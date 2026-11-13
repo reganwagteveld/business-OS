@@ -45,6 +45,8 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 ## Phase 1a: Foundation
 
 > Revised 2026-11-13 for the desktop-first decision ([ADR 0005](./adr/0005-desktop-first-client-architecture.md)). The original web-only scaffold was restructured; see [migration-desktop-first.md](./migration-desktop-first.md).
+>
+> Current status of each criterion, verified versus outstanding manual checks: [phase-1a-verification.md](./phase-1a-verification.md).
 
 **Scope:** pnpm workspace with `apps/api` (Next.js as the cloud API only: route handlers, Prisma with multi-file schema, env validation), `apps/desktop` (Tauri 2 shell for Windows and macOS), `apps/web` (companion browser app, Vite + React), and shared `packages/contracts`, `packages/ui` and `packages/app`; local PostgreSQL via Docker Compose; lint, boundary and client-security rules; test runners; CI. No product features: the only endpoint is `GET /api/v1/health`, and the only screen shows whether the API answers.
 

@@ -61,6 +61,8 @@ Built, not deployed. `pnpm --filter @business-os/desktop tauri:build` with `VITE
 
 ## 5. Phase 1a vendor verification (record the answers in ADR 0002)
 
+Status and the automated check (`pnpm verify:vendor`): [phase-1a-verification.md](./phase-1a-verification.md).
+
 Run against the real Neon project, as `bos_owner`/`bos_app`:
 
 - [ ] Roles above can be created with `NOBYPASSRLS`; `bos_app` cannot create objects in `public`.

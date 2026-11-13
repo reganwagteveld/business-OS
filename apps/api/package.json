@@ -14,7 +14,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:check-migrations": "node scripts/check-migrations.mjs",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "verify:vendor": "node scripts/verify-vendor.mjs"
   },
   "dependencies": {
     "@business-os/contracts": "workspace:*",
