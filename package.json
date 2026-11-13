@@ -22,7 +22,8 @@
     "db:setup": "pnpm db:up && pnpm --filter @business-os/api db:generate",
     "db:migrate": "pnpm --filter @business-os/api db:migrate",
     "db:check-migrations": "pnpm --filter @business-os/api db:check-migrations",
-    "verify:vendor": "pnpm --filter @business-os/api verify:vendor"
+    "verify:vendor": "pnpm --filter @business-os/api verify:vendor",
+    "test:isolation": "pnpm --filter @business-os/api test:isolation"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

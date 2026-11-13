@@ -1,6 +1,7 @@
 # ADR 0004: Database isolation design (Prisma, RLS, roles)
 
 - Status: **Accepted as the design to spike**, 2026-11-13 (Regan's third architecture review on PR #1). This accepts the design, not proof that it works: tests S1 to S13 must pass in the Phase 1b spike before any product features, and a failure of S1 to S10 or S13 reopens this ADR.
+- Spike: **S1 to S13 pass** (2026-11-13, PR 3); S11 within target. Moving the status to Accepted is the owner's decision on PR 3.
 - Date: 2026-11-13
 
 ## Context
@@ -18,11 +19,38 @@ The design in data-model.md §5:
 
 ## Pinned versions
 
-To be filled in at Phase 1a/1b: Prisma version, driver adapter, PostgreSQL version, pooler and mode, prepared-statement setting.
+Verified by the spike on 2026-11-13 (PR 3, CI run on commit 96e3c31):
+
+| Component | Version / setting |
+|---|---|
+| Prisma (`prisma`, `@prisma/client`) | 7.10.1, `prisma-client` generator |
+| Driver adapter | `@prisma/adapter-pg` 7.10.1 over `pg` 8.23.1, default statement handling |
+| PostgreSQL | 16.10 in CI; the Neon project runs 18.7 (`pnpm verify:vendor` passes 8 of 8 there) |
+| Pooler and mode | PgBouncer 1.22.0, `pool_mode = transaction`, `default_pool_size = 5`; a second pooler database with `pool_size = 1` for the carry-over tests |
+| Prepared statements | PgBouncer default for 1.22.0 (`max_prepared_statements` not set); no setting required |
+| Unit-of-work defaults | `ReadCommitted`, 5 s timeout, context set by tagged `$queryRaw` `set_config(..., true)` and checked |
 
 ## Spike results
 
-To be filled in: results of tests S1 to S13 (data-model.md §5.4), including measured overhead.
+All mandatory tests pass in CI against PostgreSQL behind PgBouncer in transaction mode (`apps/api/tests/isolation/db-context.test.ts`, `tenant-db.typecheck.ts`).
+
+| # | Result |
+|---|---|
+| S1 | Pass: `set_config` returns the intended values; `current_setting`, `txid_current()` and `pg_backend_pid()` are identical across raw and model queries; a malformed tenant id is rejected before any query |
+| S2 | Pass: with no context, `bos_app` sees 0 rows on every tenant table and `INSERT` raises an RLS violation (model and raw) |
+| S3 | Pass: a plain client or a transaction opened outside `withTenant` does not type-check as a `TenantDb`; `$transaction`, `$queryRawUnsafe` and `$executeRawUnsafe` are not reachable (`tsc` in CI) |
+| S4 | Pass: with a single pooled server connection, the next query on the same backend has an empty setting and sees 0 rows |
+| S5 | Pass: a unit of work that throws leaves no setting and no partial write |
+| S6 | Pass: 2,000 interleaved units of work across 3 businesses, pool size 5, 25 in flight: 0 leaks, 0 failures |
+| S7 | Pass: tagged `$queryRaw` is filtered by RLS exactly like model queries |
+| S8 | Pass: cross-tenant writes are rejected by the app-layer scope, and with that scope disabled RLS alone rejects inserts and re-parenting and hides other tenants' rows from updates and deletes |
+| S9 | Pass: a contact cannot reference another business's customer as `bos_owner` with `FORCE` removed (RLS bypassed) or as a superuser (`23503`) |
+| S10 | Pass: a unit of work past its 500 ms timeout fails with the transaction timeout, rolls back, and its connection returns clean |
+| S11 | Added latency of `withTenant` vs a bare query, 400 rounds on the CI runner: **p50 0.98 ms, p95 1.10 ms** (first run: p50 1.36 ms, p95 1.54 ms). Within the < 2 ms p95 target. Not measured against Neon over the network |
+| S12 | Pass: S6 passes with the adapter's default statement handling and PgBouncer's default prepared-statement setting |
+| S13 | Pass: `role: "jobs"` connects as `bos_jobs`, reads and deletes only a purgeable business's rows (30-day floor), sees 0 rows for active or recently archived businesses, and cannot insert or update |
+
+Limitations: the spike uses a test-only fixture schema with the production policy template (not the application migrations); PgBouncer runs in CI as the Ubuntu package, not a container; S11 was measured on the CI runner. The real tenancy tables must reuse the same template, and this suite re-runs on any Prisma, adapter or pooler upgrade.
 
 ## Consequences
 
