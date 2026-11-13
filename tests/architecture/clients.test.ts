@@ -96,9 +96,9 @@ describe('Tauri desktop shell', () => {
 
 describe('API contracts', () => {
   it.each(Object.entries(endpoints))('%s is implemented by an API route handler', (_name, endpoint) => {
-    const file = resolve(ROOT, 'apps/api/src/app', `.${endpoint.path}`, 'route.ts');
+    const file = resolve(ROOT, 'apps/api/src/app', `.${endpoint.path.replace(/:([A-Za-z]+)/g, '[$1]')}`, 'route.ts');
     expect(existsSync(file), `${file} should exist`).toBe(true);
-    expect(read(file.slice(ROOT.length + 1))).toMatch(new RegExp(`export (async )?function ${endpoint.method}\\b`));
+    expect(read(file.slice(ROOT.length + 1))).toMatch(new RegExp(`export (async )?(function|const) ${endpoint.method}\\b`));
   });
 
   it.each(Object.entries(authEndpoints))('auth endpoint %s is served under /api/v1/auth by the identity module', (_name, endpoint) => {

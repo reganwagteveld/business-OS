@@ -46,6 +46,32 @@ export async function authHeaders(request: Request): Promise<Headers> {
   return headers;
 }
 
+/**
+ * The raw session token presented by this request (signed cookie or signed bearer), after checking
+ * its signature, or null. Used only to call the pre-tenant database functions, which verify the
+ * session themselves; never logged or returned.
+ */
+export async function getSessionToken(request: Request): Promise<string | null> {
+  const authorization = request.headers.get('authorization');
+  if (authorization) {
+    const match = /^Bearer\s+(\S+)$/i.exec(authorization);
+    return match ? verifySignedToken(match[1]!) : null;
+  }
+  const cookieName = (await getAuth().$context).authCookies.sessionToken.name;
+  const cookie = request.headers.get('cookie') ?? '';
+  for (const part of cookie.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq > 0 && part.slice(0, eq).trim() === cookieName) {
+      try {
+        return verifySignedToken(decodeURIComponent(part.slice(eq + 1).trim()));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 /** The signed-in user, from our users table, or null. Never trusts any user id sent by the client. */
 export async function getCurrentUser(request: Request): Promise<CurrentUser | null> {
   const result = await getAuth().api.getSession({ headers: await authHeaders(request) });

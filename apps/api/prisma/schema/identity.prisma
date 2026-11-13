@@ -14,8 +14,9 @@ model User {
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz
 
-  sessions Session[]
-  accounts Account[]
+  sessions    Session[]
+  accounts    Account[]
+  memberships Membership[]
 
   @@map("users")
 }

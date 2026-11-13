@@ -126,7 +126,7 @@ model Business {
 ### 4.3 Membership (tenancy)
 
 ```prisma
-enum MembershipRole { OWNER ADMIN MEMBER }
+enum MembershipRole { OWNER ADMIN MANAGER MEMBER }   // MANAGER added in Phase 1b (PR 5)
 enum MembershipStatus { ACTIVE SUSPENDED }
 
 model Membership {
@@ -595,7 +595,10 @@ CREATE POLICY definer_member_read     ON memberships FOR SELECT TO bos_definer
 CREATE POLICY definer_member_create   ON memberships FOR INSERT TO bos_definer
   WITH CHECK (status = 'ACTIVE');
 CREATE POLICY definer_invite_read     ON invitations FOR SELECT TO bos_definer
-  USING (accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now());
+  USING (revoked_at IS NULL AND expires_at > now());
+  -- As implemented (PR 5): accepted rows stay readable, because PostgreSQL applies the SELECT
+  -- policy to the new row of the accepting UPDATE. Single use is enforced by the UPDATE policy
+  -- and by accept_invitation selecting only rows with accepted_at IS NULL.
 CREATE POLICY definer_invite_accept   ON invitations FOR UPDATE TO bos_definer
   USING (accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now())
   WITH CHECK (accepted_at IS NOT NULL);

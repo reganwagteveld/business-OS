@@ -69,6 +69,11 @@ jobs:
         run: pnpm test
       - name: Apply migrations as the owner role
         run: pnpm --filter @business-os/api exec prisma migrate deploy
+      - name: Apply privileged SQL (app_private functions) as an administrative role
+        run: pnpm --filter @business-os/api db:privileged
+        env:
+          ADMIN_DATABASE_URL: ${{ env.TEST_ADMIN_URL }}
+          DEPLOYMENT_REGION: ${{ env.REGION }}
       - name: Integration tests (PostgreSQL roles and isolation prerequisites)
         run: pnpm test:integration
       - name: Start PgBouncer in transaction mode (RLS spike pooler)

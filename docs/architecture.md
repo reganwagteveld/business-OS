@@ -315,6 +315,7 @@ Baseline requirements regardless of provider:
 |---|---|
 | `owner` | Created the business; billing (later), delete business, manage all members including admins |
 | `admin` | Manage members (except owners) and settings; full data access |
+| `manager` | Day-to-day work; invites and manages `member`s only; no settings or audit log (added in Phase 1b, PR 5) |
 | `member` | Read and write business data; no member or settings management |
 
 Code never checks roles directly. It checks **permissions**:

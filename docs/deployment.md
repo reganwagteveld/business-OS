@@ -29,6 +29,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner IN SCHEMA public GRANT SELECT, INSER
 
 Save the two passwords straight into the Vercel environment variables (below); do not paste them into chat, issues or commits. The shadow database in the local script is not needed in production.
 
+## 2a. Privileged database objects (Phase 1b)
+
+After `prisma migrate deploy` (as `bos_owner`), apply `apps/api/prisma/privileged/*.sql` with an **administrative** role (the Neon project owner), which also records the deployment region:
+
+```bash
+ADMIN_DATABASE_URL="$NEON_OWNER_DIRECT_URL" DEPLOYMENT_REGION=us-east-1 pnpm --filter @business-os/api db:privileged
+```
+
+This creates the `app_private` schema and the pre-tenant `SECURITY DEFINER` functions owned by `bos_definer` (the script grants itself `bos_definer` only while creating them, then revokes it). It needs the roles `bos_auth`, `bos_jobs`, `bos_definer` and `bos_maint` (same attributes as `docker/init/01-roles.sql`).
+
 ## 3. Connection strings and environment variables
 
 | Variable | Role | Neon endpoint | Notes |
