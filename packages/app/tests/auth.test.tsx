@@ -110,3 +110,36 @@ describe('desktop transport (PKCE + loopback + credential store)', async () => {
     expect(native.storeToken).not.toHaveBeenCalled();
   });
 });
+
+describe('invitation acceptance', () => {
+  it('posts the token with the cookie, and returns the business on success', async () => {
+    const fetchMock = vi.fn(async () => json({ business: { slug: 'acme', role: 'MEMBER' } }));
+    const result = await createAuthClient('https://app.example.test', { kind: 'cookie' }, fetchMock).acceptInvitation('a'.repeat(43));
+    expect(result).toEqual({ ok: true, data: { slug: 'acme', role: 'MEMBER' } });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://app.example.test/api/v1/invitations/accept');
+    expect(init.credentials).toBe('include');
+    expect(JSON.parse(String(init.body))).toEqual({ token: 'a'.repeat(43) });
+  });
+
+  it('gives one generic message for every failure, and never calls the API for a malformed token', async () => {
+    const fetchMock = vi.fn(async () => json({ error: 'invitation_invalid' }, 400));
+    const auth = createAuthClient('https://app.example.test', { kind: 'cookie' }, fetchMock);
+    const wrong = await auth.acceptInvitation('b'.repeat(43));
+    expect(wrong).toMatchObject({ ok: false, status: 400 });
+    const malformed = await auth.acceptInvitation('not a token!');
+    expect(malformed).toMatchObject({ ok: false, status: 400 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    if (!wrong.ok && !malformed.ok) expect(wrong.message).toBe(malformed.message);
+  });
+
+  it('asks the signed-in user to confirm; it never accepts automatically', async () => {
+    const { AcceptInvitation } = await import('../src/auth/auth-screens');
+    const auth = createAuthClient('https://x.test', { kind: 'cookie' }, vi.fn());
+    const html = renderToStaticMarkup(<AcceptInvitation auth={auth} token={'c'.repeat(43)} email="a@example.com" onDone={() => {}} />);
+    expect(html).toContain('Accept invitation');
+    expect(html).toContain('a@example.com');
+    const missing = renderToStaticMarkup(<AcceptInvitation auth={auth} token={null} email="a@example.com" onDone={() => {}} />);
+    expect(missing).toContain('incomplete');
+  });
+});

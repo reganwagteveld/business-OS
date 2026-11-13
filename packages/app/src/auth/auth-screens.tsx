@@ -149,3 +149,44 @@ export function DesktopSignIn({ auth, onSignedIn }: { auth: AuthClient; onSigned
     </Frame>
   );
 }
+
+/** Accepting an invitation: an explicit click (never automatic), then a confirmation. */
+export function AcceptInvitation({ auth, token, email, onDone }: {
+  auth: AuthClient;
+  token: string | null;
+  email: string;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [joined, setJoined] = useState<{ slug: string; role: string } | null>(null);
+  if (!token) {
+    return (
+      <Frame title="Invitation link problem" description="This link is incomplete. Open the link from your invitation email again.">
+        <button type="button" className={link} onClick={onDone}>Continue to Business OS</button>
+      </Frame>
+    );
+  }
+  if (joined) {
+    return (
+      <Frame title="You're in" description={`You joined as ${joined.role.toLowerCase()}.`}>
+        <button className={button} type="button" onClick={onDone}>Continue to Business OS</button>
+      </Frame>
+    );
+  }
+  const accept = async () => {
+    setBusy(true);
+    setError(null);
+    const result = await auth.acceptInvitation(token);
+    setBusy(false);
+    if (result.ok) setJoined(result.data);
+    else setError(result.message);
+  };
+  return (
+    <Frame title="Accept your invitation" description={`You are signed in as ${email}. The invitation works only for the email address it was sent to.`}>
+      <ErrorLine error={error} />
+      <button className={button} type="button" onClick={accept} disabled={busy}>Accept invitation</button>
+      <button type="button" className={link} onClick={onDone}>Not now</button>
+    </Frame>
+  );
+}
