@@ -1,6 +1,6 @@
 # Phase 1a verification status
 
-Last updated 2026-11-13 on PR #2. **Verified** means a command, test or CI job was run and its result is recorded here. **Outstanding (manual)** means it needs the project's Vercel or Neon account and has not been done; nothing in that column is claimed as verified. Acceptance criteria are in [implementation-plan.md](./implementation-plan.md#phase-1a-foundation).
+Last updated 2026-11-13 on PR #2 (live Vercel and Neon checks run from the project owner's Mac against the real accounts). **Verified** means a command, test or CI job was run and its result is recorded here. **Outstanding (manual)** means it needs the project's Vercel or Neon account and has not been done; nothing in that column is claimed as verified. Acceptance criteria are in [implementation-plan.md](./implementation-plan.md#phase-1a-foundation).
 
 ## Verified (automated, run in CI and locally)
 
@@ -25,14 +25,14 @@ Last updated 2026-11-13 on PR #2. **Verified** means a command, test or CI job w
 
 | Item | How to do it | Result |
 |---|---|---|
-| Vercel preview serves `GET /api/v1/health` with the expected body and `Cache-Control: private, no-store` | Open the preview URL while signed in to Vercel (it is behind login protection), or use a protection-bypass token | **Not verified** |
-| Functions run in `iad1` | Vercel deployment → Functions region; the API also refuses to start if `VERCEL_REGION` and `REGION` disagree | **Not verified** |
-| Vercel runtime has no owner credentials | Confirm `MIGRATION_DATABASE_URL` and `SHADOW_DATABASE_URL` are **not** set in Preview or Production | **Not verified** |
-| Neon connectivity as `bos_app` through the pooled endpoint | `pnpm verify:vendor` (below) | **Not verified** |
-| Neon supports `NOBYPASSRLS` roles, `FORCE ROW LEVEL SECURITY`, policies `TO <role>`, `SECURITY DEFINER` owned by a `NOLOGIN` role with fixed `search_path` | `pnpm verify:vendor` (below) | **Not verified** |
-| Transaction-local `set_config` holds through Neon's pooled (transaction-mode) endpoint (spike S1, S4, S6) | `pnpm verify:vendor` covers the basic case; the full spike runs in Phase 1b | **Not verified** |
-| Neon project region is AWS `us-east-1` | Neon console → project settings | **Not verified** |
-| **Backups and point-in-time recovery stay in us-east-1** | Neon console / Neon documentation for the plan in use; record the answer in ADR 0002's residency table | **Not verified** |
+| Vercel preview serves `GET /api/v1/health` with the expected body and `Cache-Control: private, no-store` | Open the preview URL while signed in to Vercel (it is behind login protection), or use a protection-bypass token | **Verified 2026-11-13**: HTTP 200, body `{"status":"ok","service":"business-os-api","apiVersion":"v1"}`, `Cache-Control: private, no-store` (Preview deployment of d76fa3e, after setting `APP_BASE_URL` for Preview). Before that variable was set the preview returned 500, by design. The temporary bypass token used for the check was revoked. |
+| Functions run in `iad1` | Vercel deployment → Functions region; the API also refuses to start if `VERCEL_REGION` and `REGION` disagree | **Verified 2026-11-13**: deployment regions `['iad1']`; the request was served by `iad1`. |
+| Vercel runtime has no owner credentials | Confirm `MIGRATION_DATABASE_URL` and `SHADOW_DATABASE_URL` are **not** set in Preview or Production | **Verified 2026-11-13** (variable names listed with the Vercel CLI): neither is set. Production and Preview each have `DATABASE_URL`, `REGION`, `DATABASE_REGION`, `APP_BASE_URL`. |
+| Neon connectivity as `bos_app` through the pooled endpoint | `pnpm verify:vendor` (below) | **Verified 2026-11-13**: 8 of 8 PASS against the Neon project (PostgreSQL 18.7), `bos_app` over the pooled endpoint. |
+| Neon supports `NOBYPASSRLS` roles, `FORCE ROW LEVEL SECURITY`, policies `TO <role>`, `SECURITY DEFINER` owned by a `NOLOGIN` role with fixed `search_path` | `pnpm verify:vendor` (below) | **Verified 2026-11-13**: all four capability checks PASS on Neon (roles with `NOBYPASSRLS`, `FORCE ROW LEVEL SECURITY` and `CREATE POLICY ... TO <role>`, tenant isolation failing closed, `SECURITY DEFINER` function with fixed `search_path`). The script's objects live in one transaction that was rolled back; a follow-up query found no leftover roles, schema or table. |
+| Transaction-local `set_config` holds through Neon's pooled (transaction-mode) endpoint (spike S1, S4, S6) | `pnpm verify:vendor` covers the basic case; the full spike runs in Phase 1b | Basic case **verified 2026-11-13** on Neon's pooled endpoint (set, read, then empty after commit). The full spike (S1, S4, S6) is still Phase 1b. |
+| Neon project region is AWS `us-east-1` | Neon console → project settings | **Verified 2026-11-13**: project is `aws-us-east-1` (Neon API, `region_id`), PostgreSQL 18. |
+| **Backups and point-in-time recovery stay in us-east-1** | Neon console / Neon documentation for the plan in use; record the answer in ADR 0002's residency table | **Not verified.** Neon's API reports only a 6-hour restore window (Free plan) and no storage location. Needs the Neon console or Neon's written answer; do not treat as confirmed. |
 | ADR 0002 vendor status Proposed → Accepted | Only after all of the above | Pending |
 
 ### Running the Neon checks
