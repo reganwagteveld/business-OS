@@ -8,6 +8,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as authRoute from '@/app/api/v1/auth/[...all]/route';
 import * as desktopAuthorize from '@/app/api/v1/auth/desktop/authorize/route';
 import * as desktopToken from '@/app/api/v1/auth/desktop/token/route';
+import * as meRoute from '@/app/api/v1/me/route';
+import { MeResponse } from '@business-os/contracts';
 import { devOutbox } from '@/core/email';
 import { getCurrentUser } from '@/modules/identity';
 
@@ -134,6 +136,17 @@ describe('browser sessions (HTTP-only cookie, D9b)', () => {
     expect(await getCurrentUser(req())).toBeNull();
     const { rows } = await admin.query('SELECT count(*)::int AS n FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = $1', [email]);
     expect(rows[0].n).toBe(0);
+  });
+
+  it('GET /api/v1/me returns the contract shape for a session and 401 without one', async () => {
+    const email = await signUpAndVerify();
+    const { cookie } = await signIn(email);
+    const ok = await meRoute.GET(new Request(`${BASE}/api/v1/me`, { headers: { cookie: cookie!.pair } }));
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('cache-control')).toBe('private, no-store');
+    expect(MeResponse.parse(await ok.json()).user.email).toBe(email);
+    const anon = await meRoute.GET(new Request(`${BASE}/api/v1/me`));
+    expect(anon.status).toBe(401);
   });
 
   it('rejects a forged or unsigned cookie', async () => {

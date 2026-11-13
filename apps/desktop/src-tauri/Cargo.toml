@@ -8,8 +8,13 @@ publish = false
 
 # Deliberately minimal: the desktop app is a window around the shared client and reaches data only
 # through the cloud API over HTTPS. Database drivers are forbidden here (tests/architecture/clients.test.ts).
+# Phase 1b (D9a) adds only what native sign-in needs: the OS credential store, opening the system
+# browser, and serde for command results. The allow-list is enforced by the same test.
 [dependencies]
 tauri = { version = "2", features = [] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+open = "5"
+serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

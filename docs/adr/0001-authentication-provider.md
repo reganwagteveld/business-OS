@@ -41,3 +41,16 @@ The decision stands: Better Auth, sessions and users in our database, our own te
 - **Desktop app:** sign-in in the system browser, one-time code returned to the app and exchanged with PKCE for a session token; the token is stored only in the OS credential store and sent as `Authorization: Bearer` (D9a).
 - Both are rows in the same session table, stored as a **hash** (the existing condition above), revocable and audited the same way. Add to the Phase 1b verification list: Better Auth supports bearer-token sessions for native clients (or a thin, reviewed extension provides them) without weakening the hashed-session condition.
 - Revisit trigger added: if a secure native sign-in flow cannot be built on Better Auth without forking it.
+
+## Verification of the conditions (Phase 1b, 2026-11-13, PR 4)
+
+Better Auth **1.7.22** (pinned exactly). All three conditions are met; this ADR stands.
+
+| Condition | Result | Evidence |
+|---|---|---|
+| Sessions stored as a hash, verifiable in PostgreSQL | **Met with a thin, reviewed extension.** Better Auth stores the raw token by default. `modules/identity/server/hashed-adapter.ts` wraps its Prisma adapter so `sessions.token_hash` holds `hex(sha256(token))` (a `CHECK` constraint enforces the format) and lookups hash the presented token. Password-reset and desktop sign-in codes in `verifications` are hashed the same way. No fork. | `tests/integration/auth.test.ts`: the stored row equals `sha256(cookie token)` and contains no raw token; forged, unsigned and hash-as-token cookies and bearers are rejected |
+| Rate limiting across serverless instances | **Met.** Better Auth's `storage: "database"` keeps counters in `rate_limits` (PostgreSQL). Stricter limits on sign-in, sign-up, password reset and verification email. | Repeated sign-ins from one address get 429 and the counter row exists |
+| Enumeration-safe sign-up and password reset | **Met.** `requireEmailVerification` makes duplicate sign-ups return the same body as new ones (the owner gets an email instead); password reset answers identically for unknown emails; sign-in returns the same error for an unknown email and a wrong password. | Identical status and body asserted for each pair |
+| Bearer sessions for native clients (addendum) | **Met without Better Auth's bearer plugin**, which would also expose the token to browser JavaScript in a response header. The desktop sends the same HMAC-signed token Better Auth puts in its cookie; the identity module verifies the signature and presents it as the cookie. An invalid bearer never falls back to an ambient cookie. | Desktop flow tests: exchange, bearer use, tampered/unsigned rejection, revocation |
+
+Other settings: passwords 12 to 128 characters, email verification required before sign-in, no cookie cache (revocation is immediate), sessions 30 days rolling, all sessions revoked on password reset, Better Auth telemetry off. Better Auth is reachable only from `modules/identity` and the `bos_auth` client only from its auth adapter (source rules).
