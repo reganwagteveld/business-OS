@@ -1,20 +1,27 @@
-// Source-level rules that import graphs cannot express (docs/architecture.md §5.3, §13.1, ADR 0002).
-// Import-graph rules (module APIs, layers, Prisma location, cycles, vendor SDKs) live in
+// Source-level rules that import graphs cannot express (docs/architecture.md §5.3, §13.1, ADR 0002, ADR 0005).
+// Import-graph rules (packages, module APIs, layers, Prisma location, cycles, vendor SDKs) live in
 // .dependency-cruiser.cjs. Both run in `pnpm boundaries` and in CI.
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 
-/** Server-only targets, as paths relative to src/ (or bare package names). */
-const SERVER_ONLY = [
+/** The API's source tree; the only code that may reach PostgreSQL. */
+export const SERVER_ROOT = 'apps/api/src';
+/** Every source tree that ships to a desktop or browser client. */
+export const CLIENT_ROOTS = ['apps/desktop/src', 'apps/web/src', 'packages/app/src', 'packages/ui/src', 'packages/contracts/src'];
+
+/** Package specifiers a client must never import: database drivers, Prisma, server frameworks, the API itself. */
+const CLIENT_FORBIDDEN_IMPORTS = [
   /^server-only$/,
-  /^(@prisma\/client|@prisma\/adapter-pg|pg)(\/|$)/,
-  /^core\/(db|tenant|config)(\/|$)/,
-  /^modules\/[^/]+\/server(\/|$)/,
-  /^generated\/prisma(\/|$)/,
+  /^(@prisma\/[^/]+|prisma|pg|postgres|@neondatabase\/[^/]+|@vercel\/postgres|next|dotenv)(\/|$)/,
+  /^@business-os\/api(\/|$)/,
+  /^@\//, // the API's path alias
 ];
+
+/** Database configuration has no business in client code (it would end up in the bundle). */
+const CLIENT_DATABASE_CONFIG = /\b(?:DATABASE_URL|MIGRATION_DATABASE_URL|SHADOW_DATABASE_URL|PGPASSWORD)\b|\bpostgres(?:ql)?:\/\//;
 
 // AWS-style region ids and Vercel function region codes.
 const REGION_LITERAL =
@@ -34,34 +41,23 @@ function importsOf(content) {
   return specs;
 }
 
-/** Normalises an import specifier to a path relative to src/, or a bare package name. */
-function normalise(fromFile, spec) {
-  if (spec.startsWith('@/')) return spec.slice(2);
-  if (spec.startsWith('.')) return posix.normalize(posix.join(posix.dirname(fromFile), spec));
-  return spec;
-}
-
 function isClientComponent(content) {
   const body = content.replace(/^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*/, '');
   return /^['"]use client['"]/.test(body);
 }
 
 /**
- * @param {Array<[string, string]>} files pairs of [path relative to src/, file content]
+ * Rules for the API source tree.
+ * @param {Array<[string, string]>} files pairs of [path relative to apps/api/src, file content]
  * @returns {string[]} violations, each prefixed with its rule name
  */
-export function violations(files) {
+export function serverViolations(files) {
   const errors = [];
   for (const [name, content] of files) {
     if (name.startsWith('generated/')) continue;
 
     if (isClientComponent(content)) {
-      for (const spec of importsOf(content)) {
-        const target = normalise(name, spec).replace(/\.(tsx?|jsx?)$/, '').replace(/\/index$/, '');
-        if (SERVER_ONLY.some((re) => re.test(target))) {
-          errors.push(`client-imports-server: ${name} is a client component and imports ${spec}`);
-        }
-      }
+      errors.push(`api-has-no-client-components: ${name} is marked 'use client'; UI lives in packages/app (ADR 0005)`);
     }
 
     if (!/^core\/(tenant|db)\//.test(name) && TENANT_ID_READ.some((re) => re.test(content))) {
@@ -76,23 +72,60 @@ export function violations(files) {
   return errors;
 }
 
+/**
+ * Rules for desktop, web and shared client source trees.
+ * @param {Array<[string, string]>} files pairs of [path relative to the repository root, file content]
+ * @returns {string[]} violations, each prefixed with its rule name
+ */
+export function clientViolations(files) {
+  const errors = [];
+  for (const [name, content] of files) {
+    for (const spec of importsOf(content)) {
+      const target = spec.startsWith('.') ? posix.normalize(posix.join(posix.dirname(name), spec)) : spec;
+      if (target.startsWith('apps/api/') || CLIENT_FORBIDDEN_IMPORTS.some((re) => re.test(target))) {
+        errors.push(`client-imports-server: ${name} imports ${spec}; clients reach the API over HTTPS only`);
+      }
+    }
+
+    const dbConfig = content.match(CLIENT_DATABASE_CONFIG);
+    if (dbConfig) {
+      errors.push(`client-database-config: ${name} contains "${dbConfig[0]}"; clients never connect to PostgreSQL`);
+    }
+
+    const region = content.match(REGION_LITERAL);
+    if (region) {
+      errors.push(`no-region-literals: ${name} contains "${region[0]}"; regions come from validated environment config`);
+    }
+  }
+  return errors;
+}
+
 function walk(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(resolve(dir, e.name)) : SOURCE.test(e.name) ? [resolve(dir, e.name)] : [],
   );
 }
 
-export function readSourceTree(root) {
-  return walk(root).map((path) => [relative(root, path).replaceAll('\\', '/'), readFileSync(path, 'utf8')]);
+/** Reads every source file under `root`, named relative to `relativeTo` (default: `root`). */
+export function readSourceTree(root, relativeTo = root) {
+  return walk(root).map((path) => [relative(relativeTo, path).replaceAll('\\', '/'), readFileSync(path, 'utf8')]);
+}
+
+/** Runs every source rule on the repository at `repoRoot`. */
+export function checkRepository(repoRoot) {
+  const server = readSourceTree(resolve(repoRoot, SERVER_ROOT));
+  const clients = CLIENT_ROOTS.filter((root) => existsSync(resolve(repoRoot, root))).flatMap((root) =>
+    readSourceTree(resolve(repoRoot, root), repoRoot),
+  );
+  return { files: server.length + clients.length, errors: [...serverViolations(server), ...clientViolations(clients)] };
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  const files = readSourceTree(resolve(process.argv[2] ?? 'src'));
-  const errors = violations(files);
+  const { files, errors } = checkRepository(resolve(process.argv[2] ?? '.'));
   if (errors.length) {
     console.error(errors.join('\n'));
     process.exitCode = 1;
   } else {
-    console.log(`Source rules passed (${files.length} files)`);
+    console.log(`Source rules passed (${files} files)`);
   }
 }

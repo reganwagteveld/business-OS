@@ -1,0 +1,6 @@
+@import 'tailwindcss';
+@import '@business-os/ui/styles.css';
+
+/* Generate utilities used by the shared packages, not only this app. */
+@source '../../../packages/ui/src';
+@source '../../../packages/app/src';

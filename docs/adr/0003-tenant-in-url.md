@@ -23,3 +23,9 @@ Use **path-based** `/b/[businessSlug]`. The slug is display and routing only: it
 - Business switching is a navigation, and two businesses can be open in two tabs.
 - Slug changes need a redirect from the old slug (store previous slugs) so saved links keep working.
 - Moving to subdomains later is possible: the tenant resolver is one function in `core/tenant`.
+
+## Addendum 2026-11-13: API paths and native clients (ADR 0005)
+
+- The decision stands and now applies in two places. **Client routes** in the shared app (desktop and browser) are `/b/{businessSlug}/...`. **API routes** are `/api/v1/b/{businessSlug}/...`; the API resolves the slug to a `business_id` through the caller's membership on every request, exactly as above. The client never sends a `business_id`.
+- The desktop app has no address bar, but uses the same client routes internally, so links shared from the browser app can later open in the desktop app through a registered deep link (`business-os://b/{slug}/...`, decided with D9a) without a second routing scheme.
+- "One origin and one session cookie" now means the browser app and API share a site (D9b); the desktop app uses a bearer session instead of a cookie (ADR 0001 addendum).

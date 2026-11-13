@@ -1,8 +1,13 @@
 node_modules/
 .next/
+dist/
 .env
 .env.local
 coverage/
 *.tsbuildinfo
-src/generated/
+apps/api/src/generated/
 tests/.tmp/
+# Tauri / Rust
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/tauri.generated.conf.json

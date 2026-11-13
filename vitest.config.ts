@@ -1,13 +1,6 @@
-import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
+// Workspace-wide architecture tests (boundaries, client security). Package tests run in each package.
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-      // The real package throws outside a React Server Components bundle.
-      'server-only': resolve(__dirname, 'tests/stubs/server-only.ts'),
-    },
-  },
-  test: { include: ['tests/unit/**/*.test.ts'], environment: 'node' },
+  test: { include: ['tests/**/*.test.ts'], environment: 'node' },
 });

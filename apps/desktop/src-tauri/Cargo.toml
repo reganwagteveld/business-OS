@@ -1,0 +1,22 @@
+[package]
+name = "business-os-desktop"
+version = "0.1.0"
+description = "Business OS desktop app"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+# Deliberately minimal: the desktop app is a window around the shared client and reaches data only
+# through the cloud API over HTTPS. Database drivers are forbidden here (tests/architecture/clients.test.ts).
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

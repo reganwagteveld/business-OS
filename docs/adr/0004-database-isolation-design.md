@@ -30,3 +30,7 @@ To be filled in: results of tests S1 to S13 (data-model.md §5.4), including mea
 - Two Prisma clients (app and auth) and two pools.
 - Any Prisma or pooler upgrade re-runs the spike tests before merge.
 - If S1 to S10 cannot pass, alternatives (session-mode pooling, per-request dedicated connections, or app-layer-only scoping) require a new decision and are not adopted silently.
+
+## Addendum 2026-11-13: desktop-first clients (ADR 0005)
+
+Nothing in this design changes. The cloud API (`apps/api`) is the only database client; the desktop and browser apps reach data only through it and hold no database credentials. The unit of work is opened by the `tenantRoute` wrapper for API route handlers instead of a Server Action wrapper, and the pre-tenant functions receive the session token from the cookie or the bearer header. The spike tests (S1 to S13) are unchanged.

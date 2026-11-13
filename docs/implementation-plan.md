@@ -17,8 +17,8 @@ Explicitly **not** in Phase 1: Sales, Finance, Projects, Operations and People f
 | Phase | Outcome | Depends on | Decisions needed |
 |---|---|---|---|
 | 0. Architecture review | Approved docs, decisions recorded | — | — |
-| 1a. Foundation | Empty app skeleton with enforced boundaries and CI | 0 | D3 (hosting, region) |
-| 1b. Identity, tenancy and isolation | Sign-in, businesses, memberships, invitations, RLS proven | 1a | D1 (auth), D4 (URL), D7 (locale) |
+| 1a. Foundation | Workspace skeleton (API, desktop shell, browser app, shared packages) with enforced boundaries and CI | 0 | D3 (hosting, region), D9 (client architecture) |
+| 1b. Identity, tenancy and isolation | Sign-in, businesses, memberships, invitations, RLS proven | 1a | D1 (auth), D4 (URL), D7 (locale), D9a/D9b (client sign-in, domains) |
 | 1c. Shell, Home and Zone registry | Navigable app frame with design system | 1b | D6 (planned Zones on Home) |
 | 1d. Customer Zone | Customers, contacts, activity timeline | 1c | D5 (contact cardinality) |
 | 1e. Hardening and release readiness | Audit, rate limits, observability, export, a11y, e2e | 1d | DM5 (retention) |
@@ -44,31 +44,58 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 
 ## Phase 1a: Foundation
 
-**Scope:** Next.js (App Router, TypeScript strict), Tailwind CSS, shadcn/ui initialised, Prisma with multi-file schema, local PostgreSQL via Docker Compose, env validation, lint and boundary rules, test runners, CI. No product features.
+> Revised 2026-11-13 for the desktop-first decision ([ADR 0005](./adr/0005-desktop-first-client-architecture.md)). The original web-only scaffold was restructured; see [migration-desktop-first.md](./migration-desktop-first.md).
+
+**Scope:** pnpm workspace with `apps/api` (Next.js as the cloud API only: route handlers, Prisma with multi-file schema, env validation), `apps/desktop` (Tauri 2 shell for Windows and macOS), `apps/web` (companion browser app, Vite + React), and shared `packages/contracts`, `packages/ui` and `packages/app`; local PostgreSQL via Docker Compose; lint, boundary and client-security rules; test runners; CI. No product features: the only endpoint is `GET /api/v1/health`, and the only screen shows whether the API answers.
 
 **Acceptance criteria**
 
-- [ ] `pnpm install && pnpm dev` starts the app locally against Docker Postgres with a documented one-command setup in `README.md`.
-- [ ] `tsconfig` has `strict: true`, `noUncheckedIndexedAccess: true`; `pnpm typecheck` passes with zero errors.
-- [ ] Folder structure matches architecture §4 (`app`, `zones`, `modules`, `core`, `ui`).
+Workspace and tooling
+
+- [ ] `pnpm install && pnpm db:setup && pnpm dev:api` starts the API locally against Docker Postgres; `pnpm dev:web` and `pnpm dev:desktop` start the clients against it. One-command setup is documented in `README.md`.
+- [ ] Every package's `tsconfig` has `strict: true`, `noUncheckedIndexedAccess: true`; `pnpm typecheck` passes with zero errors across the workspace.
+- [ ] Folder structure matches architecture §4 (`apps/api`, `apps/desktop`, `apps/web`, `packages/contracts`, `packages/ui`, `packages/app`; inside the API `app`, `modules`, `core`).
+- [ ] The API boots only if required env vars are valid (zod); a missing var produces a clear error. Client builds fail without `VITE_API_BASE_URL`, and clients accept only https (http for localhost).
+
+Boundaries and security (each rule proven by a fixture test that expects the violation to be caught)
+
 - [ ] Lint forbids reading `businessId` from the tenant context outside `core/tenant` and `core/db` (architecture §13.1 preparation).
-- [ ] Lint fails on: a deep import into another module (`@/modules/x/server/...`), `modules` importing `app`, client components importing `server-only` code. Each rule is proven by a fixture test that expects the violation to be caught.
-- [ ] `dependency-cruiser` runs in CI and fails on circular module dependencies.
-- [ ] A test fails if any file outside `src/core/db` imports `@prisma/client`.
-- [ ] App boots only if required env vars are valid (zod); a missing var produces a clear error.
-- [ ] Two database roles exist in local and CI databases: an owner role for migrations and an app role without `BYPASSRLS`; the app connects as the app role.
-- [ ] CI (GitHub Actions) on every PR runs: install, typecheck, lint, boundaries, unit tests, integration tests against a real Postgres service, `prisma migrate diff` check for un-generated migrations.
-- [ ] Preview deployment of the empty app succeeds with server functions in `iad1` and the database in AWS `us-east-1` (ADR 0002); a deploy check fails if the configured function region and database region differ.
+- [ ] Rules fail on: a deep import into another module, `modules` importing `app`, `core` importing modules, route handlers reaching module internals, client components inside the API.
+- [ ] `dependency-cruiser` runs in CI and fails on circular dependencies.
+- [ ] A rule fails if any file outside `apps/api/src/core/db` imports Prisma, the generated client or `pg`.
+- [ ] **Clients cannot access server code or the database:** the desktop app, web app and shared packages cannot import `apps/api`, `server-only`, `next`, Prisma or any PostgreSQL driver (dependency-cruiser and source rules), their manifests declare none of them, and their source contains no database configuration.
+- [ ] **The desktop app never connects to PostgreSQL:** its Rust crate depends only on `tauri` and `tauri-build` (no database crates or SQL, shell, fs or http plugins), its window has only `core:default` permissions, `withGlobalTauri` is off, and its CSP `connect-src` is limited to the configured API origin for every build.
+- [ ] The package layering in architecture §4 holds (apps independent, packages never import apps, `contracts` and `ui` are leaves, the API shares only `contracts`).
+- [ ] Built client bundles contain no server configuration (CI scan).
+- [ ] The API answers cross-origin requests only for exact origins in `CORS_ALLOWED_ORIGINS` (no wildcards, validated at boot).
+- [ ] Region-specific values (database URL, base URL, `REGION`, email sender, error-tracking DSN) come only from validated environment config; a test finds no hard-coded region names in the API or the clients.
+- [ ] Lint forbids vendor-specific platform APIs (e.g. hosted KV/config SDKs) inside `modules/`; platform services are reached only through adapters in `core/` (architecture §13.3).
+
+API contracts
+
+- [ ] Every endpoint is declared in `packages/contracts`; the API's response is validated against its contract in tests; the client parses every response with it; CI fails if a contract has no route handler or the JSON Schema snapshot (`packages/contracts/schema/api-v1.json`) is out of date.
+
+Database
+
+- [ ] Two database roles exist in local and CI databases: an owner role for migrations and an app role without `BYPASSRLS`; the API connects as the app role.
+
+Clients
+
+- [ ] The shared client app renders in both the desktop and browser apps and shows the real API status (connected, or an honest "not reachable" with the reason); no placeholder business data.
+- [ ] A basic working Tauri 2 desktop shell builds on Windows and macOS in CI and is compiled on Linux.
+
+CI and deployment
+
+- [ ] CI (GitHub Actions) on every PR runs: frozen-lockfile install, contract check, typecheck, lint, boundaries, unit, contract and architecture tests, integration tests against a real Postgres service, the `prisma migrate diff` check, builds of the API, browser app and desktop frontend, the client bundle scan, and the desktop builds.
+- [ ] Preview deployment of the API succeeds with server functions in `iad1` and the database in AWS `us-east-1` (ADR 0002); a deploy check fails if the configured function region and database region differ.
 - [ ] The database vendor is confirmed to support the role attributes, `FORCE ROW LEVEL SECURITY`, `SECURITY DEFINER` ownership and pooler mode required by ADR 0004, and to keep backups/PITR in-region; answers recorded in ADR 0002 and its vendor status moved to Accepted.
-- [ ] Region-specific values (database URL, base URL, `REGION`, email sender, error-tracking DSN) come only from validated environment config; a grep test finds no hard-coded region names in `src/`.
-- [ ] Lint forbids vendor-specific platform APIs (e.g. hosted KV/config SDKs) inside `modules/`; platform services are reached only through adapters in `core/` (keeps regional and dedicated deployments possible, architecture §13.3).
 - [ ] The PR template includes a checklist item: "No US-only assumptions in the shared data model (field names, formats, units)".
 
 ---
 
 ## Phase 1b: Identity, tenancy and isolation
 
-**Scope:** auth integration (D1) behind `modules/identity`; `businesses`, `memberships`, `invitations`, `audit_events` tables; onboarding (create first business); business switcher data; tenant context; `tenantAction` wrapper; tenant-scoped Prisma client; RLS; the isolation test suite.
+**Scope:** auth integration (D1) behind `modules/identity`; `businesses`, `memberships`, `invitations`, `audit_events` tables; onboarding (create first business); business switcher data; tenant context; `tenantRoute`/`publicRoute` wrappers for API route handlers; desktop and browser sign-in (D9a, D9b); tenant-scoped Prisma client; RLS; the isolation test suite.
 
 **Starts with a spike** (time-boxed, ~2 days) to prove RLS + Prisma + pooled connections, with a short written result in `docs/adr/`. If the spike fails its targets, stop and review before continuing.
 
@@ -91,11 +118,13 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 - [ ] An owner/admin can invite by email; the invitee can accept only when signed in with that verified email; expired or revoked invitations fail.
 - [ ] The last active owner cannot be removed or demoted (service test and UI test).
 - [ ] Removing a member revokes their access on their next request (integration test).
-- [ ] Every Server Action exported from a `"use server"` module is wrapped in `tenantAction` or `publicAction` (CI check).
+- [ ] Every route handler under `app/api/v1/b/` is wrapped in `tenantRoute`, and every other `/api/v1` handler in `publicRoute` or an explicit unauthenticated allowlist (CI check).
+- [ ] The desktop app signs in through the system browser and stores its session token only in the OS credential store; the token is a hashed, revocable server-side session (ADR 0001 addendum). The browser app uses an HTTP-only same-site cookie with an `Origin` check on mutating requests.
+- [ ] Every new endpoint is declared in `packages/contracts` with request and response schemas.
 - [ ] `authorize(ctx, permission, resource?)` accepts the optional resource argument (unused in Phase 1); call sites that act on a specific record pass it.
 - [ ] RLS policies are generated from one template in migrations; the schema guard verifies every tenant table's policy matches the template exactly.
 - [ ] Decision E1 is recorded as an ADR; if accepted, `activities` uses primary key `(business_id, id)`.
-- [ ] `business_id` does not appear in any action input schema (CI check).
+- [ ] `business_id` does not appear in any request schema in `packages/contracts` (CI check).
 - [ ] **Isolation suite** (`tests/isolation/`) passes, covering for every tenant table: read, list, update, delete and foreign-key reference from business A to business B fail, both via module services and via raw SQL as the app role.
 - [ ] **Schema guard** test passes: every table with a `business_id` column has RLS enabled and forced, a `tenant_isolation` policy, and a `business_id`-leading index.
 - [ ] Database roles `bos_owner`, `bos_app`, `bos_auth`, `bos_definer`, `bos_jobs` exist with exactly the grants in data-model §5.1; a test compares actual grants to the expected list.
@@ -115,14 +144,15 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 
 - [ ] `ZoneManifest` and `defineZone()` exist; the registry contains Customer (`active`) and the five other Zones (`planned`).
 - [ ] Shell, Home tiles, Zone switcher and command palette are all generated from the registry; adding a test manifest in a test makes it appear in all four without touching shell code (component test).
-- [ ] A test fails if an `active` Zone has no matching route folder or a route folder has no manifest.
-- [ ] Items whose `requires` permission the user lacks are not rendered (component test with a `MEMBER` vs `ADMIN` context), **and** direct navigation to the URL is refused server-side (integration test).
+- [ ] A test fails if an `active` Zone has no matching client route or a client route has no manifest, or if a Zone uses an API endpoint that has no contract.
+- [ ] Items whose `requires` permission the user lacks are not rendered (component test with a `MEMBER` vs `ADMIN` context), **and** calling the Zone's API endpoints directly is refused server-side (integration test).
 - [ ] Planned Zones follow decision D6 and render no data, numbers or charts.
 - [ ] Home shows only widgets whose data comes from real queries; with an empty business, every widget shows an empty state with a next step (e.g. "Add your first customer"). A grep/test guard rejects hard-coded numeric literals in widget components.
 - [ ] There is no persistent global sidebar.
 - [ ] Command palette opens with ⌘K / Ctrl+K and can navigate to every visible Zone and nav item.
 - [ ] Light and dark themes both pass automated contrast checks (axe) on the shell and Home.
-- [ ] Keyboard-only navigation works across the shell, Home and Zone switcher (Playwright test).
+- [ ] Keyboard-only navigation works across the shell, Home and Zone switcher (Playwright test against the browser build; the desktop app renders the same shared app).
+- [ ] The client router library is chosen and recorded (architecture §6.3).
 - [ ] Members screen lets owners/admins view members, change roles (within rules) and invite; members see it read-only or not at all per permissions.
 
 ---
@@ -179,7 +209,7 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 
 Listed so Phase 1 decisions can be checked against them, not as a plan:
 
-- **AI foundation:** decide D2, build `core/ai`, first assistant capability operating through existing `tenantAction`s (e.g. summarise a customer's history), with a dedicated security review for prompt injection and tenant scoping.
+- **AI foundation:** decide D2, build `core/ai`, first assistant capability operating through existing `tenantRoute` endpoints (e.g. summarise a customer's history), with a dedicated security review for prompt injection and tenant scoping.
 - **Next Zone:** most likely Sales (it reuses customers and contacts), designed with its own data-model doc before any code.
 - **Custom roles**, per-business Zone enablement, tags/custom fields, billing: each only when a real user need is confirmed.
 - **Enterprise capabilities** (organisations above businesses, scoped permissions, SSO/SCIM, regional or dedicated deployments, partitioning, analytics store): the paths and their triggers are in architecture §13. None are scheduled; each starts with its own design doc when a real customer need appears.
@@ -205,6 +235,6 @@ Listed so Phase 1 decisions can be checked against them, not as a plan:
 
 - CI green: typecheck, lint, boundaries, unit, integration, isolation suite.
 - New tenant tables include RLS policy, composite FKs and tests in the same PR.
-- New Server Actions use `tenantAction` with a permission and a zod schema.
+- New API routes use `tenantRoute` with a permission and a contract schema; clients never talk to anything but the API.
 - No hard-coded or mock business figures in product UI.
 - Docs/ADRs updated if the change affects architecture or the data model.

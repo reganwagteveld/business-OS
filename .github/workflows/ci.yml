@@ -7,10 +7,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
+    name: Workspace checks (API, web, contracts, security)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16.10
@@ -24,12 +29,15 @@ jobs:
           --health-interval 3s --health-timeout 3s --health-retries 20
     env:
       # CI-only credentials, matching docker/init/01-roles.sql. Never used outside CI.
+      # Server variables are read only by apps/api; the clients receive VITE_API_BASE_URL alone.
       DATABASE_URL: postgresql://bos_app:bos_local_app_password@localhost:5432/business_os?schema=public
       MIGRATION_DATABASE_URL: postgresql://bos_owner:bos_local_owner_password@localhost:5432/business_os?schema=public
       SHADOW_DATABASE_URL: postgresql://bos_owner:bos_local_owner_password@localhost:5432/business_os_shadow?schema=public
       APP_BASE_URL: http://localhost:3000
       REGION: ci
       DATABASE_REGION: ci
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:1420,tauri://localhost,http://tauri.localhost
+      VITE_API_BASE_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -37,18 +45,63 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Install (lockfile must be up to date)
+      - name: Install (workspace lockfile must be up to date)
         run: pnpm install --frozen-lockfile
       - name: Provision database roles (same script as local docker compose)
         run: psql "postgresql://postgres:ci_postgres_only@localhost:5432/business_os" -v ON_ERROR_STOP=1 -f docker/init/01-roles.sql
+      - name: API contracts (JSON schema snapshot is current)
+        run: pnpm contracts:check
       - run: pnpm typecheck
       - run: pnpm lint
-      - name: Boundaries (dependency-cruiser + source rules)
+      - name: Boundaries (dependency-cruiser + source rules, incl. no database or server code in clients)
         run: pnpm boundaries
-      - name: Unit tests
+      - name: Unit, contract and architecture tests
         run: pnpm test
-      - name: Integration tests (PostgreSQL)
+      - name: Integration tests (PostgreSQL roles and isolation prerequisites)
         run: pnpm test:integration
       - name: Migrations match schema
         run: pnpm db:check-migrations
-      - run: pnpm build
+      - name: Build API, web app and desktop frontend
+        run: pnpm build
+      - name: Client bundles contain no server configuration
+        run: |
+          if grep -rEl 'DATABASE_URL|postgres(ql)?://|bos_(app|owner)|MIGRATION_' apps/web/dist apps/desktop/dist; then
+            echo "Server configuration leaked into a client bundle" >&2
+            exit 1
+          fi
+
+  desktop:
+    name: Desktop shell (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux (compile check), os: ubuntu-24.04, bundle: '--no-bundle' }
+          - { name: macOS, os: macos-latest, bundle: '--bundles app' }
+          - { name: Windows, os: windows-latest, bundle: '--bundles nsis' }
+    env:
+      # No API is deployed yet, so the shell reports "Not reachable"; the CSP allows only this origin.
+      VITE_API_BASE_URL: https://api.business-os.invalid
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux WebKitGTK prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Unsigned verification build only. Code signing, notarisation and distribution are decided
+      # before the first release (ADR 0005, open decisions); no artifacts are published.
+      - name: Build the Tauri app (unsigned)
+        run: pnpm --filter @business-os/desktop tauri:build ${{ matrix.bundle }}

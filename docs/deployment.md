@@ -1,6 +1,6 @@
-# Deployment: Neon (PostgreSQL) and Vercel
+# Deployment: Neon (PostgreSQL), Vercel and the client apps
 
-Region: **AWS us-east-1 (N. Virginia)** for both the database and the functions (ADR 0002). Secrets are never committed. They live only in the Vercel project's environment variables (Preview and Production) and in each developer's local, git-ignored `.env`.
+Region: **AWS us-east-1 (N. Virginia)** for both the database and the API functions (ADR 0002). Only the API (`apps/api`) is deployed with server credentials; the browser and desktop apps receive just the public API URL (ADR 0005). Secrets are never committed. They live only in the Vercel project's environment variables (Preview and Production) and in each developer's local, git-ignored `.env`.
 
 ## 1. Neon project
 
@@ -38,17 +38,26 @@ Save the two passwords straight into the Vercel environment variables (below); d
 | `REGION` | | | `us-east-1` |
 | `DATABASE_REGION` | | | `us-east-1` |
 | `APP_BASE_URL` | | | The deployment's public URL |
+| `CORS_ALLOWED_ORIGINS` | | | Comma-separated exact origins allowed to call the API: the browser app's origin, plus `tauri://localhost,http://tauri.localhost` for the desktop app. No wildcards; empty means no cross-origin access |
 
 Both URLs need `sslmode=require`. The app refuses to start if either variable is missing or invalid, or if `REGION` and `DATABASE_REGION` differ.
 
 `MIGRATION_DATABASE_URL` is only needed where migrations run (CI/release step or a developer's machine). Consider leaving it out of the Vercel runtime environment so the running app never holds owner credentials.
 
-## 4. Vercel
+## 4. Vercel (API)
 
-1. Import `reganwagteveld/business-os`; production branch `main`; framework Next.js.
-2. `vercel.json` pins functions to `iad1`. Confirm under Project Settings → Functions.
+1. Import `reganwagteveld/business-os`; production branch `main`; framework Next.js; **Root Directory `apps/api`** (enable "Include files outside the root directory" so the workspace packages are available). Install command `pnpm install --frozen-lockfile` (Vercel detects the workspace from the lockfile).
+2. `apps/api/vercel.json` pins functions to `iad1`. Confirm under Project Settings → Functions.
 3. Add the variables above for Preview and Production.
-4. Deploy and check `/health` returns `{"status":"ok"}`; a mismatched function region fails the check at startup.
+4. Deploy and check `GET /api/v1/health` returns `{"status":"ok","service":"business-os-api","apiVersion":"v1"}` with `Cache-Control: private, no-store`; a mismatched function region fails the check at startup.
+
+## 4a. Browser app
+
+A second Vercel project (or the same domain via rewrites, decision D9b) with Root Directory `apps/web`, framework Vite, output `dist`. Its only variable is `VITE_API_BASE_URL` (the API's public URL); it must not be given any server variable. Add its origin to the API's `CORS_ALLOWED_ORIGINS`.
+
+## 4b. Desktop app
+
+Built, not deployed. `pnpm --filter @business-os/desktop tauri:build` with `VITE_API_BASE_URL` set to the API URL; the build script writes a Content Security Policy whose `connect-src` is only that origin. CI builds unsigned Windows and macOS apps on every PR as a check. Signing, notarisation, the application identifier and auto-updates are decided before any build is given to anyone outside the team (ADR 0005, D9c and D9d).
 
 ## 5. Phase 1a vendor verification (record the answers in ADR 0002)
 

@@ -32,3 +32,12 @@ The auth library connects through its own `bos_auth` database role (data-model.m
 - Easier: one database holds identity and business data; no webhook sync; no per-seat cost.
 - Harder: we own security patching and email deliverability for auth.
 - Revisit if enterprise SSO/SCIM becomes a near-term requirement (favours WorkOS), or if the hashed-session condition cannot be met.
+
+## Addendum 2026-11-13: desktop and browser clients (ADR 0005)
+
+The decision stands: Better Auth, sessions and users in our database, our own tenancy tables. The desktop-first decision adds a second kind of client:
+
+- **Browser app:** HTTP-only `Secure` `SameSite=Lax` session cookie, with the browser app served from the same site as the API (D9b) and an `Origin` check on mutating requests.
+- **Desktop app:** sign-in in the system browser, one-time code returned to the app and exchanged with PKCE for a session token; the token is stored only in the OS credential store and sent as `Authorization: Bearer` (D9a).
+- Both are rows in the same session table, stored as a **hash** (the existing condition above), revocable and audited the same way. Add to the Phase 1b verification list: Better Auth supports bearer-token sessions for native clients (or a thin, reviewed extension provides them) without weakening the hashed-session condition.
+- Revisit trigger added: if a secure native sign-in flow cannot be built on Better Auth without forking it.
