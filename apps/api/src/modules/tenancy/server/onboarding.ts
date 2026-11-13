@@ -10,7 +10,8 @@ const regionNames = new Intl.DisplayNames(['en'], { type: 'region', fallback: 'n
 export function validateNewBusiness(input: { countryCode: string; timeZone: string; locale: string; currency: string }): string | null {
   zones ??= supported('timeZone');
   currencies ??= supported('currency');
-  if (!regionNames.of(input.countryCode)) return 'countryCode';
+  // ISO 3166-1 user-assigned codes (AA, QM–QZ, XA–XZ, ZZ) are not countries even though CLDR names some.
+  if (/^(AA|Q[M-Z]|X[A-Z]|ZZ)$/.test(input.countryCode) || !regionNames.of(input.countryCode)) return 'countryCode';
   if (!zones.has(input.timeZone) && input.timeZone !== 'UTC') return 'timeZone';
   if (!currencies.has(input.currency)) return 'currency';
   try {
