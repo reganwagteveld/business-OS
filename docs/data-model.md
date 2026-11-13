@@ -373,8 +373,9 @@ Each role has one job. None of the runtime roles owns tables, and none has `BYPA
 | `bos_owner` | Migrations only (CI/deploy), never the running app | Owns all schemas and tables | Is never in the app's runtime env vars |
 | `bos_app` | The web app's tenant code (`core/db`) | Tenant tables via RLS; `users` via RLS (§5.6); `INSERT` on `audit_events` for its own business; `EXECUTE` on the `app_private` functions in §5.5 | Read auth tables (`sessions`, `accounts`, `verifications`); read platform audit events; read or update any row outside the current business |
 | `bos_auth` | The auth library's adapter inside `modules/identity` only | `users`, `sessions`, `accounts`, `verifications`; `INSERT` platform audit events (`business_id IS NULL`) | Any tenant table |
-| `bos_definer` | Owner of the `app_private` functions (no login) | Exactly the columns those functions need (§5.5) | Anything else |
-| `bos_jobs` | Scheduled jobs (§7.1) | `EXECUTE` on job-specific `app_private` functions; `UPDATE (ip_address, user_agent)` on `audit_events` for retention scrubbing | Tenant data except through `withTenant` like the app |
+| `bos_definer` | Owner of the three pre-tenant `app_private` functions (no login, no members) | Exactly the rows and columns in §5.5 | Anything else |
+| `bos_maint` | Owner of the maintenance `app_private` functions (no login, no members) | Exactly the rows and columns in §7.1 | Anything else |
+| `bos_jobs` | Scheduled jobs (§7.1), via `withTenant(..., { role: "jobs" })` and maintenance functions | `SELECT`/`DELETE` on tenant tables **only for businesses that are past the purge grace period**; `EXECUTE` on maintenance functions; `job_runs` | Insert or update tenant data; read any business that is not purgeable; update `audit_events` directly |
 
 ```sql
 -- Baseline hardening (run once by bos_owner)
@@ -388,8 +389,10 @@ CREATE ROLE bos_app     LOGIN NOBYPASSRLS NOINHERIT;
 CREATE ROLE bos_auth    LOGIN NOBYPASSRLS NOINHERIT;
 CREATE ROLE bos_jobs    LOGIN NOBYPASSRLS NOINHERIT;
 CREATE ROLE bos_definer NOLOGIN NOBYPASSRLS;
+CREATE ROLE bos_maint   NOLOGIN NOBYPASSRLS;
+-- No role is ever GRANTed membership in bos_definer or bos_maint (schema test checks pg_auth_members).
 
-GRANT USAGE ON SCHEMA public TO bos_app, bos_auth, bos_jobs;
+GRANT USAGE ON SCHEMA public TO bos_app, bos_auth, bos_jobs, bos_definer, bos_maint;
 GRANT USAGE ON SCHEMA app_private TO bos_app, bos_jobs;
 
 GRANT SELECT, INSERT, UPDATE, DELETE
@@ -400,9 +403,20 @@ GRANT SELECT ON audit_events TO bos_app;                         -- filtered by 
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, sessions, accounts, verifications TO bos_auth;
 GRANT INSERT ON audit_events TO bos_auth;
+
+GRANT SELECT, DELETE
+  ON businesses, memberships, invitations, customers, contacts, activities TO bos_jobs;  -- RLS limits to purgeable businesses (§7.1)
+GRANT SELECT, INSERT, UPDATE ON job_runs TO bos_jobs;
+GRANT INSERT ON audit_events TO bos_jobs;
+-- Auth tables also get RLS so no role sees them by accident:
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;  ALTER TABLE sessions FORCE ROW LEVEL SECURITY;
+CREATE POLICY sessions_auth ON sessions FOR ALL TO bos_auth USING (true) WITH CHECK (true);
+-- (same for accounts and verifications)
 ```
 
-The app therefore holds **two connection strings** (`bos_app` and `bos_auth`) and two Prisma clients. Only `modules/identity/server/auth-adapter.ts` may import the `bos_auth` client (lint rule + test). Tradeoff: two connection pools instead of one, in exchange for tenant code being physically unable to read password hashes, OAuth tokens or session tokens.
+The `bos_definer` and `bos_maint` grants and policies are listed next to their functions in §5.5 and §7.1, so each function's full privilege set can be reviewed in one place.
+
+The web app therefore holds **two connection strings** (`bos_app` and `bos_auth`) and two Prisma clients; the scheduled-job route uses a third (`bos_jobs`). Only `modules/identity/server/auth-adapter.ts` may import the `bos_auth` client (lint rule + test). Tradeoff: two connection pools instead of one, in exchange for tenant code being physically unable to read password hashes, OAuth tokens or session tokens.
 
 The exact auth table names depend on D1 (Better Auth's defaults are `user`, `session`, `account`, `verification`; they will be mapped to the names above).
 
@@ -419,7 +433,7 @@ CREATE POLICY tenant_isolation ON customers
 ```
 
 - When the setting is absent, `current_setting(..., true)` returns null; after a transaction-local setting ends, some PostgreSQL versions return an empty string instead, hence `nullif(..., '')`. Either way the comparison is null and **no row matches: fail closed**.
-- Policies are written `TO bos_app` so no other role is silently covered; roles without a policy see nothing on an RLS-enabled table.
+- Policies are written `TO bos_app` so no other role is silently covered; roles without a policy see nothing on an RLS-enabled table. The only other tenant-table policies are the purge policies `TO bos_jobs` (§7.1).
 - `businesses` uses `id = …` instead of `business_id = …`.
 
 ### 5.3 Unit of work: how the tenant context reaches PostgreSQL
@@ -428,15 +442,22 @@ CREATE POLICY tenant_isolation ON customers
 
 ```ts
 // core/db/with-tenant.ts  (design sketch; exact API is validated by the spike in §5.4)
+const CLIENTS = { app: appPrisma /* bos_app */, jobs: jobsPrisma /* bos_jobs */ } as const;
+
 export async function withTenant<T>(
   ctx: TenantContext,
   work: (db: TenantDb) => Promise<T>,
-  opts: { timeoutMs?: number } = {},
+  opts: { role?: keyof typeof CLIENTS; timeoutMs?: number } = {},
 ): Promise<T> {
-  return appPrisma.$transaction(
+  const client = CLIENTS[opts.role ?? "app"];   // "jobs" is importable only from core/jobs (lint + test)
+  return client.$transaction(
     async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.business_id', ${ctx.businessId}::text, true)`;
-      await tx.$executeRaw`SELECT set_config('app.user_id', ${ctx.userId}::text, true)`;
+      // set_config is a function called in a SELECT, so it goes through $queryRaw
+      // (the query API for statements that return rows). One round trip sets both values.
+      const [row] = await tx.$queryRaw<{ business_id: string; user_id: string }[]>`
+        SELECT set_config('app.business_id', ${ctx.businessId}::text, true) AS business_id,
+               set_config('app.user_id',     ${ctx.userId ?? ""}::text, true) AS user_id`;
+      if (row?.business_id !== ctx.businessId) throw new TenantContextError(); // fail closed
       return work(scopeToTenant(tx, ctx)); // layer 3: injects/validates business_id
     },
     { timeout: opts.timeoutMs ?? 5_000, isolationLevel: "ReadCommitted" },
@@ -446,10 +467,12 @@ export async function withTenant<T>(
 
 Why this shape:
 
-- **Interactive transactions are Prisma's supported API for "several statements on one connection".** Every call on `tx` (model queries, `$queryRaw`, `$executeRaw`) runs inside that database transaction, so the `set_config` and the queries cannot be split across pooled connections. The first draft's per-query `$transaction([set_config, query])` inside a client extension relied on behaviour that is less clearly documented and is dropped.
+- **Interactive transactions are Prisma's supported API for "several statements on one connection".** Every call on `tx` (model queries and tagged `$queryRaw`) runs inside that database transaction, so the `set_config` and the queries cannot be split across pooled connections. The first draft's per-query `$transaction([set_config, query])` inside a client extension relied on behaviour that is less clearly documented and is dropped.
+- **`set_config` is invoked with `$queryRaw`**, because it is a `SELECT` that returns a row; `$executeRaw` is meant for statements that return an affected-row count. The returned value is checked against the intended tenant, so a silently ignored call fails closed. That this works on the pinned Prisma version and driver adapter is test S1.
 - `set_config(..., true)` is **transaction-local**: PostgreSQL discards it at commit or rollback, so a pooled connection never carries a previous request's tenant.
 - `TenantDb` is a **narrowed type**: it exposes tenant models and `$queryRaw`, but not `$transaction` (no nesting) or `$executeRawUnsafe`/`$queryRawUnsafe` (no string-built SQL).
 - Module services receive a `TenantDb`, never a client, so they **cannot** run tenant queries outside `withTenant`. `tenantAction` and tenant page loaders open the unit of work; services just use it.
+- The **database role is explicit**: `role: "app"` (default) connects as `bos_app`; `role: "jobs"` connects as `bos_jobs` and is only used by the purge job (§7.1). The same context-setting and fail-closed behaviour applies to both.
 
 Rules that follow:
 
@@ -457,7 +480,7 @@ Rules that follow:
 2. Reads that page through large data use keyset pagination within the time limit, not long transactions.
 3. Raw SQL is allowed only through tagged `$queryRaw` on `TenantDb`, and still runs under RLS because it is the same connection and role.
 
-Tradeoffs: every tenant request costs `BEGIN` + two `set_config` round trips + `COMMIT`, and holds one pooled connection for the duration of the unit of work. This is expected to be small (sub-millisecond on the same network) but is measured in the spike, not assumed.
+Tradeoffs: every tenant request costs `BEGIN` + one `set_config` round trip + `COMMIT`, and holds one pooled connection for the duration of the unit of work. This is expected to be small (sub-millisecond on the same network) but is measured in the spike, not assumed.
 
 **Pooling.** The design is compatible with a transaction-mode pooler (PgBouncer or the provider's equivalent) because the pooler pins a server connection for the whole transaction. Prepared-statement behaviour in transaction mode depends on the pooler version and the Prisma driver adapter, so it is part of the spike.
 
@@ -469,7 +492,7 @@ The spike produces runnable tests that stay in the repo as `tests/isolation/db-c
 
 | # | Test | Pass condition |
 |---|---|---|
-| S1 | Same transaction | Inside `withTenant`, `SELECT current_setting('app.business_id')` via `$queryRaw` and the backend `pg_backend_pid()` match across every statement in the unit of work |
+| S1 | Context initialisation and same transaction | On the pinned Prisma version and driver adapter, the `$queryRaw` `set_config` call returns the intended values; then `current_setting('app.business_id')`, `txid_current()` and `pg_backend_pid()` are identical across every statement in the unit of work, including model queries |
 | S2 | Fail closed: no context | As `bos_app`, outside `withTenant`, `SELECT` on each tenant table returns 0 rows and `INSERT` raises an RLS violation |
 | S3 | Fail closed: type level | Calling a module service without a `TenantDb` does not compile (type test) |
 | S4 | No carry-over | With pool size 1, run unit of work for business A, then a raw query with no context on the same connection: setting is null/empty and 0 rows are visible |
@@ -481,14 +504,17 @@ The spike produces runnable tests that stay in the repo as `tests/isolation/db-c
 | S10 | Timeouts | A unit of work exceeding the timeout rolls back and the connection returns clean (as S4) |
 | S11 | Overhead | p50/p95 added latency of `withTenant` vs a bare query, recorded in ADR 0004 |
 | S12 | Prepared statements | S6 passes with the driver adapter's default statement handling behind the pooler; if not, the required pooler setting is recorded |
+| S13 | Jobs role | `withTenant(..., { role: "jobs" })` connects as `bos_jobs` (checked with `current_user`), can read and delete only a purgeable business's rows, sees 0 rows for an active business, and cannot insert or update |
 
-If any of S1 to S10 fails, Phase 1b feature work stops and the design is reviewed. S11 has a target of < 2 ms p95 added per unit of work; missing it is reported for decision, not silently accepted.
+If any of S1 to S10 or S13 fails, Phase 1b feature work stops and the design is reviewed. S11 has a target of < 2 ms p95 added per unit of work; missing it is reported for decision, not silently accepted.
 
 ### 5.5 Pre-tenant trusted paths (`app_private` SECURITY DEFINER functions)
 
-A few operations must run before a tenant context exists: listing the signed-in user's businesses (switcher and routing), creating a business, and accepting an invitation. These are the **only** sanctioned paths around tenant RLS, and they must not trust any caller-supplied identity.
+A few operations must run before a tenant context exists: listing the signed-in user's businesses (switcher and routing), creating a business, and accepting an invitation. Together with the maintenance functions in §7.1, these are the **only** sanctioned paths around tenant RLS, and they must not trust any caller-supplied identity.
 
-**Identity binding.** No function takes a `user_id` argument. Each takes the **raw session token** from the request's HTTP-only cookie, and resolves the user inside the database:
+#### Identity binding
+
+No function takes a `user_id` argument. Each takes the **raw session token**, which the server reads from the request's HTTP-only cookie (never from a form field or query string), and resolves the user inside the database:
 
 ```sql
 CREATE FUNCTION app_private.session_user_id(p_session_token text)
@@ -499,48 +525,110 @@ AS $$
   SELECT s.user_id
   FROM public.sessions s
   JOIN public.users u ON u.id = s.user_id
-  WHERE s.token_hash = encode(sha256(convert_to(p_session_token, 'UTF8')), 'hex')
-    AND s.expires_at > now()
+  WHERE s.token_hash = encode(pg_catalog.sha256(pg_catalog.convert_to(p_session_token, 'UTF8')), 'hex')
+    AND s.expires_at > pg_catalog.now()
     AND s.revoked_at IS NULL
     AND u.deactivated_at IS NULL
 $$;
+-- Internal helper: not executable by any login role, only called from the functions below.
+REVOKE ALL ON FUNCTION app_private.session_user_id(text) FROM PUBLIC;
 ```
 
-- The database itself verifies a live, unrevoked session, so even code (or an attacker) running SQL as `bos_app` cannot act as another user without that user's session token.
+- The database verifies a live, unrevoked session, so even code (or an attacker) running SQL as `bos_app` cannot act as another user without that user's session token.
 - This requires sessions to be stored by **hash** with expiry and revocation columns. Whether D1's library does this natively, or needs a small adapter, is checked when D1 is accepted (ADR 0001). If it cannot be made to work, the fallback is documented there and must still avoid a free `user_id` parameter.
 
-**Functions in Phase 1** (each `SECURITY DEFINER`, owned by `bos_definer`, `SET search_path = pg_catalog, pg_temp`, every object schema-qualified, no dynamic SQL):
+#### Functions in Phase 1
+
+Each is `SECURITY DEFINER`, owned by `bos_definer`, has `SET search_path = pg_catalog, pg_temp`, schema-qualifies every object, and uses no dynamic SQL.
 
 | Function | Returns / does | Checks |
 |---|---|---|
-| `my_memberships(session_token)` | `(business_id, slug, name, role)` for the caller's active memberships only | Valid session; membership `status = 'ACTIVE'`; business not archived |
-| `create_business(session_token, name, slug, country_code)` | Inserts business + `OWNER` membership in one statement; returns `business_id` | Valid session; caller's email verified; slug format and deny-list; per-user creation rate limit |
-| `accept_invitation(session_token, invite_token)` | Inserts membership; marks invitation accepted | Valid session; invite token hash matches; not expired/revoked/accepted; caller's **verified** email equals invitation email; no existing membership |
+| `my_memberships(session_token)` | `(business_id, slug, name, role)` for the caller's active memberships only | Valid session; membership `ACTIVE`; business not archived |
+| `create_business(session_token, name, slug, country_code, time_zone, locale, currency)` | Inserts the business, an `OWNER` membership and a `business.created` audit event in one statement; returns `(business_id, slug)` | See onboarding flow below |
+| `accept_invitation(session_token, invite_token)` | Inserts a membership with the invitation's role, marks the invitation accepted, writes `invitation.accepted` | Valid session; invite token hash matches; not expired, revoked or accepted; caller's **verified** email equals invitation email; no existing membership (unique constraint) |
+
+#### Onboarding: trusted input and defaulting flow for `create_business`
+
+`businesses` requires `country_code`, `time_zone`, `locale`, `currency` and `home_region` (§4.2). They reach the database like this:
+
+1. **Pre-fill (server-rendered form, suggestions only).** The country defaults from the browser's `Accept-Language` region (no IP geolocation). Locale and currency are suggested from a small country-defaults table in code (for example `US → en-US, USD`; `GB → en-GB, GBP`; `AU → en-AU, AUD`; `DE → de-DE, EUR`). Time zone is suggested from the browser (`Intl.DateTimeFormat().resolvedOptions().timeZone`). The user sees and can change all four.
+2. **Validate in the app (reject, never silently default).** The onboarding Server Action is a `publicAction` that requires a signed-in, email-verified user (no tenant yet). Its zod schema checks: `country_code` against the ISO 3166-1 list; `time_zone` in `Intl.supportedValuesOf('timeZone')`; `currency` in `Intl.supportedValuesOf('currency')`; `locale` canonicalised with `Intl.getCanonicalLocales` and present in the supported-locale list; `name` 1 to 200 characters; `slug` format.
+3. **Call the function** with the session token from the cookie and the validated values. The action never sends a user id, business id or region.
+4. **Re-validate in the database (defence in depth).** The function and table `CHECK` constraints enforce: `country_code ~ '^[A-Z]{2}$'`, `currency ~ '^[A-Z]{3}$'`, `time_zone` exists in `pg_catalog.pg_timezone_names`, `locale` matches a BCP 47 pattern (`^[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?$`), slug format and not in `app_private.reserved_slugs`. Slug uniqueness is enforced by the unique index (which applies regardless of RLS), and a conflict raises a generic "slug unavailable".
+5. **Derive the region server-side.** `home_region` is **not a parameter**. The function reads it from `app_private.deployment_config`, a single-row table written by `bos_owner` when the deployment is provisioned. The app checks at boot that its `REGION` environment variable equals `deployment_config.region` and refuses to start otherwise, so code and database cannot disagree, and no caller can influence a business's region.
+6. **Rate limit.** The function refuses if the caller already created 5 businesses in the last 24 hours (counted from `OWNER` memberships), in addition to app-layer rate limiting.
+
+#### Exact grants and RLS for `bos_definer`
+
+`bos_definer` is not a table owner and has no `BYPASSRLS`, so `FORCE ROW LEVEL SECURITY` applies to it. The **user binding is done inside each function body** from the verified session; the policies below are a second layer that limits what any function could touch even if its body had a bug: only live sessions, active users, unarchived businesses, open invitations, and specific audit actions.
 
 ```sql
-REVOKE ALL ON FUNCTION app_private.my_memberships(text)            FROM PUBLIC;
-REVOKE ALL ON FUNCTION app_private.create_business(text,text,text,text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION app_private.accept_invitation(text,text)     FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION app_private.my_memberships(text)            TO bos_app;
-GRANT EXECUTE ON FUNCTION app_private.create_business(text,text,text,text) TO bos_app;
-GRANT EXECUTE ON FUNCTION app_private.accept_invitation(text,text)     TO bos_app;
--- bos_definer gets only what these need:
-GRANT SELECT (id, token_hash, user_id, expires_at, revoked_at) ON sessions TO bos_definer;
-GRANT SELECT (id, email, email_verified, deactivated_at) ON users TO bos_definer;
-GRANT SELECT, INSERT ON memberships, businesses TO bos_definer;
-GRANT SELECT, UPDATE (accepted_at) ON invitations TO bos_definer;
+-- Execute rights: only bos_app may call the three public functions.
+REVOKE ALL ON FUNCTION app_private.my_memberships(text)                                FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_private.create_business(text,text,text,text,text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_private.accept_invitation(text,text)                        FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app_private.my_memberships(text)                                TO bos_app;
+GRANT EXECUTE ON FUNCTION app_private.create_business(text,text,text,text,text,text,text) TO bos_app;
+GRANT EXECUTE ON FUNCTION app_private.accept_invitation(text,text)                        TO bos_app;
+
+-- Table privileges for bos_definer (column-limited where possible).
+GRANT SELECT (id, token_hash, user_id, expires_at, revoked_at)     ON sessions     TO bos_definer;
+GRANT SELECT (id, email, email_verified, deactivated_at)           ON users        TO bos_definer;
+GRANT SELECT (id, slug, name, archived_at), INSERT                 ON businesses   TO bos_definer;
+GRANT SELECT (id, business_id, user_id, role, status, created_at), INSERT ON memberships TO bos_definer;
+GRANT SELECT (id, business_id, email, role, token_hash, expires_at, accepted_at, revoked_at),
+      UPDATE (accepted_at)                                         ON invitations  TO bos_definer;
+GRANT INSERT                                                       ON audit_events TO bos_definer;
+GRANT SELECT ON app_private.deployment_config, app_private.reserved_slugs           TO bos_definer;
+
+-- Row policies for bos_definer.
+CREATE POLICY definer_sessions_read   ON sessions    FOR SELECT TO bos_definer
+  USING (expires_at > now() AND revoked_at IS NULL);
+CREATE POLICY definer_users_read      ON users       FOR SELECT TO bos_definer
+  USING (deactivated_at IS NULL);
+CREATE POLICY definer_business_read   ON businesses  FOR SELECT TO bos_definer
+  USING (archived_at IS NULL);
+CREATE POLICY definer_business_create ON businesses  FOR INSERT TO bos_definer
+  WITH CHECK (archived_at IS NULL);
+CREATE POLICY definer_member_read     ON memberships FOR SELECT TO bos_definer
+  USING (status = 'ACTIVE');
+CREATE POLICY definer_member_create   ON memberships FOR INSERT TO bos_definer
+  WITH CHECK (status = 'ACTIVE');
+CREATE POLICY definer_invite_read     ON invitations FOR SELECT TO bos_definer
+  USING (accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now());
+CREATE POLICY definer_invite_accept   ON invitations FOR UPDATE TO bos_definer
+  USING (accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now())
+  WITH CHECK (accepted_at IS NOT NULL);
+CREATE POLICY definer_audit_write     ON audit_events FOR INSERT TO bos_definer
+  WITH CHECK (business_id IS NOT NULL AND action IN ('business.created', 'invitation.accepted'));
 ```
 
-`bos_definer` is subject to RLS like any role, so each table it touches has an explicit policy `TO bos_definer` limited to what the function needs (e.g. memberships where `user_id` equals the resolved session user). Functions return the minimum columns and raise a generic error on failure (no "invite exists but email differs" detail).
+Notes:
 
-**Tests** (in `tests/isolation/trusted-paths.test.ts`, required in Phase 1b):
+- `INSERT ... RETURNING` needs the new row to pass the `SELECT` policy too; new businesses (`archived_at IS NULL`) and memberships (`ACTIVE`) do.
+- No `DELETE` anywhere, and `UPDATE` only on `invitations.accepted_at`.
+- Functions return the minimum columns and raise a generic error on any failure (no "invite exists but email differs" detail).
 
-- Impersonation: user A's session token never returns user B's memberships; there is no way to pass B's id.
-- Forged, expired and revoked session tokens, and deactivated users, return nothing / raise.
-- Invitation: wrong email, unverified email, expired, revoked, already accepted, and replayed tokens all fail; success creates exactly one membership.
-- `PUBLIC` and `bos_auth` cannot execute the functions; `bos_app` cannot call them with a crafted `search_path` to shadow `sha256`, `now` or tables (create a temp-schema shadow object and assert it is not used).
-- `bos_definer` cannot log in.
-- A schema test asserts every `SECURITY DEFINER` function in the database has a fixed `search_path`, is owned by `bos_definer`, and has no `PUBLIC` execute grant.
+#### Tests (`tests/isolation/trusted-paths.test.ts`, required in Phase 1b)
+
+All run as `bos_app` with real sessions created through the auth adapter, against a database migrated exactly as in production.
+
+Legitimate operations succeed:
+
+- `my_memberships` returns exactly the caller's active memberships in unarchived businesses, with correct roles.
+- `create_business` with valid input creates one business, one `OWNER` membership for the caller and one audit event; `home_region` equals `deployment_config.region`; the stored country, time zone, locale and currency equal the input.
+- `accept_invitation` with a matching verified email creates one membership with the invitation's role, sets `accepted_at`, and writes one audit event.
+- After each, the caller can open a normal `withTenant` unit of work for the new business.
+
+Misuse is rejected:
+
+- Impersonation: user A's session token never returns or acts for user B; there is no parameter that names a user.
+- Forged, expired and revoked session tokens, and deactivated users, return nothing or raise.
+- `create_business` with an invalid country, time zone, locale or currency, a reserved or taken slug, or over the rate limit fails; there is no parameter that sets `home_region`; changing `REGION` in the app environment without changing `deployment_config` stops the app at boot.
+- Invitation: wrong email, unverified email, expired, revoked, already accepted, replayed and wrong-token cases all fail.
+- `PUBLIC`, `bos_auth` and `bos_jobs` cannot execute the functions; `bos_app` cannot execute `session_user_id` directly.
+- A crafted `search_path` (temp-schema objects shadowing `sha256`, `now` or tables) is not used by the functions.
+- Schema guards: every `SECURITY DEFINER` function has a fixed `search_path`, is owned by `bos_definer` or `bos_maint`, and has no `PUBLIC` execute grant; `pg_auth_members` shows no members of `bos_definer` or `bos_maint`; neither can log in; the actual grants and policies for both equal the lists in this document.
 
 ### 5.6 Global data: users and audit events
 
@@ -577,7 +665,7 @@ CREATE POLICY audit_platform_write ON audit_events FOR INSERT TO bos_auth
 
 - **Platform events (`business_id IS NULL`, e.g. sign-in, password reset) are invisible to `bos_app`**: the read policy can never match a null. They are readable only by an operator role used from internal tooling, not by the web app. A later "your recent sign-ins" feature would use a session-bound definer function returning only the caller's own events.
 - Within a business, reading the audit log also requires the `audit:read` permission (owner/admin) at the app layer; `ip_address` and `user_agent` are returned only to owners.
-- No `UPDATE`/`DELETE` grants for `bos_app` or `bos_auth`: append-only. Retention scrubbing is done by `bos_jobs` with a column-limited `UPDATE` grant (§7.1).
+- No `UPDATE`/`DELETE` grants for `bos_app`, `bos_auth`, `bos_definer` or `bos_jobs`: append-only. The only change ever made to an existing row is retention scrubbing of `ip_address` and `user_agent`, done by one maintenance function with its own narrowly scoped policies (§7.1).
 - Tests: a member of business A cannot read B's events, cannot read any platform event, cannot insert an event for B or with a null `business_id`, and cannot update or delete any event.
 
 ## 6. Indexing and performance notes
@@ -593,26 +681,111 @@ CREATE POLICY audit_platform_write ON audit_events FOR INSERT TO bos_auth
 - **Erasure of a contact (GDPR-style request):** a dedicated service hard-deletes the contact, scrubs its personal data from related activities' `subject`, `body` and `data` (see the history table in §4.7), and writes an audit event without the erased PII.
 - **Business deletion:** archive first (soft, reversible for a grace period, e.g. 30 days), then the `purge-archived-businesses` job (§7.1) removes all rows with that `business_id`. Backups age out per the provider's retention.
 - **Retention:** `audit_events.ip_address`/`user_agent` cleared after a retention window (e.g. 90 days), decision pending with D3 (jurisdiction).
-- **Expired sessions and invitations** are removed after a retention window.
+- **Expired sessions, verifications and invitations** are removed after a retention window (§7.1).
 
 ### 7.1 Scheduled jobs in Phase 1
 
 Business purge, audit retention scrubbing and session/invitation cleanup need something to run on a schedule, so Phase 1 **does** include a minimal job mechanism (this corrects the first draft's "no background jobs in Phase 1"). It is limited to scheduled maintenance. User-facing async work (email sending queues, imports, AI tasks) is still out of scope and will justify a real queue when it appears.
 
-**Mechanism:** the hosting platform's cron (e.g. Vercel Cron, or a system cron on another host) calls an internal route handler `POST /api/internal/jobs/[job]` authenticated with a dedicated secret (constant-time compare) and rejected from public origins. The handler connects as `bos_jobs`.
+**Mechanism:** the hosting platform's cron (e.g. Vercel Cron) calls an internal route handler `POST /api/internal/jobs/[job]`, authenticated with a dedicated secret (constant-time compare). The handler uses the `bos_jobs` connection for everything except auth-table cleanup, which goes through the identity module's `bos_auth` adapter.
 
-| Job | Schedule | What it does | How it stays tenant-safe |
+| Job | Schedule | What it does | Database path |
 |---|---|---|---|
-| `purge-archived-businesses` | Daily | Hard-deletes businesses archived longer than the grace period | `app_private.businesses_due_for_purge()` (definer, `bos_jobs` only) lists ids; each purge runs inside `withTenant` for that one business, so RLS limits every delete to it |
-| `scrub-audit-network-data` | Daily | Nulls `ip_address`/`user_agent` older than the retention window | Column-limited `UPDATE` grant to `bos_jobs` on `audit_events`; no other columns or tables |
-| `cleanup-expired-auth` | Daily | Deletes expired sessions, verifications and invitations past retention | Sessions/verifications through the auth adapter role; invitations through `withTenant` per business |
+| `purge-archived-businesses` | Daily | Hard-deletes businesses archived longer than the grace period | Lists ids with `app_private.businesses_due_for_purge()`, then for each one runs `withTenant(systemCtx(id), purge, { role: "jobs" })` as `bos_jobs`. Purge policies let `bos_jobs` see and delete rows **only** of that business, and only if it is purgeable |
+| `scrub-audit-network-data` | Daily | Nulls `ip_address`/`user_agent` older than the retention window | `app_private.scrub_audit_network_data(retention, batch)`, owned by `bos_maint` |
+| `cleanup-expired-invitations` | Daily | Deletes invitations expired, accepted or revoked longer than the retention window | `app_private.cleanup_invitations(retention, batch)`, owned by `bos_maint` |
+| `cleanup-expired-auth` | Daily | Deletes expired sessions and verifications | Identity module's auth adapter (`bos_auth`), which already owns those tables |
 
-Rules for every job:
+#### Purge: job-scoped tenant transactions
+
+The purge runs through the same `withTenant` unit of work as the app, but **explicitly as `bos_jobs`** (`role: "jobs"`, §5.3), with a system context (`userId` empty, actor `SYSTEM`). Its database rights are limited by policy to businesses past the grace period, with a minimum grace period enforced in the database:
+
+```sql
+-- Owned by bos_maint; the 30-day floor cannot be lowered by application config.
+CREATE FUNCTION app_private.is_purgeable(p_business_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.businesses b
+    WHERE b.id = p_business_id
+      AND b.archived_at IS NOT NULL
+      AND b.archived_at < pg_catalog.now() - interval '30 days')
+$$;
+REVOKE ALL ON FUNCTION app_private.is_purgeable(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app_private.is_purgeable(uuid) TO bos_jobs;
+
+GRANT SELECT (id, archived_at) ON businesses TO bos_maint;
+CREATE POLICY maint_business_archived ON businesses FOR SELECT TO bos_maint
+  USING (archived_at IS NOT NULL);
+
+-- Applied to every tenant table (generated from the same template as tenant_isolation):
+CREATE POLICY jobs_purge_read ON customers FOR SELECT TO bos_jobs
+  USING (business_id = nullif(current_setting('app.business_id', true), '')::uuid
+         AND app_private.is_purgeable(nullif(current_setting('app.business_id', true), '')::uuid));
+CREATE POLICY jobs_purge_delete ON customers FOR DELETE TO bos_jobs
+  USING (business_id = nullif(current_setting('app.business_id', true), '')::uuid
+         AND app_private.is_purgeable(nullif(current_setting('app.business_id', true), '')::uuid));
+-- businesses uses id instead of business_id.
+```
+
+- `bos_jobs` has `SELECT` and `DELETE` only (no `INSERT`/`UPDATE`) on tenant tables, so even a buggy job cannot write tenant data, and it sees **nothing** for an active business.
+- `businesses_due_for_purge()` (owned by `bos_maint`, executable only by `bos_jobs`) returns ids of purgeable businesses in batches.
+- Each purge writes a `business.purged` platform audit event: `CREATE POLICY jobs_audit_write ON audit_events FOR INSERT TO bos_jobs WITH CHECK (business_id IS NULL AND (action LIKE 'job.%' OR action = 'business.purged'))`, with the purged id in `target_id` and no other data.
+
+#### Audit scrubbing and invitation cleanup: maintenance functions
+
+These are global maintenance tasks, so they run as narrowly scoped `SECURITY DEFINER` functions owned by `bos_maint`, rather than giving `bos_jobs` any `UPDATE` on `audit_events`:
+
+```sql
+CREATE FUNCTION app_private.scrub_audit_network_data(p_older_than interval, p_batch int)
+RETURNS int LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE n int;
+BEGIN
+  IF p_older_than < interval '30 days' OR p_batch NOT BETWEEN 1 AND 10000 THEN
+    RAISE EXCEPTION 'invalid arguments';
+  END IF;
+  WITH batch AS (
+    SELECT id FROM public.audit_events
+    WHERE created_at < pg_catalog.now() - p_older_than
+      AND (ip_address IS NOT NULL OR user_agent IS NOT NULL)
+    LIMIT p_batch)
+  UPDATE public.audit_events a SET ip_address = NULL, user_agent = NULL
+  FROM batch WHERE a.id = batch.id;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $$;
+REVOKE ALL ON FUNCTION app_private.scrub_audit_network_data(interval, int) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app_private.scrub_audit_network_data(interval, int) TO bos_jobs;
+
+-- bos_maint privileges on audit_events: read only what it filters on, update only the two columns.
+GRANT SELECT (id, created_at, ip_address, user_agent) ON audit_events TO bos_maint;
+GRANT UPDATE (ip_address, user_agent)                 ON audit_events TO bos_maint;
+-- An UPDATE with a WHERE clause must pass both SELECT and UPDATE policies.
+CREATE POLICY maint_audit_read  ON audit_events FOR SELECT TO bos_maint
+  USING (created_at < now() - interval '30 days');
+CREATE POLICY maint_audit_scrub ON audit_events FOR UPDATE TO bos_maint
+  USING (created_at < now() - interval '30 days')
+  WITH CHECK (ip_address IS NULL AND user_agent IS NULL);   -- the only allowed change is clearing
+```
+
+`cleanup_invitations(p_older_than, p_batch)` follows the same pattern: `bos_maint` gets `SELECT (id, expires_at, accepted_at, revoked_at)` and `DELETE` on `invitations`, with `SELECT`/`DELETE` policies limited to invitations that expired, or were accepted or revoked, more than 30 days ago.
+
+#### Rules for every job
 
 - **Idempotent**: safe to run twice or resume after a crash; works in bounded batches.
 - **Single-flight**: takes a PostgreSQL advisory lock per job name; a second concurrent run exits.
 - **Observable**: writes a row to `job_runs (job, started_at, finished_at, status, items, error)`; failures alert via error tracking.
 - **Dry-run mode** that reports what would be affected, used on staging before enabling destructive jobs in production.
+
+#### Job tests (Phase 1e)
+
+- The purge deletes all rows of a purgeable business and nothing of an active business or a business archived for less than 30 days, even when the job is pointed at them directly (RLS returns 0 rows).
+- `bos_jobs` cannot insert or update any tenant row, cannot update `audit_events`, and cannot call the pre-tenant functions.
+- `scrub_audit_network_data` clears only `ip_address`/`user_agent`, only on rows older than the floor, refuses intervals under 30 days, and cannot change any other column (attempted via a modified function in a test schema, rejected by `WITH CHECK` and column grants).
+- `cleanup_invitations` cannot delete an open invitation.
 
 Tradeoff: HTTP-triggered cron is limited by the platform's function timeout and schedule granularity, but needs no extra service. If job volume grows, `pg-boss` (a queue inside the same PostgreSQL) is the next step, still without a new service.
 

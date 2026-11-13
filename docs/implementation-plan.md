@@ -75,16 +75,16 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 **Spike acceptance criteria**
 
 - [ ] Prisma version, driver adapter, PostgreSQL version and pooler (with its mode and prepared-statement setting) are pinned and recorded in ADR 0004.
-- [ ] Tests S1 to S10 from [data-model.md §5.4](./data-model.md#54-rls-spike-what-must-be-proven-before-phase-1b-features) pass in CI against PostgreSQL behind a transaction-mode pooler container: same connection and transaction for context and queries, fail closed with no context (runtime and type level), no carry-over between pooled uses, clean rollback and timeout paths, 0 leaks in 2,000 concurrent interleaved units of work, raw queries filtered by RLS, RLS holds with the app-layer guard disabled, composite FKs hold with RLS bypassed.
+- [ ] Tests S1 to S10 and S13 from [data-model.md §5.4](./data-model.md#54-rls-spike-what-must-be-proven-before-phase-1b-features) pass in CI against PostgreSQL behind a transaction-mode pooler container: `set_config` via `$queryRaw` works on the pinned adapter and returns the intended values, same connection and transaction for context and queries, fail closed with no context (runtime and type level), no carry-over between pooled uses, clean rollback and timeout paths, 0 leaks in 2,000 concurrent interleaved units of work, raw queries filtered by RLS, RLS holds with the app-layer guard disabled, composite FKs hold with RLS bypassed, and the jobs role is limited to purgeable businesses.
 - [ ] S11 overhead is measured and recorded; under 2 ms p95 per unit of work, or reported for decision.
 - [ ] S12 prepared-statement behaviour behind the pooler is confirmed and any required setting recorded.
-- [ ] If any of S1 to S10 fails, work stops and the design is reviewed before features start.
+- [ ] If any of S1 to S10 or S13 fails, work stops and the design is reviewed before features start.
 
 **Feature acceptance criteria**
 
 - [ ] A new user can sign up, verify their email, and sign in; unverified users cannot create or join a business.
 - [ ] A signed-in user with no business is sent to onboarding and can create a business; they become its `OWNER`.
-- [ ] Onboarding requires country, time zone, locale and currency, pre-filled from the chosen country and browser; the database has no code defaults for them, and `home_region` is written from config (data-model §4.2).
+- [ ] Onboarding follows the flow in data-model §5.5: country, time zone, locale and currency are pre-filled as suggestions, validated in the app and again in the database (no code defaults), and `home_region` is derived inside `create_business` from `app_private.deployment_config`; the app refuses to boot if its `REGION` differs from that table.
 - [ ] Dates and numbers in the UI are formatted with `Intl` using the business locale and time zone; a test renders the same record for an `en-US`/`America/New_York` business and an `en-GB`/`Europe/London` business and checks both.
 - [ ] A user with memberships in two businesses can switch between them; the URL (`/b/[slug]`) reflects the active business.
 - [ ] Visiting `/b/<slug>` for a business the user is not a member of returns 404 (not 403, to avoid confirming existence).
@@ -99,7 +99,7 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 - [ ] **Isolation suite** (`tests/isolation/`) passes, covering for every tenant table: read, list, update, delete and foreign-key reference from business A to business B fail, both via module services and via raw SQL as the app role.
 - [ ] **Schema guard** test passes: every table with a `business_id` column has RLS enabled and forced, a `tenant_isolation` policy, and a `business_id`-leading index.
 - [ ] Database roles `bos_owner`, `bos_app`, `bos_auth`, `bos_definer`, `bos_jobs` exist with exactly the grants in data-model §5.1; a test compares actual grants to the expected list.
-- [ ] The three pre-tenant `SECURITY DEFINER` functions take a session token (never a user id) and pass every test listed in data-model §5.5: impersonation, forged/expired/revoked sessions, deactivated users, invitation misuse and replay, `PUBLIC`/`bos_auth` execution denied, `search_path` shadowing, and the schema guard for all definer functions.
+- [ ] The three pre-tenant `SECURITY DEFINER` functions take a session token (never a user id), have exactly the grants and `bos_definer` policies listed in data-model §5.5, and pass every test listed there: legitimate listing, business creation and invitation acceptance succeed; impersonation, forged/expired/revoked sessions, deactivated users, invalid onboarding input, invitation misuse and replay, unauthorised execution and `search_path` shadowing are rejected; schema guards for definer functions and role membership pass.
 - [ ] `users` and `audit_events` RLS and column grants pass the tests in data-model §5.6: no enumeration of users outside the current business, no access to auth columns from `bos_app`, platform audit events invisible to `bos_app`, no cross-business audit reads or writes, no updates or deletes.
 - [ ] Sign-up, password reset and invitation responses do not reveal whether an email has an account (test compares responses).
 - [ ] Sign-in, membership changes, role changes and invitation events write `audit_events`.
@@ -160,7 +160,8 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 - [ ] Error tracking and structured logging are live with `businessId`/`userId` tags; a test confirms request bodies and customer PII fields are not logged.
 - [ ] Owners can export all business data (CSV/JSON); export writes an audit event.
 - [ ] Contact erasure service removes PII from the contact and related activity payloads (integration test).
-- [ ] Scheduled jobs from data-model §7.1 (`purge-archived-businesses`, `scrub-audit-network-data`, `cleanup-expired-auth`) run from platform cron through an authenticated internal route as `bos_jobs`; an unauthenticated or wrong-secret call is rejected (test).
+- [ ] Scheduled jobs from data-model §7.1 (`purge-archived-businesses`, `scrub-audit-network-data`, `cleanup-expired-invitations`, `cleanup-expired-auth`) run from platform cron through an authenticated internal route with the database paths listed there (`bos_jobs` via `withTenant` for purge, `bos_maint`-owned functions for scrubbing and invitation cleanup, the auth adapter for sessions); an unauthenticated or wrong-secret call is rejected (test).
+- [ ] All job tests in data-model §7.1 pass (purge limited to purgeable businesses, no tenant writes or audit updates by `bos_jobs`, scrub limited to the two columns and the 30-day floor, open invitations never deleted).
 - [ ] Each job is idempotent (running twice changes nothing the second time), single-flight (a concurrent second run exits on the advisory lock), batched, and logs to `job_runs`; failures reach error tracking.
 - [ ] The purge job deletes only the target business's rows: a test with three businesses, one due for purge, shows the other two untouched, and RLS confines each purge to its own `withTenant` unit of work.
 - [ ] Dry-run mode output was reviewed on staging before destructive jobs were enabled in production.
