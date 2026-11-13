@@ -28,7 +28,7 @@ The isolation design (ADR 0004) also requires: PostgreSQL 16+, custom roles with
 | Desktop app (`apps/desktop`) | Installed on customers' machines (Windows, macOS) | Holds no tenant data at rest in Phase 1 (online-only, ADR 0005) |
 | PostgreSQL | Neon (fallback: Supabase Postgres or AWS RDS) | `aws-us-east-1` |
 | Error tracking | Sentry (or equivalent) | US data region |
-| Transactional email | Postmark, Resend or SES | US |
+| Transactional email | **Resend** (accepted 2026-11-13) | US |
 | Scheduled jobs | Vercel Cron → internal route (data-model.md §7.1) | Runs in `iad1` |
 
 Phase 1a must confirm the database vendor supports the role attributes, `FORCE ROW LEVEL SECURITY`, `SECURITY DEFINER` ownership and pooler mode that ADR 0004 needs; if not, switch to the fallback before any data exists.
@@ -55,7 +55,7 @@ All Business OS customer data is intended to be stored and processed in the Unit
 | CDN / edge network | Vercel's global edge | Static assets are cached worldwide. **Tenant data must not be cached at the edge**: tenant pages are dynamic and served with `Cache-Control: private, no-store`; this is tested |
 | Application and request logs | Vercel (US), plus any log drain | Logs carry `businessId`/`userId` but no customer PII payloads (architecture §7.3, layer 6). Log retention follows the vendor's plan |
 | Error tracking | Sentry US region (or equivalent) | Scrubbing of request bodies and PII fields enabled; verified by test in Phase 1e |
-| Transactional email | Email provider (US) | Email content (invitations, verification) includes recipient addresses and business names |
+| Transactional email | Resend (US) | Email content (invitations, verification) includes recipient addresses and business names |
 | Auth | Our own database (ADR 0001) | No third-party identity store in Phase 1 |
 | AI provider (future) | Undecided (D2) | Will process tenant data; residency and retention terms are evaluation criteria for D2 |
 | Source control and CI (GitHub) | GitHub (US) | CI uses synthetic data only; production data never leaves production systems for testing |

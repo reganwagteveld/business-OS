@@ -6,6 +6,8 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 describe('GET /api/v1/health', () => {
   beforeAll(() => {
     vi.stubEnv('DATABASE_URL', 'postgresql://a:b@localhost:5432/db');
+    vi.stubEnv('AUTH_DATABASE_URL', 'postgresql://auth:b@localhost:5432/db');
+    vi.stubEnv('AUTH_SECRET', 'test-signing-key-0123456789-abcdefghijkl');
     vi.stubEnv('APP_BASE_URL', 'http://localhost:3000');
     vi.stubEnv('REGION', 'test-region');
     vi.stubEnv('DATABASE_REGION', 'test-region');

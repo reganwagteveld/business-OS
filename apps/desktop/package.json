@@ -16,6 +16,7 @@
   "dependencies": {
     "@business-os/app": "workspace:*",
     "@business-os/ui": "workspace:*",
+    "@tauri-apps/api": "^2.12.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

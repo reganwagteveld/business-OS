@@ -22,6 +22,8 @@ describe('CORS (ADR 0005)', () => {
 describe('CORS_ALLOWED_ORIGINS', () => {
   const base = {
     DATABASE_URL: 'postgresql://a:b@localhost:5432/db',
+    AUTH_DATABASE_URL: 'postgresql://auth:b@localhost:5432/db',
+    AUTH_SECRET: 'test-signing-key-0123456789-abcdefghijkl',
     APP_BASE_URL: 'http://localhost:3000',
     REGION: 'r',
     DATABASE_REGION: 'r',

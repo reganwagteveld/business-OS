@@ -6,7 +6,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
-import { endpoints } from '../../packages/contracts/src/index';
+import { authEndpoints, endpoints } from '../../packages/contracts/src/index';
 import { apiOrigin, generatedConfig } from '../../apps/desktop/scripts/tauri-config.mjs';
 
 const ROOT = resolve(__dirname, '../..');
@@ -49,7 +49,15 @@ describe('Tauri desktop shell', () => {
     const cargo = parseToml(read('apps/desktop/src-tauri/Cargo.toml')) as { dependencies?: Record<string, unknown>; 'build-dependencies'?: Record<string, unknown> };
     const crates = Object.keys({ ...cargo.dependencies, ...cargo['build-dependencies'] });
     expect(crates.filter((c) => FORBIDDEN_CRATES.test(c))).toEqual([]);
-    expect(crates).toEqual(['tauri', 'tauri-build']);
+    // Allow-list. Phase 1b (D9a) adds the OS credential store, opening the system browser and serde.
+    // Any new crate needs an architecture note (ADR 0005) and an update here.
+    expect(crates.sort()).toEqual(['keyring', 'open', 'serde', 'tauri', 'tauri-build']);
+  });
+
+  it('exposes only the four sign-in commands to the window', () => {
+    const main = read('apps/desktop/src-tauri/src/main.rs');
+    const handlers = /generate_handler!\[([^\]]*)\]/.exec(main)?.[1]?.split(',').map((s) => s.trim()).filter(Boolean);
+    expect(handlers).toEqual(['auth::await_browser_sign_in', 'auth::load_session_token', 'auth::store_session_token', 'auth::forget_session_token']);
   });
 
   it('does not expose the Tauri API to page scripts', () => {
@@ -91,5 +99,12 @@ describe('API contracts', () => {
     const file = resolve(ROOT, 'apps/api/src/app', `.${endpoint.path}`, 'route.ts');
     expect(existsSync(file), `${file} should exist`).toBe(true);
     expect(read(file.slice(ROOT.length + 1))).toMatch(new RegExp(`export (async )?function ${endpoint.method}\\b`));
+  });
+
+  it.each(Object.entries(authEndpoints))('auth endpoint %s is served under /api/v1/auth by the identity module', (_name, endpoint) => {
+    expect(endpoint.path.startsWith('/api/v1/auth/')).toBe(true);
+    const own = resolve(ROOT, 'apps/api/src/app', `.${endpoint.path}`, 'route.ts');
+    const file = existsSync(own) ? own : resolve(ROOT, 'apps/api/src/app/api/v1/auth/[...all]/route.ts');
+    expect(read(file.slice(ROOT.length + 1))).toMatch(new RegExp(`export (async )?(function|const) ${endpoint.method}\\b`));
   });
 });

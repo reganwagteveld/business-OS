@@ -90,8 +90,8 @@ Zone manifests (architecture §6.2) move to the shared client app (`packages/app
 
 | ID | Decision | Needed by |
 |---|---|---|
-| D9a | Desktop sign-in mechanism (deep link vs loopback redirect) and credential-store plugin | Phase 1b |
-| D9b | Browser app hosting and domains (same origin vs `app.`/`api.` subdomains), which fixes the cookie and CORS configuration | Phase 1b (before the first deploy with sign-in) |
+| D9a | Desktop sign-in mechanism (deep link vs loopback redirect) and credential-store plugin | **Accepted 2026-11-13:** loopback + PKCE S256 + OS credential store (`keyring` crate); see addendum |
+| D9b | Browser app hosting and domains (same origin vs `app.`/`api.` subdomains), which fixes the cookie and CORS configuration | **Accepted 2026-11-13:** same origin as the API; see addendum |
 | D9c | Application identifier (currently the placeholder `com.business-os.desktop`), Apple Developer ID signing and notarisation, Windows code signing | Before the first build given to anyone outside the team. The identifier cannot change after release without losing the app's stored data and update path |
 | D9d | Auto-update channel (Tauri updater with signed update manifests) | Before the first external release |
 | D9e | Offline mode or local cache | Not planned; only on a product requirement |
@@ -100,3 +100,16 @@ Zone manifests (architecture §6.2) move to the shared client app (`packages/app
 
 - `apps/desktop` builds a working Tauri 2 shell that renders the shared app and reports the real API status.
 - CI builds the desktop app on Windows and macOS (and compiles it on Linux), builds the API and browser app, runs the contract checks, and runs all existing security checks plus the client rules above.
+
+## Addendum 2026-11-13: D9a and D9b accepted (Phase 1b, PR 4)
+
+**Accepted by Regan on 2026-11-13.**
+
+**D9a, desktop sign-in: loopback redirect (RFC 8252 §7.3) + PKCE S256 + OS credential store.**
+- The app opens the system browser at `GET /api/v1/auth/desktop/authorize` with a PKCE challenge, a random `state` and `redirect_uri=http://127.0.0.1:<random port>/callback`. The API accepts only that loopback form.
+- The browser signs in with the normal web flow; the person confirms on a page served by the API. Confirmation is a same-origin `POST` (Origin checked), so another site cannot trigger it. The API then stores a one-time code (hashed, 2 minutes) and redirects to the loopback address.
+- The shared client exchanges code + verifier at `POST /api/v1/auth/desktop/token` for a new, separate session, returned once. The native shell stores it with the `keyring` crate (macOS Keychain, Windows Credential Manager) and the app sends it as `Authorization: Bearer`.
+- Native surface added: four app commands (`await_browser_sign_in`, `load_session_token`, `store_session_token`, `forget_session_token`) and three crates (`keyring`, `open`, `serde`), enforced by `tests/architecture/clients.test.ts`. Still no Tauri plugins, no shell/fs/http access, no global Tauri API; the window CSP is unchanged. The browser-opening command refuses any URL other than the API's authorisation page.
+- Deep links (`business-os://`) are not used for sign-in; they remain an option for opening shared links later.
+
+**D9b, browser app hosting: same origin as the API.** Two `*.vercel.app` hosts are different sites, so a session cookie would be third-party between them. The browser app is therefore served on the same origin as the API (the web deployment forwards `/api/*` to the API), with a host-only `HttpOnly`, `Secure`, `SameSite=Lax` cookie (`__Secure-bos.session_token` on https) and an `Origin` check on every authentication `POST`. A custom domain with `app.`/`api.` subdomains of one registrable domain would also satisfy this later without code changes.

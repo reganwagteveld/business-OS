@@ -33,6 +33,10 @@ jobs:
       DATABASE_URL: postgresql://bos_app:bos_local_app_password@localhost:5432/business_os?schema=public
       MIGRATION_DATABASE_URL: postgresql://bos_owner:bos_local_owner_password@localhost:5432/business_os?schema=public
       SHADOW_DATABASE_URL: postgresql://bos_owner:bos_local_owner_password@localhost:5432/business_os_shadow?schema=public
+      AUTH_DATABASE_URL: postgresql://bos_auth:bos_local_auth_password@localhost:5432/business_os?schema=public
+      AUTH_SECRET: ci-only-auth-secret-not-used-anywhere-else-0123456789
+      # Superuser connection used by integration tests for assertions only.
+      TEST_ADMIN_URL: postgresql://postgres:ci_postgres_only@localhost:5432/business_os
       APP_BASE_URL: http://localhost:3000
       REGION: ci
       DATABASE_REGION: ci
@@ -63,6 +67,8 @@ jobs:
         run: pnpm boundaries
       - name: Unit, contract and architecture tests
         run: pnpm test
+      - name: Apply migrations as the owner role
+        run: pnpm --filter @business-os/api exec prisma migrate deploy
       - name: Integration tests (PostgreSQL roles and isolation prerequisites)
         run: pnpm test:integration
       - name: Start PgBouncer in transaction mode (RLS spike pooler)
@@ -83,14 +89,15 @@ jobs:
         run: |
           cd apps/api
           env -i PATH="$PATH" HOME="$HOME" \
-            DATABASE_URL="$DATABASE_URL" APP_BASE_URL="$APP_BASE_URL" REGION="$REGION" \
+            DATABASE_URL="$DATABASE_URL" AUTH_DATABASE_URL="$AUTH_DATABASE_URL" AUTH_SECRET="$AUTH_SECRET" \
+            APP_BASE_URL="$APP_BASE_URL" REGION="$REGION" \
             DATABASE_REGION="$DATABASE_REGION" CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" \
             pnpm start --port 3100 &
           for i in $(seq 1 30); do curl -sf localhost:3100/api/v1/health && break; sleep 1; done
           curl -sf localhost:3100/api/v1/health | grep -q '"status":"ok"'
       - name: Client bundles contain no server configuration
         run: |
-          if grep -rEl 'DATABASE_URL|postgres(ql)?://|bos_(app|owner)|MIGRATION_' apps/web/dist apps/desktop/dist; then
+          if grep -rEl 'DATABASE_URL|postgres(ql)?://|bos_(app|owner|auth|jobs)|MIGRATION_|AUTH_SECRET' apps/web/dist apps/desktop/dist; then
             echo "Server configuration leaked into a client bundle" >&2
             exit 1
           fi
@@ -131,3 +138,6 @@ jobs:
       # before the first release (ADR 0005, open decisions); no artifacts are published.
       - name: Build the Tauri app (unsigned)
         run: pnpm --filter @business-os/desktop tauri:build ${{ matrix.bundle }}
+      # Native sign-in code (D9a): URL allow-list, callback parsing, baked-in API origin.
+      - name: Rust unit tests (desktop shell)
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml

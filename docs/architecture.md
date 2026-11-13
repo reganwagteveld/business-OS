@@ -437,8 +437,8 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 | E1 | Primary keys `(business_id, id)` on high-volume tables (for future partitioning) | Yes for `activities` and future transactional tables (§13.4) | Phase 1b |
 | D8 | Repository | Settled: `reganwagteveld/business-os` | Done |
 | D9 | Client architecture | **Accepted:** desktop-first (Tauri 2, Windows and macOS) plus a companion browser app, one shared React client, Next.js as API only ([ADR 0005](./adr/0005-desktop-first-client-architecture.md)) | Done |
-| D9a | Desktop sign-in mechanism (deep link vs loopback) and credential-store plugin | System browser + PKCE + OS credential store; details open | Phase 1b |
-| D9b | Browser app hosting and domains (same origin vs `app.`/`api.`) | Same site as the API so the session cookie is first-party | Phase 1b |
+| D9a | Desktop sign-in mechanism (deep link vs loopback) and credential-store plugin | **Accepted:** system browser, loopback redirect, PKCE S256, OS credential store (ADR 0005 addendum) | Done (Phase 1b) |
+| D9b | Browser app hosting and domains (same origin vs `app.`/`api.`) | **Accepted:** browser app on the same origin as the API (ADR 0005 addendum) | Done (Phase 1b) |
 | D9c | Desktop app identifier, code signing and notarisation | Placeholder `com.business-os.desktop` until decided; cannot change after release | Before any external build |
 | D9d | Desktop auto-update | Tauri updater with signed manifests | Before first external release |
 

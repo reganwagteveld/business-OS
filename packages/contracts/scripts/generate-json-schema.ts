@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { endpoints } from '../src/index.ts';
+import { authEndpoints, endpoints } from '../src/index.ts';
 
 const out = fileURLToPath(new URL('../schema/api-v1.json', import.meta.url));
 const doc = {
@@ -11,7 +11,18 @@ const doc = {
   endpoints: Object.fromEntries(
     Object.entries(endpoints).map(([name, e]) => [
       name,
-      { method: e.method, path: e.path, response: z.toJSONSchema(e.response) },
+      {
+        method: e.method,
+        path: e.path,
+        ...('request' in e ? { request: z.toJSONSchema(e.request, { io: 'input' }) } : {}),
+        response: z.toJSONSchema(e.response),
+      },
+    ]),
+  ),
+  authEndpoints: Object.fromEntries(
+    Object.entries(authEndpoints).map(([name, e]) => [
+      name,
+      { method: e.method, path: e.path, ...('request' in e ? { request: z.toJSONSchema(e.request, { io: 'input' }) } : {}) },
     ]),
   ),
 };

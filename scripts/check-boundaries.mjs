@@ -75,6 +75,18 @@ export function serverViolations(files) {
     if (region) {
       errors.push(`no-region-literals: ${name} contains "${region[0]}"; regions come from validated environment config`);
     }
+
+    // The bos_auth client can read password hashes and session data (data-model §5.1).
+    if (name !== 'modules/identity/server/auth-adapter.ts' && importsOf(content).some((spec) => /(^|\/)core\/db\/auth-client(\.ts)?$/.test(spec))) {
+      errors.push(`auth-client-only-in-identity: ${name} imports the bos_auth client; only modules/identity/server/auth-adapter.ts may`);
+    }
+    if (name !== 'core/config/schema.ts' && name !== 'core/db/auth-client.ts' && /\bAUTH_DATABASE_URL\b/.test(content)) {
+      errors.push(`auth-client-only-in-identity: ${name} reads AUTH_DATABASE_URL; only core/db/auth-client.ts may`);
+    }
+    // Better Auth is an implementation detail of the identity module (architecture §7.1).
+    if (!name.startsWith('modules/identity/') && importsOf(content).some((spec) => /^better-auth(\/|$)/.test(spec))) {
+      errors.push(`auth-library-only-in-identity: ${name} imports better-auth; use the identity module's public API`);
+    }
   }
   return errors;
 }

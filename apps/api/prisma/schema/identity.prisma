@@ -1,0 +1,85 @@
+// identity module (docs/data-model.md §4.1, §5.1, §5.6; ADR 0001). Better Auth core tables only,
+// mapped to our names. Reached only through the bos_auth role, except the non-sensitive user
+// columns that tenant code may read (id, name, image_url) under RLS.
+
+model User {
+  id            String    @id @db.Uuid
+  email         String    @unique // lower-cased on write
+  emailVerified Boolean   @default(false) @map("email_verified")
+  name          String?
+  imageUrl      String?   @map("image_url")
+  locale        String?
+  timeZone      String?   @map("time_zone")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz
+
+  sessions Session[]
+  accounts Account[]
+
+  @@map("users")
+}
+
+/// The raw session token is never stored: token_hash is hex(sha256(token)), written and looked up
+/// through the identity module's hashing adapter (ADR 0001 condition 1).
+model Session {
+  id        String    @id @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz
+  ipAddress String?   @map("ip_address")
+  userAgent String?   @map("user_agent")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @db.Uuid
+  userId                String    @map("user_id") @db.Uuid
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at") @db.Timestamptz
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at") @db.Timestamptz
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+/// Short-lived verification values. Password-reset and desktop sign-in codes are stored hashed.
+model Verification {
+  id         String   @id @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+/// Shared rate-limit counters, so limits hold across serverless instances (ADR 0001 condition 2).
+model RateLimit {
+  id          String @id @db.Uuid
+  key         String @unique
+  count       Int
+  lastRequest BigInt @map("last_request")
+
+  @@map("rate_limits")
+}
