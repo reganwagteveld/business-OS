@@ -36,7 +36,8 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 **Acceptance criteria**
 
 - [ ] Regan has reviewed and approved the three documents (PR approved/merged).
-- [ ] D1, D3 and D4 are decided and recorded as ADRs in `docs/adr/` (they block 1a/1b). Other decisions may stay open until their phase.
+- [ ] D1, D3 and D4 ADRs (`docs/adr/0001` to `0003`) move from Proposed to Accepted, with D3's region filled in (they block 1a/1b). Other decisions may stay open until their phase.
+- [ ] ADR 0004 (database isolation design) is accepted as the design to spike in Phase 1b.
 - [ ] Any change requested in review is reflected in the docs before scaffolding begins.
 
 ---
@@ -68,9 +69,11 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 
 **Spike acceptance criteria**
 
-- [ ] With RLS enabled and the app role, a query with no `app.business_id` set returns zero rows and an insert is rejected.
-- [ ] Under the hosting provider's pooler in transaction mode, 1,000 interleaved requests alternating between two businesses never return the other business's rows.
-- [ ] Added latency from context-setting is measured and under 2 ms p95 per operation (or the result is reported for decision).
+- [ ] Prisma version, driver adapter, PostgreSQL version and pooler (with its mode and prepared-statement setting) are pinned and recorded in ADR 0004.
+- [ ] Tests S1 to S10 from [data-model.md §5.4](./data-model.md#54-rls-spike-what-must-be-proven-before-phase-1b-features) pass in CI against PostgreSQL behind a transaction-mode pooler container: same connection and transaction for context and queries, fail closed with no context (runtime and type level), no carry-over between pooled uses, clean rollback and timeout paths, 0 leaks in 2,000 concurrent interleaved units of work, raw queries filtered by RLS, RLS holds with the app-layer guard disabled, composite FKs hold with RLS bypassed.
+- [ ] S11 overhead is measured and recorded; under 2 ms p95 per unit of work, or reported for decision.
+- [ ] S12 prepared-statement behaviour behind the pooler is confirmed and any required setting recorded.
+- [ ] If any of S1 to S10 fails, work stops and the design is reviewed before features start.
 
 **Feature acceptance criteria**
 
@@ -85,6 +88,10 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 - [ ] `business_id` does not appear in any action input schema (CI check).
 - [ ] **Isolation suite** (`tests/isolation/`) passes, covering for every tenant table: read, list, update, delete and foreign-key reference from business A to business B fail, both via module services and via raw SQL as the app role.
 - [ ] **Schema guard** test passes: every table with a `business_id` column has RLS enabled and forced, a `tenant_isolation` policy, and a `business_id`-leading index.
+- [ ] Database roles `bos_owner`, `bos_app`, `bos_auth`, `bos_definer`, `bos_jobs` exist with exactly the grants in data-model §5.1; a test compares actual grants to the expected list.
+- [ ] The three pre-tenant `SECURITY DEFINER` functions take a session token (never a user id) and pass every test listed in data-model §5.5: impersonation, forged/expired/revoked sessions, deactivated users, invitation misuse and replay, `PUBLIC`/`bos_auth` execution denied, `search_path` shadowing, and the schema guard for all definer functions.
+- [ ] `users` and `audit_events` RLS and column grants pass the tests in data-model §5.6: no enumeration of users outside the current business, no access to auth columns from `bos_app`, platform audit events invisible to `bos_app`, no cross-business audit reads or writes, no updates or deletes.
+- [ ] Sign-up, password reset and invitation responses do not reveal whether an email has an account (test compares responses).
 - [ ] Sign-in, membership changes, role changes and invitation events write `audit_events`.
 - [ ] Rate limiting is active on sign-in, sign-up, password reset and invitation endpoints (integration test hits the limit).
 
@@ -125,6 +132,8 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 - [ ] Customer and contact lists use keyset pagination and stay under 300 ms server time at 50k customers / 200k contacts in one business (seeded benchmark, not a production claim).
 - [ ] Search by name, email or phone returns matching customers and contacts within the current business only (isolation test included).
 - [ ] Contact ↔ customer links across businesses are impossible: attempts via service and raw SQL both fail (isolation suite extended).
+- [ ] A customer's primary contact must be one of that customer's own contacts: setting another customer's contact (same business) fails at the database; moving, unlinking, archiving or deleting a primary contact clears the primary in the same transaction, and a path that forgets is rejected by the FK (tests).
+- [ ] Every row of the activity history table in data-model §4.7 (contact moved, unlinked, archived, erased; customer erased) has a test showing the expected timeline on the old customer, the new customer and the contact.
 - [ ] `MEMBER` can read and write customers/contacts/activity; only `ADMIN`/`OWNER` hold `customers:delete` (hard delete is not exposed in UI in Phase 1); permission tests cover each action.
 - [ ] All screens use the shared patterns from 1c; no Zone-specific copies of tables, forms or empty states.
 - [ ] Empty states for no customers, no contacts and no activity are designed and contain no sample data.
@@ -139,6 +148,10 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 - [ ] Error tracking and structured logging are live with `businessId`/`userId` tags; a test confirms request bodies and customer PII fields are not logged.
 - [ ] Owners can export all business data (CSV/JSON); export writes an audit event.
 - [ ] Contact erasure service removes PII from the contact and related activity payloads (integration test).
+- [ ] Scheduled jobs from data-model §7.1 (`purge-archived-businesses`, `scrub-audit-network-data`, `cleanup-expired-auth`) run from platform cron through an authenticated internal route as `bos_jobs`; an unauthenticated or wrong-secret call is rejected (test).
+- [ ] Each job is idempotent (running twice changes nothing the second time), single-flight (a concurrent second run exits on the advisory lock), batched, and logs to `job_runs`; failures reach error tracking.
+- [ ] The purge job deletes only the target business's rows: a test with three businesses, one due for purge, shows the other two untouched, and RLS confines each purge to its own `withTenant` unit of work.
+- [ ] Dry-run mode output was reviewed on staging before destructive jobs were enabled in production.
 - [ ] Business archive and scheduled hard-delete work end to end on a staging database.
 - [ ] Database backups with point-in-time recovery are enabled; a restore has been performed once on staging and documented.
 - [ ] `tenantCache()` is the only cache path for tenant data (lint), and a test proves two businesses never receive each other's cached results.

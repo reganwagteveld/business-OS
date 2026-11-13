@@ -16,6 +16,7 @@ Phase 1 covers the entities needed for identity, tenancy and the Customer Zone:
 | `Contact` | customers | Yes | A person, usually at a customer |
 | `Activity` | activity | Yes | A business-facing timeline entry (note, call, system event) |
 | `AuditEvent` | core | Yes (nullable for platform events) | Append-only security log *(addition, recommended)* |
+| `JobRun` | core | No | Log of scheduled maintenance job runs (§7.1) |
 
 Auth provider tables (sessions, OAuth accounts, verification tokens) are owned by the `identity` module and depend on decision D1. They are not tenant-owned.
 
@@ -90,7 +91,7 @@ model User {
 ```
 
 - Not tenant-owned: a user exists independently and can join several businesses.
-- **No RLS** on `users`, but the `identity` module only exposes: the current user, and users who share a membership with the current business (for "assigned to" pickers). Listing all users is a platform-admin operation, not available to tenant code.
+- `users` has RLS and column-level grants: tenant code can see only the current user and members of the current business, and only non-sensitive columns. Auth columns and tables are reachable only through the separate `bos_auth` role. See §5.1 and §5.6.
 - Exact columns depend on D1; with Better Auth this table is shared with the auth library.
 
 ### 4.2 Business (tenancy, tenant root)
@@ -211,7 +212,18 @@ model Customer {
 
 - **Address as columns, not a separate table**, for Phase 1. A customer with multiple addresses (billing vs shipping) is a Finance/Operations concern; when that Zone arrives, an `addresses` table can be introduced and these columns migrated into it. Tradeoff: simpler now, one migration later.
 - `ownerUserId` must reference a user with a membership in the same business. Enforced by composite FK to `memberships(business_id, user_id)` rather than to `users`, so the database guarantees it.
-- `primaryContactId` uses a composite FK to `contacts(business_id, id)` and is `DEFERRABLE` (customer and first contact are often created together).
+- **The primary contact must be one of this customer's contacts**, not just any contact in the business. Enforced by a three-column FK that also covers the tenant:
+
+  ```sql
+  ALTER TABLE customers
+    ADD CONSTRAINT customers_primary_contact_fk
+    FOREIGN KEY (business_id, id, primary_contact_id)
+    REFERENCES contacts (business_id, customer_id, id)
+    ON UPDATE NO ACTION ON DELETE NO ACTION
+    DEFERRABLE INITIALLY DEFERRED;
+  ```
+
+  With the default `MATCH SIMPLE`, a null `primary_contact_id` skips the check. `DEFERRABLE INITIALLY DEFERRED` lets a customer and its first contact be created in one transaction. Because `NO ACTION` blocks moving, unlinking or deleting a contact that is still primary, the `customers` service must clear or change `primary_contact_id` in the same transaction first; the database rejects any path that forgets. Archiving a primary contact also clears it (service rule, tested), and writes a `customer.primary_contact_changed` activity.
 - Search in Phase 1: `ILIKE` plus a `pg_trgm` GIN index on `(display_name)` and contact names/emails. Full-text or external search is deferred until there is a measured need.
 
 ### 4.6 Contact (customers)
@@ -238,6 +250,7 @@ model Contact {
   customer     Customer? @relation(fields: [businessId, customerId], references: [businessId, id])
 
   @@unique([businessId, id])
+  @@unique([businessId, customerId, id])     // target of the customers primary-contact FK
   @@index([businessId, customerId])
   @@index([businessId, email])
   @@index([businessId, displayName])
@@ -299,7 +312,21 @@ Other rules:
 
 - A `CHECK` that `actor_user_id` is non-null when `actor_type = 'USER'` and null when `actor_type = 'SYSTEM'`.
 - System activities are written **in the same transaction** as the change they describe (architecture §5.2, rule 5).
-- An activity tied to a contact that belongs to a customer also sets `customer_id`, so the customer timeline includes contact-level history without a join through contacts. Kept consistent by the `activity` service.
+- An activity tied to a contact that belongs to a customer also sets `customer_id` **to the contact's customer at the time of writing**, so the customer timeline includes contact-level history without a join. The `activity` service enforces this on write (and rejects a write where `contact_id`'s current customer differs from a supplied `customer_id`). It cannot be a database constraint, because the link is deliberately historical (below).
+
+**Historical behaviour when contacts and customers change**
+
+Activities record what happened, with whom, for which customer, at the time. They are **not rewritten** when relationships change later.
+
+| Change | Existing activities | New activities | Timeline effect |
+|---|---|---|---|
+| Contact moved from customer A to B | Keep `customer_id = A`, `contact_id` unchanged | Get `customer_id = B` | A's timeline keeps the history of the period the contact was at A; B's starts from the move; the contact's own timeline shows everything. System activity `contact.customer_changed` is written on both A and B and on the contact |
+| Contact unlinked from customer A | Keep `customer_id = A` | Have `customer_id = null` | As above; system activity `contact.customer_removed` on A and the contact |
+| Contact or customer archived | Unchanged and still shown on timelines, with the subject marked "Archived" | Manual activities cannot be added to an archived record until it is restored | System activity `*.archived` / `*.restored` |
+| Contact hard-deleted (erasure, §7) | `contact_id` set to null via `ON DELETE SET NULL (contact_id)`; personal data scrubbed from `subject`, `body` and `data` by the erasure service | — | Customer timeline keeps a de-identified entry ("Call with a removed contact") |
+| Customer hard-deleted (erasure or business purge) | Deleted with it (`ON DELETE CASCADE` on the `(business_id, customer_id)` FK) | — | There is no remaining record to show them on |
+
+Tests in Phase 1d cover each row of this table.
 - `type` is free text validated against a registry in code (each module registers its activity types with a zod schema for `data`), not a Postgres enum, so new types do not need migrations.
 - **No mock activity.** Timelines start empty; the empty state explains how activity appears.
 
@@ -324,64 +351,228 @@ model AuditEvent {
 }
 ```
 
-- **Append-only:** the app role is granted `INSERT` and `SELECT` only (no `UPDATE`/`DELETE`).
+- **Append-only and access-controlled:** grants, RLS policies, the handling of platform events with a null `business_id`, and tests are specified in §5.6.
 - Activity vs audit: Activity answers "what happened with this customer?" for business users. AuditEvent answers "who changed permissions or exported data?" for owners and for security investigation. They overlap a little by design; merging them would mix PII-bearing business content with a security log that has different retention and access rules.
 
-## 5. Row-Level Security
+## 5. Database roles, Row-Level Security and trusted paths
 
-### 5.1 Roles
+This section is the authoritative design for database-level isolation. It was revised after architecture review to remove two weaknesses in the first draft: an RLS example that did not guarantee `set_config` and the query share a transaction and connection, and pre-tenant functions that would have trusted a caller-supplied `user_id`.
+
+### 5.1 Roles and grants (least privilege)
+
+Each role has one job. None of the runtime roles owns tables, and none has `BYPASSRLS`.
+
+| Role | Used by | Can access | Cannot |
+|---|---|---|---|
+| `bos_owner` | Migrations only (CI/deploy), never the running app | Owns all schemas and tables | Is never in the app's runtime env vars |
+| `bos_app` | The web app's tenant code (`core/db`) | Tenant tables via RLS; `users` via RLS (§5.6); `INSERT` on `audit_events` for its own business; `EXECUTE` on the `app_private` functions in §5.5 | Read auth tables (`sessions`, `accounts`, `verifications`); read platform audit events; read or update any row outside the current business |
+| `bos_auth` | The auth library's adapter inside `modules/identity` only | `users`, `sessions`, `accounts`, `verifications`; `INSERT` platform audit events (`business_id IS NULL`) | Any tenant table |
+| `bos_definer` | Owner of the `app_private` functions (no login) | Exactly the columns those functions need (§5.5) | Anything else |
+| `bos_jobs` | Scheduled jobs (§7.1) | `EXECUTE` on job-specific `app_private` functions; `UPDATE (ip_address, user_agent)` on `audit_events` for retention scrubbing | Tenant data except through `withTenant` like the app |
 
 ```sql
--- Owner role: runs migrations, owns tables. Never used by the running app.
-CREATE ROLE bos_owner LOGIN;
--- App role: what the application connects as. Not owner, no BYPASSRLS.
-CREATE ROLE bos_app LOGIN NOBYPASSRLS;
-GRANT USAGE ON SCHEMA public TO bos_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON customers, contacts, activities, memberships, invitations TO bos_app;
-GRANT SELECT, INSERT ON audit_events TO bos_app;
+-- Baseline hardening (run once by bos_owner)
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+CREATE SCHEMA app_private AUTHORIZATION bos_owner;
+REVOKE ALL ON SCHEMA app_private FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA app_private REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+CREATE ROLE bos_app     LOGIN NOBYPASSRLS NOINHERIT;
+CREATE ROLE bos_auth    LOGIN NOBYPASSRLS NOINHERIT;
+CREATE ROLE bos_jobs    LOGIN NOBYPASSRLS NOINHERIT;
+CREATE ROLE bos_definer NOLOGIN NOBYPASSRLS;
+
+GRANT USAGE ON SCHEMA public TO bos_app, bos_auth, bos_jobs;
+GRANT USAGE ON SCHEMA app_private TO bos_app, bos_jobs;
+
+GRANT SELECT, INSERT, UPDATE, DELETE
+  ON businesses, memberships, invitations, customers, contacts, activities TO bos_app;
+GRANT SELECT (id, name, image_url) ON users TO bos_app;          -- no email, no auth columns
+GRANT INSERT ON audit_events TO bos_app;
+GRANT SELECT ON audit_events TO bos_app;                         -- filtered by RLS, §5.6
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON users, sessions, accounts, verifications TO bos_auth;
+GRANT INSERT ON audit_events TO bos_auth;
 ```
 
-### 5.2 Policy pattern (applied to every tenant table)
+The app therefore holds **two connection strings** (`bos_app` and `bos_auth`) and two Prisma clients. Only `modules/identity/server/auth-adapter.ts` may import the `bos_auth` client (lint rule + test). Tradeoff: two connection pools instead of one, in exchange for tenant code being physically unable to read password hashes, OAuth tokens or session tokens.
+
+The exact auth table names depend on D1 (Better Auth's defaults are `user`, `session`, `account`, `verification`; they will be mapped to the names above).
+
+### 5.2 Tenant policy pattern (every tenant-owned table)
 
 ```sql
 ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE customers FORCE ROW LEVEL SECURITY;   -- applies even to the table owner
+ALTER TABLE customers FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY tenant_isolation ON customers
-  USING      (business_id = current_setting('app.business_id', true)::uuid)
-  WITH CHECK (business_id = current_setting('app.business_id', true)::uuid);
+  FOR ALL TO bos_app
+  USING      (business_id = nullif(current_setting('app.business_id', true), '')::uuid)
+  WITH CHECK (business_id = nullif(current_setting('app.business_id', true), '')::uuid);
 ```
 
-- `current_setting(..., true)` returns null when unset, so `business_id = NULL` is never true: **no context means no rows**, and inserts are rejected.
-- `businesses` uses `id = current_setting('app.business_id', true)::uuid`.
-- Pre-tenant paths (list my memberships, accept invitation, create business) use `SECURITY DEFINER` functions with fixed, minimal queries (e.g. `my_memberships(user_id)`), owned by `bos_owner`, each covered by tests. This is the only sanctioned way around tenant RLS.
+- When the setting is absent, `current_setting(..., true)` returns null; after a transaction-local setting ends, some PostgreSQL versions return an empty string instead, hence `nullif(..., '')`. Either way the comparison is null and **no row matches: fail closed**.
+- Policies are written `TO bos_app` so no other role is silently covered; roles without a policy see nothing on an RLS-enabled table.
+- `businesses` uses `id = …` instead of `business_id = …`.
 
-### 5.3 Setting the context with Prisma
+### 5.3 Unit of work: how the tenant context reaches PostgreSQL
+
+**Design.** All tenant data access happens inside one **Prisma interactive transaction** per unit of work. The first statement in that transaction sets the context; every later statement uses the same transaction client, and therefore the same physical connection.
 
 ```ts
-// core/db/tenant-client.ts  (illustrative)
-export function forTenant(ctx: TenantContext) {
-  return basePrisma.$extends({
-    query: {
-      $allModels: {
-        async $allOperations({ model, args, query }) {
-          if (!TENANT_MODELS.has(model)) return query(args);
-          const scoped = injectBusinessId(model, args, ctx.businessId); // layer 3
-          const [, result] = await basePrisma.$transaction([
-            basePrisma.$executeRaw`SELECT set_config('app.business_id', ${ctx.businessId}, true)`,
-            query(scoped),
-          ]);                                                            // layer 4
-          return result;
-        },
-      },
+// core/db/with-tenant.ts  (design sketch; exact API is validated by the spike in §5.4)
+export async function withTenant<T>(
+  ctx: TenantContext,
+  work: (db: TenantDb) => Promise<T>,
+  opts: { timeoutMs?: number } = {},
+): Promise<T> {
+  return appPrisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.business_id', ${ctx.businessId}::text, true)`;
+      await tx.$executeRaw`SELECT set_config('app.user_id', ${ctx.userId}::text, true)`;
+      return work(scopeToTenant(tx, ctx)); // layer 3: injects/validates business_id
     },
-  });
+    { timeout: opts.timeoutMs ?? 5_000, isolationLevel: "ReadCommitted" },
+  );
 }
 ```
 
-- Transaction-local `set_config(..., true)` is reset at commit, so pooled connections never carry another tenant's setting.
-- Multi-step service operations use an interactive transaction that sets the context once at the start.
-- **Must be validated in the Phase 1b spike**: correctness under PgBouncer/provider pooling in transaction mode, behaviour with the chosen Prisma version's driver adapter, and overhead per query (target: < 2 ms p95 added).
+Why this shape:
+
+- **Interactive transactions are Prisma's supported API for "several statements on one connection".** Every call on `tx` (model queries, `$queryRaw`, `$executeRaw`) runs inside that database transaction, so the `set_config` and the queries cannot be split across pooled connections. The first draft's per-query `$transaction([set_config, query])` inside a client extension relied on behaviour that is less clearly documented and is dropped.
+- `set_config(..., true)` is **transaction-local**: PostgreSQL discards it at commit or rollback, so a pooled connection never carries a previous request's tenant.
+- `TenantDb` is a **narrowed type**: it exposes tenant models and `$queryRaw`, but not `$transaction` (no nesting) or `$executeRawUnsafe`/`$queryRawUnsafe` (no string-built SQL).
+- Module services receive a `TenantDb`, never a client, so they **cannot** run tenant queries outside `withTenant`. `tenantAction` and tenant page loaders open the unit of work; services just use it.
+
+Rules that follow:
+
+1. One unit of work per request/action. Keep it short: no network calls (email, AI, webhooks) inside it; do those after commit.
+2. Reads that page through large data use keyset pagination within the time limit, not long transactions.
+3. Raw SQL is allowed only through tagged `$queryRaw` on `TenantDb`, and still runs under RLS because it is the same connection and role.
+
+Tradeoffs: every tenant request costs `BEGIN` + two `set_config` round trips + `COMMIT`, and holds one pooled connection for the duration of the unit of work. This is expected to be small (sub-millisecond on the same network) but is measured in the spike, not assumed.
+
+**Pooling.** The design is compatible with a transaction-mode pooler (PgBouncer or the provider's equivalent) because the pooler pins a server connection for the whole transaction. Prepared-statement behaviour in transaction mode depends on the pooler version and the Prisma driver adapter, so it is part of the spike.
+
+**Versions.** Pinned at Phase 1a and recorded in ADR 0004: the then-current Prisma major (7.x at the time of writing) with the `@prisma/adapter-pg` driver adapter, PostgreSQL 16 or later, and the hosting provider's pooler. A Prisma or pooler upgrade re-runs the spike's test suite before merging.
+
+### 5.4 RLS spike: what must be proven before Phase 1b features
+
+The spike produces runnable tests that stay in the repo as `tests/isolation/db-context.test.ts` and run in CI against the same pooler configuration as production (a PgBouncer container in transaction mode in CI).
+
+| # | Test | Pass condition |
+|---|---|---|
+| S1 | Same transaction | Inside `withTenant`, `SELECT current_setting('app.business_id')` via `$queryRaw` and the backend `pg_backend_pid()` match across every statement in the unit of work |
+| S2 | Fail closed: no context | As `bos_app`, outside `withTenant`, `SELECT` on each tenant table returns 0 rows and `INSERT` raises an RLS violation |
+| S3 | Fail closed: type level | Calling a module service without a `TenantDb` does not compile (type test) |
+| S4 | No carry-over | With pool size 1, run unit of work for business A, then a raw query with no context on the same connection: setting is null/empty and 0 rows are visible |
+| S5 | Rollback path | A unit of work that throws mid-way leaves no setting on the connection (as S4) and no partial writes |
+| S6 | Concurrency | 2,000 interleaved units of work across 3 businesses with pool size 5 behind the pooler, each asserting it only sees its own rows: 0 leaks |
+| S7 | Raw queries | `$queryRaw` inside `withTenant` is filtered by RLS exactly like model queries |
+| S8 | Cross-tenant write | Insert/update with another business's `business_id` inside a unit of work is rejected by both layer 3 and RLS (disable layer 3 in the test to prove RLS alone holds) |
+| S9 | Composite FKs | Linking a contact to another business's customer fails even as `bos_owner` with RLS bypassed (proves layer 5 independently) |
+| S10 | Timeouts | A unit of work exceeding the timeout rolls back and the connection returns clean (as S4) |
+| S11 | Overhead | p50/p95 added latency of `withTenant` vs a bare query, recorded in ADR 0004 |
+| S12 | Prepared statements | S6 passes with the driver adapter's default statement handling behind the pooler; if not, the required pooler setting is recorded |
+
+If any of S1 to S10 fails, Phase 1b feature work stops and the design is reviewed. S11 has a target of < 2 ms p95 added per unit of work; missing it is reported for decision, not silently accepted.
+
+### 5.5 Pre-tenant trusted paths (`app_private` SECURITY DEFINER functions)
+
+A few operations must run before a tenant context exists: listing the signed-in user's businesses (switcher and routing), creating a business, and accepting an invitation. These are the **only** sanctioned paths around tenant RLS, and they must not trust any caller-supplied identity.
+
+**Identity binding.** No function takes a `user_id` argument. Each takes the **raw session token** from the request's HTTP-only cookie, and resolves the user inside the database:
+
+```sql
+CREATE FUNCTION app_private.session_user_id(p_session_token text)
+RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT s.user_id
+  FROM public.sessions s
+  JOIN public.users u ON u.id = s.user_id
+  WHERE s.token_hash = encode(sha256(convert_to(p_session_token, 'UTF8')), 'hex')
+    AND s.expires_at > now()
+    AND s.revoked_at IS NULL
+    AND u.deactivated_at IS NULL
+$$;
+```
+
+- The database itself verifies a live, unrevoked session, so even code (or an attacker) running SQL as `bos_app` cannot act as another user without that user's session token.
+- This requires sessions to be stored by **hash** with expiry and revocation columns. Whether D1's library does this natively, or needs a small adapter, is checked when D1 is accepted (ADR 0001). If it cannot be made to work, the fallback is documented there and must still avoid a free `user_id` parameter.
+
+**Functions in Phase 1** (each `SECURITY DEFINER`, owned by `bos_definer`, `SET search_path = pg_catalog, pg_temp`, every object schema-qualified, no dynamic SQL):
+
+| Function | Returns / does | Checks |
+|---|---|---|
+| `my_memberships(session_token)` | `(business_id, slug, name, role)` for the caller's active memberships only | Valid session; membership `status = 'ACTIVE'`; business not archived |
+| `create_business(session_token, name, slug, country_code)` | Inserts business + `OWNER` membership in one statement; returns `business_id` | Valid session; caller's email verified; slug format and deny-list; per-user creation rate limit |
+| `accept_invitation(session_token, invite_token)` | Inserts membership; marks invitation accepted | Valid session; invite token hash matches; not expired/revoked/accepted; caller's **verified** email equals invitation email; no existing membership |
+
+```sql
+REVOKE ALL ON FUNCTION app_private.my_memberships(text)            FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_private.create_business(text,text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_private.accept_invitation(text,text)     FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app_private.my_memberships(text)            TO bos_app;
+GRANT EXECUTE ON FUNCTION app_private.create_business(text,text,text,text) TO bos_app;
+GRANT EXECUTE ON FUNCTION app_private.accept_invitation(text,text)     TO bos_app;
+-- bos_definer gets only what these need:
+GRANT SELECT (id, token_hash, user_id, expires_at, revoked_at) ON sessions TO bos_definer;
+GRANT SELECT (id, email, email_verified, deactivated_at) ON users TO bos_definer;
+GRANT SELECT, INSERT ON memberships, businesses TO bos_definer;
+GRANT SELECT, UPDATE (accepted_at) ON invitations TO bos_definer;
+```
+
+`bos_definer` is subject to RLS like any role, so each table it touches has an explicit policy `TO bos_definer` limited to what the function needs (e.g. memberships where `user_id` equals the resolved session user). Functions return the minimum columns and raise a generic error on failure (no "invite exists but email differs" detail).
+
+**Tests** (in `tests/isolation/trusted-paths.test.ts`, required in Phase 1b):
+
+- Impersonation: user A's session token never returns user B's memberships; there is no way to pass B's id.
+- Forged, expired and revoked session tokens, and deactivated users, return nothing / raise.
+- Invitation: wrong email, unverified email, expired, revoked, already accepted, and replayed tokens all fail; success creates exactly one membership.
+- `PUBLIC` and `bos_auth` cannot execute the functions; `bos_app` cannot call them with a crafted `search_path` to shadow `sha256`, `now` or tables (create a temp-schema shadow object and assert it is not used).
+- `bos_definer` cannot log in.
+- A schema test asserts every `SECURITY DEFINER` function in the database has a fixed `search_path`, is owned by `bos_definer`, and has no `PUBLIC` execute grant.
+
+### 5.6 Global data: users and audit events
+
+`users` and `audit_events` are not tenant-owned, so they need their own rules against enumeration.
+
+**Users**
+
+```sql
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users FORCE ROW LEVEL SECURITY;
+CREATE POLICY users_visible_to_app ON users FOR SELECT TO bos_app
+  USING (
+    id = nullif(current_setting('app.user_id', true), '')::uuid
+    OR id IN (SELECT m.user_id FROM memberships m)  -- memberships is itself RLS-filtered to the current business
+  );
+CREATE POLICY users_auth ON users FOR ALL TO bos_auth USING (true) WITH CHECK (true);
+```
+
+- Tenant code sees only the current user and members of the current business, and only `id`, `name`, `image_url` (column grants). Member emails are shown via a `tenancy` service that reads them through a `SECURITY DEFINER` function restricted to the current business, and only for `members:manage` holders.
+- No API looks up arbitrary users by email. Invitations are created by email without revealing whether an account exists; sign-up and password reset return identical responses for existing and new emails.
+
+**Audit events**
+
+```sql
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
+CREATE POLICY audit_tenant_read ON audit_events FOR SELECT TO bos_app
+  USING (business_id = nullif(current_setting('app.business_id', true), '')::uuid);
+CREATE POLICY audit_tenant_write ON audit_events FOR INSERT TO bos_app
+  WITH CHECK (business_id = nullif(current_setting('app.business_id', true), '')::uuid);
+CREATE POLICY audit_platform_write ON audit_events FOR INSERT TO bos_auth
+  WITH CHECK (business_id IS NULL);
+```
+
+- **Platform events (`business_id IS NULL`, e.g. sign-in, password reset) are invisible to `bos_app`**: the read policy can never match a null. They are readable only by an operator role used from internal tooling, not by the web app. A later "your recent sign-ins" feature would use a session-bound definer function returning only the caller's own events.
+- Within a business, reading the audit log also requires the `audit:read` permission (owner/admin) at the app layer; `ip_address` and `user_agent` are returned only to owners.
+- No `UPDATE`/`DELETE` grants for `bos_app` or `bos_auth`: append-only. Retention scrubbing is done by `bos_jobs` with a column-limited `UPDATE` grant (§7.1).
+- Tests: a member of business A cannot read B's events, cannot read any platform event, cannot insert an event for B or with a null `business_id`, and cannot update or delete any event.
 
 ## 6. Indexing and performance notes
 
@@ -393,9 +584,31 @@ export function forTenant(ctx: TenantContext) {
 ## 7. Privacy and data lifecycle
 
 - **Export:** an owner can export all of a business's data (customers, contacts, activities) as CSV/JSON. Recorded in `audit_events`.
-- **Erasure of a contact (GDPR-style request):** a dedicated service hard-deletes the contact, scrubs its personal fields from related activities' `data`, and writes an audit event without the erased PII.
-- **Business deletion:** archive first (soft, reversible for a grace period, e.g. 30 days), then a hard-delete job removes all rows with that `business_id`. Backups age out per the provider's retention.
+- **Erasure of a contact (GDPR-style request):** a dedicated service hard-deletes the contact, scrubs its personal data from related activities' `subject`, `body` and `data` (see the history table in §4.7), and writes an audit event without the erased PII.
+- **Business deletion:** archive first (soft, reversible for a grace period, e.g. 30 days), then the `purge-archived-businesses` job (§7.1) removes all rows with that `business_id`. Backups age out per the provider's retention.
 - **Retention:** `audit_events.ip_address`/`user_agent` cleared after a retention window (e.g. 90 days), decision pending with D3 (jurisdiction).
+- **Expired sessions and invitations** are removed after a retention window.
+
+### 7.1 Scheduled jobs in Phase 1
+
+Business purge, audit retention scrubbing and session/invitation cleanup need something to run on a schedule, so Phase 1 **does** include a minimal job mechanism (this corrects the first draft's "no background jobs in Phase 1"). It is limited to scheduled maintenance. User-facing async work (email sending queues, imports, AI tasks) is still out of scope and will justify a real queue when it appears.
+
+**Mechanism:** the hosting platform's cron (e.g. Vercel Cron, or a system cron on another host) calls an internal route handler `POST /api/internal/jobs/[job]` authenticated with a dedicated secret (constant-time compare) and rejected from public origins. The handler connects as `bos_jobs`.
+
+| Job | Schedule | What it does | How it stays tenant-safe |
+|---|---|---|---|
+| `purge-archived-businesses` | Daily | Hard-deletes businesses archived longer than the grace period | `app_private.businesses_due_for_purge()` (definer, `bos_jobs` only) lists ids; each purge runs inside `withTenant` for that one business, so RLS limits every delete to it |
+| `scrub-audit-network-data` | Daily | Nulls `ip_address`/`user_agent` older than the retention window | Column-limited `UPDATE` grant to `bos_jobs` on `audit_events`; no other columns or tables |
+| `cleanup-expired-auth` | Daily | Deletes expired sessions, verifications and invitations past retention | Sessions/verifications through the auth adapter role; invitations through `withTenant` per business |
+
+Rules for every job:
+
+- **Idempotent**: safe to run twice or resume after a crash; works in bounded batches.
+- **Single-flight**: takes a PostgreSQL advisory lock per job name; a second concurrent run exits.
+- **Observable**: writes a row to `job_runs (job, started_at, finished_at, status, items, error)`; failures alert via error tracking.
+- **Dry-run mode** that reports what would be affected, used on staging before enabling destructive jobs in production.
+
+Tradeoff: HTTP-triggered cron is limited by the platform's function timeout and schedule granularity, but needs no extra service. If job volume grows, `pg-boss` (a queue inside the same PostgreSQL) is the next step, still without a new service.
 
 ## 8. Data-model open questions
 

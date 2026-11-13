@@ -112,6 +112,7 @@ business-os/
 │   │   ├── authz/                # authorize(), permission registry
 │   │   ├── actions/              # tenantAction() wrapper for Server Actions
 │   │   ├── audit/                # security audit log writer
+│   │   ├── jobs/                 # scheduled maintenance jobs (Phase 1e)
 │   │   ├── config/               # env validation (zod)
 │   │   └── errors/
 │   └── ui/
@@ -142,7 +143,7 @@ Notes:
 | `access` | none in Phase 1 (role→permission map in code) | `can(ctx, permission)`; permission registry | `tenancy`, `core` |
 | `customers` | `customers`, `contacts` | Customer and contact records | `access`, `activity`, `core` |
 | `activity` | `activities` | Business-facing timeline of what happened | `access`, `core` |
-| `core` (kernel) | `audit_events` | DB, tenant context, authz plumbing, audit, config | nothing |
+| `core` (kernel) | `audit_events`, `job_runs` | DB, tenant context, authz plumbing, audit, scheduled jobs, config | nothing |
 
 **Modules are not Zones.** A module is a data and logic boundary. A Zone is a navigation and UI grouping. The Customer Zone composes `customers` and `activity`; the future Sales Zone will also read `customers`. This separation is what keeps "one source of truth" intact as Zones are added: no Zone ever gets its own copy of customers.
 
@@ -338,21 +339,21 @@ Each layer below must independently prevent a cross-tenant read or write. A bug 
 - A CI check fails if a `"use server"` file exports a function not wrapped by `tenantAction`/`publicAction`.
 - **Next.js middleware/proxy is not a security boundary.** It may redirect unauthenticated users for UX, but authentication and authorisation are always re-checked in the layout, page, action or handler. (A 2025 Next.js vulnerability allowed middleware to be bypassed entirely; the design must not depend on it.)
 
-**Layer 3: tenant-scoped data access.**
+**Layer 3: tenant-scoped data access (unit of work).**
 
-- `core/db` exposes `db.forTenant(ctx)`, a Prisma client extension that:
-  - injects `businessId` into the `where` of every read, update and delete on tenant models;
-  - sets `businessId` on every create, rejecting a mismatched value;
-  - refuses to run on a tenant model if no context is present.
-- The unscoped client is available only to `core` and to explicitly named system jobs (e.g. migrations), and its use is grep-checked in CI.
+- `core/db` exposes `withTenant(ctx, work)`, which opens one Prisma **interactive transaction**, sets the tenant context as its first statement, and passes `work` a narrowed `TenantDb` client bound to that transaction. Every statement in the unit of work therefore runs on the same connection and transaction as the context (design and rationale in [data-model.md §5.3](./data-model.md#53-unit-of-work-how-the-tenant-context-reaches-postgresql)).
+- `TenantDb` injects `businessId` into every read, update and delete on tenant models, sets it on every create (rejecting a mismatch), and does not expose `$transaction` or the `*Unsafe` raw-SQL methods.
+- Module services accept a `TenantDb` parameter and never receive a client, so a tenant query outside a unit of work does not compile.
+- The unscoped clients (`bos_auth` for the auth adapter, `bos_jobs` for scheduled jobs) are importable only from their single owning file, enforced by lint and a test.
 
-**Layer 4: PostgreSQL Row-Level Security.**
+**Layer 4: PostgreSQL Row-Level Security and least-privilege roles.**
 
-- Every tenant-owned table has `ENABLE` and `FORCE ROW LEVEL SECURITY` with a policy `business_id = current_setting('app.business_id')::uuid`.
-- The application connects as a **non-owner role without `BYPASSRLS`**. Migrations run as a separate owner role.
-- The tenant-scoped client runs each operation in a transaction that first executes `SELECT set_config('app.business_id', $1, true)` (transaction-local, so it is safe with pooled connections in transaction mode).
-- If the setting is missing, `current_setting(..., true)` returns null and the policy matches no rows: **fail closed**.
-- Details and SQL in [data-model.md §5](./data-model.md#5-row-level-security).
+- Every tenant-owned table has `ENABLE` and `FORCE ROW LEVEL SECURITY` with a policy `TO bos_app` matching `business_id` to the transaction-local `app.business_id` setting.
+- The application connects as `bos_app`: not a table owner, no `BYPASSRLS`, no access to auth tables or platform audit events. Migrations run as `bos_owner`, the auth library as `bos_auth`, scheduled jobs as `bos_jobs` (roles and grants in [data-model.md §5.1](./data-model.md#51-roles-and-grants-least-privilege)).
+- With no setting, the policy matches nothing: **fail closed**.
+- The only paths around tenant RLS are three `SECURITY DEFINER` functions for pre-tenant operations (list my businesses, create business, accept invitation). They take the **session token, not a user id**, verify the session inside the database, use a fixed `search_path`, are owned by a dedicated no-login role, and are not executable by `PUBLIC` ([data-model.md §5.5](./data-model.md#55-pre-tenant-trusted-paths-app_private-security-definer-functions)).
+- `users` and `audit_events` are global tables with their own RLS and column grants, so tenant code cannot enumerate unrelated users or read platform audit events ([data-model.md §5.6](./data-model.md#56-global-data-users-and-audit-events)).
+- **This design is gated by a spike** with twelve concrete tests (same connection, fail closed, no carry-over, rollback, concurrency behind the pooler, raw queries, timeouts, overhead) before any Phase 1b feature work ([data-model.md §5.4](./data-model.md#54-rls-spike-what-must-be-proven-before-phase-1b-features)).
 
 **Layer 5: referential integrity across tenants.**
 
@@ -398,7 +399,7 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 | Hosting | Vercel (or any Node host) | Open decision D3 |
 | Database | Managed PostgreSQL 16+ with PITR backups | Neon, Supabase, RDS all fit; region per D3 |
 | Pooling | Provider pooler in transaction mode | Compatible with transaction-local `set_config` |
-| Background jobs | None in Phase 1 | Add a queue (e.g. pg-boss on Postgres) when the first async need appears |
+| Scheduled jobs | Platform cron → authenticated internal route, `bos_jobs` role, idempotent + advisory-locked, introduced in Phase 1e for purge/retention/cleanup only ([data-model.md §7.1](./data-model.md#71-scheduled-jobs-in-phase-1)) | A queue (e.g. pg-boss on Postgres) only when user-facing async work appears |
 | Email | Transactional provider for verification/invites | Open decision, low risk |
 | Observability | Structured logs + error tracking (e.g. Sentry) | `businessId`/`userId` tags, no PII |
 | Package manager | pnpm | Assumption |
@@ -408,16 +409,16 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 
 | ID | Decision | Recommendation | Needed by |
 |---|---|---|---|
-| D1 | Authentication provider | Better Auth, our own tenancy tables | Phase 1b |
+| D1 | Authentication provider | Better Auth, our own tenancy tables ([ADR 0001](./adr/0001-authentication-provider.md), proposed) | Phase 1b |
 | D2 | AI provider and abstraction | Defer; evaluate against §8 criteria | Before first AI feature |
-| D3 | Hosting, database vendor and **data region** (e.g. EU, UK, AU/NZ, US) | Depends on target market and data-residency obligations | Phase 1a |
-| D4 | Tenant in URL: path `/b/[slug]` vs subdomain `slug.app.com` | Path-based now; subdomains add DNS/cookie complexity with little Phase 1 benefit | Phase 1b |
+| D3 | Hosting, database vendor and **data region** | Vercel + managed Postgres in one region; region depends on target market ([ADR 0002](./adr/0002-hosting-and-data-region.md), proposed, needs region) | Phase 1a |
+| D4 | Tenant in URL: path `/b/[slug]` vs subdomain `slug.app.com` | Path-based ([ADR 0003](./adr/0003-tenant-in-url.md), proposed) | Phase 1b |
 | D5 | Customer ↔ Contact relationship | Contact belongs to at most one customer in Phase 1 (see data model) | Phase 1d |
 | D6 | Show planned Zones on Home? | Show as labelled "Not available yet" tiles with no data, so the product shape is visible | Phase 1c |
 | D7 | Locale, currency and date formats | Per-business locale/timezone/currency fields now; UI in English only | Phase 1b |
 | D8 | Repository | Settled: `reganwagteveld/business-os` | Done |
 
-Each accepted decision gets a short ADR in `docs/adr/`.
+Each decision gets a short ADR in `docs/adr/`. ADR 0004 records the database isolation design and will hold the spike's results.
 
 ## 11. Assumptions
 
@@ -434,7 +435,9 @@ Each accepted decision gets a short ADR in `docs/adr/`.
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
 | Cross-tenant data leak | Critical | Medium without controls | Seven layers in §7.3; isolation suite blocks merge |
-| RLS with Prisma adds complexity (transaction per operation, pooled connections) | Medium: perf and DX | Medium | Prove it in a Phase 1b spike with benchmarks before building features; fall back to app-layer-only scoping only by explicit decision |
+| RLS with Prisma adds complexity (interactive transaction per unit of work, pooled connections, prepared statements behind the pooler) | High if wrong: isolation; Medium: perf and DX | Medium | Twelve-test spike gates Phase 1b (data-model §5.4); tests stay in CI and re-run on any Prisma/pooler upgrade; any fallback needs an explicit decision |
+| `SECURITY DEFINER` functions become an isolation bypass | Critical | Low with controls | Session-token identity binding, fixed `search_path`, dedicated owner, no `PUBLIC` execute, schema test + impersonation tests |
+| Long units of work exhaust the connection pool | Medium | Medium | No network calls inside a unit of work; 5 s timeout; pool metrics alerting |
 | Cache keyed without tenant | Critical | Medium | `tenantCache()` helper, lint ban on raw cache APIs with tenant data, isolation tests on cached paths |
 | Server Actions treated as private functions | High | Medium | `tenantAction` wrapper + CI check |
 | Module boundaries erode into a "big ball of mud" | High over time | High without enforcement | Lint + dependency-cruiser in CI from the first commit |
