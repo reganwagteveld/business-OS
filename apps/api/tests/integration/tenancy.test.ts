@@ -137,13 +137,14 @@ describe('creating businesses (pre-tenant trusted path)', () => {
 });
 
 describe('invitations', () => {
-  it('accept_invitation succeeds when called directly as bos_app (diagnostic)', async () => {
+  it('accept_invitation works when called directly as bos_app, and only once', async () => {
     const owner = await newUser('owner');
     const { slug } = await createBusiness(owner);
     const invitee = await newUser('invitee');
     const { token } = await invite(owner, slug, invitee.email, 'MEMBER');
     const { rows } = await app.query('SELECT slug, role::text FROM app_private.accept_invitation($1, $2)', [invitee.token, token]);
     expect(rows).toEqual([{ slug, role: 'MEMBER' }]);
+    await expect(app.query('SELECT * FROM app_private.accept_invitation($1, $2)', [invitee.token, token])).rejects.toThrow(/invitation not valid/);
   });
 
   it('stores only a hash, accepts once for the matching verified email, and refuses everyone else', async () => {

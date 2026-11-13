@@ -55,8 +55,11 @@ DROP POLICY IF EXISTS definer_member_create ON public.memberships;
 CREATE POLICY definer_member_create ON public.memberships FOR INSERT TO bos_definer
   WITH CHECK (status = 'ACTIVE');
 DROP POLICY IF EXISTS definer_invite_read ON public.invitations;
+-- Accepted rows stay readable so the accepting UPDATE's new row passes the SELECT policy (PostgreSQL
+-- checks it when the UPDATE reads the table). Single use is enforced by the UPDATE policy below and
+-- by accept_invitation, which only takes rows with accepted_at IS NULL.
 CREATE POLICY definer_invite_read ON public.invitations FOR SELECT TO bos_definer
-  USING (accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now());
+  USING (revoked_at IS NULL AND expires_at > now());
 DROP POLICY IF EXISTS definer_invite_accept ON public.invitations;
 CREATE POLICY definer_invite_accept ON public.invitations FOR UPDATE TO bos_definer
   USING (accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now())
@@ -171,6 +174,7 @@ BEGIN
   SELECT i.id, i.business_id, i.email, i.role INTO v_invite
   FROM public.invitations i
   WHERE i.token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(p_invite_token, ''), 'UTF8')), 'hex')
+    AND i.accepted_at IS NULL
   FOR UPDATE;
   SELECT b.slug INTO v_slug FROM public.businesses b WHERE b.id = v_invite.business_id;
   IF v_user IS NULL OR v_verified IS NOT TRUE OR v_invite.id IS NULL OR v_slug IS NULL
