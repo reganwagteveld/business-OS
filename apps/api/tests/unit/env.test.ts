@@ -4,6 +4,8 @@ import { parseEnv } from '@/core/config/schema';
 
 const valid = {
   DATABASE_URL: 'postgresql://a:b@localhost:5432/db',
+  AUTH_DATABASE_URL: 'postgresql://auth:b@localhost:5432/db',
+  AUTH_SECRET: 'test-signing-key-0123456789-abcdefghijkl',
   APP_BASE_URL: 'http://localhost:3000',
   REGION: 'test-region',
   DATABASE_REGION: 'test-region',
@@ -17,6 +19,17 @@ describe('deployment environment', () => {
     expect(() => parseEnv({ ...valid, DATABASE_URL: 'mysql://a:b@h/db' })).toThrow('PostgreSQL'));
   it('rejects cross-region database connections', () =>
     expect(() => parseEnv({ ...valid, DATABASE_REGION: 'elsewhere' })).toThrow('must match'));
+});
+
+describe('authentication configuration', () => {
+  it('requires the auth role URL and a strong secret', () => {
+    expect(() => parseEnv({ ...valid, AUTH_DATABASE_URL: undefined })).toThrow('AUTH_DATABASE_URL');
+    expect(() => parseEnv({ ...valid, AUTH_SECRET: 'short' })).toThrow('32 characters');
+  });
+  it('refuses log-only email in Vercel production', () =>
+    expect(() => parseEnv({ ...valid, VERCEL_ENV: 'production' })).toThrow('real email'));
+  it('requires provider credentials for real email', () =>
+    expect(() => parseEnv({ ...valid, EMAIL_TRANSPORT: 'resend' })).toThrow('RESEND_API_KEY'));
 });
 
 describe('runtime region colocation', () => {

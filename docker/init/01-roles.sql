@@ -19,3 +19,8 @@ CREATE ROLE bos_maint NOLOGIN NOSUPERUSER NOBYPASSRLS;
 -- rebuilds its fixture schema here on every run.
 CREATE DATABASE business_os_spike OWNER bos_owner;
 GRANT CONNECT ON DATABASE business_os_spike TO bos_app, bos_jobs;
+
+-- Auth library role (ADR 0001, data-model §5.1): reaches the identity tables only.
+CREATE ROLE bos_auth LOGIN PASSWORD 'bos_local_auth_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
+GRANT CONNECT ON DATABASE business_os TO bos_auth;
+GRANT USAGE ON SCHEMA public TO bos_auth;

@@ -22,6 +22,7 @@
     "@business-os/contracts": "workspace:*",
     "@prisma/adapter-pg": "^7.0.0",
     "@prisma/client": "^7.0.0",
+    "better-auth": "1.7.22",
     "dotenv": "^16.6.0",
     "next": "^16.0.0",
     "pg": "^8.16.0",

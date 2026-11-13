@@ -215,6 +215,14 @@ describe('source rules (scripts/check-boundaries.mjs)', () => {
     expect(server([['core/config/migration.ts', 'const u = input.MIGRATION_DATABASE_URL;\n']])).toEqual([]);
   });
 
+  it('confines the bos_auth client and Better Auth to the identity module', () => {
+    expect(server([['modules/tenancy/server/x.ts', "import { getAuthPrisma } from '@/core/db/auth-client';\n"]])).toEqual(['auth-client-only-in-identity']);
+    expect(server([['core/db/index.ts', 'const u = env.AUTH_DATABASE_URL;\n']])).toEqual(['auth-client-only-in-identity']);
+    expect(server([['modules/identity/server/auth-adapter.ts', "import { getAuthPrisma } from '@/core/db/auth-client';\n"]])).toEqual([]);
+    expect(server([['app/api/v1/x/route.ts', "import { betterAuth } from 'better-auth';\n"]])).toEqual(['auth-library-only-in-identity']);
+    expect(server([['modules/identity/server/x.ts', "import { betterAuth } from 'better-auth';\n"]])).toEqual([]);
+  });
+
   it('forbids hard-coded region names in the API and the clients', () => {
     expect(server([['core/config/env.ts', "const r = 'us-east-1';\n"]])).toEqual(['no-region-literals']);
     expect(server([['core/config/regions.ts', "const r = 'us-east-1';\n"]])).toEqual([]);
