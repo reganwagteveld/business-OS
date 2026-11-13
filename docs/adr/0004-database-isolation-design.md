@@ -1,13 +1,13 @@
 # ADR 0004: Database isolation design (Prisma, RLS, roles)
 
-- Status: **Proposed** (design to be validated by the Phase 1b spike; results recorded here)
+- Status: **Accepted as the design to spike**, 2026-11-13 (Regan's third architecture review on PR #1). This accepts the design, not proof that it works: tests S1 to S13 must pass in the Phase 1b spike before any product features, and a failure of S1 to S10 or S13 reopens this ADR.
 - Date: 2026-11-13
 
 ## Context
 
 Tenant isolation relies on PostgreSQL Row-Level Security in addition to application checks. The first draft's example set the tenant context with a per-query batch transaction inside a Prisma client extension, which did not clearly establish that `set_config` and the query share a transaction and connection. Pre-tenant `SECURITY DEFINER` functions also trusted a caller-supplied `user_id`. Both were raised as blockers in architecture review.
 
-## Decision (proposed)
+## Decision
 
 The design in data-model.md §5:
 

@@ -1,6 +1,6 @@
 # Business OS: Architecture (Phase 1)
 
-> Status: **Draft for review.** Nothing in this document has been implemented. No application code or scaffolding should be written until this document, [data-model.md](./data-model.md) and [implementation-plan.md](./implementation-plan.md) have been reviewed and the open decisions in §10 are settled.
+> Status: **Reviewed (Phase 0).** Nothing in this document has been implemented. D1, D3 (region) and D4 are accepted; ADR 0004 is accepted as the design to spike, and the Phase 1b spike must pass before product features. Remaining open decisions in §10 are settled in the phase that needs them.
 
 ## 1. Purpose and principles
 
@@ -413,17 +413,17 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 
 | ID | Decision | Recommendation | Needed by |
 |---|---|---|---|
-| D1 | Authentication provider | Better Auth, our own tenancy tables ([ADR 0001](./adr/0001-authentication-provider.md), proposed) | Phase 1b |
+| D1 | Authentication provider | **Accepted:** Better Auth, our own tenancy tables, conditions verified in 1b ([ADR 0001](./adr/0001-authentication-provider.md)) | Phase 1b |
 | D2 | AI provider and abstraction | Defer; evaluate against §8 criteria | Before first AI feature |
 | D3 | Hosting, database vendor and data region | **Region accepted: US East (N. Virginia), us-east-1**, compute and database colocated, single region in Phase 1. Vercel + Neon proposed, verified in 1a ([ADR 0002](./adr/0002-hosting-and-data-region.md)) | Phase 1a |
-| D4 | Tenant in URL: path `/b/[slug]` vs subdomain `slug.app.com` | Path-based ([ADR 0003](./adr/0003-tenant-in-url.md), proposed) | Phase 1b |
+| D4 | Tenant in URL: path `/b/[slug]` vs subdomain `slug.app.com` | **Accepted:** path-based ([ADR 0003](./adr/0003-tenant-in-url.md)) | Phase 1b |
 | D5 | Customer ↔ Contact relationship | Contact belongs to at most one customer in Phase 1 (see data model) | Phase 1d |
 | D6 | Show planned Zones on Home? | Show as labelled "Not available yet" tiles with no data, so the product shape is visible | Phase 1c |
 | D7 | Locale, currency and date formats | Per-business locale, time zone and currency, required at onboarding (pre-filled `en-US`/`USD` for the US launch); UI in English only | Phase 1b |
 | E1 | Primary keys `(business_id, id)` on high-volume tables (for future partitioning) | Yes for `activities` and future transactional tables (§13.4) | Phase 1b |
 | D8 | Repository | Settled: `reganwagteveld/business-os` | Done |
 
-Each decision gets a short ADR in `docs/adr/`. ADR 0004 records the database isolation design and will hold the spike's results.
+Each decision gets a short ADR in `docs/adr/`. ADR 0004 (accepted as the design to spike) records the database isolation design and will hold the spike's results.
 
 ## 11. Assumptions
 

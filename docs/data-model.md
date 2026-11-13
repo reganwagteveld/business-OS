@@ -1,6 +1,6 @@
 # Business OS: Initial Data Model (Phase 1)
 
-> Status: **Draft for review.** Schemas below are illustrative design sketches, not migration files. See [architecture.md](./architecture.md) for the isolation model this data model relies on.
+> Status: **Reviewed (Phase 0).** Schemas below are illustrative design sketches, not migration files. See [architecture.md](./architecture.md) for the isolation model this data model relies on.
 
 ## 1. Scope
 

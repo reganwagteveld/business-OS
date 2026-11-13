@@ -1,6 +1,6 @@
 # ADR 0001: Authentication provider
 
-- Status: **Proposed** (Regan's review called Better Auth a reasonable default; awaiting acceptance)
+- Status: **Accepted**, 2026-11-13 (Regan's third architecture review on PR #1), subject to the conditions below being verified at the start of Phase 1b
 - Date: 2026-11-13
 - Decision ID: D1 (architecture.md §10)
 
@@ -15,13 +15,13 @@ Business OS needs email/password or magic-link sign-in, Google sign-in, email ve
 3. **WorkOS AuthKit** (hosted). Best path to enterprise SSO/SCIM, ahead of SMB needs; same sync concern.
 4. **Supabase Auth**. Couples auth to the database host.
 
-## Decision (proposed)
+## Decision
 
 Use **Better Auth** with its core user, session, account and verification tables only. Do **not** use its organisation plugin; `businesses` and `memberships` remain ours.
 
 The auth library connects through its own `bos_auth` database role (data-model.md §5.1), isolated from tenant code.
 
-## Conditions to verify before acceptance is final (first task of Phase 1b)
+## Conditions to verify (first task of Phase 1b; if any fails, this ADR is reopened)
 
 - Sessions can be stored as a **hash** of the token with expiry and revocation columns that `app_private.session_user_id()` can verify. If Better Auth stores raw tokens, either configure/extend it to store a hash, or add a hashed mirror column maintained in the same write. A design that falls back to a free `user_id` parameter is not acceptable.
 - Rate limiting can be backed by Postgres (or a shared store) so it works across serverless instances.

@@ -1,6 +1,6 @@
 # Business OS: Implementation Plan (Phase 1)
 
-> Status: **Draft for review.** No phase after Phase 0 starts until the architecture is approved and the decisions marked "needed by" for that phase are recorded as ADRs.
+> Status: **Reviewed (Phase 0).** No phase after Phase 0 starts until the architecture is approved and the decisions marked "needed by" for that phase are recorded as ADRs.
 
 Related: [architecture.md](./architecture.md) · [data-model.md](./data-model.md)
 
@@ -35,10 +35,10 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 
 **Acceptance criteria**
 
-- [ ] Regan has reviewed and approved the three documents (PR approved/merged).
-- [ ] D1, D3 and D4 ADRs (`docs/adr/0001` to `0003`) move from Proposed to Accepted, with D3's region filled in (they block 1a/1b). Other decisions may stay open until their phase.
-- [ ] ADR 0004 (database isolation design) is accepted as the design to spike in Phase 1b.
-- [ ] Any change requested in review is reflected in the docs before scaffolding begins.
+- [ ] Regan has reviewed and approved the three documents (reviews complete; checked when PR #1 merges).
+- [x] D1, D3 and D4 ADRs (`docs/adr/0001` to `0003`) move from Proposed to Accepted, with D3's region filled in (they block 1a/1b). D3's vendor choice stays Proposed until verified in Phase 1a. Other decisions may stay open until their phase.
+- [x] ADR 0004 (database isolation design) is accepted as the design to spike in Phase 1b.
+- [x] Any change requested in review is reflected in the docs before scaffolding begins (three review rounds on PR #1).
 
 ---
 
