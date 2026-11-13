@@ -223,6 +223,14 @@ describe('source rules (scripts/check-boundaries.mjs)', () => {
     expect(server([['modules/identity/server/x.ts', "import { betterAuth } from 'better-auth';\n"]])).toEqual([]);
   });
 
+  it('requires tenantRoute for every tenant handler and publicRoute elsewhere', () => {
+    expect(server([['app/api/v1/b/[slug]/x/route.ts', 'export async function GET() {}\n']])).toEqual(['tenant-route-wrapper']);
+    expect(server([['app/api/v1/b/[slug]/x/route.ts', "export const GET = publicRoute({}, h);\n"]])).toEqual(['tenant-route-wrapper']);
+    expect(server([['app/api/v1/b/[slug]/x/route.ts', "export const GET = tenantRoute({ permission: 'members:read' }, h);\n"]])).toEqual([]);
+    expect(server([['app/api/v1/businesses/route.ts', 'export async function POST() {}\n']])).toEqual(['tenant-route-wrapper']);
+    expect(server([['app/api/v1/health/route.ts', 'export function GET() {}\n']])).toEqual([]);
+  });
+
   it('forbids hard-coded region names in the API and the clients', () => {
     expect(server([['core/config/env.ts', "const r = 'us-east-1';\n"]])).toEqual(['no-region-literals']);
     expect(server([['core/config/regions.ts', "const r = 'us-east-1';\n"]])).toEqual([]);

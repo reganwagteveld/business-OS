@@ -16,7 +16,8 @@
     "db:check-migrations": "node scripts/check-migrations.mjs",
     "postinstall": "prisma generate && prisma generate --schema tests/isolation/prisma/schema.prisma",
     "verify:vendor": "node scripts/verify-vendor.mjs",
-    "test:isolation": "vitest run --config vitest.isolation.config.ts"
+    "test:isolation": "vitest run --config vitest.isolation.config.ts",
+    "db:privileged": "node scripts/apply-privileged.mjs"
   },
   "dependencies": {
     "@business-os/contracts": "workspace:*",

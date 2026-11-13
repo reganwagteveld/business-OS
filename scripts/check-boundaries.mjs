@@ -76,6 +76,19 @@ export function serverViolations(files) {
       errors.push(`no-region-literals: ${name} contains "${region[0]}"; regions come from validated environment config`);
     }
 
+    // Every tenant route handler goes through tenantRoute (architecture §7.3 layer 2); other v1
+    // handlers through publicRoute, except the listed unauthenticated or auth-library endpoints.
+    if (/^app\/api\/v1\/.*route\.ts$/.test(name)) {
+      const methods = [...content.matchAll(/export\s+(?:async\s+)?(?:const|function)\s+(GET|POST|PUT|PATCH|DELETE)\b(.*)/g)];
+      const tenant = name.startsWith('app/api/v1/b/');
+      const unwrappedAllowed = /^app\/api\/v1\/(health|me|auth)\//.test(name);
+      for (const [, method, rest] of methods) {
+        const wrapper = /=\s*(tenantRoute|publicRoute)\(/.exec(rest)?.[1];
+        if (tenant && wrapper !== 'tenantRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
+        if (!tenant && !wrapper && !unwrappedAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} must use publicRoute (or be an allowed unauthenticated endpoint)`);
+      }
+    }
+
     // The bos_auth client can read password hashes and session data (data-model §5.1).
     if (name !== 'modules/identity/server/auth-adapter.ts' && importsOf(content).some((spec) => /(^|\/)core\/db\/auth-client(\.ts)?$/.test(spec))) {
       errors.push(`auth-client-only-in-identity: ${name} imports the bos_auth client; only modules/identity/server/auth-adapter.ts may`);

@@ -8,6 +8,11 @@ import {
 
 export { HealthResponse } from './health.ts';
 export * from './auth.ts';
+export * from './tenancy.ts';
+import {
+  AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, ChangeRoleRequest, CreateBusinessRequest, CreateBusinessResponse,
+  CreateInvitationRequest, InvitationResponse, InvitationsResponse, ListBusinessesResponse, MemberResponse, MembersResponse, OkResponse,
+} from './tenancy.ts';
 
 export const API_VERSION = 'v1' as const;
 
@@ -15,7 +20,26 @@ export const endpoints = {
   health: { method: 'GET', path: '/api/v1/health', response: HealthResponse },
   me: { method: 'GET', path: '/api/v1/me', response: MeResponse },
   desktopToken: { method: 'POST', path: '/api/v1/auth/desktop/token', request: DesktopTokenRequest, response: DesktopTokenResponse },
+  listBusinesses: { method: 'GET', path: '/api/v1/businesses', response: ListBusinessesResponse },
+  createBusiness: { method: 'POST', path: '/api/v1/businesses', request: CreateBusinessRequest, response: CreateBusinessResponse },
+  acceptInvitation: { method: 'POST', path: '/api/v1/invitations/accept', request: AcceptInvitationRequest, response: AcceptInvitationResponse },
+  businessContext: { method: 'GET', path: '/api/v1/b/:slug', response: BusinessContextResponse },
+  listMembers: { method: 'GET', path: '/api/v1/b/:slug/members', response: MembersResponse },
+  changeMemberRole: { method: 'PATCH', path: '/api/v1/b/:slug/members/:membershipId', request: ChangeRoleRequest, response: MemberResponse },
+  removeMember: { method: 'DELETE', path: '/api/v1/b/:slug/members/:membershipId', response: OkResponse },
+  listInvitations: { method: 'GET', path: '/api/v1/b/:slug/invitations', response: InvitationsResponse },
+  createInvitation: { method: 'POST', path: '/api/v1/b/:slug/invitations', request: CreateInvitationRequest, response: InvitationResponse },
+  revokeInvitation: { method: 'DELETE', path: '/api/v1/b/:slug/invitations/:invitationId', response: OkResponse },
 } as const;
+
+/** Fills `:param` segments of an endpoint path; values are URL-encoded. */
+export function endpointPath(path: string, params: Record<string, string> = {}): string {
+  return path.replace(/:([A-Za-z]+)/g, (_, key: string) => {
+    const value = params[key];
+    if (value === undefined) throw new Error(`Missing path parameter ${key}`);
+    return encodeURIComponent(value);
+  });
+}
 
 /**
  * Endpoints served by the identity module's auth library under /api/v1/auth (catch-all route).

@@ -1,0 +1,94 @@
+// tenancy and core audit (docs/data-model.md §4.2–4.4, §4.8, §5; architecture §7.2–7.3).
+// Every tenant table forces Row-Level Security; the policies, grants and the pre-tenant SECURITY
+// DEFINER functions live in the migration and in prisma/privileged (applied by an admin role).
+
+/// Fixed roles for Phase 1. Code checks permission keys, never roles (modules/access).
+/// MANAGER (added in Phase 1b, PR 5) runs day-to-day work and can bring in MEMBERs, but cannot
+/// change settings or manage admins or owners.
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MANAGER
+  MEMBER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model Business {
+  id          String    @id @db.Uuid
+  name        String
+  slug        String    @unique
+  legalName   String?   @map("legal_name")
+  countryCode String    @map("country_code") @db.Char(2)
+  timeZone    String    @map("time_zone")
+  locale      String
+  currency    String    @db.Char(3)
+  homeRegion  String    @map("home_region")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  memberships Membership[]
+  invitations Invitation[]
+
+  @@map("businesses")
+}
+
+model Membership {
+  id         String           @id @db.Uuid
+  businessId String           @map("business_id") @db.Uuid
+  userId     String           @map("user_id") @db.Uuid
+  role       MembershipRole   @default(MEMBER)
+  status     MembershipStatus @default(ACTIVE)
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@unique([businessId, id])
+  @@index([userId])
+  @@map("memberships")
+}
+
+/// The raw invitation token is only in the email link; token_hash = hex(sha256(token)).
+model Invitation {
+  id          String         @id @db.Uuid
+  businessId  String         @map("business_id") @db.Uuid
+  email       String
+  role        MembershipRole @default(MEMBER)
+  tokenHash   String         @unique @map("token_hash")
+  invitedById String         @map("invited_by_id") @db.Uuid
+  expiresAt   DateTime       @map("expires_at") @db.Timestamptz
+  acceptedAt  DateTime?      @map("accepted_at") @db.Timestamptz
+  revokedAt   DateTime?      @map("revoked_at") @db.Timestamptz
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, id])
+  @@index([businessId, email])
+  @@map("invitations")
+}
+
+/// Append-only security log. business_id is null for platform events.
+model AuditEvent {
+  id          String   @id @db.Uuid
+  businessId  String?  @map("business_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  targetType  String?  @map("target_type")
+  targetId    String?  @map("target_id") @db.Uuid
+  metadata    Json     @default("{}")
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([businessId, createdAt(sort: Desc)])
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@map("audit_events")
+}
