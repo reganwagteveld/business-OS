@@ -100,7 +100,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # Only the desktop app and the packages it uses: the desktop build never installs the API.
+      - run: pnpm install --frozen-lockfile --filter "@business-os/desktop..."
       # Unsigned verification build only. Code signing, notarisation and distribution are decided
       # before the first release (ADR 0005, open decisions); no artifacts are published.
       - name: Build the Tauri app (unsigned)
