@@ -194,7 +194,7 @@ describe('RLS spike (data-model §5.4)', () => {
         try {
           await withTenant(ctx(businessId), async (db) => {
             const customers = await db.customer.findMany();
-            if (i % 7 === 0) await db.$queryRaw`SELECT pg_sleep(0.002)`; // widen the interleaving window
+            if (i % 7 === 0) await db.$queryRaw`SELECT 1 AS slept FROM pg_sleep(0.002)`; // widen the interleaving window
             const raw = await db.$queryRaw<{ business_id: string }[]>`SELECT business_id::text FROM contacts`;
             const own = await db.business.findMany();
             const seen = [...customers.map((c) => c.businessId), ...raw.map((r) => r.business_id), ...own.map((b) => b.id)];
@@ -205,7 +205,7 @@ describe('RLS spike (data-model §5.4)', () => {
           });
           completed++;
         } catch (error) {
-          failures.push(`unit ${i}: ${(error as Error).message.split('\n')[0]}`);
+          failures.push(`unit ${i}: ${(error as Error).message.trim().slice(0, 300)}`);
         }
       }
     }
@@ -300,12 +300,12 @@ describe('RLS spike (data-model §5.4)', () => {
         async (db) => {
           pidInside = (await db.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`)[0]!.pid;
           await db.customer.create({ data: { id, businessId: A, displayName: 'S10 partial' } });
-          await db.$queryRaw`SELECT pg_sleep(1.5)`;
+          await db.$queryRaw`SELECT 1 AS slept FROM pg_sleep(1.5)`;
           await db.customer.create({ data: { id: randomUUID(), businessId: A, displayName: 'S10 after timeout' } });
         },
         { timeoutMs: 500 },
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/transaction|timeout|expired|closed/i);
     const after = await inspectSingleConnection();
     expect(after.pid).toBe(pidInside);
     expect(after.setting ?? '').toBe('');
