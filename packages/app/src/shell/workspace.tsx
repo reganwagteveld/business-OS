@@ -154,7 +154,7 @@ export function Workspace({ user, client, onSignOut }: {
     }
     setView({ kind: 'choose', businesses: result.data.businesses });
   }, [client]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
   const select = async (businesses: Business[], slug: string) => {
     setView({ kind: 'loading' });
     const result = await client.context(slug);
