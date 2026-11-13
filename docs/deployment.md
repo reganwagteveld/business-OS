@@ -61,9 +61,15 @@ Both URLs need `sslmode=require`. The app refuses to start if either variable is
 3. Add the variables above for Preview and Production.
 4. Deploy and check `GET /api/v1/health` returns `{"status":"ok","service":"business-os-api","apiVersion":"v1"}` with `Cache-Control: private, no-store`; a mismatched function region fails the check at startup.
 
-## 4a. Browser app
+## 4a. Browser app (same origin as the API, D9b)
 
-A second Vercel project (or the same domain via rewrites, decision D9b) with Root Directory `apps/web`, framework Vite, output `dist`. Its only variable is `VITE_API_BASE_URL` (the API's public URL); it must not be given any server variable. Add its origin to the API's `CORS_ALLOWED_ORIGINS`.
+A second Vercel project, `business-os-web`, with Root Directory `apps/web` (framework Vite, output `dist`, settings in `apps/web/vercel.json`). Its public origin is the origin of the whole product: the browser app and `/api/*` are served from it, so the session cookie is first-party and host-only (ADR 0005 addendum).
+
+- `vercel.json` rewrites `/api/*` to the API project's deployment and every other path to `index.html` (client-side routes such as `/sign-in`, `/reset-password`, `/invite`). It also sets the browser app's security headers, including a CSP whose `connect-src` is `'self'` only.
+- Variable for the web project: `VITE_API_BASE_URL` = the web project's own public origin (public value, no secrets).
+- API project: `APP_BASE_URL` must equal that same origin. It drives the cookie, the Origin check on auth requests and the links in emails. Changing it signs everyone out.
+- The desktop app calls the API cross-origin, so the API project needs `CORS_ALLOWED_ORIGINS=tauri://localhost,http://tauri.localhost` (exact origins only).
+- A custom domain (for example `app.pixakova.com`) can be added later: attach it to the web project and update `APP_BASE_URL` and `VITE_API_BASE_URL` to it.
 
 ## 4b. Desktop app
 
