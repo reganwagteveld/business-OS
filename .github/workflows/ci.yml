@@ -38,6 +38,12 @@ jobs:
       DATABASE_REGION: ci
       CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:1420,tauri://localhost,http://tauri.localhost
       VITE_API_BASE_URL: http://localhost:3000
+      # RLS spike (data-model §5.4): direct admin/owner connections, and bos_app/bos_jobs through PgBouncer.
+      SPIKE_ADMIN_URL: postgresql://postgres:ci_postgres_only@localhost:5432/business_os_spike
+      SPIKE_OWNER_URL: postgresql://bos_owner:bos_local_owner_password@localhost:5432/business_os_spike
+      SPIKE_APP_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os_spike
+      SPIKE_APP_SINGLE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/spike_single
+      SPIKE_JOBS_URL: postgresql://bos_jobs:bos_local_jobs_password@127.0.0.1:6433/business_os_spike
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -59,6 +65,16 @@ jobs:
         run: pnpm test
       - name: Integration tests (PostgreSQL roles and isolation prerequisites)
         run: pnpm test:integration
+      - name: Start PgBouncer in transaction mode (RLS spike pooler)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pgbouncer
+          sudo systemctl stop pgbouncer || true
+          pgbouncer --version
+          cd docker/pgbouncer && pgbouncer -d pgbouncer.ini
+          for i in $(seq 1 20); do pg_isready -h 127.0.0.1 -p 6433 && break; sleep 0.5; done
+      - name: RLS spike and isolation tests (S1-S13, behind the pooler)
+        run: pnpm test:isolation
       - name: Migrations match schema
         run: pnpm db:check-migrations
       - name: Build API, web app and desktop frontend

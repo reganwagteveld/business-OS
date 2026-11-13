@@ -1,0 +1,37 @@
+// RLS spike client (docs/data-model.md §5.4). Generated for the isolation tests only; it mirrors
+// tests/isolation/fixtures/spike-schema.sql and is never used by the running API.
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Business {
+  id         String    @id @db.Uuid
+  slug       String    @unique
+  name       String
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz
+
+  @@map("businesses")
+}
+
+model Customer {
+  id          String @id @db.Uuid
+  businessId  String @map("business_id") @db.Uuid
+  displayName String @map("display_name")
+
+  @@unique([businessId, id], map: "customers_business_id_id_key")
+  @@map("customers")
+}
+
+model Contact {
+  id          String  @id @db.Uuid
+  businessId  String  @map("business_id") @db.Uuid
+  customerId  String? @map("customer_id") @db.Uuid
+  displayName String  @map("display_name")
+
+  @@map("contacts")
+}

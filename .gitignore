@@ -11,3 +11,4 @@ tests/.tmp/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/tauri.generated.conf.json
+apps/api/tests/isolation/generated/

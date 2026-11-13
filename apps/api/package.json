@@ -11,11 +11,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "db:generate": "prisma generate",
+    "db:generate": "prisma generate && prisma generate --schema tests/isolation/prisma/schema.prisma",
     "db:migrate": "prisma migrate dev",
     "db:check-migrations": "node scripts/check-migrations.mjs",
-    "postinstall": "prisma generate",
-    "verify:vendor": "node scripts/verify-vendor.mjs"
+    "postinstall": "prisma generate && prisma generate --schema tests/isolation/prisma/schema.prisma",
+    "verify:vendor": "node scripts/verify-vendor.mjs",
+    "test:isolation": "vitest run --config vitest.isolation.config.ts"
   },
   "dependencies": {
     "@business-os/contracts": "workspace:*",
