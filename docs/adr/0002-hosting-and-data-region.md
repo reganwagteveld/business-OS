@@ -23,7 +23,9 @@ The isolation design (ADR 0004) also requires: PostgreSQL 16+, custom roles with
 
 | Layer | Proposed | Region setting |
 |---|---|---|
-| Application | Vercel | Functions region `iad1` (Washington, D.C. / us-east-1) |
+| Cloud API (`apps/api`) | Vercel | Functions region `iad1` (Washington, D.C. / us-east-1) |
+| Browser app (`apps/web`) | Vercel (static) | Global edge; contains no tenant data |
+| Desktop app (`apps/desktop`) | Installed on customers' machines (Windows, macOS) | Holds no tenant data at rest in Phase 1 (online-only, ADR 0005) |
 | PostgreSQL | Neon (fallback: Supabase Postgres or AWS RDS) | `aws-us-east-1` |
 | Error tracking | Sentry (or equivalent) | US data region |
 | Transactional email | Postmark, Resend or SES | US |
@@ -47,8 +49,9 @@ All Business OS customer data is intended to be stored and processed in the Unit
 | Data flow | Where it lives | Limitation / note |
 |---|---|---|
 | Primary database (all business data) | AWS us-east-1 via the database vendor | Single region; no cross-region replica |
-| Database backups and point-in-time recovery | Vendor-managed, expected in the same region | **Verify in Phase 1a** that the vendor does not store backups or WAL archives outside the region, and record the answer here |
+| Database backups and point-in-time recovery | Vendor-managed, expected in the same region | **Not confirmed (2026-11-13).** The Neon console and API show the project region (`aws-us-east-1`) and a 6-hour history window (Free plan) but not where history, WAL or backups are stored; Neon's public documentation says backups are kept in cloud object storage without naming a region. Accepted by the project owner as the best available evidence for now: **assumed, not verified**, to be in the project's region. Revisit with a written vendor answer before real customer data or a paid plan |
 | Application compute | Vercel `iad1` | Server functions process data in the US region |
+| Desktop and browser apps | Customer devices | Display tenant data fetched from the API, kept in memory only (no offline cache in Phase 1); the desktop session token is in the OS credential store (ADR 0005) |
 | CDN / edge network | Vercel's global edge | Static assets are cached worldwide. **Tenant data must not be cached at the edge**: tenant pages are dynamic and served with `Cache-Control: private, no-store`; this is tested |
 | Application and request logs | Vercel (US), plus any log drain | Logs carry `businessId`/`userId` but no customer PII payloads (architecture §7.3, layer 6). Log retention follows the vendor's plan |
 | Error tracking | Sentry US region (or equivalent) | Scrubbing of request bodies and PII fields enabled; verified by test in Phase 1e |
@@ -91,3 +94,10 @@ Known hard problem, recorded now: an organisation whose entities must be stored 
 - Platform cron with function time limits is the job runner (data-model.md §7.1); jobs must be batched.
 - Retention periods (DM5) are set for US requirements first and revisited per region.
 - Non-US customers are possible but served from the US until a regional deployment exists; sales and terms must say so.
+
+## Addendum 2026-11-13: desktop-first clients (ADR 0005)
+
+- The region decision and the colocation principle apply to the **API and database**, which stay together in us-east-1. The desktop and browser apps run on customers' devices and contain no server code, so they have no region.
+- The Vercel project's root directory is `apps/api`; `apps/api/vercel.json` pins the functions to `iad1`, and the deploy-config test reads it from there.
+- The API answers cross-origin requests only for `CORS_ALLOWED_ORIGINS` (validated at boot, no wildcards).
+- Future regional silos: the desktop app will learn its regional API from the global directory at sign-in (architecture §13.3), since one installed app may serve users in any region.

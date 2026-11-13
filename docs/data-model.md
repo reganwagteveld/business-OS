@@ -471,7 +471,7 @@ Why this shape:
 - **`set_config` is invoked with `$queryRaw`**, because it is a `SELECT` that returns a row; `$executeRaw` is meant for statements that return an affected-row count. The returned value is checked against the intended tenant, so a silently ignored call fails closed. That this works on the pinned Prisma version and driver adapter is test S1.
 - `set_config(..., true)` is **transaction-local**: PostgreSQL discards it at commit or rollback, so a pooled connection never carries a previous request's tenant.
 - `TenantDb` is a **narrowed type**: it exposes tenant models and `$queryRaw`, but not `$transaction` (no nesting) or `$executeRawUnsafe`/`$queryRawUnsafe` (no string-built SQL).
-- Module services receive a `TenantDb`, never a client, so they **cannot** run tenant queries outside `withTenant`. `tenantAction` and tenant page loaders open the unit of work; services just use it.
+- Module services receive a `TenantDb`, never a client, so they **cannot** run tenant queries outside `withTenant`. The `tenantRoute` wrapper (architecture §7.3, ADR 0005) opens the unit of work; services just use it.
 - The **database role is explicit**: `role: "app"` (default) connects as `bos_app`; `role: "jobs"` connects as `bos_jobs` and is only used by the purge job (§7.1). The same context-setting and fail-closed behaviour applies to both.
 
 Rules that follow:
@@ -514,7 +514,7 @@ A few operations must run before a tenant context exists: listing the signed-in 
 
 #### Identity binding
 
-No function takes a `user_id` argument. Each takes the **raw session token**, which the server reads from the request's HTTP-only cookie (never from a form field or query string), and resolves the user inside the database:
+No function takes a `user_id` argument. Each takes the **raw session token**, which the API reads from the request's HTTP-only cookie (browser app) or `Authorization: Bearer` header (desktop app, ADR 0005), never from a form field, request body or query string, and resolves the user inside the database:
 
 ```sql
 CREATE FUNCTION app_private.session_user_id(p_session_token text)
@@ -551,9 +551,9 @@ Each is `SECURITY DEFINER`, owned by `bos_definer`, has `SET search_path = pg_ca
 
 `businesses` requires `country_code`, `time_zone`, `locale`, `currency` and `home_region` (§4.2). They reach the database like this:
 
-1. **Pre-fill (server-rendered form, suggestions only).** The country defaults from the browser's `Accept-Language` region (no IP geolocation). Locale and currency are suggested from a small country-defaults table in code (for example `US → en-US, USD`; `GB → en-GB, GBP`; `AU → en-AU, AUD`; `DE → de-DE, EUR`). Time zone is suggested from the browser (`Intl.DateTimeFormat().resolvedOptions().timeZone`). The user sees and can change all four.
-2. **Validate in the app (reject, never silently default).** The onboarding Server Action is a `publicAction` that requires a signed-in, email-verified user (no tenant yet). Its zod schema checks: `country_code` against the ISO 3166-1 list; `time_zone` in `Intl.supportedValuesOf('timeZone')`; `currency` in `Intl.supportedValuesOf('currency')`; `locale` canonicalised with `Intl.getCanonicalLocales` and present in the supported-locale list; `name` 1 to 200 characters; `slug` format.
-3. **Call the function** with the session token from the cookie and the validated values. The action never sends a user id, business id or region.
+1. **Pre-fill (client form, suggestions only).** The country defaults from the system or browser locale (`navigator.language` region, in both the desktop and browser apps; no IP geolocation). Locale and currency are suggested from a small country-defaults table in code (for example `US → en-US, USD`; `GB → en-GB, GBP`; `AU → en-AU, AUD`; `DE → de-DE, EUR`). Time zone is suggested from the browser (`Intl.DateTimeFormat().resolvedOptions().timeZone`). The user sees and can change all four.
+2. **Validate in the app (reject, never silently default).** The onboarding API route is a `publicRoute` that requires a signed-in, email-verified user (no tenant yet). Its zod schema checks: `country_code` against the ISO 3166-1 list; `time_zone` in `Intl.supportedValuesOf('timeZone')`; `currency` in `Intl.supportedValuesOf('currency')`; `locale` canonicalised with `Intl.getCanonicalLocales` and present in the supported-locale list; `name` 1 to 200 characters; `slug` format.
+3. **Call the function** with the session token from the cookie or bearer header and the validated values. The route never sends a user id, business id or region.
 4. **Re-validate in the database (defence in depth).** The function and table `CHECK` constraints enforce: `country_code ~ '^[A-Z]{2}$'`, `currency ~ '^[A-Z]{3}$'`, `time_zone` exists in `pg_catalog.pg_timezone_names`, `locale` matches a BCP 47 pattern (`^[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?$`), slug format and not in `app_private.reserved_slugs`. Slug uniqueness is enforced by the unique index (which applies regardless of RLS), and a conflict raises a generic "slug unavailable".
 5. **Derive the region server-side.** `home_region` is **not a parameter**. The function reads it from `app_private.deployment_config`, a single-row table written by `bos_owner` when the deployment is provisioned. The app checks at boot that its `REGION` environment variable equals `deployment_config.region` and refuses to start otherwise, so code and database cannot disagree, and no caller can influence a business's region.
 6. **Rate limit.** The function refuses if the caller already created 5 businesses in the last 24 hours (counted from `OWNER` memberships), in addition to app-layer rate limiting.

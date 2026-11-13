@@ -1,0 +1,11 @@
+{
+  "//": "Root project: workspace-wide architecture tests and scripts. Each app and package has its own tsconfig.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": false,
+    "paths": { "@/*": ["./apps/api/src/*"] }
+  },
+  "include": ["tests/**/*.ts", "scripts/**/*.d.mts", "vitest.config.ts"]
+}

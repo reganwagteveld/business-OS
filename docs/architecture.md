@@ -1,6 +1,6 @@
 # Business OS: Architecture (Phase 1)
 
-> Status: **Reviewed (Phase 0).** Nothing in this document has been implemented. D1, D3 (region) and D4 are accepted; ADR 0004 is accepted as the design to spike, and the Phase 1b spike must pass before product features. Remaining open decisions in §10 are settled in the phase that needs them.
+> Status: **Reviewed (Phase 0); revised 2026-11-13 for the desktop-first decision ([ADR 0005](./adr/0005-desktop-first-client-architecture.md)).** D1, D3 (region), D4 and D9 are accepted; ADR 0004 is accepted as the design to spike, and the Phase 1b spike must pass before product features. Remaining open decisions in §10 are settled in the phase that needs them. The Phase 1a foundation (workspace, API skeleton, shared client, desktop shell, CI) is in PR #2.
 
 ## 1. Purpose and principles
 
@@ -10,7 +10,7 @@ Business OS is an AI-native, multi-tenant SaaS platform. Its **initial market is
 
 The principles below follow from that and act as tie-breakers for every design choice in this document:
 
-1. **One deployable application.** A single Next.js app and a single PostgreSQL database. No separate apps per Zone and no microservices until a measured need exists.
+1. **One backend, one client codebase.** A single cloud API (Next.js) and a single PostgreSQL database hold all business logic and data. One shared React client app is delivered as a **native desktop app (Windows, macOS) first** and a **companion browser app** (ADR 0005). No separate apps per Zone and no microservices until a measured need exists.
 2. **One business data model.** Every Zone reads and writes the same records (a customer is a customer, whether you reach it from Customer, Sales or Finance). Zones are views over shared data, not data silos.
 3. **Explicit domain boundaries inside the monolith.** Modules own their tables and expose a small public API. Boundaries are enforced by tooling, not convention.
 4. **Tenant isolation is defence in depth.** Application checks, a tenant-scoped data layer and PostgreSQL Row-Level Security each independently prevent cross-tenant access.
@@ -18,43 +18,41 @@ The principles below follow from that and act as tie-breakers for every design c
 6. **Build only what Phase 1 needs.** Extension points (Zone registry, permission keys, AI interface) are designed now so they don't need rework, but only Customer Zone functionality is built.
 7. **Simple for small customers, no artificial ceiling for enterprises.** SMBs are the starting market, not the limit. Phase 1 builds no enterprise functionality, but it must not make choices that block multi-entity organisations, enterprise permissions, regional or dedicated deployments, large volumes, or enterprise identity and compliance later. Enterprise capabilities arrive as optional layers that small customers never see. Decisions that would be expensive to reverse are listed and made deliberately (§13).
 8. **International by default.** The US is the first market, not an assumption baked into the model: every business has its own currency, locale and time zone, and the shared data model avoids US-only concepts (ADR 0002).
+9. **Clients are untrusted.** The desktop and browser apps never connect to the database and never contain server code or secrets. Authentication, authorisation, business rules and tenant isolation are enforced only in the API (ADR 0005).
 
 ## 2. Current repository state
 
-Inspected on 2026-11-13:
-
-- The repository `reganwagteveld/business-os` was created on 2026-11-13 and is **empty**: no commits, no branches, no files.
-- None of the other GitHub repositories accessible to this project is related to Business OS.
-- The project is therefore **greenfield**. There is no existing code, schema, CI or design system to preserve or migrate.
-- To allow a reviewable pull request, `main` was initialised with a single commit containing only a minimal `README.md`. These docs arrive in a PR against it.
+- 2026-11-13: the repository `reganwagteveld/business-os` was created empty (greenfield). The Phase 0 documents were merged in PR #1.
+- Phase 1a (PR #2) first scaffolded a single Next.js app, then, after the desktop-first decision (ADR 0005), was restructured into the pnpm workspace described in §4. What moved where is recorded in [migration-desktop-first.md](./migration-desktop-first.md). No product features exist yet.
 
 ## 3. System overview
 
 ```
-┌──────────────────────────── Browser ─────────────────────────────┐
-│  Home dashboard · Zone views · Command palette (⌘K)              │
-└───────────────────────────────┬──────────────────────────────────┘
-                                │ HTTPS (RSC, Server Actions, Route Handlers)
-┌───────────────────────────────▼──────────────────────────────────┐
-│  Next.js application (single deployable, App Router)             │
-│                                                                  │
-│  app/          thin routing layer (layouts, pages, actions)      │
-│     │                                                            │
-│  zones/        Zone manifests + registry (navigation, widgets)   │
-│     │                                                            │
-│  modules/      domain modules (public API → services → repos)    │
-│     │   identity · tenancy · access · customers · activity       │
-│     │                                                            │
-│  core/         shared kernel: db, tenant context, authz, errors, │
-│                audit, config, (later) ai                         │
-│  ui/           design system (tokens, shadcn/ui, patterns)       │
-└───────────────────────────────┬──────────────────────────────────┘
-                                │ Prisma (tenant-scoped client) + RLS session var
-┌───────────────────────────────▼──────────────────────────────────┐
-│  PostgreSQL: single database, shared schema, business_id on      │
-│  every tenant-owned row, RLS policies on every tenant table      │
-└──────────────────────────────────────────────────────────────────┘
-External (decisions pending): auth provider, AI provider, email delivery, hosting.
+┌─────── Desktop app (Windows, macOS) ───────┐   ┌──────── Browser app ────────┐
+│ Tauri 2 shell: native window, OS web view, │   │ static Vite build           │
+│ no custom commands, minimal permissions    │   │                             │
+│  └ shared client (packages/app + ui)       │   │  └ shared client            │
+│    Home · Zone views · Command palette     │   │                             │
+└─────────────────────┬──────────────────────┘   └──────────────┬──────────────┘
+                      │ HTTPS + JSON, /api/v1/... (packages/contracts)
+                      │ no database access, no server code, no secrets
+┌─────────────────────▼───────────────────────────────────────────▼─────────────┐
+│ Cloud API: Next.js route handlers (apps/api), Vercel iad1, renders no UI      │
+│                                                                               │
+│  app/api/v1/   thin routing layer: route handlers (tenantRoute wrapper)       │
+│     │                                                                         │
+│  modules/      domain modules (public API → services → repos)                 │
+│     │   identity · tenancy · access · customers · activity                    │
+│     │                                                                         │
+│  core/         shared kernel: db, tenant context, authz, http (CORS),         │
+│                errors, audit, config, (later) ai                              │
+└─────────────────────────────────────┬─────────────────────────────────────────┘
+                                      │ Prisma (tenant-scoped client) + RLS session var
+┌─────────────────────────────────────▼─────────────────────────────────────────┐
+│  PostgreSQL (Neon, aws-us-east-1): single database, shared schema,            │
+│  business_id on every tenant-owned row, RLS policies on every tenant table    │
+└───────────────────────────────────────────────────────────────────────────────┘
+External: email delivery, error tracking (ADR 0002); AI provider (D2, later).
 ```
 
 **Multi-tenancy model: shared database, shared schema, `business_id` column.**
@@ -69,69 +67,74 @@ The shared-schema choice is only safe because of the layered safeguards in §7. 
 
 ## 4. Repository structure
 
-A single repository, single package. A monorepo with workspaces (Turborepo, Nx) is **not** proposed: with one app and no shared external packages it adds tooling cost without benefit. Module boundaries are enforced with lint rules instead (§5.3). If a second deployable ever appears (e.g. a public API or background worker that needs separate scaling), promoting `core/` and `modules/` to workspace packages is a mechanical change.
+A **pnpm workspace** with three deployables and three shared packages (ADR 0005). Workspaces are used because there are now genuinely separate build targets (a native app, a static web app and a server), and because a package boundary is the strongest way to keep server code out of clients. No build orchestrator (Turborepo, Nx) is added: `pnpm -r` is enough at this size.
 
 ```
 business-os/
-├── docs/                         # architecture, data model, plan, ADRs
-│   └── adr/                      # one file per accepted decision
-├── prisma/
-│   ├── schema/                   # multi-file schema, one file per module
-│   │   ├── _base.prisma          # generator + datasource
-│   │   ├── identity.prisma
-│   │   ├── tenancy.prisma
-│   │   ├── customers.prisma
-│   │   └── activity.prisma
-│   ├── migrations/               # generated SQL + hand-written RLS SQL
-│   └── seed.ts                   # dev-only seed, clearly fake names, never in prod
-├── src/
-│   ├── app/                      # Next.js App Router: routing ONLY
-│   │   ├── (public)/             # sign-in, sign-up, accept-invite
-│   │   ├── (app)/b/[businessSlug]/
-│   │   │   ├── layout.tsx        # resolves tenant context, renders shell
-│   │   │   ├── page.tsx          # Home dashboard
-│   │   │   ├── customer/...      # Customer Zone routes → delegate to modules
-│   │   │   └── settings/...      # business settings, members
-│   │   └── api/                  # route handlers (auth callbacks, webhooks)
-│   ├── zones/
-│   │   ├── define-zone.ts        # ZoneManifest type + defineZone()
-│   │   ├── registry.ts           # static list of all Zone manifests
-│   │   └── customer/zone.ts      # one manifest per Zone
-│   ├── modules/
-│   │   ├── identity/             # users, sessions (wraps auth provider)
-│   │   ├── tenancy/              # businesses, memberships, invitations
-│   │   ├── access/               # roles, permissions, can()
-│   │   ├── customers/            # customers, contacts
-│   │   └── activity/             # activity timeline (cross-cutting)
-│   │       ├── index.ts          # PUBLIC API: the only importable file
-│   │       ├── server/           # services, repositories (server-only)
-│   │       ├── ui/               # module-specific components
-│   │       ├── schemas.ts        # zod input/output schemas
-│   │       └── *.test.ts
-│   ├── core/
-│   │   ├── db/                   # Prisma client, tenant-scoped extension
-│   │   ├── tenant/               # TenantContext, requireTenant()
-│   │   ├── authz/                # authorize(), permission registry
-│   │   ├── actions/              # tenantAction() wrapper for Server Actions
-│   │   ├── audit/                # security audit log writer
-│   │   ├── jobs/                 # scheduled maintenance jobs (Phase 1e)
-│   │   ├── config/               # env validation (zod)
-│   │   └── errors/
-│   └── ui/
-│       ├── tokens/               # design tokens (CSS variables, Tailwind theme)
-│       ├── components/           # shadcn/ui primitives (owned, not a dependency)
-│       └── patterns/             # composites: ZoneHeader, EntityTable,
-│                                 # EmptyState, Timeline, CommandPalette
-├── tests/
-│   ├── isolation/                # cross-tenant test suite (must stay green)
-│   └── e2e/                      # Playwright
-└── .github/workflows/            # CI
+├── apps/
+│   ├── api/                      # @business-os/api: Next.js cloud API (route handlers only)
+│   │   ├── prisma/
+│   │   │   ├── schema/           # multi-file schema, one file per module
+│   │   │   └── migrations/       # generated SQL + hand-written RLS SQL
+│   │   ├── src/
+│   │   │   ├── app/api/v1/       # route handlers: routing ONLY
+│   │   │   │   ├── health/       # liveness (Phase 1a)
+│   │   │   │   └── b/[businessSlug]/...  # tenant-scoped routes (Phase 1b+)
+│   │   │   ├── modules/
+│   │   │   │   ├── identity/     # users, sessions (wraps Better Auth)
+│   │   │   │   ├── tenancy/      # businesses, memberships, invitations
+│   │   │   │   ├── access/       # roles, permissions, can()
+│   │   │   │   ├── customers/    # customers, contacts
+│   │   │   │   └── activity/     # activity timeline (cross-cutting)
+│   │   │   │       ├── index.ts  # PUBLIC API: the only importable file
+│   │   │   │       └── server/   # services, repositories
+│   │   │   ├── core/
+│   │   │   │   ├── db/           # Prisma client, tenant-scoped extension
+│   │   │   │   ├── tenant/       # TenantContext, requireTenant()
+│   │   │   │   ├── authz/        # authorize(), permission registry
+│   │   │   │   ├── http/         # API headers, CORS allowlist, tenantRoute()
+│   │   │   │   ├── audit/        # security audit log writer
+│   │   │   │   ├── jobs/         # scheduled maintenance jobs (Phase 1e)
+│   │   │   │   ├── config/       # env validation (zod), region map
+│   │   │   │   └── errors/
+│   │   │   └── generated/        # Prisma client (generated, not committed)
+│   │   ├── tests/                # unit, contract and integration tests (real Postgres)
+│   │   └── vercel.json           # functions pinned to iad1
+│   ├── desktop/                  # @business-os/desktop: Tauri 2 app for Windows and macOS
+│   │   ├── src/                  # entry: renders <App platform="desktop">
+│   │   ├── src-tauri/            # Rust shell, tauri.conf.json (CSP), capabilities, icons
+│   │   └── scripts/              # per-build CSP (connect-src = API origin only)
+│   └── web/                      # @business-os/web: companion browser app (static Vite build)
+│       └── src/                  # entry: renders <App platform="web">
+├── packages/
+│   ├── contracts/                # @business-os/contracts: endpoint definitions + zod schemas,
+│   │                             # JSON Schema snapshot (schema/api-v1.json)
+│   ├── ui/                       # @business-os/ui: design tokens, Tailwind theme, shadcn/ui-style
+│   │                             # components, patterns (ZoneHeader, EntityTable, ...)
+│   └── app/                      # @business-os/app: shared client: Home, Zone manifests and
+│                                 # views, typed API client, client routing
+├── tests/architecture/           # workspace-wide boundary, client-security and contract tests
+├── scripts/check-boundaries.mjs  # source rules that import graphs cannot express
+├── tooling/                      # shared lint config for client packages
+├── docker/, docker-compose.yml   # local PostgreSQL 16 with the least-privilege roles
+└── .github/workflows/ci.yml      # workspace checks + desktop builds (Windows, macOS, Linux compile)
 ```
+
+**Allowed dependencies between workspace packages** (enforced by dependency-cruiser, §5.3):
+
+| From | May depend on | Must never depend on |
+|---|---|---|
+| `apps/api` | `contracts` | `ui`, `app`, any other app |
+| `apps/desktop`, `apps/web` | `app`, `ui` (and `contracts` through `app`) | `apps/api`, each other, database drivers, Prisma, `next`, `server-only` |
+| `packages/app` | `contracts`, `ui` | any app, server or database packages |
+| `packages/ui` | nothing internal | `app`, `contracts`, any app |
+| `packages/contracts` | `zod` only | everything else internal |
 
 Notes:
 
-- **`app/` is thin.** Pages load data via module public APIs and render module or `ui/` components. Business rules never live in `app/`.
-- **Server-only code** in `modules/*/server` and `core/db` imports the `server-only` package so it cannot be bundled to the client.
+- **Route handlers are thin.** They call module public APIs; business rules never live in `app/`.
+- **Only `apps/api` can reach PostgreSQL**, and inside it only `core/db` imports Prisma (§5.2 rule 6). The API is never a dependency of a client, so server code cannot be bundled into a client.
+- **Clients receive only public build-time configuration** (`VITE_API_BASE_URL`). No secret or database setting exists in a client package.
 - **The dev seed** uses obviously synthetic data ("Example Customer 1"), is never run in production, and is never shown as product content.
 
 ## 5. Domain boundaries
@@ -162,11 +165,13 @@ Future modules (not built in Phase 1, listed only to show where they would go): 
 
 ### 5.3 Enforcement
 
-- ESLint `no-restricted-imports` (or `eslint-plugin-boundaries`) for deep-import and layer rules (`ui` cannot import `modules/*/server`; `modules` cannot import `app`).
-- `dependency-cruiser` in CI for cycles and the module dependency graph above.
-- A unit test that fails if any module other than `core/db` imports `@prisma/client` directly.
+- **Workspace package boundaries** (§4): clients cannot import the API or server-only packages at all.
+- `dependency-cruiser` (`.dependency-cruiser.cjs`) in CI: cycles, module public APIs, layer rules inside the API (`modules` cannot import `app`; `core` imports nothing above it), Prisma only in `core/db`, no vendor SDKs in modules, and the package rules in §4.
+- Source rules (`scripts/check-boundaries.mjs`): no `businessId` reads outside `core/tenant`/`core/db`, no hard-coded region names, no client components in the API, and no server imports or database configuration in any client source.
+- Client security tests (`tests/architecture/clients.test.ts`): client manifests, the Tauri crate list, CSP and capabilities (ADR 0005).
+- Every rule is proven by a fixture test that expects the violation to be caught (`tests/architecture/boundaries.test.ts`).
 
-**Tradeoff:** lint-enforced boundaries are weaker than package boundaries (anyone can disable a rule) but have zero build overhead. Code review plus CI is judged sufficient for a small team.
+**Tradeoff:** module boundaries inside the API remain tool-enforced rules rather than packages, which keeps the API one deployable with no build overhead. The client/server line, where a mistake would ship server code to customers' machines, is a package boundary.
 
 ## 6. Zones: registration and navigation
 
@@ -181,7 +186,7 @@ Future modules (not built in Phase 1, listed only to show where they would go): 
 Each Zone is described by a typed, static manifest. The registry is a plain array assembled at build time; there is no runtime plugin loading.
 
 ```ts
-// src/zones/define-zone.ts  (illustrative, not final code)
+// packages/app/src/zones/define-zone.ts  (illustrative, not final code)
 export type ZoneStatus = "active" | "planned";
 
 export interface ZoneManifest {
@@ -191,7 +196,7 @@ export interface ZoneManifest {
   icon: IconName;                 // from the design-system icon set
   order: number;                  // position on Home and in the switcher
   status: ZoneStatus;             // planned Zones render no data
-  basePath: `/${string}`;         // "/customer" (under /b/[businessSlug])
+  basePath: `/${string}`;         // "/customer" (client route under /b/{businessSlug})
   requires: Permission;           // minimum permission to see the Zone
   nav: ZoneNavItem[];             // zone-local navigation
   homeWidgets?: HomeWidgetDef[];  // widgets contributed to Home
@@ -211,12 +216,12 @@ export interface HomeWidgetDef {
   title: string;
   requires: Permission;
   size: "sm" | "md" | "lg";
-  load: () => Promise<{ default: WidgetComponent }>; // lazy server component
+  load: () => Promise<{ default: WidgetComponent }>; // lazy client component; data via the API
 }
 ```
 
 ```ts
-// src/zones/customer/zone.ts  (illustrative)
+// packages/app/src/zones/customer/zone.ts  (illustrative)
 export const customerZone = defineZone({
   id: "customer",
   label: "Customer",
@@ -233,7 +238,7 @@ export const customerZone = defineZone({
   homeWidgets: [
     { id: "recent-activity", title: "Recent customer activity",
       requires: "activity:read", size: "md",
-      load: () => import("@/modules/activity/ui/recent-activity-widget") },
+      load: () => import("./widgets/recent-activity") },
   ],
   commands: [
     { id: "new-customer", label: "New customer", requires: "customers:write", href: "/new" },
@@ -243,11 +248,12 @@ export const customerZone = defineZone({
 
 ### 6.3 How the pieces fit
 
-- **Routing.** Next.js uses file-system routes, so each active Zone also has a route folder under `app/(app)/b/[businessSlug]/<zone>/`. Route files are thin and delegate to module UI. A test asserts that every `active` manifest has a matching route folder and vice versa, so the registry and routes cannot drift.
-- **Visibility.** Shell, Home, switcher and command palette all derive from one function: `visibleZones(ctx) = registry.filter(z => can(ctx, z.requires))`. Nav items, widgets and commands are filtered the same way. Hiding a link is a UX convenience only: every page and action re-checks permissions on the server (§7).
+- **Where Zones live.** Zone manifests, views and client routes live in the shared client app (`packages/app/src/zones`), so the desktop and browser apps render the same Zones (ADR 0005). Their data comes only from API endpoints declared in `packages/contracts`, served by the modules in `apps/api`. Widgets are client components that call the API; `load` in the manifest is a lazy client import.
+- **Routing.** Client routes follow ADR 0003 (`/b/{businessSlug}/<zone>/...`); the matching API routes are `/api/v1/b/{businessSlug}/...`. A test asserts that every `active` manifest has a client route and that every API endpoint it uses exists in the contracts, so the registry, routes and API cannot drift. The client router library is chosen in Phase 1c.
+- **Visibility.** Shell, Home, switcher and command palette all derive from one function: `visibleZones(permissions) = registry.filter(z => permissions.includes(z.requires))`, using the permissions the API returns for the current membership. Nav items, widgets and commands are filtered the same way. Hiding a link is a UX convenience only: every API route re-checks permissions on the server (§7).
 - **Planned Zones.** Sales, Finance, Projects, Operations and People are registered with `status: "planned"`, no routes, no widgets and no data. Whether they appear on Home (as clearly labelled "Not available yet" tiles) or are hidden entirely is an open decision (§10, D6).
 - **Per-business enablement (later).** A `business_zone_settings` table can later let a business turn Zones on or off. It is not needed in Phase 1 and is deliberately not built.
-- **Adding a Zone** is: a module (if new data is needed), a manifest, a route folder, and permission keys. No changes to shell code. This is the main scalability property of the model.
+- **Adding a Zone** is: a module and API routes (if new data is needed), contracts for those routes, a manifest and client views, and permission keys. No changes to shell code. This is the main scalability property of the model.
 
 ### 6.4 Navigation UX
 
@@ -263,9 +269,10 @@ export const customerZone = defineZone({
 
 ### 6.5 Design system
 
-- Tailwind CSS with design tokens as CSS variables (colour, spacing, radius, typography, Zone accent colours), light and dark themes from the start.
-- shadcn/ui components are copied into `src/ui/components` and owned by the project.
-- Shared patterns in `src/ui/patterns` (`ZoneHeader`, `EntityTable`, `EntityForm`, `EmptyState`, `Timeline`, `DetailPanel`) are the only way Zones build standard screens, so all Zones look and behave the same.
+- One design system for desktop and web, in `packages/ui`: Tailwind CSS with design tokens as CSS variables (colour, spacing, radius, typography, Zone accent colours), light and dark themes from the start.
+- shadcn/ui components are copied into `packages/ui/src/components` and owned by the project.
+- Desktop conventions (keyboard shortcuts, window sizing, menus) are added in the shared app and adapt per platform only where the OS expects it; there is no separate desktop UI.
+- Shared patterns in `packages/ui/src/patterns` (`ZoneHeader`, `EntityTable`, `EntityForm`, `EmptyState`, `Timeline`, `DetailPanel`) are the only way Zones build standard screens, so all Zones look and behave the same.
 - Accessibility target: WCAG 2.2 AA (keyboard navigation, focus states, contrast, labelled controls).
 
 ## 7. Authentication, authorisation and tenant isolation
@@ -291,10 +298,12 @@ Options evaluated:
 
 **Recommendation: Better Auth**, using its core user/session/account tables only, with **our own `businesses` and `memberships` tables as the tenancy source of truth** (we would not use its organisation plugin, to avoid two membership models). Reasons: user data stays in our database alongside the business data model, no per-seat cost for SMB customers, and no webhook sync. **Revisit if** enterprise SSO/SCIM becomes a near-term requirement, which would favour WorkOS.
 
+**Native and browser clients (ADR 0005).** The browser app uses an HTTP-only session cookie on the same site as the API. The desktop app signs in through the system browser and receives a revocable session token (PKCE code exchange) that it stores only in the OS credential store and sends as a bearer token. Both resolve to the same server-side session. Mechanism details: D9a.
+
 Baseline requirements regardless of provider:
 
 - Email + password and/or magic link; Google sign-in; optional TOTP 2FA (required for owners later).
-- HTTP-only, `Secure`, `SameSite=Lax` session cookies; server-side session revocation.
+- Browser: HTTP-only, `Secure`, `SameSite=Lax` session cookies with an `Origin` check on mutating requests. Desktop: bearer session tokens in the OS credential store, never in web storage. Server-side session revocation for both.
 - Email verification before a user can create or join a business.
 - Rate limiting on sign-in, sign-up, password reset and invitation endpoints.
 
@@ -332,15 +341,15 @@ Each layer below must independently prevent a cross-tenant read or write. A bug 
 
 **Layer 1: tenant context is derived server-side, never trusted from the client.**
 
-- The active business comes from the URL segment `/b/[businessSlug]`, resolved on the server to a `business_id` **and** verified against the signed-in user's membership on every request.
+- The active business comes from the API path segment `/api/v1/b/{businessSlug}`, resolved on the server to a `business_id` **and** verified against the signed-in user's membership on every request. The desktop and browser apps are untrusted clients: nothing they send is trusted for identity or tenancy.
 - `business_id` is never accepted from form data, query strings or request bodies. Zod schemas for actions do not contain it.
 - `requireTenant()` returns an immutable `TenantContext { businessId, userId, membershipId, role, permissions }` and is the only way to obtain one.
 - Membership is re-checked per request (cached only within the request), so removing a member takes effect immediately.
 
 **Layer 2: every entry point goes through a wrapper.**
 
-- Server Actions and Route Handlers are public HTTP endpoints regardless of where they are called from. All tenant-scoped actions are defined via `tenantAction({ permission, input: zodSchema }, handler)`, which resolves the tenant, authorises, validates input and passes `ctx` to the handler.
-- A CI check fails if a `"use server"` file exports a function not wrapped by `tenantAction`/`publicAction`.
+- Route handlers are public HTTP endpoints. All tenant-scoped routes are defined via `tenantRoute({ permission, input: contractSchema }, handler)`, which authenticates (cookie or bearer session), resolves the tenant, authorises, validates input with the contract schema and passes `ctx` to the handler. Pre-tenant routes use `publicRoute`. (These replace the `tenantAction`/`publicAction` wrappers of the web-only design; Server Actions are not used, ADR 0005.)
+- A CI check fails if a route handler under `app/api/v1/b/` is not wrapped by `tenantRoute`, or one elsewhere under `app/api/v1/` is not wrapped by `publicRoute` or explicitly listed as unauthenticated (such as `health`).
 - **Next.js middleware/proxy is not a security boundary.** It may redirect unauthenticated users for UX, but authentication and authorisation are always re-checked in the layout, page, action or handler. (A 2025 Next.js vulnerability allowed middleware to be bypassed entirely; the design must not depend on it.)
 
 **Layer 3: tenant-scoped data access (unit of work).**
@@ -365,6 +374,7 @@ Each layer below must independently prevent a cross-tenant read or write. A bug 
 
 **Layer 6: caches, files, search and logs.**
 
+- API responses carrying tenant data are `Cache-Control: private, no-store`, so no CDN or shared cache stores them. Clients keep tenant data in memory only (no offline cache in Phase 1, ADR 0005).
 - Any server cache (`use cache`, `unstable_cache`, `fetch` cache, external cache) that stores tenant data **must include `businessId` in its key**, enforced by a `tenantCache()` helper; direct use of the Next.js cache APIs with tenant data is banned by lint. Cross-tenant cache bleed is one of the most common multi-tenant bugs in Next.js apps.
 - Future file storage uses `businesses/{businessId}/...` key prefixes with signed, short-lived URLs.
 - Future search indexes and AI embeddings carry `business_id` and are always filtered by it server-side.
@@ -379,9 +389,11 @@ Each layer below must independently prevent a cross-tenant read or write. A bug 
 ### 7.4 Other security baselines
 
 - Non-guessable IDs (UUIDv7) for all records; slugs are for display and routing only and are always resolved through membership.
-- Security headers (CSP, HSTS, `X-Content-Type-Options`, `frame-ancestors 'none'`).
+- Security headers (CSP, HSTS, `X-Content-Type-Options`, `frame-ancestors 'none'`) on the API and browser app. The desktop app has its own strict CSP whose `connect-src` is only the configured API origin, `withGlobalTauri: false`, and only `core:default` permissions (ADR 0005).
+- CORS: an exact origin allowlist from validated config (`CORS_ALLOWED_ORIGINS`), never a wildcard.
 - `audit_events` table (security log, append-only) for sign-ins, membership changes, role changes, exports and deletions.
-- Secrets only in the hosting provider's secret store; env validated at boot.
+- Secrets only in the hosting provider's secret store, used only by the API; env validated at boot. Client builds receive only `VITE_*` public settings, and CI checks client bundles for database configuration.
+- Desktop releases are code-signed and notarised, and updates are signed (D9c, D9d) before any external distribution.
 - Dependency scanning (Dependabot/Renovate) and `npm audit` in CI.
 
 ## 8. AI-native foundations (design only)
@@ -389,7 +401,7 @@ Each layer below must independently prevent a cross-tenant read or write. A bug 
 No AI features are built in Phase 1. "AI-native" is protected now by decisions that would be expensive to retrofit:
 
 1. **Structured, well-described data.** The shared data model, typed activity records and zod schemas are what an AI assistant will read and act on. Clean data is the main AI investment in Phase 1.
-2. **Actions as the AI's hands.** Every write goes through `tenantAction` with a zod schema and a permission. A future assistant invokes the same actions as tools, so it can never do more than the signed-in user can, and every AI action is authorised, validated and audited like a human one.
+2. **Actions as the AI's hands.** Every write goes through a `tenantRoute` with a contract schema and a permission. A future assistant invokes the same actions as tools, so it can never do more than the signed-in user can, and every AI action is authorised, validated and audited like a human one.
 3. **Provider abstraction.** A future `core/ai` module exposes a narrow interface (`generate`, `stream`, `embed`, tool calling). The provider is an **open decision** (§10, D2).
 4. **Tenant-safe retrieval.** Any context sent to a model is fetched through the tenant-scoped data layer. Embeddings, if used, live in Postgres (pgvector) with `business_id` and RLS, not in a separate unscoped vector store.
 5. **Attribution.** `activities.actor_type` already distinguishes `user`, `system` and (future) `ai`, so AI-made changes are visible in the timeline.
@@ -400,13 +412,15 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 
 | Concern | Proposed default | Notes |
 |---|---|---|
-| Hosting | Vercel, functions in `iad1` (us-east-1) | ADR 0002; app kept portable (Next.js standalone output, platform services behind adapters) |
+| Hosting (API) | Vercel, functions in `iad1` (us-east-1) | ADR 0002; app kept portable (Next.js standalone output, platform services behind adapters) |
+| Browser app | Static Vite build on Vercel, same site as the API | No tenant data in static assets; domain layout is D9b |
+| Desktop app | Tauri 2, Windows (WebView2) and macOS (WKWebView) | Built in CI on both; signing, notarisation and updates before external release (D9c, D9d) |
 | Database | Managed PostgreSQL 16+ with PITR backups, AWS us-east-1 | Neon proposed; colocated with compute (ADR 0002) |
 | Pooling | Provider pooler in transaction mode | Compatible with transaction-local `set_config` |
 | Scheduled jobs | Platform cron → authenticated internal route, `bos_jobs` role, idempotent + advisory-locked, introduced in Phase 1e for purge/retention/cleanup only ([data-model.md §7.1](./data-model.md#71-scheduled-jobs-in-phase-1)) | A queue (e.g. pg-boss on Postgres) only when user-facing async work appears |
 | Email | Transactional provider for verification/invites | Open decision, low risk |
 | Observability | Structured logs + error tracking (e.g. Sentry) | `businessId`/`userId` tags, no PII |
-| Package manager | pnpm | Assumption |
+| Package manager | pnpm workspace (`apps/*`, `packages/*`) | ADR 0005 |
 | Testing | Vitest (unit/integration against real Postgres), Playwright (e2e) | Integration tests use a real database, not mocks, because RLS must be exercised |
 
 ## 10. Open decisions
@@ -422,6 +436,11 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 | D7 | Locale, currency and date formats | Per-business locale, time zone and currency, required at onboarding (pre-filled `en-US`/`USD` for the US launch); UI in English only | Phase 1b |
 | E1 | Primary keys `(business_id, id)` on high-volume tables (for future partitioning) | Yes for `activities` and future transactional tables (§13.4) | Phase 1b |
 | D8 | Repository | Settled: `reganwagteveld/business-os` | Done |
+| D9 | Client architecture | **Accepted:** desktop-first (Tauri 2, Windows and macOS) plus a companion browser app, one shared React client, Next.js as API only ([ADR 0005](./adr/0005-desktop-first-client-architecture.md)) | Done |
+| D9a | Desktop sign-in mechanism (deep link vs loopback) and credential-store plugin | System browser + PKCE + OS credential store; details open | Phase 1b |
+| D9b | Browser app hosting and domains (same origin vs `app.`/`api.`) | Same site as the API so the session cookie is first-party | Phase 1b |
+| D9c | Desktop app identifier, code signing and notarisation | Placeholder `com.business-os.desktop` until decided; cannot change after release | Before any external build |
+| D9d | Desktop auto-update | Tauri updater with signed manifests | Before first external release |
 
 Each decision gets a short ADR in `docs/adr/`. ADR 0004 (accepted as the design to spike) records the database isolation design and will hold the spike's results.
 
@@ -430,7 +449,8 @@ Each decision gets a short ADR in `docs/adr/`. ADR 0004 (accepted as the design 
 - A small team (one to a few developers) builds Phase 1, so operational simplicity is weighted heavily.
 - Initial go-to-market: English-speaking US small businesses with roughly 5 to 50 employees, so Phase 1 tenants have roughly 1 to 50 users and up to low hundreds of thousands of records each. This is a hypothesis, not a limit (principles 7 and 8).
 - **A user can belong to more than one business** (e.g. an owner of two companies, or a bookkeeper serving several clients). This is supported from day one because retrofitting it is hard.
-- Web only (responsive), no native mobile apps in Phase 1.
+- Desktop-first: native Windows and macOS apps are the primary experience, with a companion browser app; no native mobile apps in Phase 1. The desktop app requires a network connection (no offline mode).
+- Supported desktop platforms: Windows 10 and later (WebView2) and macOS 11 and later. Linux is compiled in CI for fast feedback but is not a supported target.
 - English (US) UI first; the data model and formatting are locale-, currency- and time-zone-aware per business.
 - No billing/subscriptions in Phase 1.
 - Customer PII (names, emails, phones) is stored, so GDPR-style obligations (export, deletion) apply and are designed for.
@@ -444,12 +464,17 @@ Each decision gets a short ADR in `docs/adr/`. ADR 0004 (accepted as the design 
 | `SECURITY DEFINER` functions become an isolation bypass | Critical | Low with controls | Session-token identity binding, fixed `search_path`, dedicated owner, no `PUBLIC` execute, schema test + impersonation tests |
 | Long units of work exhaust the connection pool | Medium | Medium | No network calls inside a unit of work; 5 s timeout; pool metrics alerting |
 | Cache keyed without tenant | Critical | Medium | `tenantCache()` helper, lint ban on raw cache APIs with tenant data, isolation tests on cached paths |
-| Server Actions treated as private functions | High | Medium | `tenantAction` wrapper + CI check |
+| API routes treated as private because only our clients call them | High | Medium | `tenantRoute`/`publicRoute` wrappers + CI check; clients treated as untrusted (ADR 0005) |
+| Server code, secrets or database access shipped in the desktop or browser app | Critical | Low with controls | Package boundary, dependency-cruiser and source rules, manifest/crate deny lists, desktop CSP, bundle scan in CI (ADR 0005) |
+| Desktop shell gains privileges over time (plugins, IPC commands, broad CSP) | High | Medium | Capabilities and CSP checked by tests; any new capability needs an architecture review |
+| Stolen desktop session token | High | Low-medium | Token only in the OS credential store, short-lived and revocable server-side, sign-in in the system browser |
+| Client and API drift apart | Medium | Medium | Shared contracts, response validation on both sides, contract coverage and snapshot checks in CI, versioned paths |
+| Desktop distribution friction (unsigned builds, SmartScreen/Gatekeeper warnings, updates) | Medium (adoption) | High until solved | D9c and D9d decided before any external release; CI already builds both platforms |
 | Module boundaries erode into a "big ball of mud" | High over time | High without enforcement | Lint + dependency-cruiser in CI from the first commit |
 | Shared data model becomes a god-schema as Zones grow | Medium | Medium | Modules own tables; cross-module access via public API; ADR for any shared table |
 | Zone model feels slower than a sidebar for power users | Medium (UX) | Medium | Zone switcher, ⌘K, recent items; usability test in Phase 1c |
 | Auth vendor lock-in or migration | Medium | Low-medium | `identity` module boundary; our own users table is the reference |
-| Framework churn (Next.js and Prisma both had major releases in late 2025) | Medium | Medium | Pin versions; upgrade deliberately; keep framework code in `app/` and `core/` |
+| Framework churn (Next.js, Prisma, Vite and Tauri all release often) | Medium | Medium | Lockfile pinned; upgrade deliberately; keep framework code in `app/` and `core/`; Tauri shell kept free of custom Rust |
 | AI features leak data across tenants or exceed user permissions (incl. prompt injection from stored content) | Critical (later) | Medium | AI uses the same actions and tenant-scoped reads; treat stored content as untrusted in prompts; design review before first AI feature |
 | Scope creep into speculative Zone features | Medium | High | Phase 1 is Customer Zone only; other Zones stay `planned` with no data |
 | SMB-shaped choices block enterprise growth (single-entity tenant, role checks, US-only fields, vendor lock-in) | High over the long term | Medium | Principle 7; the irreversible-choices table in §13.6; preparations enforced by lint and acceptance criteria |
@@ -491,6 +516,7 @@ Ratings: **Open** (no Phase 1 change needed), **Prepared** (a small, cheap Phase
 **Assessment: Prepared for regional silos; Work later for dedicated deployments; Hard for one organisation split across regions.**
 
 - Regional silos (full stack per region from the same codebase) are described in [ADR 0002](./adr/0002-hosting-and-data-region.md). Prepared by: `business_id` on everything with no cross-tenant references, globally unique UUIDv7 ids, region values only in environment config, and `businesses.home_region`.
+- **Desktop clients and regions:** the desktop app talks to one API base URL. With regional silos it must learn its region's API at sign-in from the global directory (ADR 0002) rather than from a build-time setting; the API URL setting is therefore kept in one place in the client (`parseClientConfig`) so that change is local. CSP `connect-src` will then list the regional API origins.
 - **Dedicated enterprise deployments** (single-tenant stack, possibly in the customer's preferred region or cloud) use the same mechanism as a region with one business or organisation in it. To keep this possible: the app must stay deployable outside Vercel (Next.js standalone output, no proprietary storage or KV APIs in modules; platform services behind adapters in `core`), and infrastructure should be defined as code from Phase 1a so a new stack is reproducible. Customer-managed encryption keys are realistic only in dedicated deployments.
 - **Hard:** an organisation whose entities must be stored in different regions cannot have live, database-level cross-entity reporting. If this becomes a requirement it needs a specific design (e.g. residency-compliant aggregated exports into a reporting store), and may be offered only as a dedicated-deployment feature.
 
@@ -528,6 +554,8 @@ These are the decisions to get right now. Everything else in this document can b
 | Users keyed by our id, identity data in our database | Yes | Moving away from a hosted identity vendor later means migrating every user | Decided (ADR 0001) |
 | Permission-key authorisation with a resource argument | Yes | Role checks scattered through code are expensive to unwind | Decided |
 | Portability of hosting (no proprietary APIs in modules) | Yes | Vendor-specific APIs inside business logic block regions and dedicated deployments | Decided, enforced by lint in 1a |
+| Desktop application identifier and signing identity | Placeholder | Changing the identifier after release orphans installed apps' data and breaks the update path | **Decision D9c** |
+| Public API paths and contracts | `/api/v1`, contracts package | Installed desktop apps cannot be updated instantly, so old clients call the API for weeks; breaking a published contract strands them | Decided: additive changes only within a version (ADR 0005) |
 | Region of existing customers' data | us-east-1 | Moving live tenants needs a relocation procedure and customer communication | Accepted (ADR 0002); relocation possible by design |
 
 ### 13.7 Keeping it simple for small customers

@@ -1,0 +1,47 @@
+{
+  "name": "business-os",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.20.0",
+  "type": "module",
+  "scripts": {
+    "dev:api": "pnpm --filter @business-os/api dev",
+    "dev:web": "pnpm --filter @business-os/web dev",
+    "dev:desktop": "pnpm --filter @business-os/desktop tauri dev",
+    "build": "pnpm -r build",
+    "build:desktop": "pnpm --filter @business-os/desktop tauri:build",
+    "typecheck": "pnpm -r typecheck && tsc --noEmit -p tsconfig.json",
+    "lint": "pnpm -r lint && eslint .",
+    "boundaries": "depcruise apps/api/src apps/web/src apps/desktop/src packages/contracts/src packages/ui/src packages/app/src --config .dependency-cruiser.cjs && node scripts/check-boundaries.mjs",
+    "test": "pnpm -r test && vitest run",
+    "test:integration": "pnpm --filter @business-os/api test:integration",
+    "contracts:check": "pnpm --filter @business-os/contracts check",
+    "contracts:generate": "pnpm --filter @business-os/contracts generate",
+    "db:up": "docker compose up -d --wait",
+    "db:reset": "docker compose down -v && docker compose up -d --wait",
+    "db:setup": "pnpm db:up && pnpm --filter @business-os/api db:generate",
+    "db:migrate": "pnpm --filter @business-os/api db:migrate",
+    "db:check-migrations": "pnpm --filter @business-os/api db:check-migrations",
+    "verify:vendor": "pnpm --filter @business-os/api verify:vendor"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^24.0.0",
+    "dependency-cruiser": "^17.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-react-hooks": "^7.0.0",
+    "globals": "^17.0.0",
+    "smol-toml": "^1.9.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "@tailwindcss/oxide",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}
