@@ -1,10 +1,12 @@
 import {
   BusinessContextResponse, CreateBusinessRequest, CreateBusinessResponse,
   endpoints, endpointPath, ListBusinessesResponse,
-  type BusinessContextResponse as BusinessContext,
-  type BusinessSummary,
 } from '@business-os/contracts';
+import { z } from 'zod';
 import type { AuthClient, AuthResult } from './auth';
+
+type BusinessSummary = z.infer<typeof import('@business-os/contracts').BusinessSummary>;
+type BusinessContext = z.infer<typeof BusinessContextResponse>;
 
 export type WorkspaceResult<T> = AuthResult<T>;
 
