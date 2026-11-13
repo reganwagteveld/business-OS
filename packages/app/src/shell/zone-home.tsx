@@ -1,3 +1,4 @@
+import { BusinessOsMark } from './business-os-mark';
 import type { CurrentUser } from '@business-os/contracts';
 
 const zones = [
@@ -19,7 +20,7 @@ export function ZoneHome({ business, user, role, onSwitch, onSignOut }: {
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div aria-hidden="true" className="flex h-10 w-10 items-center justify-center rounded-xl bg-foreground text-lg font-semibold text-background">B</div>
+            <BusinessOsMark className="h-10 w-10 shrink-0" />
             <div>
               <p className="text-sm font-bold tracking-tight">BUSINESS OS</p>
               <p className="text-[10px] font-medium tracking-[.15em] text-muted-foreground">POWERED BY PIXAKOVA</p>
