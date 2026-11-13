@@ -1,5 +1,5 @@
 import {
-  authEndpoints, endpoints, MeResponse, RequestPasswordResetRequest, ResetPasswordRequest, SignInRequest, SignUpRequest,
+  AcceptInvitationRequest, AcceptInvitationResponse, authEndpoints, endpoints, MeResponse, RequestPasswordResetRequest, ResetPasswordRequest, SignInRequest, SignUpRequest,
   type CurrentUser,
 } from '@business-os/contracts';
 
@@ -29,6 +29,8 @@ const GENERIC: Record<number, string> = {
   429: 'Too many attempts. Please wait a minute and try again.',
 };
 
+const INVITE_INVALID = 'This invitation is not valid for your account. It may have expired, been used already, or been sent to a different email address.';
+
 export interface AuthClient {
   me(): Promise<CurrentUser | null>;
   signUp(input: { email: string; password: string; name: string }): Promise<AuthResult>;
@@ -36,6 +38,8 @@ export interface AuthClient {
   signOut(): Promise<void>;
   requestPasswordReset(email: string): Promise<AuthResult>;
   resetPassword(token: string, newPassword: string): Promise<AuthResult>;
+  /** Joins the business the invitation is for. The server checks the signed-in user's verified email. */
+  acceptInvitation(token: string): Promise<AuthResult<{ slug: string; role: string }>>;
   transport: AuthTransport;
 }
 
@@ -101,6 +105,27 @@ export function createAuthClient(baseUrl: string, transport: AuthTransport, fetc
       const parsed = RequestPasswordResetRequest.safeParse({ email, redirectTo: '/reset-password' });
       if (!parsed.success) return invalid('Enter a valid email address.');
       return post(authEndpoints.requestPasswordReset.path, parsed.data);
+    },
+    async acceptInvitation(token) {
+      const parsed = AcceptInvitationRequest.safeParse({ token });
+      if (!parsed.success) return { ok: false, status: 400, message: INVITE_INVALID };
+      let res: Response;
+      try {
+        res = await fetchImpl(`${baseUrl}${endpoints.acceptInvitation.path}`, {
+          method: 'POST',
+          headers: await headers(true),
+          body: JSON.stringify(parsed.data),
+          credentials: transport.kind === 'cookie' ? 'include' : 'omit',
+          cache: 'no-store',
+        });
+      } catch {
+        return { ok: false, status: 0, message: 'Cannot reach Business OS. Check your connection.' };
+      }
+      if (res.status === 401) return { ok: false, status: 401, message: 'Please sign in first.' };
+      const body = AcceptInvitationResponse.safeParse(res.ok ? await res.json().catch(() => null) : null);
+      // One message for every failure: it never says whether the link, the email or the account is the problem.
+      if (!body.success) return { ok: false, status: res.status, message: INVITE_INVALID };
+      return { ok: true, data: body.data.business };
     },
     async resetPassword(token, newPassword) {
       const parsed = ResetPasswordRequest.safeParse({ token, newPassword });

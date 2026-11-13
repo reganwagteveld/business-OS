@@ -15,6 +15,7 @@ createRoot(document.getElementById('root')!).render(
       transport={{ kind: 'cookie' }}
       location={{ pathname: window.location.pathname, search: window.location.search }}
       navigate={(url) => window.location.assign(url)}
+      replaceLocation={(path) => window.history.replaceState(null, '', path)}
     />
   </StrictMode>,
 );
