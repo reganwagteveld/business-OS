@@ -1,7 +1,6 @@
 # ADR 0004: Database isolation design (Prisma, RLS, roles)
 
-- Status: **Accepted as the design to spike**, 2026-11-13 (Regan's third architecture review on PR #1). This accepts the design, not proof that it works: tests S1 to S13 must pass in the Phase 1b spike before any product features, and a failure of S1 to S10 or S13 reopens this ADR.
-- Spike: **S1 to S13 pass** (2026-11-13, PR 3); S11 within target. Moving the status to Accepted is the owner's decision on PR 3.
+- Status: **Accepted**, 2026-11-13, by Regan after the Phase 1b spike (PR 3: S1 to S13 pass, S11 within target). Previously "accepted as the design to spike" (PR #1). A Prisma, driver-adapter or pooler upgrade re-runs the spike suite; a failure of S1 to S10 or S13 reopens this ADR.
 - Date: 2026-11-13
 
 ## Context

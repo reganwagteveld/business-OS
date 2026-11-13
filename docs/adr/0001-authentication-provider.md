@@ -54,3 +54,7 @@ Better Auth **1.7.22** (pinned exactly). All three conditions are met; this ADR 
 | Bearer sessions for native clients (addendum) | **Met without Better Auth's bearer plugin**, which would also expose the token to browser JavaScript in a response header. The desktop sends the same HMAC-signed token Better Auth puts in its cookie; the identity module verifies the signature and presents it as the cookie. An invalid bearer never falls back to an ambient cookie. | Desktop flow tests: exchange, bearer use, tampered/unsigned rejection, revocation |
 
 Other settings: passwords 12 to 128 characters, email verification required before sign-in, no cookie cache (revocation is immediate), sessions 30 days rolling, all sessions revoked on password reset, Better Auth telemetry off. Better Auth is reachable only from `modules/identity` and the `bos_auth` client only from its auth adapter (source rules).
+
+## Email provider (accepted 2026-11-13)
+
+**Resend**, accepted by Regan on 2026-11-13, for verification, password-reset and account-notice emails. It is called over its HTTPS API from `core/email` (no SDK), so the provider can change behind one function. Production refuses to boot with the development `log` transport. Before the first production sign-up: a Resend account with a verified sending domain, and `EMAIL_TRANSPORT=resend`, `RESEND_API_KEY` and `EMAIL_FROM` set in Vercel. Resend is a sub-processor that receives recipients' email addresses (ADR 0002 residency table).
