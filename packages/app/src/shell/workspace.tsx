@@ -1,3 +1,4 @@
+import { BusinessOsMark } from './business-os-mark';
 import { CreateBusinessRequest, type CurrentUser } from '@business-os/contracts';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { z } from 'zod';
@@ -22,7 +23,7 @@ function Frame({ children, title, subtitle }: { children: React.ReactNode; title
     <main className="flex min-h-screen items-center justify-center bg-background px-5 py-12 text-foreground">
       <div className="w-full max-w-xl">
         <div className="mb-10 flex items-center gap-3">
-          <span aria-hidden="true" className="flex h-12 w-12 items-center justify-center rounded-xl bg-foreground text-xl font-bold text-background">B</span>
+          <BusinessOsMark className="h-12 w-12 shrink-0" />
           <div><p className="text-sm font-extrabold tracking-tight">BUSINESS OS</p><p className="text-[10px] tracking-[.18em] text-muted-foreground">POWERED BY PIXAKOVA</p></div>
         </div>
         <div className="rounded-3xl border border-border bg-card p-7 shadow-sm sm:p-10">
@@ -37,7 +38,7 @@ function Frame({ children, title, subtitle }: { children: React.ReactNode; title
 export function Startup({ label = 'Opening your workspace…' }: { label?: string }) {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-background px-6 text-foreground" role="status" aria-live="polite">
-      <div aria-hidden="true" className="mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-foreground text-4xl font-bold text-background">B</div>
+      <BusinessOsMark className="mb-6 h-20 w-20" />
       <h1 className="text-3xl font-semibold tracking-tight">Business OS</h1>
       <p className="mt-2 text-xs font-medium uppercase tracking-[.22em] text-muted-foreground">Powered by Pixakova</p>
       <div className="mt-12 h-1 w-20 overflow-hidden rounded-full bg-muted"><div className="h-full w-1/2 animate-pulse rounded-full bg-foreground motion-reduce:animate-none" /></div>
