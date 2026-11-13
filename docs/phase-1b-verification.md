@@ -15,21 +15,29 @@
 | Desktop shell opens only the configured API origin's authorisation page; callback parsing | Rust unit tests in `apps/desktop/src-tauri/src/auth.rs` (`cargo test`, CI on Windows, macOS, Linux) |
 | Client flows (cookie/bearer transports, PKCE, state check, token only in the native store) | `packages/app/tests/auth.test.tsx` |
 
-### Outstanding: deployed end-to-end checks
+### Deployed end-to-end checks (production, 2026-11-13)
 
-These need the production rollout first, which requires Regan's approval: `bos_auth` on Neon, `prisma migrate deploy`, `AUTH_DATABASE_URL`/`AUTH_SECRET`/Resend settings in Vercel, a verified Resend sending domain, and the browser app on the same origin as the API (D9b).
+Run against `https://app.pixakova.com` (browser app and API on one origin) with Resend test addresses (`delivered+…@resend.dev`), reading the emails through the Resend API. The test accounts, businesses and audit rows were deleted afterwards; production had no other data. **49 checks passed.** One result differs from the design and is recorded under "Findings".
 
-| # | Check | How | Result |
-|---|---|---|---|
-| E1 | Sign-up sends a real verification email via Resend; link verifies; sign-in works | Browser app on the deployed origin | Not verified |
-| E2 | Cookie is `__Secure-bos.session_token`, `HttpOnly`, `Secure`, `SameSite=Lax`, host-only | Browser dev tools on the deployed origin | Not verified |
-| E3 | A cross-site form POST to `/api/v1/auth/sign-out` from another domain returns 403 and the session stays | Small test page on another host | Not verified |
-| E4 | Password reset email arrives, link opens `/reset-password`, new password works, other sessions are signed out | Browser app | Not verified |
-| E5 | Rate limit returns 429 after repeated failed sign-ins from one address, across several function instances | Scripted requests against the deployment | Not verified |
-| E6 | Desktop (macOS and Windows): "Sign in with your browser" opens the deployed API's authorise page, confirmation returns to the app, token appears in Keychain / Credential Manager, `/api/v1/me` works, sign-out removes the token and revokes the session | Signed-off build pointed at the deployment | Not verified |
-| E7 | Desktop build pointed at a different origin refuses to open the authorise page | Build with another `VITE_API_BASE_URL`, compare | Not verified |
-| E8 | Database: `sessions.token_hash` rows only (no raw token), `verifications` reset/desktop identifiers hashed, `bos_app` denied on auth tables | SQL against Neon as an administrative role | Not verified |
-| E9 | Vercel logs contain no email bodies, tokens or connection strings | Vercel log search | Not verified |
+| # | Check | Result |
+|---|---|---|
+| E1 | Sign-up sends a real verification email through Resend; the link verifies; sign-in works; sign-in is refused before verification; duplicate sign-up answers like a new one | **Verified** |
+| E2 | Cookie is `__Secure-bos.session_token`, `HttpOnly`, `Secure`, `SameSite=Lax`, host-only | **Verified** (response header) |
+| E3 | Cross-site POST to `/api/v1/auth/sign-out` and a cookie request without the app origin return 403; the session survives | **Verified** (scripted with a foreign `Origin`; not tested from a real page on another domain) |
+| E4 | Password reset email arrives, the token resets the password once, replay fails, old sessions end | **Verified** (reset link path `/reset-password/<token>`; the browser screen for it was not clicked through) |
+| E5 | Rate limit across function instances | **Partly verified**: counters are stored in PostgreSQL (7 rows during the run) and sign-up/sign-in were not throttled below the limits; the 429 itself was not provoked in production, to avoid locking out the test address |
+| E6 | Desktop sign-in | **Server side verified** (PKCE, loopback redirect only, state, confirmation needs the app origin, wrong verifier burns the code, single use, bearer works from `tauri://localhost`, tampered token refused, sign-out revokes only that session). **Not verified:** the native app itself (system browser opening, loopback listener, Keychain / Credential Manager) on macOS and Windows |
+| E7 | Desktop build pointed at another origin refuses the sign-in page | **Not verified in production** (Rust unit tests cover the check) |
+| E8 | Database: only hashes stored; `bos_app` denied on auth tables and cannot read emails; forced RLS on all 9 tables; definer functions return nothing for forged tokens | **Verified** against Neon |
+| E9 | Vercel logs contain no email bodies, tokens or connection strings | **Not verified** (logs were not searched) |
+| E10 | Tenant isolation: another business's context, members and invitations answer 404; a membership id from another business through your own URL answers 404; no session is 401; the only owner cannot demote or remove themselves; a MEMBER cannot list invitations | **Verified** |
+| E11 | Invitation by email: link points at `app.pixakova.com/invite`; a different verified user cannot use it; the invitee accepts once; replay fails | **Verified** through the API (the `/invite` screen in PR 7 was not deployed or clicked through) |
+| E12 | Sign-out: browser session revoked server-side (`/me` and tenant API 401) | **Verified** |
+
+#### Findings
+
+- **Bearer requests without an `Origin` header are refused (403) in production.** Better Auth runs its own Origin check on cookie-bearing requests and the identity module presents a bearer as a cookie, so it applies. The check is disabled under test, so CI did not see this. The real desktop app is unaffected: its webview sends `Origin: tauri://localhost` (or `http://tauri.localhost` on Windows), both on the allow-list, and that path passed. A native non-browser client without an Origin would need to send one. Follow-up: make the integration tests exercise the same check as production, and align the `classifyAuthRequest` comment.
+- The reset and desktop-code rows are consumed on use, so E8 could not inspect an unconsumed one in production; the hashed identifiers are covered by CI.
 
 ## Tenancy and access control (PR 5)
 
