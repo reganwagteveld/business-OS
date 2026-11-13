@@ -4,7 +4,7 @@
 
 ## 1. Purpose and principles
 
-Business OS is an AI-native, multi-tenant SaaS platform for small and medium-sized businesses.
+Business OS is an AI-native, multi-tenant SaaS platform. Its **initial market is English-speaking US small businesses (about 5 to 50 employees)**; its long-term ambition is to serve organisations from small businesses up to large multinational enterprises.
 
 **One platform. One interface. One source of truth.**
 
@@ -16,6 +16,8 @@ The principles below follow from that and act as tie-breakers for every design c
 4. **Tenant isolation is defence in depth.** Application checks, a tenant-scoped data layer and PostgreSQL Row-Level Security each independently prevent cross-tenant access.
 5. **Real data or honest empty states.** No mock business metrics, placeholder charts or invented numbers anywhere in the product UI.
 6. **Build only what Phase 1 needs.** Extension points (Zone registry, permission keys, AI interface) are designed now so they don't need rework, but only Customer Zone functionality is built.
+7. **Simple for small customers, no artificial ceiling for enterprises.** SMBs are the starting market, not the limit. Phase 1 builds no enterprise functionality, but it must not make choices that block multi-entity organisations, enterprise permissions, regional or dedicated deployments, large volumes, or enterprise identity and compliance later. Enterprise capabilities arrive as optional layers that small customers never see. Decisions that would be expensive to reverse are listed and made deliberately (§13).
+8. **International by default.** The US is the first market, not an assumption baked into the model: every business has its own currency, locale and time zone, and the shared data model avoids US-only concepts (ADR 0002).
 
 ## 2. Current repository state
 
@@ -314,7 +316,9 @@ type Permission =
   | "customers:read" | "customers:write" | "customers:delete"
   | "activity:read"  | "activity:write";
 
-await authorize(ctx, "customers:write"); // throws ForbiddenError
+await authorize(ctx, "customers:write");            // throws ForbiddenError
+await authorize(ctx, "customers:write", customer);  // optional resource: ignored in Phase 1,
+                                                    // reserved for record/scope rules later (§13.2)
 ```
 
 - A static `ROLE_PERMISSIONS` map in `modules/access` translates role → permissions.
@@ -396,8 +400,8 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 
 | Concern | Proposed default | Notes |
 |---|---|---|
-| Hosting | Vercel (or any Node host) | Open decision D3 |
-| Database | Managed PostgreSQL 16+ with PITR backups | Neon, Supabase, RDS all fit; region per D3 |
+| Hosting | Vercel, functions in `iad1` (us-east-1) | ADR 0002; app kept portable (Next.js standalone output, platform services behind adapters) |
+| Database | Managed PostgreSQL 16+ with PITR backups, AWS us-east-1 | Neon proposed; colocated with compute (ADR 0002) |
 | Pooling | Provider pooler in transaction mode | Compatible with transaction-local `set_config` |
 | Scheduled jobs | Platform cron → authenticated internal route, `bos_jobs` role, idempotent + advisory-locked, introduced in Phase 1e for purge/retention/cleanup only ([data-model.md §7.1](./data-model.md#71-scheduled-jobs-in-phase-1)) | A queue (e.g. pg-boss on Postgres) only when user-facing async work appears |
 | Email | Transactional provider for verification/invites | Open decision, low risk |
@@ -411,11 +415,12 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 |---|---|---|---|
 | D1 | Authentication provider | Better Auth, our own tenancy tables ([ADR 0001](./adr/0001-authentication-provider.md), proposed) | Phase 1b |
 | D2 | AI provider and abstraction | Defer; evaluate against §8 criteria | Before first AI feature |
-| D3 | Hosting, database vendor and **data region** | Vercel + managed Postgres in one region; region depends on target market ([ADR 0002](./adr/0002-hosting-and-data-region.md), proposed, needs region) | Phase 1a |
+| D3 | Hosting, database vendor and data region | **Region accepted: US East (N. Virginia), us-east-1**, compute and database colocated, single region in Phase 1. Vercel + Neon proposed, verified in 1a ([ADR 0002](./adr/0002-hosting-and-data-region.md)) | Phase 1a |
 | D4 | Tenant in URL: path `/b/[slug]` vs subdomain `slug.app.com` | Path-based ([ADR 0003](./adr/0003-tenant-in-url.md), proposed) | Phase 1b |
 | D5 | Customer ↔ Contact relationship | Contact belongs to at most one customer in Phase 1 (see data model) | Phase 1d |
 | D6 | Show planned Zones on Home? | Show as labelled "Not available yet" tiles with no data, so the product shape is visible | Phase 1c |
-| D7 | Locale, currency and date formats | Per-business locale/timezone/currency fields now; UI in English only | Phase 1b |
+| D7 | Locale, currency and date formats | Per-business locale, time zone and currency, required at onboarding (pre-filled `en-US`/`USD` for the US launch); UI in English only | Phase 1b |
+| E1 | Primary keys `(business_id, id)` on high-volume tables (for future partitioning) | Yes for `activities` and future transactional tables (§13.4) | Phase 1b |
 | D8 | Repository | Settled: `reganwagteveld/business-os` | Done |
 
 Each decision gets a short ADR in `docs/adr/`. ADR 0004 records the database isolation design and will hold the spike's results.
@@ -423,10 +428,10 @@ Each decision gets a short ADR in `docs/adr/`. ADR 0004 records the database iso
 ## 11. Assumptions
 
 - A small team (one to a few developers) builds Phase 1, so operational simplicity is weighted heavily.
-- Target tenants are SMBs with roughly 1 to 50 users and up to low hundreds of thousands of records each in Phase 1 scope.
+- Initial go-to-market: English-speaking US small businesses with roughly 5 to 50 employees, so Phase 1 tenants have roughly 1 to 50 users and up to low hundreds of thousands of records each. This is a hypothesis, not a limit (principles 7 and 8).
 - **A user can belong to more than one business** (e.g. an owner of two companies, or a bookkeeper serving several clients). This is supported from day one because retrofitting it is hard.
 - Web only (responsive), no native mobile apps in Phase 1.
-- English UI first; data model is locale-aware.
+- English (US) UI first; the data model and formatting are locale-, currency- and time-zone-aware per business.
 - No billing/subscriptions in Phase 1.
 - Customer PII (names, emails, phones) is stored, so GDPR-style obligations (export, deletion) apply and are designed for.
 
@@ -447,3 +452,84 @@ Each decision gets a short ADR in `docs/adr/`. ADR 0004 records the database iso
 | Framework churn (Next.js and Prisma both had major releases in late 2025) | Medium | Medium | Pin versions; upgrade deliberately; keep framework code in `app/` and `core/` |
 | AI features leak data across tenants or exceed user permissions (incl. prompt injection from stored content) | Critical (later) | Medium | AI uses the same actions and tenant-scoped reads; treat stored content as untrusted in prompts; design review before first AI feature |
 | Scope creep into speculative Zone features | Medium | High | Phase 1 is Customer Zone only; other Zones stay `planned` with no data |
+| SMB-shaped choices block enterprise growth (single-entity tenant, role checks, US-only fields, vendor lock-in) | High over the long term | Medium | Principle 7; the irreversible-choices table in §13.6; preparations enforced by lint and acceptance criteria |
+| Enterprise needs complicate the SMB product | High (product) | Medium | Enterprise features are optional layers invisible to SMBs (§13.7) |
+| Customers outside the US expect in-region data storage before a region exists | Medium (sales) | Medium | Residency limits stated in terms (ADR 0002); regional-silo path designed |
+
+## 13. Growth paths: from small business to enterprise
+
+SMBs are the initial market, not the platform's limit (principle 7). This section assesses whether the Phase 1 design leaves reasonable expansion paths towards large, multi-entity, multinational organisations. **None of this is built in Phase 1.** The aim is to know which constraints Phase 1 creates, how each would be lifted later, and which choices are expensive or impossible to reverse, so those are made deliberately now.
+
+Ratings: **Open** (no Phase 1 change needed), **Prepared** (a small, cheap Phase 1 choice keeps the path open), **Work later** (feasible, but a real project when the need comes), **Hard** (needs a dedicated design; may limit what is offered).
+
+### 13.1 Parent organisations, subsidiaries, divisions and multi-entity structures
+
+**Phase 1 model:** a `Business` is the tenant, the isolation boundary, and in practice one operating entity. Users can belong to several businesses.
+
+**Assessment: Work later, with two cheap preparations now.**
+
+- The future model adds an **`Organisation` above businesses** (`businesses.organisation_id`, nullable; SMBs never see it). Each subsidiary or legal entity is a `Business` with its own currency, locale, time zone and country, which matches how enterprises actually operate legal entities. Divisions and departments become an `org_units` hierarchy inside a business (or across an organisation), used for permissions and reporting dimensions, not as separate tenants.
+- **Cross-entity access** (a group CFO seeing all subsidiaries) means a tenant context that covers **a set of businesses** for reads, while every write still targets exactly one business. RLS changes from `business_id = setting` to `business_id = ANY(setting_array)` for reads, keeping single-business `WITH CHECK` for writes.
+- **Preparations now (cheap):**
+  1. RLS policies are **generated from one template** and checked by the schema guard (data-model §5.2), so changing the predicate for every table later is one migration, not a hand edit of each policy.
+  2. Only `core/tenant` and `core/db` read `businessId` from the context; modules never compare tenant ids themselves (lint rule). Widening the context to a set then touches core, not every module.
+- **Not prepared, and deliberately so:** no `organisations` table, no org-level membership, no consolidated reporting in Phase 1.
+- **Known future design work:** shared master data across entities (one global customer record used by several subsidiaries) does not fit "every row belongs to one business". Options when needed: organisation-owned tables with organisation-level RLS, or per-entity records linked to a shared master. Intercompany transactions will be modelled the way accounting does it: a record in each entity, linked, not one row spanning two tenants.
+
+### 13.2 Enterprise-scale users, permissions and hierarchies
+
+**Assessment: Prepared.**
+
+- Permissions are checked by **permission key**, never by role (§7.2). Custom roles become a table without changing call sites.
+- **Preparation now:** `authorize(ctx, permission, resource?)` takes an optional resource argument from the start, even though Phase 1 ignores it. Record-level and scope-based rules (e.g. "managers see their division's customers", "sales reps see assigned accounts") can then be added in `modules/access` without touching every call site.
+- Later paths, in order of likely need: role assignment scoped to a business or org unit; record ownership and team-based visibility (enforced in both services and RLS predicates); and, if rules become a graph (delegation, sharing, matrix organisations), a relationship-based authorisation engine (e.g. OpenFGA, SpiceDB or Cedar) behind the same `authorize()` interface.
+- Scale: member pickers, lists and searches are paginated and server-searched from the start (no "load all members" UI), so 10,000-user organisations do not need UI rewrites.
+- Constraint to note: membership is per business. A user in 30 subsidiaries will need organisation-level membership with inheritance; this is part of the 13.1 work.
+
+### 13.3 Regional data residency and dedicated enterprise deployments
+
+**Assessment: Prepared for regional silos; Work later for dedicated deployments; Hard for one organisation split across regions.**
+
+- Regional silos (full stack per region from the same codebase) are described in [ADR 0002](./adr/0002-hosting-and-data-region.md). Prepared by: `business_id` on everything with no cross-tenant references, globally unique UUIDv7 ids, region values only in environment config, and `businesses.home_region`.
+- **Dedicated enterprise deployments** (single-tenant stack, possibly in the customer's preferred region or cloud) use the same mechanism as a region with one business or organisation in it. To keep this possible: the app must stay deployable outside Vercel (Next.js standalone output, no proprietary storage or KV APIs in modules; platform services behind adapters in `core`), and infrastructure should be defined as code from Phase 1a so a new stack is reproducible. Customer-managed encryption keys are realistic only in dedicated deployments.
+- **Hard:** an organisation whose entities must be stored in different regions cannot have live, database-level cross-entity reporting. If this becomes a requirement it needs a specific design (e.g. residency-compliant aggregated exports into a reporting store), and may be offered only as a dedicated-deployment feature.
+
+### 13.4 Large transaction volumes, complex workflows and cross-entity reporting
+
+**Assessment: Open to Work later, with one decision to take before Phase 1b.**
+
+- PostgreSQL is a sound system of record well beyond SMB scale. The scaling path is: indexes leading with `business_id` (already required), keyset pagination (already required), read replicas for heavy reads (RLS works on replicas), then **partitioning** of high-volume tables by `business_id` (hash) or by time.
+- **Decision E1 (before Phase 1b):** PostgreSQL requires the partition key in the primary key of a partitioned table. Changing a primary key on a large, live table is one of the few genuinely expensive migrations. Because every tenant FK is already composite `(business_id, id)`, making the **primary key `(business_id, id)` on high-volume tables** (`activities` now; future ledgers, invoices, events) costs little today. Recommendation: do it for `activities` and future transactional tables; keep single-column keys on small tables.
+- Workflows: Phase 1 has scheduled maintenance jobs only (data-model §7.1). The path is a Postgres-backed queue (pg-boss), then a durable workflow engine (e.g. Temporal or Inngest) when multi-step business processes appear, with a **transactional outbox** so domain events are never lost between the database and the queue.
+- Reporting: in-app reports query PostgreSQL. Cross-entity and large-scale analytics later move to a separate analytical store fed by change data capture, keeping `business_id` (and later `organisation_id`) on every row so tenant filtering survives the copy.
+- Money and time are already enterprise-grade by convention (integer minor units with ISO currency; UTC with IANA time zones). Multi-currency consolidation will need exchange-rate tables per organisation; nothing in Phase 1 blocks it.
+
+### 13.5 Enterprise SSO, identity provisioning, compliance and audit
+
+**Assessment: Prepared, with vendor maturity to verify.**
+
+- Identity is behind the `identity` module, and users are keyed by our own id, not email, so an SSO subject or a changed email does not break records. SSO identities attach as additional `accounts` rows.
+- SSO (SAML/OIDC) and SCIM provisioning: Better Auth offers SSO support; its SCIM maturity must be verified when the need arises. If insufficient, a broker such as WorkOS can be added **for enterprise connections only**, while users, sessions and memberships stay in our database (ADR 0001 lists this as the revisit trigger). SCIM deprovisioning maps to `memberships.status = SUSPENDED`, which already exists.
+- Later additions: verified email domains per organisation (auto-join and enforced SSO), mandatory MFA policies, session-length policies per organisation.
+- Audit and compliance: `audit_events` is append-only with RLS from Phase 1. Later: tenant-visible audit log UI, export/streaming to customer SIEMs, configurable retention per organisation, and SOC 2 / ISO 27001 controls (access reviews, change management, vendor list from ADR 0002). The separation of business activity from security audit (data-model §4.8) is what makes per-tenant retention and SIEM export straightforward later.
+
+### 13.6 Choices that are expensive or impossible to reverse
+
+These are the decisions to get right now. Everything else in this document can be changed with ordinary refactoring.
+
+| Choice | Phase 1 position | Why it is hard to reverse | Status |
+|---|---|---|---|
+| Identifier format | UUIDv7 everywhere | Changing ids means rewriting every FK, URL and integration | Decided; also enables region moves |
+| Every row owned by exactly one `business_id`, composite FKs | Yes | It is the basis of isolation, export, relocation and partitioning | Decided |
+| Tenant granularity (business = entity; organisations added above) | Business-level tenant | Collapsing entities into one tenant later would mix data that is isolated today | Decided, with 13.1 preparations |
+| Primary keys on high-volume tables | Proposed `(business_id, id)` | PK changes on large live tables need long, risky migrations | **Decision E1** |
+| Time, money, locale representation | UTC `timestamptz`, IANA zones, ISO currency, minor units, BCP 47 locales | Retrofitting time zones or currency to stored data is error-prone and lossy | Decided |
+| International data model (no US-only fields) | Yes | Renaming `state`/`zip`/`ein` across data and integrations later is costly | Decided (ADR 0002) |
+| Users keyed by our id, identity data in our database | Yes | Moving away from a hosted identity vendor later means migrating every user | Decided (ADR 0001) |
+| Permission-key authorisation with a resource argument | Yes | Role checks scattered through code are expensive to unwind | Decided |
+| Portability of hosting (no proprietary APIs in modules) | Yes | Vendor-specific APIs inside business logic block regions and dedicated deployments | Decided, enforced by lint in 1a |
+| Region of existing customers' data | us-east-1 | Moving live tenants needs a relocation procedure and customer communication | Accepted (ADR 0002); relocation possible by design |
+
+### 13.7 Keeping it simple for small customers
+
+Enterprise structure must be **additive and invisible** until used: an SMB has one business, no organisation, no org units, three fixed roles and no SSO configuration, and never sees settings for any of them. New enterprise capabilities are introduced as optional layers above the Phase 1 model, never as required fields or extra steps in the SMB experience.

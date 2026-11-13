@@ -39,6 +39,8 @@ Out of scope for Phase 1 (deliberately not modelled): deals, invoices, products,
 | Emails | Stored lower-cased; global uniqueness only on `users.email` | Customer contacts may legitimately share or duplicate emails |
 | Enums | Postgres enums only for stable, closed sets (role, customer kind); free text + zod validation for evolving sets (activity type) | Avoids a migration every time an activity type is added |
 | Money | Not in Phase 1. When added: integer minor units + ISO 4217 currency code | Recorded now so nobody uses floats later |
+| International fields | `country_code` (ISO 3166-1), `region`, `postal_code`, E.164 phones, generic `tax_number` + optional type, BCP 47 locales, IANA time zones | US is the first market, not a model assumption (ADR 0002); no `state`, `zip`, `ein` or `ssn` columns |
+| Primary keys on high-volume tables | `(business_id, id)` composite (decision E1) | Allows hash partitioning by tenant later without a primary-key migration (architecture §13.4) |
 
 ## 3. Entity relationships
 
@@ -102,10 +104,11 @@ model Business {
   name         String
   slug         String    @unique               // URL segment; changeable, never used as an identity
   legalName    String?
-  countryCode  String?   @db.Char(2)           // ISO 3166-1 alpha-2
-  timeZone     String    @default("UTC")       // IANA; drives "today" in the UI
-  locale       String    @default("en")        // formatting, D7
-  currency     String    @default("USD") @db.Char(3) // ISO 4217 default for future money fields
+  countryCode  String    @db.Char(2)           // ISO 3166-1 alpha-2, chosen at onboarding
+  timeZone     String                          // IANA, e.g. "America/Chicago"; drives "today" in the UI
+  locale       String                          // BCP 47, e.g. "en-US"; formatting via Intl APIs
+  currency     String    @db.Char(3)           // ISO 4217 default for future money fields
+  homeRegion   String                          // data region, set from the deployment's REGION config (ADR 0002)
   createdAt    DateTime  @default(now()) @db.Timestamptz
   updatedAt    DateTime  @updatedAt @db.Timestamptz
   archivedAt   DateTime? @db.Timestamptz       // business closed; data retained for the retention window
@@ -116,6 +119,8 @@ model Business {
 ```
 
 - RLS on `businesses` uses `id` instead of `business_id`: a request can only see its own business row. Creating a business and listing "my businesses" for the switcher go through dedicated `tenancy` services that run before a tenant context exists, using a narrowly-scoped query on `memberships` by `user_id`.
+- **`countryCode`, `timeZone`, `locale` and `currency` are required and set at onboarding**, pre-filled from the selected country and the browser (for the US launch typically `US`, the browser's US time zone, `en-US`, `USD`). They are deliberately not code defaults, so no business silently inherits US settings.
+- `homeRegion` is written from the deployment's configured region, so it is always `us-east-1` in Phase 1. It exists so that the future regional directory and tenant relocation (ADR 0002) have a field to read, and costs nothing now.
 - Slugs are reserved against a deny-list (`settings`, `api`, `admin`, …) and are resolved through membership on every request, so knowing a slug grants nothing.
 
 ### 4.3 Membership (tenancy)
@@ -185,12 +190,13 @@ model Customer {
   email          String?                        // general inbox, e.g. accounts@
   phone          String?                        // E.164 when parseable, else as entered
   website        String?
-  taxNumber      String?                        // ABN/VAT/EIN; format varies by country
+  taxNumber      String?                        // any national format: EIN, VAT, ABN, GST...
+  taxNumberType  String?                        // optional label, e.g. "us_ein", "eu_vat"; not an enum
   addressLine1   String?
   addressLine2   String?
   city           String?
-  region         String?
-  postalCode     String?
+  region         String?                        // state / province / county / prefecture
+  postalCode     String?                        // ZIP or international postcode, stored as entered
   countryCode    String?   @db.Char(2)
   notes          String?                        // short free text; longer history goes in Activity
   ownerUserId    String?   @db.Uuid             // account owner within the business
@@ -271,8 +277,8 @@ The activity timeline is the business-facing history of a record: notes, calls, 
 enum ActorType { USER SYSTEM AI }
 
 model Activity {
-  id           String    @id @default(uuid(7)) @db.Uuid
-  businessId   String    @db.Uuid
+  id           String    @default(uuid(7)) @db.Uuid
+  businessId   String    @db.Uuid               // with id, forms the primary key (decision E1)
   type         String                           // "note" | "call" | "meeting" | "email" | "customer.created" | ...
   occurredAt   DateTime  @db.Timestamptz        // when it happened (user may back-date a call)
   actorType    ActorType @default(USER)
@@ -290,7 +296,7 @@ model Activity {
   customer     Customer? @relation(fields: [businessId, customerId], references: [businessId, id])
   contact      Contact?  @relation(fields: [businessId, contactId],  references: [businessId, id])
 
-  @@unique([businessId, id])
+  @@id([businessId, id])                       // E1: partition-ready; replaces the separate @@unique
   @@index([businessId, customerId, occurredAt(sort: Desc)])
   @@index([businessId, contactId, occurredAt(sort: Desc)])
   @@index([businessId, occurredAt(sort: Desc)])

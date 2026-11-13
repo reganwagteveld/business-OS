@@ -51,13 +51,18 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 - [ ] `pnpm install && pnpm dev` starts the app locally against Docker Postgres with a documented one-command setup in `README.md`.
 - [ ] `tsconfig` has `strict: true`, `noUncheckedIndexedAccess: true`; `pnpm typecheck` passes with zero errors.
 - [ ] Folder structure matches architecture §4 (`app`, `zones`, `modules`, `core`, `ui`).
+- [ ] Lint forbids reading `businessId` from the tenant context outside `core/tenant` and `core/db` (architecture §13.1 preparation).
 - [ ] Lint fails on: a deep import into another module (`@/modules/x/server/...`), `modules` importing `app`, client components importing `server-only` code. Each rule is proven by a fixture test that expects the violation to be caught.
 - [ ] `dependency-cruiser` runs in CI and fails on circular module dependencies.
 - [ ] A test fails if any file outside `src/core/db` imports `@prisma/client`.
 - [ ] App boots only if required env vars are valid (zod); a missing var produces a clear error.
 - [ ] Two database roles exist in local and CI databases: an owner role for migrations and an app role without `BYPASSRLS`; the app connects as the app role.
 - [ ] CI (GitHub Actions) on every PR runs: install, typecheck, lint, boundaries, unit tests, integration tests against a real Postgres service, `prisma migrate diff` check for un-generated migrations.
-- [ ] Preview deployment of the empty app succeeds on the chosen host (D3) in the chosen region.
+- [ ] Preview deployment of the empty app succeeds with server functions in `iad1` and the database in AWS `us-east-1` (ADR 0002); a deploy check fails if the configured function region and database region differ.
+- [ ] The database vendor is confirmed to support the role attributes, `FORCE ROW LEVEL SECURITY`, `SECURITY DEFINER` ownership and pooler mode required by ADR 0004, and to keep backups/PITR in-region; answers recorded in ADR 0002 and its vendor status moved to Accepted.
+- [ ] Region-specific values (database URL, base URL, `REGION`, email sender, error-tracking DSN) come only from validated environment config; a grep test finds no hard-coded region names in `src/`.
+- [ ] Lint forbids vendor-specific platform APIs (e.g. hosted KV/config SDKs) inside `modules/`; platform services are reached only through adapters in `core/` (keeps regional and dedicated deployments possible, architecture §13.3).
+- [ ] The PR template includes a checklist item: "No US-only assumptions in the shared data model (field names, formats, units)".
 
 ---
 
@@ -79,12 +84,17 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 
 - [ ] A new user can sign up, verify their email, and sign in; unverified users cannot create or join a business.
 - [ ] A signed-in user with no business is sent to onboarding and can create a business; they become its `OWNER`.
+- [ ] Onboarding requires country, time zone, locale and currency, pre-filled from the chosen country and browser; the database has no code defaults for them, and `home_region` is written from config (data-model §4.2).
+- [ ] Dates and numbers in the UI are formatted with `Intl` using the business locale and time zone; a test renders the same record for an `en-US`/`America/New_York` business and an `en-GB`/`Europe/London` business and checks both.
 - [ ] A user with memberships in two businesses can switch between them; the URL (`/b/[slug]`) reflects the active business.
 - [ ] Visiting `/b/<slug>` for a business the user is not a member of returns 404 (not 403, to avoid confirming existence).
 - [ ] An owner/admin can invite by email; the invitee can accept only when signed in with that verified email; expired or revoked invitations fail.
 - [ ] The last active owner cannot be removed or demoted (service test and UI test).
 - [ ] Removing a member revokes their access on their next request (integration test).
 - [ ] Every Server Action exported from a `"use server"` module is wrapped in `tenantAction` or `publicAction` (CI check).
+- [ ] `authorize(ctx, permission, resource?)` accepts the optional resource argument (unused in Phase 1); call sites that act on a specific record pass it.
+- [ ] RLS policies are generated from one template in migrations; the schema guard verifies every tenant table's policy matches the template exactly.
+- [ ] Decision E1 is recorded as an ADR; if accepted, `activities` uses primary key `(business_id, id)`.
 - [ ] `business_id` does not appear in any action input schema (CI check).
 - [ ] **Isolation suite** (`tests/isolation/`) passes, covering for every tenant table: read, list, update, delete and foreign-key reference from business A to business B fail, both via module services and via raw SQL as the app role.
 - [ ] **Schema guard** test passes: every table with a `business_id` column has RLS enabled and forced, a `tenant_isolation` policy, and a `business_id`-leading index.
@@ -145,6 +155,8 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 **Acceptance criteria**
 
 - [ ] Security headers (CSP, HSTS, `X-Content-Type-Options`, `frame-ancestors`) are set and verified by an automated check.
+- [ ] Every tenant page and API response is served with `Cache-Control: private, no-store` so tenant data is never cached at the CDN edge (automated check across routes).
+- [ ] The data residency table in ADR 0002 is reviewed against the services actually in use, and a sub-processor list is published from it.
 - [ ] Error tracking and structured logging are live with `businessId`/`userId` tags; a test confirms request bodies and customer PII fields are not logged.
 - [ ] Owners can export all business data (CSV/JSON); export writes an audit event.
 - [ ] Contact erasure service removes PII from the contact and related activity payloads (integration test).
@@ -169,6 +181,7 @@ Listed so Phase 1 decisions can be checked against them, not as a plan:
 - **AI foundation:** decide D2, build `core/ai`, first assistant capability operating through existing `tenantAction`s (e.g. summarise a customer's history), with a dedicated security review for prompt injection and tenant scoping.
 - **Next Zone:** most likely Sales (it reuses customers and contacts), designed with its own data-model doc before any code.
 - **Custom roles**, per-business Zone enablement, tags/custom fields, billing: each only when a real user need is confirmed.
+- **Enterprise capabilities** (organisations above businesses, scoped permissions, SSO/SCIM, regional or dedicated deployments, partitioning, analytics store): the paths and their triggers are in architecture §13. None are scheduled; each starts with its own design doc when a real customer need appears.
 
 ## 4. Risks to the plan
 
@@ -178,6 +191,7 @@ Listed so Phase 1 decisions can be checked against them, not as a plan:
 | Auth decision delayed | 1b blocked | 1a can proceed; 1c can start against a stub `requireUser()` used only in tests |
 | Scope creep (adding "just one" Sales feature) | Phase 1 never finishes | Anything outside §1 goes to a backlog note, not into Phase 1 PRs |
 | Framework major-version change mid-phase | Rework | Pin versions in 1a; upgrade only between phases |
+| Enterprise ambitions pull enterprise features into Phase 1 | Phase 1 grows and SMB experience gets heavier | Only the cheap preparations listed in architecture §13 are in scope; everything else needs its own design doc and decision |
 | Design system built ad hoc per screen | Inconsistent Zones, rework | 1c patterns are mandatory for 1d; review checks for it |
 
 ## 5. Assumptions for estimating
