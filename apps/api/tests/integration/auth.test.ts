@@ -160,6 +160,20 @@ describe('browser sessions (HTTP-only cookie, D9b)', () => {
     }
   });
 
+  it('rejects cookie-authenticated state changes without the exact app origin (CSRF)', async () => {
+    const email = await signUpAndVerify();
+    const { cookie } = await signIn(email);
+    for (const origin of [null, 'tauri://localhost', 'https://evil.example']) {
+      const res = await call('POST', '/api/v1/auth/sign-out', { cookie: cookie!.pair, body: {}, origin });
+      expect(res.status).toBe(403);
+    }
+    // The session survived every rejected attempt.
+    expect((await getCurrentUser(new Request(`${BASE}/x`, { headers: { cookie: cookie!.pair } })))?.email).toBe(email);
+    const noOrigin = await call('POST', '/api/v1/auth/sign-in/email', { body: { email, password: PASSWORD }, origin: null, ip: newIp() });
+    expect(noOrigin.status).toBe(403);
+    expect(sessionCookie(noOrigin)).toBeNull();
+  });
+
   it('blocks a cross-site sign-in POST (CSRF origin check)', async () => {
     const email = await signUpAndVerify();
     const res = await call('POST', '/api/v1/auth/sign-in/email', { body: { email, password: PASSWORD }, origin: 'https://evil.example', ip: newIp() });
@@ -292,6 +306,15 @@ describe('desktop sign-in (system browser + PKCE, bearer session, D9a)', () => {
     // A bad bearer never falls back to an ambient cookie.
     const both = new Request(`${BASE}/x`, { headers: { authorization: 'Bearer nope', cookie: cookie!.pair } });
     expect(await getCurrentUser(both)).toBeNull();
+
+    // An invalid bearer is rejected outright and never falls back to the cookie session.
+    const invalid = await call('POST', '/api/v1/auth/sign-out', { bearer: `${raw}.AAAA`, cookie: cookie!.pair, body: {}, origin: null });
+    expect(invalid.status).toBe(401);
+    expect((await getCurrentUser(new Request(`${BASE}/x`, { headers: { cookie: cookie!.pair } })))?.email).toBe(email);
+    // A valid bearer sent from a foreign page is refused.
+    const foreign = await call('POST', '/api/v1/auth/sign-out', { bearer: token, body: {}, origin: 'https://evil.example' });
+    expect(foreign.status).toBe(403);
+    expect((await me(token))?.email).toBe(email);
 
     // The desktop session is separate from the browser session and revocable on its own.
     const out = await call('POST', '/api/v1/auth/sign-out', { bearer: token, body: {}, origin: null });

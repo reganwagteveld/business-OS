@@ -16,22 +16,29 @@ pub struct BrowserCallback {
     redirect_uri: String,
 }
 
-/// Only the API's own desktop authorisation page may be opened: https, or http on localhost in
-/// development. Anything else is refused, so the command cannot be used to open arbitrary URLs.
-fn authorize_url_allowed(url: &str) -> bool {
-    let (scheme, rest) = match url.split_once("://") {
+/// The API origin this build talks to, fixed at compile time (build.rs, from VITE_API_BASE_URL).
+const API_ORIGIN: &str = env!("BOS_API_ORIGIN");
+
+/// Only the configured API origin's desktop authorisation page may be opened: same scheme, host
+/// and port as `api_origin`, exact path, a query string, and nothing that could change how the URL
+/// is parsed (userinfo, fragments, backslashes, whitespace or control characters). Anything else is
+/// refused, so the command cannot be used to open arbitrary URLs.
+fn authorize_url_allowed(url: &str, api_origin: &str) -> bool {
+    if url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\\' || c == '#') {
+        return false;
+    }
+    let rest = match url.strip_prefix(api_origin) {
+        Some(rest) => rest,
+        None => return false,
+    };
+    // The origin must end exactly here: "https://api.example.com.evil.net/..." or
+    // "https://api.example.com:444/..." do not match "https://api.example.com".
+    let (path, query) = match rest.split_once('?') {
         Some(parts) => parts,
         None => return false,
     };
-    let (authority, path_and_query) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => return false,
-    };
-    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority);
-    let local = host == "localhost" || host == "127.0.0.1";
-    let scheme_ok = scheme == "https" || (scheme == "http" && local);
-    let path = path_and_query.split('?').next().unwrap_or("");
-    scheme_ok && !authority.contains('@') && path == AUTHORIZE_PATH && path_and_query.contains('?')
+    let authority = api_origin.split_once("://").map(|(_, a)| a).unwrap_or("");
+    path == AUTHORIZE_PATH && !query.is_empty() && !authority.is_empty() && !authority.contains('@')
 }
 
 fn query_value(query: &str, key: &str) -> Option<String> {
@@ -65,7 +72,7 @@ pub async fn await_browser_sign_in(authorize_url: String, state: String) -> Resu
         let port = listener.local_addr().map_err(|_| "Could not start sign-in".to_string())?.port();
         let redirect_uri = format!("http://127.0.0.1:{port}/callback");
         let url = authorize_url.replace("%7Bport%7D", &port.to_string()).replace("{port}", &port.to_string());
-        if !authorize_url_allowed(&url) {
+        if !authorize_url_allowed(&url, API_ORIGIN) {
             return Err("Refusing to open an unexpected sign-in address".to_string());
         }
         open::that_detached(&url).map_err(|_| "Could not open your browser".to_string())?;
@@ -144,14 +151,63 @@ pub fn forget_session_token() -> Result<(), String> {
 mod tests {
     use super::*;
 
+    const API: &str = "https://api.example.com";
+    const PAGE: &str = "/api/v1/auth/desktop/authorize?code_challenge=x&state=y";
+
     #[test]
-    fn only_the_api_authorize_page_may_be_opened() {
-        assert!(authorize_url_allowed("https://api.example.com/api/v1/auth/desktop/authorize?x=1"));
-        assert!(authorize_url_allowed("http://localhost:3000/api/v1/auth/desktop/authorize?x=1"));
-        assert!(!authorize_url_allowed("http://api.example.com/api/v1/auth/desktop/authorize?x=1"));
-        assert!(!authorize_url_allowed("https://api.example.com/evil?x=1"));
-        assert!(!authorize_url_allowed("https://user@api.example.com/api/v1/auth/desktop/authorize?x=1"));
-        assert!(!authorize_url_allowed("file:///etc/passwd"));
+    fn opens_the_configured_api_authorize_page() {
+        assert!(authorize_url_allowed(&format!("{API}{PAGE}"), API));
+        assert!(authorize_url_allowed("http://localhost:3000/api/v1/auth/desktop/authorize?x=1", "http://localhost:3000"));
+    }
+
+    #[test]
+    fn refuses_any_other_https_host_with_the_right_path() {
+        for url in [
+            "https://evil.example/api/v1/auth/desktop/authorize?x=1",
+            "https://api.example.com.evil.net/api/v1/auth/desktop/authorize?x=1",
+            "https://evil.api.example.com/api/v1/auth/desktop/authorize?x=1",
+            "https://api.example.co/api/v1/auth/desktop/authorize?x=1",
+        ] {
+            assert!(!authorize_url_allowed(url, API), "{url}");
+        }
+    }
+
+    #[test]
+    fn refuses_other_schemes_ports_and_userinfo() {
+        for url in [
+            "http://api.example.com/api/v1/auth/desktop/authorize?x=1",
+            "https://api.example.com:444/api/v1/auth/desktop/authorize?x=1",
+            "https://api.example.com@evil.example/api/v1/auth/desktop/authorize?x=1",
+            "https://user@api.example.com/api/v1/auth/desktop/authorize?x=1",
+            "file:///api/v1/auth/desktop/authorize?x=1",
+            "javascript:alert(1)//api/v1/auth/desktop/authorize?x=1",
+        ] {
+            assert!(!authorize_url_allowed(url, API), "{url}");
+        }
+    }
+
+    #[test]
+    fn refuses_other_paths_and_parser_confusion() {
+        for url in [
+            "https://api.example.com/evil?x=1",
+            "https://api.example.com/api/v1/auth/desktop/authorize",
+            "https://api.example.com/api/v1/auth/desktop/authorize?",
+            "https://api.example.com/api/v1/auth/desktop/authorize/../../x?x=1",
+            "https://api.example.com/api/v1/auth/desktop/authorize?x=1#frag",
+            "https://api.example.com\\@evil.example/api/v1/auth/desktop/authorize?x=1",
+            "https://api.example.com/api/v1/auth/desktop/authorize?x=1 https://evil.example",
+            "https://api.example.com/api/v1/auth/desktop/authorize?x=1\nhttps://evil.example",
+            "",
+        ] {
+            assert!(!authorize_url_allowed(url, API), "{url}");
+        }
+    }
+
+    #[test]
+    fn the_baked_in_origin_is_an_https_or_localhost_origin_without_a_path() {
+        let rest = API_ORIGIN.split_once("://").map(|(_, r)| r).unwrap_or("");
+        assert!(API_ORIGIN.starts_with("https://") || API_ORIGIN.starts_with("http://localhost") || API_ORIGIN.starts_with("http://127.0.0.1"));
+        assert!(!rest.is_empty() && !rest.contains('/') && !rest.contains('@'));
     }
 
     #[test]
