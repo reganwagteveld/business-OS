@@ -34,7 +34,7 @@ Save the two passwords straight into the Vercel environment variables (below); d
 | Variable | Role | Neon endpoint | Notes |
 |---|---|---|---|
 | `DATABASE_URL` | `bos_app` | **Pooled** (host contains `-pooler`) | Runtime traffic; transaction-mode pooling (ADR 0004 spike S6, S12 must pass against it) |
-| `MIGRATION_DATABASE_URL` | `bos_owner` | **Direct** (no `-pooler`) | Migrations and `prisma migrate`; never on the runtime path |
+| `MIGRATION_DATABASE_URL` | `bos_owner` | **Direct** (no `-pooler`) | **Migration tooling only (CI or a developer machine). Not set in Vercel.** Never on the runtime path |
 | `REGION` | | | `us-east-1` |
 | `DATABASE_REGION` | | | `us-east-1` |
 | `APP_BASE_URL` | | | The deployment's public URL |
@@ -42,7 +42,7 @@ Save the two passwords straight into the Vercel environment variables (below); d
 
 Both URLs need `sslmode=require`. The app refuses to start if either variable is missing or invalid, or if `REGION` and `DATABASE_REGION` differ.
 
-`MIGRATION_DATABASE_URL` is only needed where migrations run (CI/release step or a developer's machine). Consider leaving it out of the Vercel runtime environment so the running app never holds owner credentials.
+**Runtime and migration configuration are separate.** The running API reads only the runtime variables above (`apps/api/src/core/config/schema.ts`). `MIGRATION_DATABASE_URL` and `SHADOW_DATABASE_URL` are read only by migration tooling (`core/config/migration.ts`, `prisma.config.ts`, the migration check) and **must not be set in the Vercel project** (Preview or Production). This is tested: the API's unit tests, a source rule (`runtime-owner-credentials`) and a CI step that starts the built API with no owner credentials and checks `/api/v1/health`. Run migrations from CI or a developer machine with the owner URL set there.
 
 ## 4. Vercel (API)
 

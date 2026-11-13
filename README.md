@@ -58,7 +58,7 @@ CI runs all of them on every pull request, with PostgreSQL as a service containe
 
 | Role | Used for | Key properties |
 |---|---|---|
-| `bos_owner` | Migrations (`MIGRATION_DATABASE_URL`) | Creates tables; no superuser, no `BYPASSRLS` |
+| `bos_owner` | Migrations (`MIGRATION_DATABASE_URL`, migration tooling only; never set on the running API) | Creates tables; no superuser, no `BYPASSRLS` |
 | `bos_app` | The running API (`DATABASE_URL`) | Cannot create objects; no superuser, no `BYPASSRLS`; not a member of `bos_owner` |
 
 The remaining roles from `docs/data-model.md` §5.1 (`bos_auth`, `bos_jobs`, `bos_definer`, `bos_maint`) arrive with the features that need them in Phase 1b and 1e.

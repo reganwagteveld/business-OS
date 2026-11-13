@@ -27,6 +27,9 @@ const CLIENT_DATABASE_CONFIG = /\b(?:DATABASE_URL|MIGRATION_DATABASE_URL|SHADOW_
 const REGION_LITERAL =
   /\b(?:(?:us|eu|ap|ca|sa|me|af|il|mx)-(?:east|west|north|south|central|northeast|southeast|northwest|southwest)-\d|(?:iad|cle|pdx|sfo|yul|gru|lhr|cdg|fra|arn|dub|hnd|kix|icn|sin|syd|bom|cpt|hkg)1)\b/;
 
+// Migration-owner credentials must never reach the running API (architecture §7.3 layer 4).
+const OWNER_CREDENTIALS = /\b(?:MIGRATION_DATABASE_URL|SHADOW_DATABASE_URL)\b/;
+
 // Reading the tenant id from a context object: ctx.businessId, tenant.businessId,
 // or `const { businessId } = ctx`.
 const TENANT_ID_READ = [
@@ -62,6 +65,10 @@ export function serverViolations(files) {
 
     if (!/^core\/(tenant|db)\//.test(name) && TENANT_ID_READ.some((re) => re.test(content))) {
       errors.push(`tenant-id-outside-core: ${name} reads businessId from a tenant context; only core/tenant and core/db may`);
+    }
+
+    if (name !== 'core/config/migration.ts' && OWNER_CREDENTIALS.test(content)) {
+      errors.push(`runtime-owner-credentials: ${name} reads migration-owner credentials; only core/config/migration.ts (migration tooling) may`);
     }
 
     const region = name === 'core/config/regions.ts' ? null : content.match(REGION_LITERAL);

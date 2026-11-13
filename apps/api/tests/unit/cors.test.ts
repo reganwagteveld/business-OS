@@ -22,7 +22,6 @@ describe('CORS (ADR 0005)', () => {
 describe('CORS_ALLOWED_ORIGINS', () => {
   const base = {
     DATABASE_URL: 'postgresql://a:b@localhost:5432/db',
-    MIGRATION_DATABASE_URL: 'postgresql://a:b@localhost:5432/db',
     APP_BASE_URL: 'http://localhost:3000',
     REGION: 'r',
     DATABASE_REGION: 'r',

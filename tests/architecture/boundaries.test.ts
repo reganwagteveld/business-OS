@@ -209,6 +209,12 @@ describe('source rules (scripts/check-boundaries.mjs)', () => {
     expect(server([['core/tenant/index.ts', 'export const f = (ctx) => ctx.businessId;\n']])).toEqual([]);
   });
 
+  it('forbids runtime code reading migration-owner credentials', () => {
+    expect(server([['core/config/schema.ts', 'const u = process.env.MIGRATION_DATABASE_URL;\n']])).toEqual(['runtime-owner-credentials']);
+    expect(server([['core/db/index.ts', "z.object({ SHADOW_DATABASE_URL: z.string() })\n"]])).toEqual(['runtime-owner-credentials']);
+    expect(server([['core/config/migration.ts', 'const u = input.MIGRATION_DATABASE_URL;\n']])).toEqual([]);
+  });
+
   it('forbids hard-coded region names in the API and the clients', () => {
     expect(server([['core/config/env.ts', "const r = 'us-east-1';\n"]])).toEqual(['no-region-literals']);
     expect(server([['core/config/regions.ts', "const r = 'us-east-1';\n"]])).toEqual([]);

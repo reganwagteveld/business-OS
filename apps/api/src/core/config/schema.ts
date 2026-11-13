@@ -1,5 +1,7 @@
-// Pure environment schema: no secrets are read here, so it is safe to import from
+// Pure RUNTIME environment schema: no secrets are read here, so it is safe to import from
 // instrumentation and tests. Server code reads the environment through ./env.ts.
+// The running API never holds migration-owner credentials: those are validated separately in
+// ./migration.ts and used only by migration tooling (architecture §7.3 layer 4, ADR 0004).
 import { z } from 'zod';
 import { VERCEL_TO_AWS_REGION } from './regions';
 
@@ -12,14 +14,13 @@ const originList = z
   .transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean))
   .pipe(z.array(z.string().regex(ORIGIN, 'Each CORS origin must be an exact origin such as https://app.example.com (no wildcard, no path)')));
 
-const postgresUrl = z
+export const postgresUrl = z
   .url()
   .refine((url) => url.startsWith('postgresql://') || url.startsWith('postgres://'), 'Must be a PostgreSQL URL');
 
 export const envSchema = z
   .object({
     DATABASE_URL: postgresUrl,
-    MIGRATION_DATABASE_URL: postgresUrl,
     APP_BASE_URL: z.url(),
     // Browser and desktop origins allowed to call the API cross-origin. Empty means none (ADR 0005).
     CORS_ALLOWED_ORIGINS: originList,
