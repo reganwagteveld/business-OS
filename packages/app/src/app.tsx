@@ -4,7 +4,8 @@ import { createAuthClient, type AuthClient, type AuthTransport } from './api/aut
 import { createApiClient, type ApiClient } from './api/client';
 import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
 import type { ClientPlatform } from './config';
-import { Home } from './shell/home';
+import { Workspace, Startup } from './shell/workspace';
+import { createWorkspaceClient } from './api/workspace';
 import { useApiStatus } from './shell/use-api-status';
 
 export interface AppProps {
@@ -33,6 +34,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const api = useMemo(() => client ?? createApiClient(apiBaseUrl), [client, apiBaseUrl]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, transport ?? { kind: 'cookie' }), [authOverride, apiBaseUrl, transport]);
   const status = useApiStatus(api);
+  const workspace = useMemo(() => createWorkspaceClient(apiBaseUrl, auth), [apiBaseUrl, auth]);
   const [session, setSession] = useState<SessionState>({ state: 'loading' });
 
   const params = new URLSearchParams(location?.search ?? '');
@@ -60,8 +62,9 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     };
   }, [auth, next, navigate, version]);
 
-  if (session.state === 'loading') return null;
+  if (session.state === 'loading') return <Startup />;
   if (session.state === 'signed-out') {
+    if (status.state === 'unreachable') return <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center"><h1 className="text-2xl font-semibold">Cannot connect to Business OS</h1><p role="alert" className="text-sm text-muted-foreground">{status.reason}</p><button className="rounded-lg border px-4 py-2" type="button" onClick={refresh}>Retry connection</button></main>;
     if (platform === 'desktop') return <DesktopSignIn auth={auth} onSignedIn={refresh} />;
     const initialView: AuthView = location?.pathname === '/reset-password' ? 'reset' : inviteToken ? 'sign-up' : 'sign-in';
     return <AuthScreens auth={auth} initialView={initialView} resetToken={params.get('token')} onSignedIn={refresh} />;
@@ -80,11 +83,9 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     );
   }
   return (
-    <Home
-      platform={platform}
-      apiBaseUrl={apiBaseUrl}
-      status={status}
+    <Workspace
       user={session.user}
+      client={workspace}
       onSignOut={async () => {
         await auth.signOut();
         refresh();
