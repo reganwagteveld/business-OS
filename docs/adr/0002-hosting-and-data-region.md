@@ -49,7 +49,7 @@ All Business OS customer data is intended to be stored and processed in the Unit
 | Data flow | Where it lives | Limitation / note |
 |---|---|---|
 | Primary database (all business data) | AWS us-east-1 via the database vendor | Single region; no cross-region replica |
-| Database backups and point-in-time recovery | Vendor-managed, expected in the same region | **Verify in Phase 1a** that the vendor does not store backups or WAL archives outside the region, and record the answer here |
+| Database backups and point-in-time recovery | Vendor-managed, expected in the same region | **Not confirmed (2026-11-13).** The Neon console and API show the project region (`aws-us-east-1`) and a 6-hour history window (Free plan) but not where history, WAL or backups are stored; Neon's public documentation says backups are kept in cloud object storage without naming a region. Accepted by the project owner as the best available evidence for now: **assumed, not verified**, to be in the project's region. Revisit with a written vendor answer before real customer data or a paid plan |
 | Application compute | Vercel `iad1` | Server functions process data in the US region |
 | Desktop and browser apps | Customer devices | Display tenant data fetched from the API, kept in memory only (no offline cache in Phase 1); the desktop session token is in the OS credential store (ADR 0005) |
 | CDN / edge network | Vercel's global edge | Static assets are cached worldwide. **Tenant data must not be cached at the edge**: tenant pages are dynamic and served with `Cache-Control: private, no-store`; this is tested |
