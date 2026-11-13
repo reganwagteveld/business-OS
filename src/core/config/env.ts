@@ -1,19 +1,10 @@
 import 'server-only';
-import { z } from 'zod';
+import { parseEnv, type Env } from './schema';
 
-const envSchema = z.object({
-  DATABASE_URL: z.url().refine((url) => url.startsWith('postgresql://') || url.startsWith('postgres://'), 'Must be a PostgreSQL URL'),
-  MIGRATION_DATABASE_URL: z.url().refine((url) => url.startsWith('postgresql://') || url.startsWith('postgres://'), 'Must be a PostgreSQL URL'),
-  APP_BASE_URL: z.url(),
-  REGION: z.string().min(1),
-  DATABASE_REGION: z.string().min(1),
-}).superRefine((value, ctx) => {
-  if (value.REGION !== value.DATABASE_REGION) ctx.addIssue({ code: 'custom', path: ['DATABASE_REGION'], message: 'Application and database regions must match' });
-});
+let cached: Env | undefined;
 
-export function parseEnv(input: NodeJS.ProcessEnv) {
-  const result = envSchema.safeParse(input);
-  if (!result.success) throw new Error(`Invalid Business OS environment: ${z.prettifyError(result.error)}`);
-  return result.data;
+/** Validated server environment. Throws with a readable message if anything is missing or invalid. */
+export function getEnv(): Env {
+  cached ??= parseEnv(process.env);
+  return cached;
 }
-export function getEnv() { return parseEnv(process.env); }

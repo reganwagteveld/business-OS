@@ -35,7 +35,7 @@ Each phase is delivered as one or more pull requests. **A phase is done only whe
 
 **Acceptance criteria**
 
-- [ ] Regan has reviewed and approved the three documents (reviews complete; checked when PR #1 merges).
+- [x] Regan has reviewed and approved the three documents (PR #1 merged 2026-11-13).
 - [x] D1, D3 and D4 ADRs (`docs/adr/0001` to `0003`) move from Proposed to Accepted, with D3's region filled in (they block 1a/1b). D3's vendor choice stays Proposed until verified in Phase 1a. Other decisions may stay open until their phase.
 - [x] ADR 0004 (database isolation design) is accepted as the design to spike in Phase 1b.
 - [x] Any change requested in review is reflected in the docs before scaffolding begins (three review rounds on PR #1).

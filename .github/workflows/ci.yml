@@ -3,20 +3,52 @@ on:
   pull_request:
   push:
     branches: [main]
+
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16.10
+        env:
+          POSTGRES_DB: business_os
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_postgres_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d business_os"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      # CI-only credentials, matching docker/init/01-roles.sql. Never used outside CI.
+      DATABASE_URL: postgresql://bos_app:bos_local_app_password@localhost:5432/business_os?schema=public
+      MIGRATION_DATABASE_URL: postgresql://bos_owner:bos_local_owner_password@localhost:5432/business_os?schema=public
+      SHADOW_DATABASE_URL: postgresql://bos_owner:bos_local_owner_password@localhost:5432/business_os_shadow?schema=public
+      APP_BASE_URL: http://localhost:3000
+      REGION: ci
+      DATABASE_REGION: ci
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.20.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+      - name: Install (lockfile must be up to date)
+        run: pnpm install --frozen-lockfile
+      - name: Provision database roles (same script as local docker compose)
+        run: psql "postgresql://postgres:ci_postgres_only@localhost:5432/business_os" -v ON_ERROR_STOP=1 -f docker/init/01-roles.sql
       - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm boundaries
-      - run: pnpm test
+      - name: Boundaries (dependency-cruiser + source rules)
+        run: pnpm boundaries
+      - name: Unit tests
+        run: pnpm test
+      - name: Integration tests (PostgreSQL)
+        run: pnpm test:integration
+      - name: Migrations match schema
+        run: pnpm db:check-migrations
+      - run: pnpm build

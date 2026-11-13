@@ -5,3 +5,7 @@ GRANT CONNECT ON DATABASE business_os TO bos_owner, bos_app;
 GRANT USAGE, CREATE ON SCHEMA public TO bos_owner;
 GRANT USAGE ON SCHEMA public TO bos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app;
+
+-- Shadow database for `prisma migrate diff --from-migrations` and `migrate dev`.
+-- bos_owner has no CREATEDB, so the shadow database is provisioned here.
+CREATE DATABASE business_os_shadow OWNER bos_owner;
