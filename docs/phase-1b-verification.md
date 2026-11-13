@@ -30,3 +30,24 @@ These need the production rollout first, which requires Regan's approval: `bos_a
 | E7 | Desktop build pointed at a different origin refuses to open the authorise page | Build with another `VITE_API_BASE_URL`, compare | Not verified |
 | E8 | Database: `sessions.token_hash` rows only (no raw token), `verifications` reset/desktop identifiers hashed, `bos_app` denied on auth tables | SQL against Neon as an administrative role | Not verified |
 | E9 | Vercel logs contain no email bodies, tokens or connection strings | Vercel log search | Not verified |
+
+## Tenancy and access control (PR 5)
+
+### Verified in CI
+
+| Area | Evidence |
+|---|---|
+| Role → permission map (OWNER, ADMIN, MANAGER, MEMBER), zone-namespaced keys, no-escalation rules | `apps/api/tests/unit/access.test.ts` |
+| Business creation through the session-bound definer function; region from `deployment_config`; invalid details, reserved/taken slugs, CSRF and unauthenticated requests refused; no user-id or region parameter | `apps/api/tests/integration/tenancy.test.ts` |
+| Invitations: hash-only storage, matching verified email only, single use, replay/expired/revoked/wrong-token refused, never OWNER, only below the inviter's role | same |
+| Role changes: no self change (API and database trigger), only below one's own role, owners may make owners, last owner kept (API has no path; deferred trigger blocks SQL), audit events written | same |
+| Removal takes effect on the next request | same |
+| Isolation: other businesses answer 404 by slug or id; audit events confined to the business, platform events invisible, append-only; `bos_app` cannot insert businesses or memberships and sees nothing without a context | same |
+| Trusted paths: forged/hashed/revoked session tokens see nothing; only `bos_app` may execute; `session_user_id` not executable; schema guards (fixed `search_path`, owner `bos_definer`, no PUBLIC execute, no members of `bos_definer`/`bos_maint`) | same |
+| Every `/api/v1/b/` handler uses `tenantRoute` | source rule in `scripts/check-boundaries.mjs` |
+
+### Outstanding
+
+- Apply `prisma/privileged` on Neon with the project's owner role (`pnpm db:privileged`), after the migrations (production approval needed).
+- Boot-time check that `REGION` equals `app_private.deployment_config.region` (data-model §5.5 step 5) is not implemented yet.
+- Member emails in the members list need a business-restricted definer function (data-model §5.6); the list returns names only.
