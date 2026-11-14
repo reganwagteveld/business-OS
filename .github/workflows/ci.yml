@@ -144,16 +144,20 @@ jobs:
       - name: Integration tests (API, RBAC, tenancy, PostgreSQL roles and isolation prerequisites)
         run: pnpm test:integration
       # Cached .deb files from the signed Ubuntu archive, keyed by the pinned version and runner image.
+      - name: PgBouncer cache key
+        id: pgbouncer-key
+        run: echo "key=pgbouncer-$PGBOUNCER_VERSION-$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
       - name: Restore PgBouncer packages
         uses: actions/cache@v4
         with:
           path: ~/.cache/pgbouncer-debs
-          key: pgbouncer-${{ env.PGBOUNCER_VERSION }}-${{ env.ImageOS }}-${{ env.ImageVersion }}
+          key: ${{ steps.pgbouncer-key.outputs.key }}
       - name: Start PgBouncer ${{ env.PGBOUNCER_VERSION }} in transaction mode (RLS spike pooler)
         run: |
-          PGBOUNCER_DEB_DIR="$HOME/.cache/pgbouncer-debs" .github/scripts/install-pgbouncer.sh
-          cd docker/pgbouncer && pgbouncer -d pgbouncer.ini
+          pgbouncer="$(PGBOUNCER_DEB_DIR="$HOME/.cache/pgbouncer-debs" .github/scripts/install-pgbouncer.sh)"
+          cd docker/pgbouncer && "$pgbouncer" -d pgbouncer.ini
           for _ in $(seq 1 20); do pg_isready -h 127.0.0.1 -p 6433 && break; sleep 0.5; done
+          pg_isready -h 127.0.0.1 -p 6433
       - name: RLS spike and isolation tests (S1-S13, behind the pooler)
         run: pnpm test:isolation
       - name: Migrations match schema
