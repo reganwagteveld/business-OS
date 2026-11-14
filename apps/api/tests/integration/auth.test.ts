@@ -251,12 +251,95 @@ describe('desktop sign-in (system browser + PKCE, bearer session, D9a)', () => {
   const query = (p: ReturnType<typeof pkce>) =>
     new URLSearchParams({ code_challenge: p.challenge, code_challenge_method: 'S256', redirect_uri: redirect, state: p.state }).toString();
 
-  async function authorize(cookie: string, p: ReturnType<typeof pkce>, origin = ORIGIN) {
+  /** Opens the confirmation page and returns the one-time CSRF token embedded in its form. */
+  async function confirmPage(cookie: string, p: ReturnType<typeof pkce>) {
     const page = await call('GET', `/api/v1/auth/desktop/authorize?${query(p)}`, { cookie, origin: null });
     expect(page.status).toBe(200);
-    const headers = new Headers({ cookie, 'content-type': 'application/x-www-form-urlencoded', origin });
-    return desktopAuthorize.POST(new Request(`${BASE}/api/v1/auth/desktop/authorize`, { method: 'POST', headers, body: query(p) }));
+    const html = await page.text();
+    const csrf = /name="csrf" value="([^"]+)"/.exec(html)?.[1];
+    expect(csrf).toBeTruthy();
+    return { page, csrf: csrf! };
   }
+
+  function post(cookie: string, body: string, extra: Record<string, string>) {
+    const headers = new Headers({ cookie, 'content-type': 'application/x-www-form-urlencoded', ...extra });
+    return desktopAuthorize.POST(new Request(`${BASE}/api/v1/auth/desktop/authorize`, { method: 'POST', headers, body }));
+  }
+
+  async function authorize(cookie: string, p: ReturnType<typeof pkce>, origin = ORIGIN) {
+    const { csrf } = await confirmPage(cookie, p);
+    return post(cookie, `${query(p)}&csrf=${encodeURIComponent(csrf)}`, { origin });
+  }
+
+  it('the confirmation page allows its form to redirect only to the exact loopback origin, and keeps Origin on Safari', async () => {
+    const email = await signUpAndVerify();
+    const { cookie } = await signIn(email);
+    const { page } = await confirmPage(cookie!.pair, pkce());
+    const csp = page.headers.get('content-security-policy')!;
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("form-action 'self' http://127.0.0.1:53682;");
+    expect(csp).not.toMatch(/\*/);
+    expect(csp).toContain("frame-ancestors 'none'");
+    // no-referrer made WebKit send Origin: null on the form POST; same-origin keeps it and still sends nothing cross-site.
+    expect(page.headers.get('referrer-policy')).toBe('same-origin');
+    expect(page.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  it('CSRF: refuses a missing, forged, or other-session token, and a token for a different request', async () => {
+    const email = await signUpAndVerify();
+    const { cookie } = await signIn(email);
+    const p = pkce();
+    const { csrf } = await confirmPage(cookie!.pair, p);
+    expect((await post(cookie!.pair, query(p), { origin: ORIGIN })).status).toBe(400); // missing token
+    expect((await post(cookie!.pair, `${query(p)}&csrf=${Date.now() + 60_000}.${'A'.repeat(43)}`, { origin: ORIGIN })).status).toBe(403);
+    // the same token for a different challenge, redirect port or state
+    const other = pkce();
+    expect((await post(cookie!.pair, `${query(other)}&csrf=${encodeURIComponent(csrf)}`, { origin: ORIGIN })).status).toBe(403);
+    const otherPort = query(p).replace(encodeURIComponent(redirect), encodeURIComponent('http://127.0.0.1:53683/callback'));
+    expect((await post(cookie!.pair, `${otherPort}&csrf=${encodeURIComponent(csrf)}`, { origin: ORIGIN })).status).toBe(403);
+    // a token minted for another person's session
+    const mallory = await signIn(await signUpAndVerify());
+    expect((await post(mallory.cookie!.pair, `${query(p)}&csrf=${encodeURIComponent(csrf)}`, { origin: ORIGIN })).status).toBe(403);
+    // and the genuine one still works once
+    expect((await post(cookie!.pair, `${query(p)}&csrf=${encodeURIComponent(csrf)}`, { origin: ORIGIN })).status).toBe(303);
+  });
+
+  it('Safari Origin: null is accepted only with same-origin Fetch Metadata AND a valid token', async () => {
+    const email = await signUpAndVerify();
+    const { cookie } = await signIn(email);
+    const p = pkce();
+    const { csrf } = await confirmPage(cookie!.pair, p);
+    const body = `${query(p)}&csrf=${encodeURIComponent(csrf)}`;
+    const sameOrigin = { origin: 'null', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' };
+    expect((await post(cookie!.pair, body, { ...sameOrigin, 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+    expect((await post(cookie!.pair, body, { ...sameOrigin, 'sec-fetch-dest': 'iframe' })).status).toBe(403);
+    expect((await post(cookie!.pair, body, { origin: 'null' })).status).toBe(403);
+    expect((await post(cookie!.pair, query(p), sameOrigin)).status).toBe(400); // null origin never replaces the token
+    const ok = await post(cookie!.pair, body, sameOrigin);
+    expect(ok.status).toBe(303);
+    expect(new URL(ok.headers.get('location')!).origin).toBe('http://127.0.0.1:53682');
+  });
+
+  it('expired codes are refused at exchange', async () => {
+    const email = await signUpAndVerify();
+    const { cookie } = await signIn(email);
+    const p = pkce();
+    const code = new URL((await authorize(cookie!.pair, p)).headers.get('location')!).searchParams.get('code')!;
+    await admin.query("UPDATE verifications SET expires_at = now() - interval '1 second' WHERE identifier = $1", [`desktop-code:${sha256(code)}`]);
+    const res = await call('POST', '/api/v1/auth/desktop/token', { body: { code, code_verifier: p.verifier, redirect_uri: redirect }, origin: null });
+    expect(res.status).toBe(400);
+  });
+
+  it('a code is bound to its redirect: exchanging with another loopback port fails and burns it', async () => {
+    const email = await signUpAndVerify();
+    const { cookie } = await signIn(email);
+    const p = pkce();
+    const code = new URL((await authorize(cookie!.pair, p)).headers.get('location')!).searchParams.get('code')!;
+    const wrong = await call('POST', '/api/v1/auth/desktop/token', { body: { code, code_verifier: p.verifier, redirect_uri: 'http://127.0.0.1:53683/callback' }, origin: null });
+    expect(wrong.status).toBe(400);
+    const right = await call('POST', '/api/v1/auth/desktop/token', { body: { code, code_verifier: p.verifier, redirect_uri: redirect }, origin: null });
+    expect(right.status).toBe(400);
+  });
 
   it('sends a signed-out browser to sign in first', async () => {
     const res = await call('GET', `/api/v1/auth/desktop/authorize?${query(pkce())}`, { origin: null });

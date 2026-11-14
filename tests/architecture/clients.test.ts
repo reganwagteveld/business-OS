@@ -108,3 +108,16 @@ describe('API contracts', () => {
     expect(read(file.slice(ROOT.length + 1))).toMatch(new RegExp(`export (async )?(function|const) ${endpoint.method}\\b`));
   });
 });
+
+describe('local development proxy (D9b)', () => {
+  it('the browser app proxies only /api to the local API, and only in the dev server', async () => {
+    const mod = (await import('../../apps/web/vite.config')) as { default: (env: { command: 'serve' | 'build'; mode: string }) => { server?: { proxy?: Record<string, { target: string }> } } };
+    const dev = mod.default({ command: 'serve', mode: 'development' });
+    expect(Object.keys(dev.server?.proxy ?? {})).toEqual(['/api']);
+    expect(dev.server?.proxy?.['/api']?.target).toBe('http://localhost:3000');
+    // production reaches the API through the same-origin rewrite on Vercel instead
+    const vercel = json<{ rewrites: Array<{ source: string; destination: string }> }>('apps/web/vercel.json');
+    expect(vercel.rewrites[0]).toMatchObject({ source: '/api/:path*' });
+    expect(vercel.rewrites[0]!.destination.startsWith('https://')).toBe(true);
+  });
+});
