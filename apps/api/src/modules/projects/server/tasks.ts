@@ -148,14 +148,18 @@ const MAX_POSITION = 2_000_000_000;
  * 2. the project is read FOR SHARE (archived → 409 project_archived; an archive in flight waits);
  * 3. the project's order lock is taken, so concurrent moves in this project run one at a time and
  *    each one sees the order the previous one committed;
- * 4. the anchor must be an active task of this project (else 409 order_changed: the client's view
- *    is out of date). It may have any status: positions are ONE order over the whole project and a
- *    board column is just the tasks of its statuses in that order. So "directly after the anchor in
- *    the project's order" is "directly after it" in every column that shows both, whichever
- *    statuses a board puts in a column, and "no anchor" (first in the project) is first in any column;
+ * 4. the anchor must be an active task of this project in the committed state this move reads
+ *    (else 409 order_changed: the client's view is out of date). Archiving or restoring the anchor
+ *    is deliberately NOT serialised with moves: it changes no position, and a concurrent one has
+ *    the same result as if it ran just after the move (docs/projects-data-model.md §4.1). The anchor
+ *    may have any status: positions are ONE order over the whole project and a board column is
+ *    just the tasks of its statuses in that order. So "directly after the anchor in the project's
+ *    order" is "directly after it" in every column that shows both, whichever statuses a board puts
+ *    in a column, and "no anchor" (first in the project) is first in any column;
  * 5. the task gets a position strictly between the anchor and the task after it. If there is no
- *    integer gap left, the project's tasks are renumbered (1000, 2000, …) in their current order first. Renumbering changes no task's version: position is not part of an edit,
- *    so it never makes someone else's pending edit stale.
+ *    integer gap left, the project's tasks are renumbered (1000, 2000, …) in their current order
+ *    first. Renumbering changes no task's version: position is not part of an edit, so it never
+ *    makes someone else's pending edit stale.
  * The write is conditional on the version and on the task being active, like every other edit.
  */
 export async function moveTask(db: AppTenantDb, actorUserId: string, projectId: string, id: string, move: { version: number; status: Status; afterTaskId: string | null }) {
@@ -225,8 +229,16 @@ export async function moveTask(db: AppTenantDb, actorUserId: string, projectId: 
  * Spreads the project's positions out again (1000, 2000, …) in their current order, archived tasks
  * included so a restored task comes back where it was. Runs only under the order lock. Tagged
  * $queryRaw on the tenant client: bos_app, forced RLS, plus the explicit business_id predicate.
+ *
+ * The rows are locked first, in id order. Every multi-row writer of project_tasks (this and member
+ * removal, tenancy/members.ts) takes its row locks in id order, so two of them can never each hold
+ * a row the other is waiting for (docs/projects-data-model.md §4.1, "Lock order").
  */
 async function renumber(db: AppTenantDb, projectId: string) {
+  await db.$queryRaw<{ id: string }[]>`
+    SELECT id FROM project_tasks
+    WHERE project_id = ${projectId}::uuid AND business_id = nullif(current_setting('app.business_id', true), '')::uuid
+    ORDER BY id FOR UPDATE`;
   await db.$queryRaw<{ id: string }[]>`
     UPDATE project_tasks AS t SET position = (r.n * ${STEP})::int
     FROM (

@@ -905,3 +905,162 @@ describe('PR 19 board: moving tasks between and within columns', () => {
     expect((await admin.query('SELECT status, version FROM project_tasks WHERE id = $1', [tasks.secret!.id])).rows[0]).toEqual({ status: 'TODO', version: 1 });
   });
 });
+
+describe('PR 19 review: archive/restore vs move, and row-lock order (docs/projects-data-model.md §4.1)', () => {
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const settled = async (p: Promise<unknown>) => Promise.race([p.then(() => true), pause(50).then(() => false)]);
+  /** A second bos_app connection in A's tenant context, used to hold row locks at chosen moments. */
+  async function holder() {
+    const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await c.connect();
+    await c.query('BEGIN');
+    await c.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [A.businessId, A.people.OWNER!.id]);
+    return c;
+  }
+  const rows = async (pid: string) =>
+    (await admin.query('SELECT title, position, version, archived_at IS NOT NULL AS archived FROM project_tasks WHERE project_id = $1 ORDER BY position, id', [pid])).rows as
+      { title: string; position: number; version: number; archived: boolean }[];
+  const activeOrder = async (pid: string) => (await rows(pid)).filter((r) => !r.archived).map((r) => r.title);
+  /** Is this row locked by someone else right now? (NOWAIT probe from a superuser connection.) */
+  const locked = async (id: string) => {
+    const c = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE NOWAIT', [id]);
+      return false;
+    } catch (e) {
+      if ((e as { code?: string }).code === '55P03') return true;
+      throw e;
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  };
+  /**
+   * Makes an unordered scan meet `first` before the others (an UPDATE writes a new row version at the
+   * end of the table), so a writer that does NOT lock in id order would block on it while holding
+   * nothing, and the probe below would catch that.
+   */
+  async function physicallyFirst(first: string, ids: string[]) {
+    await admin.query('UPDATE project_tasks SET updated_at = updated_at WHERE id = ANY($1) AND id <> $2', [ids, first]);
+    const order = (await admin.query('SELECT id FROM project_tasks WHERE id = ANY($1) ORDER BY ctid', [ids])).rows.map((r) => r.id);
+    expect(order[0]).toBe(first);
+  }
+  async function board(name: string, titles: string[]) {
+    const a = api(A.people.OWNER!, A.slug);
+    const p = (await a.create({ name })).body.project;
+    const t: Record<string, { id: string }> = {};
+    for (const x of titles) t[x] = (await a.createTask(p.id, { title: x })).body.task;
+    return { a, p, t };
+  }
+
+  it('anchor archived after the move read it: the move succeeds and the result equals "move, then archive"; no invariant breaks', async () => {
+    const { a, p, t } = await board('Review R1', ['A', 'B', 'T']);
+    const h = await holder();
+    let move;
+    try {
+      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [t.T!.id]); // stall the move at its final write
+      move = a.moveTask(p.id, t.T!.id, { version: 1, status: 'TODO', afterTaskId: t.A!.id });
+      await pause(300); // the move has validated A and is waiting on T's row
+      expect((await a.archiveTask(p.id, t.A!.id)).status).toBe(200); // not serialised with the move, by design
+      await h.query('COMMIT');
+    } finally {
+      await h.end();
+    }
+    expect((await move!).status).toBe(200);
+    const after = await rows(p.id);
+    expect(after.map((r) => [r.title, r.archived, r.version])).toEqual([['A', true, 2], ['T', false, 2], ['B', false, 1]]);
+    expect(new Set(after.map((r) => r.position)).size).toBe(3); // positions still distinct and total
+    // Serial equivalent: move first (A, T, B), then archive A → active T, B. Same state.
+    expect(await activeOrder(p.id)).toEqual(['T', 'B']);
+  });
+
+  it('anchor archive in flight when a renumber reaches its row: the move waits, re-reads and answers order_changed; nothing changes', async () => {
+    const { a, p, t } = await board('Review R2', ['A', 'B', 'T']);
+    await admin.query("UPDATE project_tasks SET position = CASE title WHEN 'A' THEN 7 WHEN 'B' THEN 8 ELSE 9 END WHERE project_id = $1", [p.id]); // no gap after A
+    const h = await holder();
+    let move;
+    try {
+      await h.query('UPDATE project_tasks SET archived_at = now(), version = version + 1 WHERE id = $1', [t.A!.id]); // archive, not yet committed
+      move = a.moveTask(p.id, t.T!.id, { version: 1, status: 'TODO', afterTaskId: t.A!.id });
+      await pause(300);
+      expect(await settled(move)).toBe(false); // the renumber waits for A's row
+      await h.query('COMMIT');
+    } finally {
+      await h.end();
+    }
+    expect(await move!).toMatchObject({ status: 409, body: { error: 'order_changed' } });
+    expect((await rows(p.id)).map((r) => [r.title, r.position, r.version])).toEqual([['A', 7, 2], ['B', 8, 1], ['T', 9, 1]]); // rolled back, renumber included
+  });
+
+  it('anchor restore in flight: the move answers from the committed state (order_changed) without waiting; nothing changes', async () => {
+    const { a, p, t } = await board('Review R3', ['A', 'B', 'T']);
+    await a.archiveTask(p.id, t.A!.id);
+    const h = await holder();
+    try {
+      await h.query('UPDATE project_tasks SET archived_at = NULL, version = version + 1 WHERE id = $1', [t.A!.id]); // restore, not yet committed
+      const move = a.moveTask(p.id, t.T!.id, { version: 1, status: 'TODO', afterTaskId: t.A!.id });
+      await pause(300);
+      expect(await settled(move)).toBe(true);
+      expect(await move).toMatchObject({ status: 409, body: { error: 'order_changed' } });
+      await h.query('COMMIT');
+    } finally {
+      await h.end();
+    }
+    expect((await rows(p.id)).map((r) => [r.title, r.version])).toEqual([['A', 3], ['B', 1], ['T', 1]]);
+  });
+
+  it('a renumber locks the project\'s task rows in id order (so it cannot deadlock with member removal)', async () => {
+    const { a, p, t } = await board('Review lock order: renumber', ['r1', 'r2', 'r3', 'r4']);
+    await admin.query('UPDATE project_tasks SET position = 10 + (SELECT count(*) FROM project_tasks x WHERE x.project_id = project_tasks.project_id AND x.title < project_tasks.title) WHERE project_id = $1', [p.id]);
+    const ids = (await admin.query('SELECT id FROM project_tasks WHERE project_id = $1 ORDER BY id', [p.id])).rows.map((r) => r.id as string);
+    const [lowest, highest] = [ids[0]!, ids[ids.length - 1]!];
+    await physicallyFirst(highest, ids);
+    // A real move that needs a renumber: the mover is not one of the probed rows, and the anchor has
+    // another task after it (not the mover itself, which would be a no-op).
+    const ordered = (await rows(p.id)).map((r) => t[r.title]!.id);
+    const mover = { id: ordered.find((id) => id !== lowest && id !== highest)! };
+    const others = ordered.filter((id) => id !== mover.id);
+    const anchor = { id: others.slice(0, -1).find((id) => ordered[ordered.indexOf(id) + 1] !== mover.id)! };
+    const h = await holder();
+    let move;
+    try {
+      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [highest]);
+      move = a.moveTask(p.id, mover.id, { version: 1, status: 'TODO', afterTaskId: anchor.id }); // no gap anywhere: renumbers
+      await pause(300);
+      expect(await settled(move)).toBe(false); // waiting on the highest id …
+      expect(await locked(lowest)).toBe(true); // … while already holding the lowest
+      await h.query('COMMIT');
+    } finally {
+      await h.end();
+    }
+    expect((await move!).status).toBe(200);
+    expect(new Set((await rows(p.id)).map((r) => r.position)).size).toBe(4);
+  });
+
+  it('member removal locks the member\'s task rows in id order before clearing them', async () => {
+    const a = api(A.people.OWNER!, A.slug);
+    const temp = await newUser('pa-lockorder');
+    await invite(A.slug, A.people.OWNER!, temp, 'MEMBER');
+    const p = (await a.create({ name: 'Review lock order: removal' })).body.project;
+    for (const title of ['m1', 'm2', 'm3']) await a.createTask(p.id, { title, assigneeUserId: temp.id });
+    const ids = (await admin.query('SELECT id FROM project_tasks WHERE assignee_user_id = $1 ORDER BY id', [temp.id])).rows.map((r) => r.id as string);
+    await physicallyFirst(ids[ids.length - 1]!, ids);
+    const membership = (await a.members()).body.members.find((m: { userId: string }) => m.userId === temp.id);
+    const h = await holder();
+    let removal;
+    try {
+      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [ids[ids.length - 1]]);
+      removal = a.removeMember(membership.id);
+      await pause(300);
+      expect(await settled(removal)).toBe(false);
+      expect(await locked(ids[0]!)).toBe(true);
+      await h.query('COMMIT');
+    } finally {
+      await h.end();
+    }
+    expect((await removal!).status).toBe(200);
+    expect((await admin.query('SELECT count(*)::int AS n FROM project_tasks WHERE assignee_user_id = $1', [temp.id])).rows[0].n).toBe(0);
+  });
+});

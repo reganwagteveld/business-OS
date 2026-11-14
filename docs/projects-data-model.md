@@ -63,7 +63,7 @@ Out of scope for this version: subtasks, cross-project tasks, dependencies, chec
 - **Archive and restore take no version.** They only change `archived_at` and never overwrite edited fields. They are conditional on the current archive state, and they bump the version, so an edit prepared before them is refused (`stale`/`archived`) rather than applied to an archived record.
 - **Ordering (PR 19 board).** A project's tasks have ONE order, `(position, id)`, archived tasks included. A board column is a presentation choice: the tasks whose status is in that column's set, in that order. The default board (To Do; In Progress, which also shows Blocked; Done) lives in the client (`packages/app/src/zones/projects/board-stages.ts`), not in the database, so another layout needs no schema change.
   - `POST …/tasks/:taskId/move` with `{ version, status, afterTaskId | null }` sets the status and places the task directly after the anchor in the project's order (null: first). Because the order is project-wide, "after the card above it" is right in every column that shows both, whatever statuses a column holds.
-  - In one tenant transaction: load the task and check `version` (409 `stale`); read the project `FOR SHARE` (409 `project_archived`; same archive guarantee as every task change); take a transaction-level advisory lock on the project id so order changes in one project run one at a time (creates take it too); check the anchor is an active task of this project (409 `order_changed` otherwise, so a stale board reloads); write a position strictly between the anchor and the next task.
+  - In one tenant transaction: load the task and check `version` (409 `stale`); read the project `FOR SHARE` (409 `project_archived`; same archive guarantee as every task change); take a transaction-level advisory lock on the project id so order changes in one project run one at a time (creates take it too); check the anchor is an active task of this project in the committed state the move reads (409 `order_changed` otherwise, so a stale board reloads); write a position strictly between the anchor and the next task. Archive and restore of the anchor are not serialised with moves (§4.1).
   - When no integer gap is left the project's positions are renumbered (1000, 2000, …) in their current order first. Renumbering changes no task's `version`: position is not part of an edit, so it never makes someone else's pending edit stale.
   - The write is conditional on `version` and `archived_at IS NULL`, like PATCH. Moving into DONE stamps `completed_at`, out of it clears it. A move to where the task already is changes nothing (no version bump, no audit). Audit: `projects.task.moved` (`from`, `to`, and `order: renumbered` when it happened), plus `projects.task.status_changed` when the status changed.
   - PATCH can still change a task's status; the task keeps its place in the project order.
@@ -71,6 +71,32 @@ Out of scope for this version: subtasks, cross-project tasks, dependencies, chec
 - **Customer access.** Customer names are joined into project responses only for people holding `customers:read`. Without it, `customerId` still shows a customer is linked but `customer` is `null`. Linking, changing or unlinking a customer, and listing a customer's projects, need `customers:read` (403 otherwise).
 - **Progress** (`taskCounts: { total, done }`) counts non-archived tasks, computed in one grouped query per page (no N+1).
 - **Audit.** Every mutation writes an audit entry in the same unit of work with ids and structured facts only (status, from/to, field names), never names, titles or descriptions.
+
+### 4.1 Invariants and locks (PR 19)
+
+Every task change runs in one READ COMMITTED tenant transaction. These are the invariants, and what protects each one.
+
+| # | Invariant | Protected by |
+|---|---|---|
+| I1 | No task change commits after its project was archived | Every task write reads the project row `FOR SHARE`; archive/restore/edit of a project take `FOR NO KEY UPDATE` on it, so each waits for the other |
+| I2 | No edit is applied on top of a version it did not see | Conditional `UPDATE … WHERE version = $v AND archived_at IS NULL` on the one row written |
+| I3 | Positions are written from an order nobody else is rewriting (no two moves, or a move and a create, compute from the same stale order) | Transaction-level advisory lock per project (`lockOrder`), taken by move and create, after the project `FOR SHARE` |
+| I4 | A renumber never loses a concurrent change to another column of a task | Renumber writes only `position`; PostgreSQL re-applies it to the latest row version, and no other writer touches `position` |
+| I5 | No owner or assignee points at a removed member | Member removal locks the membership `FOR UPDATE` before clearing owners and assignees |
+| I6 | Two multi-row writers of `project_tasks` cannot deadlock | Renumber and member removal both lock their task rows in id order (`SELECT … ORDER BY id FOR UPDATE`) before updating |
+
+**What is deliberately not serialised.** Archiving or restoring a single task changes no position: positions span archived tasks too, so the project order is unchanged and only visibility changes. A move validates its anchor against the committed state it reads; an archive or restore of that anchor committing at the same moment is not waited for. The outcome is always the same as running the move first and the archive/restore just after (they write different rows, and archive/restore read none of the move's writes). Case by case: anchor archived after the move read it → 200, the task sits where the anchor was; anchor archive still in flight when a renumber reaches its row → the move waits, re-reads and answers 409 `order_changed`; anchor restore in flight → 409 `order_changed` at once. Regression-tested ("PR 19 review" in `projects.test.ts`). Serialising them would make every archive and restore in a project wait behind board moves to protect a placement that is already correct; if a stricter "anchor still active at commit" rule is ever needed, the narrow fix is `FOR SHARE` on the anchor row inside the move.
+
+**Lock order.** membership → project row → project order lock → task rows (multi-row writers in id order). Single-row task writers (edit, archive, restore) hold one task row and then wait only on their audit insert. Moves and creates are serialised by the order lock, always taken after the project share lock. A project archive waits for the share holders, which never wait on it. So there is no cycle.
+
+| Operation | Locks, in order |
+|---|---|
+| create task | project `FOR SHARE` → order lock → insert |
+| move task | project `FOR SHARE` → order lock → (renumber: all project task rows, id order) → the moved row |
+| edit, archive, restore task | project `FOR SHARE` → the task row |
+| edit, archive, restore project | the project row (`FOR NO KEY UPDATE`) |
+| remove member | membership `FOR UPDATE` → owned project rows → assigned task rows (id order) |
+| list tasks | none |
 
 ## 5. Permissions
 

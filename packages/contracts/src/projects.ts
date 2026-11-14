@@ -157,8 +157,10 @@ export const UpdateTaskRequest = z
  * project's task order, or first when `afterTaskId` is null. The order is one sequence over the
  * whole project; a board column shows the tasks of its statuses in that order, so this places the
  * task correctly whichever statuses a column holds. The server decides the stored position.
- * `version` is the moved task's version: a stale one gets 409 stale. An anchor that is no longer an
- * active task of this project gets 409 order_changed, so the client reloads and the person retries.
+ * `version` is the moved task's version: a stale one gets 409 stale. An anchor that is not an active
+ * task of this project in the committed state the move reads gets 409 order_changed, so the client
+ * reloads and the person retries. An archive or restore of the anchor running at the same moment is
+ * not waited for; the outcome is the same as if it had run just after the move.
  */
 export const MoveTaskRequest = z
   .object({ version: z.number().int().min(1), status: TaskStatus, afterTaskId: Uuid.nullable() })
