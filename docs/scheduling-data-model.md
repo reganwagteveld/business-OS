@@ -65,6 +65,7 @@ Indexes: `UNIQUE (business_id, id, during, occupying)`, GiST `(business_id, duri
 
 - Partial unique `(business_id, event_id, resource_id) WHERE removed_at IS NULL`.
 - `schedule_no_double_booking` exclusion constraint (ADR 0006 §2).
+- Every write that can occupy time first takes per-resource transaction advisory locks in sorted key order (ADR 0006 §2, lock order). That prevents deadlocks between conflicting writers; it is not what prevents double-booking.
 - Rows are inserted only by raw SQL that selects the copies from their sources.
 
 ### 2.5 `schedule_working_hours`
@@ -113,7 +114,7 @@ Weekday, local `start_time`/`end_time`, effective dates. Expanded in the resourc
 | Revive a removed participant | `guard_assignment_privacy` (E6) |
 | Write or plant details | Restrictive policy `WITH CHECK` (P1) |
 | Change the copies, role or resource of an assignment | Column grants (W2) |
-| Read through erasure | The function returns a count only (R1) |
+| Read through erasure | The function returns a count only, and only a database-verified OWNER/ADMIN session can call it (A1–A6) |
 | Read through owner export | Export runs under RLS (§8) |
 | Read through a conflict error | Details never forwarded; the data is busy-time only (ADR 0006 consequence 2) |
 
@@ -159,8 +160,38 @@ No core table or constraint changes.
 |---|---|---|---|
 | **Ordinary owner export** (Phase 1e "export all business data") | OWNER, as `bos_app` with their user id | **No.** Private entries are exported busy-only (time, resources, "Private"), except the owner's own entries. | Normal RLS. Audited `export.created`. |
 | **Personal export** (later): a person exports their own schedule | Any member | Only entries they organize or attend | Normal RLS |
-| **Privileged erasure** (contact, customer or departed member) | The erasure service, after its own permission check (`customers:delete` today: OWNER/ADMIN) | **Never reads.** It scrubs title, description, location and cancel reason, and unlinks the subject. | `scheduling_private.scrub_event_details()`: `SECURITY DEFINER`, owned by `bos_maint`, fixed `search_path`, current tenant only, user context required, returns a count. Has a `bos_maint` tenant policy (without it, it silently scrubs 0 rows; mutation-tested). Audited with the count only. |
+| **Privileged erasure** (contact, customer or departed member) | A caller holding a **live OWNER or ADMIN session for this business**, verified **in the database** from the raw session token. The API's permission check (`customers:delete`) comes first, but the database does not rely on it. | **Never reads.** It scrubs title, description, location and cancel reason, and unlinks the subject. | See §8.1 |
 | **Legally authorised access** (court order, regulator, a disclosure that must include a private entry) | **No tenant role, ever** | Only under the platform procedure | Not a product feature. Business OS staff verify the legal basis (not the tenant). Two-person approval. A time-limited break-glass administrative session on an isolated Neon branch. Recorded in the platform audit log. The tenant owner is told unless the law forbids it. Needs its own policy document before the first request (open choice U4). |
+
+### 8.1 The erasure boundary, and why transaction settings are not enough
+
+**Trust model.** `app.business_id` and `app.user_id` scope RLS, but `bos_app` code can change them with `set_config`, so they are never authority for an irreversible operation (ADR 0006 §6). A function that only checked "a user is set" would let any member's unit of work, or any raw SQL running as `bos_app`, scrub private details. Test A2 is the regression for exactly that.
+
+**Enforced boundary.** Authority comes from the caller's **raw session token**, which the API already has from the cookie or bearer header and passes as a parameter. The database verifies it the way the pre-tenant trusted paths do (data-model §5.5):
+
+| Step | Where | Enforced by |
+|---|---|---|
+| 1. The token hash matches a session that is not expired and not revoked; the user is not deactivated and has a verified email | `erasure_actor` (owner `bos_definer`, executable by `bos_maint` only) | The function body **and** `bos_definer`'s row policies. `bos_app` has no access to `users` or `sessions` at all (A5). |
+| 2. That user's membership in the **current** business is `ACTIVE` with role `OWNER` or `ADMIN` | `erasure_actor` | Function body and row policy |
+| 3. The verified user equals `app.user_id` | `scrub_event_details` (owner `bos_maint`, executable by `bos_app`) | Function body. A real owner token used under someone else's context is refused (A2). |
+| 4. Only named columns, in the current business only | `scrub_event_details` | Column grants and the `bos_maint` tenant policy. Without the policy it silently scrubs 0 rows (mutation-tested). |
+| 5. Audit row written as the verified user, with the count | `scrub_event_details` | `bos_maint`-only INSERT policy for that action. The API cannot skip or forge it (A5, A6). |
+| 6. Result | | A count, never content. One generic `42501` for every refusal. |
+
+**Tests (A1–A6):**
+- members and managers are refused with their own valid sessions;
+- impersonating an owner is refused, whether by setting `app.user_id` (through the context or `set_config` mid-transaction), by passing no token, a made-up token or the owner's user id, or by pairing a real owner token with another user's context;
+- expired, revoked, deactivated, suspended and unverified sessions are refused;
+- an owner of another business is refused, and that business's owner cannot reach these rows;
+- `bos_app` cannot read sessions, call `erasure_actor` or write the erasure audit;
+- live OWNER and ADMIN sessions succeed and are audited.
+
+Each check was removed in turn, and both copies where it is enforced twice. Every removal fails at least one test.
+
+**Residual assumptions.**
+1. A compromised API process could use the tokens of owners whose requests it is handling. Each use is bounded to those owners' businesses and the tokens' lifetime, and audited by the database (step-up "recent sign-in", U9).
+2. The verification rules must stay identical to `app_private.session_user_id`. S1 places the helper beside it in `privileged/` under the trusted-path schema tests.
+3. The OWNER/ADMIN list must match the roles holding `customers:delete`. S1 adds a unit test that keeps them in sync; custom roles will need a role-table lookup.
 
 ## 9. Time zones
 
@@ -174,11 +205,15 @@ Unchanged from the proposal:
 
 | Check | PG 16.10 (CI image, local) | PG 18.7 (local) | Neon test branch (PG 18.7, `bos_app` via Neon's pooler) |
 |---|---|---|---|
-| Scheduling spike suite (23 tests) | 23/23 | 23/23 | 23/23: 22 in one full run; C7 (40 sequential setup bookings) exceeded the default 30 s test timeout over the network and passed alone with a 180 s timeout |
-| Whole isolation suite (Phase 1b S1–S13 + scheduling) | — | 36/36 (direct; CI adds PgBouncer) | not run (Phase 1b fixture drops `public` tables, not appropriate on a production copy) |
+| Scheduling spike suite (28 tests since the PR #20 audit; 23 before) | 28/28, three runs; C6 and C7 15/15 repeated runs | 28/28, three runs; C6 and C7 15/15 | **Audit run** (branch `s0-scheduling-audit`): 26 non-concurrency tests 26/26, including all erasure authorisation tests A1–A6. C6 and C7 2/2 with `SPIKE_STRICT_CONCURRENCY=off`: exactly one winner, every other writer refused (`23P01`) or timed out waiting for the resource lock and rolled back (`P2028`), and the database holds exactly one booking. **First run** (23 tests): 23/23. |
+| Whole isolation suite (Phase 1b S1–S13 + scheduling) | 41/41 | 41/41 (direct; CI adds PgBouncer) | not run (Phase 1b fixture drops `public` tables, not appropriate on a production copy) |
 | `prisma migrate diff --exit-code` (main migrations + S1-shaped scheduling migration) | 0 | 0 | not run (needs a shadow database) |
 | `btree_gist` | 1.7 | 1.8 | 1.8 available. **Installed by `neondb_owner` (privileged step).** `bos_owner`: permission denied (as designed). |
 | Mutation check (each guard, policy, grant and predicate term removed in turn) | every removal fails at least one test | — | — |
+
+**Concurrency findings:**
+- **Deadlocks without lock ordering.** In one local run without per-resource locks, 19 of 20 concurrent reschedules into one slot got `40P01`, and the last one ran into the unit-of-work timeout, so none succeeded. Nobody double-booked, but nobody made progress either. It was intermittent (0 of 10 later runs reproduced it). With sorted per-resource advisory locks (§2.4), C6 and C7 passed 30 of 30 repeated runs locally.
+- **Queuing over a slow link.** From a laptop to Neon's us-east-1, each locked unit of work holds its resource lock for several round trips (about 200 ms each), so 50 queued writers exceed the 5 s unit-of-work timeout. That is why the Neon run counts `P2028` (rolled back) as "not committed". Production calls from Vercel `iad1` to Neon `us-east-1` take about a millisecond per round trip. S1 still keeps occupying writes to as few round trips as possible and measures this (U6).
 
 **Neon-specific findings:**
 1. A function owner change needs `CREATE` on the schema for the new owner. A superuser skips that check, so it only showed up on Neon. The fixture now grants it for the change, as privileged/001 does.
@@ -196,7 +231,9 @@ Until schema-only branches work (U7), every Neon verification branch is a copy o
   No query reads tenant tables. The only reads outside the fixture are catalog and role checks (version, extension availability, role membership, privileges).
 - **No exports.** No `pg_dump`, no row copies, and no test output containing row data. Connection strings are fetched into environment variables for the run and never printed, logged or saved, and the helper that built them is deleted afterwards. Neither the Phase 1b isolation suite (it rebuilds `public` tables) nor anything else that touches existing tables runs on such a branch.
 - **Short-lived, with deletion confirmed.** The branch is created with an expiry of at most 24 hours and deleted as soon as the run ends. Deletion is then confirmed by listing the project's branches.
-- **Record of the S0 run.** Branch `s0-scheduling-spike` (`br-patient-thunder-bb52udkz`) was created from `production` at 12:52 UTC on 2026-11-14 with a 24 h expiry, deleted at about 12:57 UTC the same day, and confirmed absent from the branch list. The remaining branches are `production` and the three earlier pre-migration branches, which are also production copies, outside this work.
+- **Record of the S0 runs** (2026-11-14, both created from `production` with a 24 h expiry, and both confirmed absent from the branch list afterwards):
+  - `s0-scheduling-spike` (`br-patient-thunder-bb52udkz`): created 12:52 UTC, deleted about 12:57 UTC;
+  - `s0-scheduling-audit` (`br-raspy-sea-bbr2rrok`, PR #20 audit re-run): created 13:22 UTC, deleted 13:31 UTC. The remaining branches are `production` and the three earlier pre-migration branches, which are also production copies, outside this work.
 
 ### 10.2 Connection acquisition vs transaction failures (rule for S1)
 
@@ -206,6 +243,7 @@ Until schema-only branches work (U7), every Neon verification branch is a copy o
 |---|---|---|---|
 | **No connection was acquired; the unit of work never started** | `withTenant` sets a flag on the first line inside the transaction callback. A failure with the flag unset proves no statement ran, so nothing could have committed. | `503 service_unavailable` with `Retry-After` and `retryable: true` | The **client** may resubmit. The API never re-executes a mutation by itself. |
 | **The transaction started and then failed** (timeout inside the unit of work, connection lost mid-way, commit outcome unknown) | Flag set | `500` (or the mapped `409`/`400` for known database errors). **Not** marked retryable. | Never automatic. The client re-reads, and the user decides. |
+| Deadlock victim (`40P01`) or serialization failure | SQLSTATE | `503` with `retryable: true`. PostgreSQL rolled the transaction back, so it definitely did not commit. | The client may resubmit. Per-resource lock ordering makes this rare. |
 | Read-only requests (GET) | Any of the above | As above | The client may retry reads freely |
 
 - **No automatic retries of mutations anywhere in the API.** A resubmitted booking is a new request.
@@ -225,9 +263,10 @@ Until schema-only branches work (U7), every Neon verification branch is a copy o
 |---|---|---|
 | U1 | May `schedule:manage` clear the organizer of a private entry? It narrows access, but locks the organizer out of their own entry. | The DB allows it (member removal needs it); the **service allows it only in `detachMember`** |
 | U2 | Reassigning members on a private entry needs sight of it | Accept. Managers cancel, and the person rebooks. |
-| U3 | Permission for erasure | Keep Phase 1e's `customers:delete` (OWNER, ADMIN) for contact/customer erasure; the same for departed-member scrubbing |
+| U3 | Permission for erasure | OWNER and ADMIN (the holders of `customers:delete`), **verified in the database from the session token** (§8.1); a test keeps the role list in sync |
 | U4 | Legally authorised access | Platform-operated break-glass only, with a written procedure before first use. No tenant feature. |
 | U5 | Owner export of the owner's *own* private entries | Included (RLS already allows it) |
 | U6 | Connection pool and `maxWait` for bursty booking | `503 retryable` only when the unit of work provably never started (§10.2). Never auto-retry mutations. Measure in S1 before changing the pool (today `max: 5`). |
 | U7 | Schema-only Neon branches are blocked by the legacy role | Accept full-copy test branches under §10.1 for now. Migrating the role is a separate change with its own approval. |
 | U8 | Idempotency for creating entries | Optional `Idempotency-Key` on `POST /schedule/events` (business-scoped, unique), in S1 |
+| U9 | Step-up for erasure (a sign-in within the last N minutes) | Add in S1 as an extra condition in `erasure_actor` |

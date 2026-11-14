@@ -30,9 +30,20 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- ---------------------------------------------------------------------------------------------
 -- Dependencies (cut down)
 CREATE TYPE "MembershipStatus" AS ENUM ('ACTIVE', 'SUSPENDED');
+CREATE TYPE "MembershipRole" AS ENUM ('OWNER', 'ADMIN', 'MANAGER', 'MEMBER');
 CREATE TABLE businesses (id uuid PRIMARY KEY, slug text NOT NULL UNIQUE, time_zone text NOT NULL DEFAULT 'America/New_York');
+-- Identity tables as in the identity migration: tenant code (bos_app) has no access to them at all.
+CREATE TABLE users (id uuid PRIMARY KEY, email_verified boolean NOT NULL DEFAULT false, deactivated_at timestamptz);
+CREATE TABLE sessions (
+  id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id), token_hash text NOT NULL UNIQUE,
+  expires_at timestamptz NOT NULL, revoked_at timestamptz);
+CREATE TABLE audit_events (
+  id uuid PRIMARY KEY, business_id uuid NOT NULL REFERENCES businesses(id) ON DELETE CASCADE, actor_user_id uuid NOT NULL,
+  action text NOT NULL, target_type text NOT NULL, target_id uuid NOT NULL, metadata jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE memberships (
   id uuid PRIMARY KEY, business_id uuid NOT NULL REFERENCES businesses(id) ON DELETE CASCADE, user_id uuid NOT NULL,
+  role "MembershipRole" NOT NULL DEFAULT 'MEMBER',
   status "MembershipStatus" NOT NULL DEFAULT 'ACTIVE',
   CONSTRAINT memberships_business_id_user_id_key UNIQUE (business_id, user_id),
   CONSTRAINT memberships_business_id_id_key UNIQUE (business_id, id));
@@ -150,18 +161,24 @@ CREATE UNIQUE INDEX schedule_event_resources_active_key ON schedule_event_resour
 -- Least privilege. No DELETE anywhere for tenant code; assignment copies are never writable.
 REVOKE ALL ON ALL TABLES IN SCHEMA scheduling_spike FROM bos_app;
 GRANT SELECT, INSERT, UPDATE ON businesses, memberships, customers, contacts, projects, project_tasks TO bos_app;
+-- users and sessions: nothing for bos_app. audit_events: read only (writes here come from the erasure function).
+GRANT SELECT ON audit_events TO bos_app;
 GRANT SELECT, INSERT, UPDATE ON schedule_resources, schedule_events, schedule_event_details TO bos_app;
 GRANT SELECT, INSERT ON schedule_event_resources TO bos_app;
 GRANT UPDATE (removed_at, removed_by_id, removal_reason) ON schedule_event_resources TO bos_app;
 
 -- Standard tenant policy on every table (businesses by id).
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users FORCE ROW LEVEL SECURITY;
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sessions FORCE ROW LEVEL SECURITY;
 ALTER TABLE businesses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE businesses FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON businesses FOR ALL TO bos_app
   USING (id = nullif(current_setting('app.business_id', true), '')::uuid)
   WITH CHECK (id = nullif(current_setting('app.business_id', true), '')::uuid);
 DO $$ DECLARE t text; BEGIN
-  FOREACH t IN ARRAY ARRAY['memberships','customers','contacts','projects','project_tasks','schedule_resources','schedule_events','schedule_event_details','schedule_event_resources'] LOOP
+  FOREACH t IN ARRAY ARRAY['memberships','audit_events','customers','contacts','projects','project_tasks','schedule_resources','schedule_events','schedule_event_details','schedule_event_resources'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format($p$CREATE POLICY tenant_isolation ON %I FOR ALL TO bos_app
@@ -256,23 +273,68 @@ RESET ROLE;
 
 -- ---------------------------------------------------------------------------------------------
 -- Privileged erasure (ADR 0006 §6). The one path that can change private details its caller cannot see.
--- Owned by bos_maint (NOLOGIN, no login role is a member), SECURITY DEFINER, fixed search_path, limited
--- to the CURRENT tenant, scrubs named columns only and returns a count, never content. bos_maint has its
--- own tenant-limited policy: without it a definer under FORCE RLS silently matches 0 rows (finding F2).
+--
+-- Trust model. app.business_id and app.user_id are set by withTenant from a verified session, but
+-- any code running as bos_app can call set_config and change them, so they scope RLS and are never
+-- AUTHORITY for an irreversible operation. Authority comes from the caller's raw session token, verified
+-- in the database exactly like the pre-tenant trusted paths (privileged/001, ADR 0004): only a holder
+-- of a live OWNER or ADMIN session can erase. bos_app can neither read sessions nor forge a token.
+--
+-- Two functions, two owners, least privilege:
+--   scheduling_spike_private.erasure_actor(token, business)  owner bos_definer (already trusted to verify
+--       sessions). Returns the verified user id if the session is live, the user active and verified, and
+--       their membership in that business ACTIVE with role OWNER or ADMIN (the roles that hold
+--       customers:delete in ROLE_PERMISSIONS; S1 adds a unit test that keeps the two in sync). Executable
+--       by bos_maint only.
+--   scheduling_spike_private.scrub_event_details(token, subject, id)  owner bos_maint. Executable by
+--       bos_app. Calls erasure_actor; refuses unless it returns a user and that user equals app.user_id
+--       (a mismatch means the context was tampered with); scrubs named columns in the CURRENT business
+--       only; writes its own audit row as the verified user (the API cannot skip or forge it); returns a count.
+
+-- bos_definer: read exactly what verification needs. Policies are per role; tenant code gets nothing.
+GRANT USAGE ON SCHEMA scheduling_spike TO bos_definer;
+GRANT SELECT (id, user_id, token_hash, expires_at, revoked_at) ON scheduling_spike.sessions TO bos_definer;
+GRANT SELECT (id, email_verified, deactivated_at) ON scheduling_spike.users TO bos_definer;
+GRANT SELECT (business_id, user_id, role, status) ON scheduling_spike.memberships TO bos_definer;
+CREATE POLICY definer_verify ON scheduling_spike.sessions FOR SELECT TO bos_definer USING (revoked_at IS NULL AND expires_at > now());
+CREATE POLICY definer_verify ON scheduling_spike.users FOR SELECT TO bos_definer USING (deactivated_at IS NULL);
+CREATE POLICY definer_verify ON scheduling_spike.memberships FOR SELECT TO bos_definer USING (status = 'ACTIVE' AND role IN ('OWNER', 'ADMIN'));
+
+-- bos_maint: change only the scrubbed columns of the current business, and append its audit row.
 GRANT SELECT ON scheduling_spike.schedule_event_details TO bos_maint;
 GRANT UPDATE (title, description, location, cancel_reason, customer_id, contact_id) ON scheduling_spike.schedule_event_details TO bos_maint;
 CREATE POLICY maint_scrub ON scheduling_spike.schedule_event_details FOR ALL TO bos_maint
   USING (business_id = nullif(current_setting('app.business_id', true), '')::uuid)
   WITH CHECK (business_id = nullif(current_setting('app.business_id', true), '')::uuid);
+GRANT INSERT ON scheduling_spike.audit_events TO bos_maint;
+CREATE POLICY maint_audit ON scheduling_spike.audit_events FOR INSERT TO bos_maint
+  WITH CHECK (business_id = nullif(current_setting('app.business_id', true), '')::uuid AND action = 'schedule.details.scrubbed');
 
-CREATE FUNCTION scheduling_spike_private.scrub_event_details(p_subject text, p_subject_id uuid) RETURNS integer
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+CREATE FUNCTION scheduling_spike_private.erasure_actor(p_session_token text, p_business uuid) RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT u.id
+  FROM scheduling_spike.sessions s
+  JOIN scheduling_spike.users u ON u.id = s.user_id
+  JOIN scheduling_spike.memberships m ON m.user_id = u.id AND m.business_id = p_business
+  WHERE s.token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(p_session_token, ''), 'UTF8')), 'hex')
+    AND s.expires_at > pg_catalog.now() AND s.revoked_at IS NULL
+    AND u.deactivated_at IS NULL AND u.email_verified
+    AND m.status = 'ACTIVE' AND m.role IN ('OWNER', 'ADMIN')
+$$;
+
+CREATE FUNCTION scheduling_spike_private.scrub_event_details(p_session_token text, p_subject text, p_subject_id uuid) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   b uuid := nullif(current_setting('app.business_id', true), '')::uuid;
+  ctx_user uuid := nullif(current_setting('app.user_id', true), '')::uuid;
+  actor uuid;
   n integer;
 BEGIN
-  IF b IS NULL OR nullif(current_setting('app.user_id', true), '') IS NULL THEN
-    RAISE EXCEPTION 'tenant context required' USING ERRCODE = '42501';
+  IF b IS NULL THEN RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501'; END IF;
+  actor := scheduling_spike_private.erasure_actor(p_session_token, b);
+  -- One generic failure for every reason: no session, wrong role, other business, or a tampered context.
+  IF actor IS NULL OR ctx_user IS DISTINCT FROM actor THEN
+    RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501';
   END IF;
   IF p_subject = 'contact' THEN
     UPDATE scheduling_spike.schedule_event_details d
@@ -286,17 +348,22 @@ BEGIN
     RAISE EXCEPTION 'unknown subject' USING ERRCODE = '22023';
   END IF;
   GET DIAGNOSTICS n = ROW_COUNT;
+  INSERT INTO scheduling_spike.audit_events (id, business_id, actor_user_id, action, target_type, target_id, metadata)
+  VALUES (pg_catalog.gen_random_uuid(), b, actor, 'schedule.details.scrubbed', p_subject, p_subject_id, pg_catalog.jsonb_build_object('count', n));
   RETURN n;
 END $$;
--- Hand the function to bos_maint the way privileged/001 hands functions to bos_definer: the admin role
--- (Neon's owner role is not a superuser) joins bos_maint only for the ownership change.
--- A new owner needs CREATE on the function's schema, so bos_maint holds it only for the change (as
--- bos_definer does on app_private in privileged/001). Found on Neon: a superuser skips this check.
-GRANT bos_maint TO CURRENT_USER;
-GRANT CREATE ON SCHEMA scheduling_spike_private TO bos_maint;
-ALTER FUNCTION scheduling_spike_private.scrub_event_details(text, uuid) OWNER TO bos_maint;
-REVOKE CREATE ON SCHEMA scheduling_spike_private FROM bos_maint;
-REVOKE bos_maint FROM CURRENT_USER;
-REVOKE ALL ON FUNCTION scheduling_spike_private.scrub_event_details(text, uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION scheduling_spike_private.scrub_event_details(text, uuid) TO bos_app;
-GRANT USAGE ON SCHEMA scheduling_spike_private TO bos_maint;
+
+-- Ownership changes as privileged/001 does: the admin role joins the owner role, and the owner holds
+-- CREATE on the schema, only for the change (a superuser skips the CREATE check; Neon does not).
+GRANT bos_definer, bos_maint TO CURRENT_USER;
+GRANT CREATE ON SCHEMA scheduling_spike_private TO bos_definer, bos_maint;
+GRANT USAGE ON SCHEMA scheduling_spike_private TO bos_definer, bos_maint;
+ALTER FUNCTION scheduling_spike_private.erasure_actor(text, uuid) OWNER TO bos_definer;
+ALTER FUNCTION scheduling_spike_private.scrub_event_details(text, text, uuid) OWNER TO bos_maint;
+-- Execute rights are set while the admin role still belongs to the owners (it may grant on their behalf).
+REVOKE ALL ON FUNCTION scheduling_spike_private.erasure_actor(text, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION scheduling_spike_private.erasure_actor(text, uuid) TO bos_maint;
+REVOKE ALL ON FUNCTION scheduling_spike_private.scrub_event_details(text, text, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION scheduling_spike_private.scrub_event_details(text, text, uuid) TO bos_app;
+REVOKE CREATE ON SCHEMA scheduling_spike_private FROM bos_definer, bos_maint;
+REVOKE bos_definer, bos_maint FROM CURRENT_USER;

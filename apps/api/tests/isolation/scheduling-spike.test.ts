@@ -7,7 +7,8 @@
  *   P*  busy-only privacy enforced by a restrictive RLS policy;
  *   E*  no privilege escalation into private details (visibility, organizer, participants, relinking);
  *   W*  the scoped tenant client cannot write generated or copied columns;
- *   R*  privileged erasure, member removal and capacity (RESERVATION) preparation.
+ *   A*  privileged erasure is authorised by a database-verified OWNER/ADMIN session, never by settings;
+ *   R*  member removal and capacity (RESERVATION) preparation.
  *
  * Fixture: tests/isolation/fixtures/scheduling-spike-schema.sql (own schemas, never the Phase 1b fixture's).
  * Connections: SPIKE_ADMIN_URL (administrative, direct) and SPIKE_APP_URL (bos_app, through the pooler).
@@ -50,7 +51,11 @@ async function outcome(p: Promise<unknown>): Promise<string> {
 
 // --- Seed -------------------------------------------------------------------------------------
 const A = uuid(), B = uuid();
-const alice = uuid(), bob = uuid(), carol = uuid(), erin = uuid(), dave = uuid();
+// Roles in business A: alice OWNER, erin ADMIN, carol MANAGER, bob MEMBER. dave is OWNER of B.
+// frank (OWNER, deactivated), gina (ADMIN, suspended) and hank (OWNER, email not verified) exist only to be refused.
+const alice = uuid(), bob = uuid(), carol = uuid(), erin = uuid(), dave = uuid(), frank = uuid(), gina = uuid(), hank = uuid();
+/** Raw session tokens (what the API receives in the cookie or bearer header); the database stores only their SHA-256. */
+const token = { alice: uuid(), carol: uuid(), bob: uuid(), erin: uuid(), dave: uuid(), frank: uuid(), gina: uuid(), hank: uuid(), aliceExpired: uuid(), aliceRevoked: uuid() };
 const rBob = uuid(), rCarol = uuid(), rErin = uuid(), rRoom = uuid(), rVan = uuid(), rTables = uuid(), rDave = uuid();
 const customerA = uuid(), contactA = uuid(), projectA = uuid(), taskA = uuid(), customerB = uuid();
 
@@ -58,9 +63,21 @@ async function seed() {
   await admin.query(readFileSync(resolve(__dirname, 'fixtures/scheduling-spike-schema.sql'), 'utf8'));
   const q = (sql: string, params: unknown[]) => admin.query(sql, params);
   await q(`INSERT INTO scheduling_spike.businesses (id, slug) VALUES ($1, 'sched-a'), ($2, 'sched-b')`, [A, B]);
-  for (const [b, u] of [[A, alice], [A, bob], [A, carol], [A, erin], [B, dave]] as const) {
-    await q(`INSERT INTO scheduling_spike.memberships (id, business_id, user_id) VALUES ($1, $2, $3)`, [uuid(), b, u]);
+  for (const [u, verified, deactivated] of [[alice, true, false], [bob, true, false], [carol, true, false], [erin, true, false], [dave, true, false], [frank, true, true], [gina, true, false], [hank, false, false]] as const) {
+    await q(`INSERT INTO scheduling_spike.users (id, email_verified, deactivated_at) VALUES ($1, $2, CASE WHEN $3 THEN now() END)`, [u, verified, deactivated]);
   }
+  for (const [b, u, role, status] of [
+    [A, alice, 'OWNER', 'ACTIVE'], [A, bob, 'MEMBER', 'ACTIVE'], [A, carol, 'MANAGER', 'ACTIVE'], [A, erin, 'ADMIN', 'ACTIVE'], [B, dave, 'OWNER', 'ACTIVE'],
+    [A, frank, 'OWNER', 'ACTIVE'], [A, gina, 'ADMIN', 'SUSPENDED'], [A, hank, 'OWNER', 'ACTIVE'],
+  ] as const) {
+    await q(`INSERT INTO scheduling_spike.memberships (id, business_id, user_id, role, status) VALUES ($1, $2, $3, $4, $5)`, [uuid(), b, u, role, status]);
+  }
+  const session = (user: string, raw: string, live = "now() + interval '1 hour'", revoked = 'NULL') =>
+    q(`INSERT INTO scheduling_spike.sessions (id, user_id, token_hash, expires_at, revoked_at)
+       VALUES ($1, $2, encode(sha256(convert_to($3, 'UTF8')), 'hex'), ${live}, ${revoked})`, [uuid(), user, raw]);
+  for (const [user, raw] of [[alice, token.alice], [bob, token.bob], [carol, token.carol], [erin, token.erin], [dave, token.dave], [frank, token.frank], [gina, token.gina], [hank, token.hank]] as const) await session(user, raw);
+  await session(alice, token.aliceExpired, "now() - interval '1 minute'");
+  await session(alice, token.aliceRevoked, "now() + interval '1 hour'", 'now()');
   for (const [id, b, kind, user, name] of [
     [rBob, A, 'MEMBER', bob, 'Bob'], [rCarol, A, 'MEMBER', carol, 'Carol'], [rErin, A, 'MEMBER', erin, 'Erin'],
     [rRoom, A, 'PLACE', null, 'Room 1'], [rVan, A, 'EQUIPMENT', null, 'Van'], [rTables, A, 'PLACE', null, 'Patio tables'], [rDave, B, 'MEMBER', dave, 'Dave'],
@@ -80,8 +97,29 @@ const nextDay = () => new Date(Date.UTC(2030, 0, 1 + day++));
 const at = (d: Date, h: number, m = 0) => new Date(d.getTime() + (h * 60 + m) * 60_000);
 
 interface NewEvent { start: Date; end: Date; resources?: string[]; visibility?: 'STANDARD' | 'PRIVATE'; status?: 'CONFIRMED' | 'CANCELLED'; title?: string; contactId?: string; customerId?: string; role?: 'REQUIRED' | 'OPTIONAL'; blocks?: boolean; organizer?: string | null }
+/**
+ * Liveness, not correctness (ADR 0006 §2): every write that can occupy time first takes a transaction
+ * advisory lock per resource, in one global order, the pattern PR #19 uses per project. Without it,
+ * concurrent writers that conflict in the exclusion constraint wait on each other's uncommitted index
+ * entries and deadlock (observed: 19 of 20 concurrent reschedules got 40P01, and the last one ran into the
+ * unit-of-work timeout, so none succeeded). The exclusion constraint stays the guarantee.
+ */
+async function lockResources(db: Db, businessId: string, resourceIds: string[]) {
+  if (resourceIds.length === 0) return;
+  // pg_advisory_xact_lock returns void, which Prisma cannot read back, so the locks are taken inside count().
+  await db.$queryRaw`
+    SELECT count(pg_advisory_xact_lock(k)::text)::int AS locked FROM (
+      SELECT DISTINCT hashtextextended(${businessId}::text || ':' || r::text, 0) AS k FROM unnest(${resourceIds}::uuid[]) AS r ORDER BY k
+    ) ordered`;
+}
+/** The resources an existing entry occupies (its active assignments), for locking before a time or status change. */
+async function resourcesOf(db: Db, eventId: string) {
+  const rows = await db.scheduleEventResource.findMany({ where: { eventId, removedAt: null }, select: { resourceId: true } });
+  return rows.map((r) => r.resourceId);
+}
 async function createEvent(db: Db, businessId: string, me: string | null, e: NewEvent) {
   const id = uuid();
+  await lockResources(db, businessId, e.resources ?? []);
   await db.scheduleEvent.create({
     data: {
       id, businessId, kind: 'APPOINTMENT', startsAt: e.start, endsAt: e.end, timeZone: 'America/New_York',
@@ -94,7 +132,9 @@ async function createEvent(db: Db, businessId: string, me: string | null, e: New
   return id;
 }
 /** Assignments are inserted by raw SQL that copies the range, occupancy and exclusivity from their sources. */
-const assign = (db: Db, businessId: string, eventId: string, resourceId: string, role: 'REQUIRED' | 'OPTIONAL' = 'REQUIRED') => db.$queryRaw`
+const assign = async (db: Db, businessId: string, eventId: string, resourceId: string, role: 'REQUIRED' | 'OPTIONAL' = 'REQUIRED') => {
+  await lockResources(db, businessId, [resourceId]);
+  return db.$queryRaw`
   INSERT INTO scheduling_spike.schedule_event_resources (id, business_id, event_id, resource_id, role, during, occupying, exclusive)
   SELECT ${uuid()}::uuid, e.business_id, e.id, s.id, ${role}::scheduling_spike."ScheduleAssignmentRole", e.during, e.occupying, s.exclusive
   FROM scheduling_spike.schedule_events e JOIN scheduling_spike.schedule_resources s ON s.business_id = e.business_id AND s.id = ${resourceId}::uuid
@@ -102,12 +142,35 @@ const assign = (db: Db, businessId: string, eventId: string, resourceId: string,
   RETURNING id`.then((rows) => {
   if ((rows as unknown[]).length !== 1) throw Object.assign(new Error('not found'), { code: 'not_found' });
 });
+};
 const book = (e: NewEvent, me = alice, businessId = A) => as(businessId, me, (db) => createEvent(db, businessId, me, e));
-const setTime = (id: string, start: Date, end: Date, me = alice) => as(A, me, (db) => db.scheduleEvent.updateMany({ where: { id }, data: { startsAt: start, endsAt: end, version: { increment: 1 } } }));
-const setStatus = (id: string, status: 'CONFIRMED' | 'CANCELLED' | 'COMPLETED' | 'NO_SHOW', me = alice) =>
-  as(A, me, (db) => db.scheduleEvent.updateMany({ where: { id }, data: { status, version: { increment: 1 } } }));
+const setTime = (id: string, start: Date, end: Date, me = alice) => as(A, me, async (db) => {
+  await lockResources(db, A, await resourcesOf(db, id));
+  return db.scheduleEvent.updateMany({ where: { id }, data: { startsAt: start, endsAt: end, version: { increment: 1 } } });
+});
+const setStatus = (id: string, status: 'CONFIRMED' | 'CANCELLED' | 'COMPLETED' | 'NO_SHOW', me = alice) => as(A, me, async (db) => {
+  await lockResources(db, A, await resourcesOf(db, id));
+  return db.scheduleEvent.updateMany({ where: { id }, data: { status, version: { increment: 1 } } });
+});
 const copyOf = async (eventId: string) =>
   (await admin.query(`SELECT lower(during) AS start, occupying, exclusive FROM scheduling_spike.schedule_event_resources WHERE event_id = $1 AND removed_at IS NULL`, [eventId])).rows as { start: Date; occupying: boolean; exclusive: boolean }[];
+/**
+ * The concurrency invariant: exactly one writer wins, and every other writer was refused or rolled back,
+ * never committed. Refusal is 23P01. Over a slow link (a laptop to Neon's us-east-1), writers queued on the
+ * per-resource lock can also reach the 5 s unit-of-work timeout (P2028, rolled back), so those are counted
+ * as "not committed" too. The database is then checked directly: exactly one occupying assignment holds the
+ * slot. Locally and in CI, every loser is a 23P01 (asserted when SPIKE_STRICT_CONCURRENCY is not 'off').
+ */
+async function expectExactlyOneWinner(outcomes: string[], resourceId: string, start: Date, end: Date) {
+  expect(outcomes.filter((r) => r === 'ok'), outcomes.join(',')).toHaveLength(1);
+  const notCommitted = new Set(['23P01', 'P2028', '40P01']);
+  expect(outcomes.filter((r) => r !== 'ok' && !notCommitted.has(r)), outcomes.join(',')).toEqual([]);
+  if (process.env.SPIKE_STRICT_CONCURRENCY !== 'off') expect(outcomes.filter((r) => r === '23P01')).toHaveLength(outcomes.length - 1);
+  const held = await admin.query(
+    `SELECT count(*)::int AS n FROM scheduling_spike.schedule_event_resources
+     WHERE resource_id = $1 AND occupying AND removed_at IS NULL AND during && tstzrange($2, $3)`, [resourceId, start, end]);
+  expect(held.rows[0].n).toBe(1);
+}
 const titleSeenBy = (eventId: string, me: string | null) => as(A, me, (db) => db.scheduleEventDetails.findFirst({ where: { eventId } })).then((r) => r?.title ?? null);
 
 beforeAll(async () => {
@@ -174,11 +237,10 @@ describe('C: conflict prevention (variant A, forced RLS, bos_app)', () => {
     expect(await outcome(book({ start: at(d, 18), end: at(d, 19), resources: [rVan] }))).toBe('23P01');
   });
 
-  it('C6: 50 concurrent bookings of one slot: exactly one wins', async () => {
+  it('C6: 50 concurrent bookings of one slot: exactly one wins', { timeout: 180_000 }, async () => {
     const d = nextDay();
     const results = await Promise.all(Array.from({ length: 50 }, () => outcome(book({ start: at(d, 9), end: at(d, 10), resources: [rRoom] }))));
-    expect(results.filter((r) => r === 'ok')).toHaveLength(1);
-    expect(results.filter((r) => r === '23P01')).toHaveLength(49);
+    await expectExactlyOneWinner(results, rRoom, at(d, 9), at(d, 10));
   });
 
   it('C7: 20 concurrent reschedules and 20 concurrent reopens into one slot: exactly one wins each', async () => {
@@ -187,14 +249,12 @@ describe('C: conflict prevention (variant A, forced RLS, bos_app)', () => {
     for (let i = 0; i < 20; i++) movers.push(await book({ start: at(d, i), end: at(d, i, 30), resources: [rVan] }));
     const target = nextDay();
     const moved = await Promise.all(movers.map((id) => outcome(setTime(id, at(target, 9), at(target, 10)))));
-    expect(moved.filter((r) => r === 'ok')).toHaveLength(1);
-    expect(moved.filter((r) => r === '23P01')).toHaveLength(19);
+    await expectExactlyOneWinner(moved, rVan, at(target, 9), at(target, 10));
     const d2 = nextDay();
     const cancelled: string[] = [];
     for (let i = 0; i < 20; i++) cancelled.push(await book({ start: at(d2, 9), end: at(d2, 10), resources: [rVan], status: 'CANCELLED' }));
     const reopened = await Promise.all(cancelled.map((id) => outcome(setStatus(id, 'CONFIRMED'))));
-    expect(reopened.filter((r) => r === 'ok')).toHaveLength(1);
-    expect(reopened.filter((r) => r === '23P01')).toHaveLength(19);
+    await expectExactlyOneWinner(reopened, rVan, at(d2, 9), at(d2, 10));
   }, 180_000); // 40 sequential setup bookings: slow over a remote pooler, instant locally
 });
 
@@ -333,18 +393,83 @@ describe('W: the scoped tenant client cannot write generated or copied columns',
   });
 });
 
-describe('R: erasure, member removal and capacity preparation', () => {
-  it('R1: privileged erasure scrubs private details its caller cannot see, in the current business only, returning a count', async () => {
+describe('A: privileged erasure is authorised by a database-verified session, never by context settings', () => {
+  /** Calls the scrub function inside a unit of work whose context says `ctxUser`, passing `raw` as the session token. */
+  const scrub = (b: string, ctxUser: string | null, raw: string | null, subject: 'contact' | 'customer' = 'contact', id = contactA) =>
+    as(b, ctxUser, (db) => db.$queryRaw<{ n: number }[]>`SELECT scheduling_spike_private.scrub_event_details(${raw}, ${subject}, ${id}::uuid) AS n`);
+  const detailsOf = async (ev: string) => (await admin.query(`SELECT title, contact_id FROM scheduling_spike.schedule_event_details WHERE event_id = $1`, [ev])).rows[0];
+  const audits = async () => (await admin.query(`SELECT actor_user_id, metadata FROM scheduling_spike.audit_events WHERE business_id = $1 AND action = 'schedule.details.scrubbed' ORDER BY created_at, id`, [A])).rows as { actor_user_id: string; metadata: { count: number } }[];
+  let ev = '';
+
+  beforeAll(async () => {
     const d = nextDay();
-    const ev = await book({ start: at(d, 9), end: at(d, 10), resources: [rBob], visibility: 'PRIVATE', title: 'Therapy with A contact', contactId: contactA, customerId: customerA });
-    const scrub = (b: string, me: string | null) => as(b, me, (db) => db.$queryRaw<{ n: number }[]>`SELECT scheduling_spike_private.scrub_event_details('contact', ${contactA}::uuid) AS n`);
-    expect(await outcome(scrub(A, null))).toBe('42501');
-    expect((await scrub(B, dave))[0]!.n).toBe(0);
-    expect((await scrub(A, carol))[0]!.n).toBeGreaterThanOrEqual(1);
-    const row = (await admin.query(`SELECT title, contact_id FROM scheduling_spike.schedule_event_details WHERE event_id = $1`, [ev])).rows[0];
-    expect(row).toEqual({ title: 'Appointment', contact_id: null });
-    expect(await titleSeenBy(ev, carol)).toBeNull();
+    ev = await book({ start: at(d, 9), end: at(d, 10), resources: [rBob], visibility: 'PRIVATE', title: 'Therapy with A contact', contactId: contactA, customerId: customerA }, bob);
   });
+
+  it('A1: members and managers are refused with their own valid sessions; nothing changes', async () => {
+    expect(await outcome(scrub(A, bob, token.bob))).toBe('42501');
+    expect(await outcome(scrub(A, carol, token.carol))).toBe('42501');
+    expect(await detailsOf(ev)).toEqual({ title: 'Therapy with A contact', contact_id: contactA });
+    expect(await audits()).toHaveLength(0);
+  });
+
+  it('A2: impersonating an owner through mutable transaction settings does not work', async () => {
+    // The context claims to be alice (as if bos_app code had called set_config), with the member's real token,
+    // no token, a made-up token, or alice's id where a token belongs.
+    expect(await outcome(scrub(A, alice, token.carol))).toBe('42501');
+    expect(await outcome(scrub(A, alice, null))).toBe('42501');
+    expect(await outcome(scrub(A, alice, uuid()))).toBe('42501');
+    expect(await outcome(scrub(A, alice, alice))).toBe('42501');
+    // set_config inside the unit of work, after withTenant set the real user.
+    const tampered = as(A, carol, async (db) => {
+      await db.$queryRaw`SELECT set_config('app.user_id', ${alice}::text, true)`;
+      return db.$queryRaw`SELECT scheduling_spike_private.scrub_event_details(${token.carol}, 'contact', ${contactA}::uuid)`;
+    });
+    expect(await outcome(tampered)).toBe('42501');
+    // A real owner token whose holder is not the context user is refused too (context and session must agree).
+    expect(await outcome(scrub(A, carol, token.alice))).toBe('42501');
+    expect(await detailsOf(ev)).toEqual({ title: 'Therapy with A contact', contact_id: contactA });
+    expect(await audits()).toHaveLength(0);
+  });
+
+  it('A3: expired, revoked, deactivated, suspended and unverified sessions are refused', async () => {
+    expect(await outcome(scrub(A, alice, token.aliceExpired))).toBe('42501');
+    expect(await outcome(scrub(A, alice, token.aliceRevoked))).toBe('42501');
+    expect(await outcome(scrub(A, frank, token.frank))).toBe('42501');
+    expect(await outcome(scrub(A, gina, token.gina))).toBe('42501');
+    expect(await outcome(scrub(A, hank, token.hank))).toBe('42501');
+    expect(await outcome(scrub(A, null, token.alice))).toBe('42501');
+    expect(await audits()).toHaveLength(0);
+  });
+
+  it('A4: an owner of one business has no authority in another, and cannot reach the other business\'s rows', async () => {
+    expect(await outcome(scrub(B, alice, token.alice))).toBe('42501');
+    expect((await scrub(B, dave, token.dave))[0]!.n).toBe(0);
+    // dave's authorised (empty) attempt is audited in B, never in A.
+    expect((await admin.query(`SELECT count(*)::int AS n FROM scheduling_spike.audit_events WHERE business_id = $1 AND actor_user_id = $2`, [B, dave])).rows[0].n).toBe(1);
+    expect(await detailsOf(ev)).toEqual({ title: 'Therapy with A contact', contact_id: contactA });
+  });
+
+  it('A5: bos_app cannot reach the verification inputs or write the erasure audit itself', async () => {
+    expect(await outcome(as(A, alice, (db) => db.$queryRaw`SELECT count(*) FROM scheduling_spike.sessions`))).toBe('42501');
+    expect(await outcome(as(A, alice, (db) => db.$queryRaw`SELECT scheduling_spike_private.erasure_actor(${token.alice}, ${A}::uuid)`))).toBe('42501');
+    expect(await outcome(as(A, alice, (db) => db.$queryRaw`INSERT INTO scheduling_spike.audit_events (id, business_id, actor_user_id, action, target_type, target_id)
+      VALUES (${uuid()}::uuid, ${A}::uuid, ${alice}::uuid, 'schedule.details.scrubbed', 'contact', ${contactA}::uuid)`))).toBe('42501');
+  });
+
+  it('A6: a live OWNER or ADMIN session scrubs private details the caller cannot see, returns a count and writes its own audit row', async () => {
+    expect(await titleSeenBy(ev, alice)).toBeNull();
+    expect((await scrub(A, alice, token.alice))[0]!.n).toBe(1);
+    expect(await detailsOf(ev)).toEqual({ title: 'Appointment', contact_id: null });
+    expect((await scrub(A, erin, token.erin, 'customer', customerA))[0]!.n).toBe(1);
+    expect(await audits()).toEqual([
+      { actor_user_id: alice, metadata: { count: 1 } },
+      { actor_user_id: erin, metadata: { count: 1 } },
+    ]);
+  });
+});
+
+describe('R: member removal and capacity preparation', () => {
 
   it('R2: member removal: future assignments soft-removed, organizer cleared, resource archived, then the membership can go', async () => {
     const d = nextDay();

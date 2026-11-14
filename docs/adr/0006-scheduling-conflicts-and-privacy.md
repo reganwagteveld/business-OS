@@ -30,6 +30,7 @@ Both must hold under the existing isolation design (ADR 0004): forced RLS, `bos_
 - `EXCLUDE USING gist (business_id WITH =, resource_id WITH =, during WITH &&) WHERE (occupying AND exclusive AND role = 'REQUIRED' AND removed_at IS NULL)`.
 - `bos_app` cannot update the copies (column grants) and cannot forge them on insert (the FK). Assignments are soft-removed (`removed_at`) and never deleted.
 - Deletion: no scheduling table that records what happened grants DELETE. The single exception is `schedule_working_hours` (configuration).
+- **Lock order (liveness).** Every write that can occupy time first takes a transaction advisory lock per resource, sorted by key: the PR #19 pattern, per resource instead of per project. Without it, conflicting concurrent writers wait on each other's uncommitted exclusion-index entries and can deadlock. In one observed local run, 19 of 20 concurrent reschedules got `40P01` and the last one ran into the unit-of-work timeout, so none succeeded and nobody double-booked. The lock is for progress only: the exclusion constraint remains the guarantee, and a write path that forgets the lock can fail, but cannot double-book.
 - **Fallback (variant B, tested in S0):** `SECURITY INVOKER` triggers maintain the copies, with a column-level `UPDATE` grant guarded by a trigger that re-derives them. It is never `SECURITY DEFINER` (see consequence 3).
 
 ### 3. Extensions: privileged pre-migration step
@@ -54,25 +55,41 @@ Both must hold under the existing isolation design (ADR 0004): forced RLS, `bos_
 
 Narrowing changes (STANDARD → PRIVATE, clearing the organizer, removing a participant) and time/status changes stay available to `schedule:manage`.
 
-### 6. Privileged erasure
+### 6. Trust model for transaction settings
 
-- Erasure is the only path that changes private details its caller cannot see. It goes through a `SECURITY DEFINER` function owned by `bos_maint`, with these limits:
-  - fixed `search_path`;
-  - tenant from `app.business_id` only, and a user context is required;
-  - it scrubs named columns only and returns a count, never content;
-  - its own tenant-limited policy for `bos_maint`;
-  - executable only by `bos_app`.
+- `app.business_id` and `app.user_id` are set by `withTenant` from a session the API verified. They are **not** authenticated by the database: any code running as `bos_app` can change them with `set_config`.
+- They are therefore trusted only to **scope** queries: RLS, the privacy policy, audit authorship checks. In each case they back up application-layer checks, the same model as ADR 0004.
+- They are **never authority for an irreversible or privileged operation.**
+- The consequence is spelled out: busy-only privacy (§4) and the escalation guards (§5) protect against bugs and against requests that pass through the API. They do **not** protect against a compromised API process or arbitrary SQL running as `bos_app`, which could set `app.user_id` to an organizer's id and read that entry. This is the same boundary as tenant isolation itself. S1 narrows it further:
+  - a boundary rule allows `set_config` and `current_setting` only in `core/db`, which `check-boundaries.mjs` already does for `businessId`;
+  - `$queryRawUnsafe` and `$executeRawUnsafe` stay unreachable from services (ADR 0004 S3).
+
+### 7. Privileged erasure: authority from a database-verified session
+
+- Erasure is the only path that changes private details its caller cannot see. Its authority comes from the caller's **raw session token, verified in the database**, the same mechanism as the pre-tenant trusted paths (data-model §5.5, ADR 0004). `bos_app` cannot read `sessions`, so it cannot obtain or forge a token for someone else.
+- The work is split across two functions:
+
+| Function | Owner | Executable by | Does |
+|---|---|---|---|
+| `erasure_actor(token, business)` | `bos_definer` (already the role trusted to verify sessions) | `bos_maint` only | Returns the user id only if all of the following hold: the session's token hash matches, it is not expired and not revoked; the user is not deactivated and has a verified email; and the user's membership **in that business** is `ACTIVE` with role `OWNER` or `ADMIN`. `bos_definer`'s row policies repeat the expiry, revocation, deactivation and role conditions, so each check is enforced twice. |
+| `scrub_event_details(token, subject, id)` | `bos_maint` | `bos_app` | Refuses unless `erasure_actor` returns a user **and** that user equals `app.user_id` (a mismatch means a tampered or confused context). Scrubs named columns in the **current** business only. Writes its own audit row as the verified user, so the API can neither skip it nor forge it (`bos_app` has no INSERT for that action). Returns a count, never content. Every failure is the same generic `42501`. |
+
+- **Roles vs permission keys.** The database cannot read `ROLE_PERMISSIONS`, so `erasure_actor` names the roles that hold `customers:delete` today (OWNER, ADMIN), as `create_business` names OWNER. S1 adds a unit test that fails if the two lists drift. Custom roles (architecture §7.2) will need this function to read the role tables instead.
+- **Residual assumptions:**
+  1. A compromised API process can use the tokens of owners whose requests it is handling. The database bounds that to those owners' businesses and to the token's lifetime, and records each use in an audit row the process cannot suppress. A "recent sign-in" requirement for erasure (step-up) is a candidate for S1 (U9).
+  2. The session-verification rules must stay identical to `app_private.session_user_id`. In S1 the helper is placed next to it in `privileged/` and covered by the trusted-path schema tests.
+  3. The role list check above.
 - Ordinary owner export returns private entries as busy-only. Legally authorised access is not a product feature (data-model §8).
 
 ## Evidence (S0)
 
-The `tests/isolation/scheduling-spike.test.ts` suite (23 tests) passes:
+The `tests/isolation/scheduling-spike.test.ts` suite (28 tests) passes:
 
 | Environment | Result |
 |---|---|
-| PostgreSQL 16.10 (CI image) | 23/23 |
-| PostgreSQL 18.7 (local) | 23/23; the whole isolation suite 36/36 |
-| Neon test branch (PG 18.7, `bos_app` through Neon's pooler, `btree_gist` 1.8 installed by `neondb_owner`) | 23/23 (details and two harness fixes in scheduling-data-model.md §10); branch deleted afterwards |
+| PostgreSQL 16.10 (CI image) | 28/28; C6 and C7 (concurrency) 15/15 repeated runs |
+| PostgreSQL 18.7 (local) | 28/28; C6 and C7 15/15 repeated runs; the whole isolation suite passes |
+| Neon test branches (PG 18.7, `bos_app` through Neon's pooler, `btree_gist` 1.8 installed by `neondb_owner`) | First run 23/23. Audit re-run: the new erasure functions install under Neon's non-superuser owner role and A1–A6 pass; concurrency tests pass with the latency-tolerant invariant (scheduling-data-model.md §10). Both branches deleted afterwards. |
 
 - Every guard, the restrictive policy, the `bos_maint` policy, the column grants and each term of the exclusion predicate were removed one at a time. Each removal made at least one test fail.
 - Prisma `migrate diff --from-migrations … --to-schema … --exit-code` returns 0 on PG 16 and PG 18 for the S1-shaped schema, given these annotations:
