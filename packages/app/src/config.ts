@@ -28,3 +28,4 @@ export function parseClientConfig(env: Record<string, string | undefined>): Clie
   }
   return { apiBaseUrl: result.data };
 }
+// CI scenario: application change

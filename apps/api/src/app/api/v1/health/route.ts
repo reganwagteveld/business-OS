@@ -13,3 +13,4 @@ export function GET(request: Request) {
 export function OPTIONS(request: Request) {
   return preflight(request);
 }
+// CI scenario: API change
