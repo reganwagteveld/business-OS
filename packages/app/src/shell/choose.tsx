@@ -4,11 +4,13 @@ import { Frame, secondaryClass } from './frame';
 export const ROLE_LABEL = { OWNER: 'Owner', ADMIN: 'Admin', MANAGER: 'Manager', MEMBER: 'Member' } as const;
 
 /** Lists exactly the businesses the server says you belong to. The server re-checks access when one is opened. */
-export function ChooseWorkspace({ businesses, onSelect, onCreate, onSignOut }: {
+export function ChooseWorkspace({ businesses, onSelect, onCreate, onSignOut, onBack }: {
   businesses: BusinessSummary[];
   onSelect: (slug: string) => void;
   onCreate: () => void;
   onSignOut: () => void;
+  /** Returns to the business that is already open (when there is one). */
+  onBack?: () => void;
 }) {
   return (
     <Frame title="Choose your workspace" subtitle="Select a business to continue, or create a new one. Your access is always verified by the server.">
@@ -26,7 +28,8 @@ export function ChooseWorkspace({ businesses, onSelect, onCreate, onSignOut }: {
           </li>
         ))}
       </ul>
-      <div className="mt-6 flex gap-3">
+      <div className="mt-6 flex flex-wrap gap-3">
+        {onBack ? <button type="button" className={secondaryClass} onClick={onBack}>Back</button> : null}
         <button type="button" className={secondaryClass} onClick={onCreate}>Create another business</button>
         <button type="button" className={secondaryClass} onClick={onSignOut}>Sign out</button>
       </div>

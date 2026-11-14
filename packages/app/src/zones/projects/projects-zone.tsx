@@ -18,10 +18,12 @@ type View = { name: 'list' } | { name: 'detail'; id: string } | { name: 'new' } 
  * cached outside the component, and every request names the business only through the URL. The same
  * component runs in the browser and in the desktop app.
  */
-export function ProjectsZone({ client, customers, context, userLabel, initialProjectId, onHome, onSwitch, onSignOut, onSessionEnded, onOpenCustomer }: {
+export function ProjectsZone({ client, customers, context, userLabel, initialProjectId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded, onOpenCustomer }: {
   client: ProjectsClient; customers: CustomersClient; context: BusinessContext; userLabel: string;
   /** Opens straight into one project (for example from a customer's page). */
   initialProjectId?: string;
+  /** Opens straight into the new-project form (a Home shortcut); ignored without projects:create. */
+  initialAction?: 'new';
   onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
   /** Opens a linked customer in the Customer Zone; omitted when the person cannot read customers. */
   onOpenCustomer?: (customerId: string) => void;
@@ -33,7 +35,7 @@ export function ProjectsZone({ client, customers, context, userLabel, initialPro
   const canArchive = can('projects:archive');
   const canManageTasks = can('projects:manage_tasks');
   const canReadCustomers = can('customers:read');
-  const [view, setView] = useState<View>(initialProjectId ? { name: 'detail', id: initialProjectId } : { name: 'list' });
+  const [view, setView] = useState<View>(initialProjectId ? { name: 'detail', id: initialProjectId } : initialAction === 'new' && canCreate ? { name: 'new' } : { name: 'list' });
   const [query, setQuery] = useState<ListQuery>(DEFAULT_QUERY);
   const [notice, setNotice] = useState<string | null>(null);
   const guard = useDraftGuard();
@@ -62,7 +64,7 @@ export function ProjectsZone({ client, customers, context, userLabel, initialPro
   }, [viewKey]);
 
   return (
-    <ZoneFrame zone="Projects" business={name} user={userLabel} onHome={() => guard.leave(onHome)} onSwitch={() => guard.leave(onSwitch)} onSignOut={() => guard.leave(onSignOut)}>
+    <ZoneFrame zone="Projects" business={name} user={userLabel} leave={guard.leave} onHome={onHome} onSwitch={onSwitch} onSignOut={onSignOut}>
       <div ref={content}>
         {notice ? <p role="status" className="mb-5 rounded-xl border border-border bg-muted px-4 py-3 text-sm">{notice}</p> : null}
         {view.name === 'list' ? (

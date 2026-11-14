@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { z } from 'zod';
 import type { AuthClient } from '../api/auth';
 import type { TenancyClient } from '../api/tenancy';
-import { createBusinessFlow, resolveWorkspace, type Phase } from './resolve';
+import { createBusinessFlow, resolveWorkspace, type Phase, type SwitchNotice } from './resolve';
 import type { WorkspaceStorage } from './storage';
 
 const STARTING = 'Starting Business OS…';
@@ -18,6 +18,15 @@ export interface WorkspaceController {
   retry(): void;
   /** Opens a business the person chose; the server still decides whether they may. */
   select(slug: string): void;
+  /**
+   * Switches business from inside the shell. The shell stays up and shows the switch in progress;
+   * the previous business's screens are gone at once. Membership is checked again on the server:
+   * if the business is no longer yours, or the server cannot be reached, you stay where you were
+   * and are told why.
+   */
+  switchTo(slug: string): void;
+  /** Clears the notice from the last switch. */
+  dismissNotice(): void;
   /**
    * Creates a business and opens it. After a network failure the server may still have created it,
    * so memberships are read again before anything is retried (no duplicate businesses).
@@ -93,10 +102,41 @@ export function useWorkspace(deps: { auth: AuthClient; tenancy: TenancyClient; s
     }
   };
 
+  const switchTo = (slug: string) => {
+    if (phase.kind !== 'ready') return start(OPENING, slug);
+    const from = phase;
+    const to = from.businesses.find((b) => b.slug === slug);
+    if (!to || slug === from.context.business.slug) return;
+    controller.current?.abort();
+    const abort = new AbortController();
+    controller.current = abort;
+    const mine = ++run.current;
+    const stay = (kind: SwitchNotice['kind']) => setPhase({ kind: 'ready', user: from.user, businesses: from.businesses, context: from.context, notice: { kind, business: to.name, current: from.context.business.name } });
+    setPhase({ kind: 'switching', user: from.user, businesses: from.businesses, context: from.context, to });
+    void resolveWorkspace({ auth, tenancy, storage, preferredSlug: slug, signal: abort.signal }).then(
+      (resolved) => {
+        if (mine !== run.current) return; // a newer switch or retry took over
+        if (resolved.kind === 'ready') {
+          // Not where we asked to go: the server no longer lists the membership.
+          setPhase(resolved.context.business.slug === slug ? resolved : { ...resolved, notice: { kind: 'access-revoked', business: to.name, current: resolved.context.business.name } });
+        } else if (resolved.kind === 'unreachable' || resolved.kind === 'failed') {
+          stay('switch-failed');
+        } else {
+          setPhase(resolved); // signed out, unverified, no businesses left, or a choice to make
+        }
+      },
+      () => {
+        if (mine === run.current && !abort.signal.aborted) stay('switch-failed');
+      },
+    );
+  };
+
   return {
     phase,
     retry: () => start(STARTING),
     select: (slug) => start(OPENING, slug),
+    switchTo,
+    dismissNotice: () => setPhase((p) => (p.kind === 'ready' && p.notice ? { ...p, notice: undefined } : p)),
     create,
     signOut: async () => {
       await auth.signOut();

@@ -6,7 +6,8 @@ import { ChooseWorkspace, ROLE_LABEL } from '../src/shell/choose';
 import { Startup } from '../src/shell/frame';
 import { BusinessSetup, slugify, validateDetails } from '../src/shell/onboarding';
 import { Failed, SessionExpiredNotice, Unreachable, Unverified } from '../src/shell/states';
-import { ZoneHome } from '../src/shell/zone-home';
+import { Home } from '../src/shell/home';
+import { resolveNavigation } from '../src/shell/registry';
 
 const user = { id: '0b8f9a9e-2f1c-4c7e-9a52-0c7f6d1b2a10', email: 'a@example.com', name: 'Ada', emailVerified: true };
 const noop = () => {};
@@ -96,24 +97,41 @@ describe('workspace choice and onboarding', () => {
   });
 });
 
-describe('Zone home', () => {
-  const html = renderToStaticMarkup(<ZoneHome business="Acme Plumbing" user={user} role="OWNER" onSwitch={noop} onSignOut={noop} />);
+describe('Home', () => {
+  const all = ['business:read', 'customers:read', 'customers:write', 'sales:read', 'sales:write', 'projects:read', 'projects:create'];
+  const render = (permissions: string[]) => renderToStaticMarkup(
+    <Home business="Acme Plumbing" timeZone="Australia/Sydney" user={user} role="OWNER" permissions={permissions}
+      navigation={resolveNavigation({ state: 'ready', permissions })} onOpen={noop} />,
+  );
+  const html = render(all);
 
-  it('shows the real business, person and role, with a switcher and sign out', () => {
+  it('greets the person and shows the real business and role', () => {
     expect(html).toContain('Welcome to Acme Plumbing');
-    expect(html).toContain('Ada');
-    expect(html).toContain('Switch business, current business Acme Plumbing');
-    expect(html).toContain('Sign out');
-    expect(html).toContain('Powered by Pixakova');
+    expect(html).toMatch(/Good (morning|afternoon|evening), Ada/);
+    expect(html).toContain('owner');
   });
 
-  it('every Zone is an honest, non-clickable "coming soon" card: no dead links, no invented data', () => {
-    for (const zone of ['Customers', 'Sales', 'Projects', 'Finance', 'People', 'Operations', 'Insights', 'Settings']) {
-      expect(html).toContain(`${zone} Zone — coming soon`);
-    }
+  it('launches only the Zones the role can open; Zones not built yet are honest, non-clickable "coming soon" cards', () => {
+    for (const zone of ['Customers', 'Sales', 'Projects']) expect(html).toContain(`Open the ${zone} Zone`);
+    for (const zone of ['Finance', 'People', 'Operations', 'Insights', 'Settings']) expect(html).toContain(`${zone} Zone — coming soon`);
+    const limited = render(['business:read', 'customers:read']);
+    expect(limited).not.toContain('Open the Sales Zone');
+    expect(limited).not.toContain('Sales Zone — coming soon');
+  });
+
+  it('offers common actions only where the role may act', () => {
+    expect(html).toContain('Add customer');
+    expect(html).toContain('Add opportunity');
+    expect(html).toContain('New project');
+    const reader = render(['business:read', 'customers:read', 'sales:read', 'projects:read']);
+    expect(reader).not.toMatch(/Add customer|Add opportunity|New project/);
+  });
+
+  it('invents nothing: no links, no figures, and recent activity says it is not available yet', () => {
     expect(html).not.toMatch(/<a /);
     expect(html).not.toMatch(/href=/);
-    expect(html).not.toMatch(/revenue|\$\d|notification|\b\d+ (new|open|overdue)/i);
+    expect(html).not.toMatch(/revenue|\$\d|\b\d+ (new|open|overdue)/i);
+    expect(html).toContain('No combined activity feed yet');
   });
 });
 

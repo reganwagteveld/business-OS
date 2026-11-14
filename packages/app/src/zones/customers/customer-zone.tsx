@@ -16,17 +16,19 @@ type View = { name: 'list' } | { name: 'detail'; id: string } | { name: 'new' } 
  * so switching business discards every bit of this state; nothing here is persisted or cached
  * outside the component, and every request names the business only through the URL.
  */
-export function CustomerZone({ client, context, userLabel, projects, initialCustomerId, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function CustomerZone({ client, context, userLabel, projects, initialCustomerId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: CustomersClient; context: BusinessContext; userLabel: string; onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
   /** Linked projects on each customer's page (passed only to people who may read projects). */
   projects?: ProjectsLink;
   /** Opens straight into one customer (for example from a project's page). */
   initialCustomerId?: string;
+  /** Opens straight into the add-customer form (a Home shortcut); ignored without customers:write. */
+  initialAction?: 'new';
 }) {
   const { slug, name, timeZone, locale } = context.business;
   const canWrite = context.membership.permissions.includes('customers:write');
   const canLogActivity = context.membership.permissions.includes('activity:write');
-  const [view, setView] = useState<View>(initialCustomerId ? { name: 'detail', id: initialCustomerId } : { name: 'list' });
+  const [view, setView] = useState<View>(initialCustomerId ? { name: 'detail', id: initialCustomerId } : initialAction === 'new' && canWrite ? { name: 'new' } : { name: 'list' });
   const [query, setQuery] = useState<DirectoryQuery>({ q: '', status: 'active' });
   const [notice, setNotice] = useState<string | null>(null);
   // Each open editor reports here by name (the customer form, a contact form, the activity composer).
@@ -64,7 +66,7 @@ export function CustomerZone({ client, context, userLabel, projects, initialCust
   }, [viewKey]);
 
   return (
-    <ZoneFrame zone="Customers" business={name} user={userLabel} onHome={() => leave(onHome)} onSwitch={() => leave(onSwitch)} onSignOut={() => leave(onSignOut)}>
+    <ZoneFrame zone="Customers" business={name} user={userLabel} leave={leave} onHome={onHome} onSwitch={onSwitch} onSignOut={onSignOut}>
       <div ref={content}>
         {notice ? <p role="status" className="mb-5 rounded-xl border border-border bg-muted px-4 py-3 text-sm">{notice}</p> : null}
         {view.name === 'list' ? (

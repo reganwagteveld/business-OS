@@ -16,9 +16,14 @@ export type Phase =
   | { kind: 'unverified'; user: CurrentUser }
   | { kind: 'no-workspace'; user: CurrentUser }
   | { kind: 'pick'; user: CurrentUser; businesses: BusinessSummary[] }
-  | { kind: 'ready'; user: CurrentUser; businesses: BusinessSummary[]; context: BusinessContext };
+  | { kind: 'ready'; user: CurrentUser; businesses: BusinessSummary[]; context: BusinessContext; notice?: SwitchNotice }
+  /** Opening another business from inside the shell. Nothing from the previous business is shown meanwhile. */
+  | { kind: 'switching'; user: CurrentUser; businesses: BusinessSummary[]; context: BusinessContext; to: BusinessSummary };
 
-export type Resolved = Exclude<Phase, { kind: 'booting' }>;
+/** Why the last in-shell switch did not land where the person asked (shown once, then dismissed). */
+export type SwitchNotice = { kind: 'switch-failed' | 'access-revoked'; business: string; current: string };
+
+export type Resolved = Exclude<Phase, { kind: 'booting' } | { kind: 'switching' }>;
 
 export interface ResolveDeps {
   auth: AuthClient;
