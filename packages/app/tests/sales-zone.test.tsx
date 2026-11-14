@@ -9,6 +9,7 @@ import type { SessionCheck } from '../src/api/auth';
 import { SalesZone } from '../src/zones/sales/sales-zone';
 import { contact, createFakeApi, customer, emptyBusiness, uuid, type FakeBusiness } from './support/fake-api';
 import { emptySales, opportunity, pipelineWithStages, withSales, type FakeSales } from './support/fake-sales';
+import { homeCrumb, switchBusiness } from './support/shell';
 
 afterEach(() => {
   cleanup();
@@ -263,7 +264,7 @@ describe('editing and concurrent changes', () => {
     await user.click(await screen.findByRole('button', { name: 'Draft' }));
     await user.click(await screen.findByRole('button', { name: 'Edit' }));
     await user.type(await screen.findByLabelText('Title'), ' changed');
-    await user.click(screen.getByRole('button', { name: /All Zones/ }));
+    await user.click(homeCrumb());
     await user.click(within(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).getByRole('button', { name: 'Keep editing' }));
     expect(handlers.onHome).not.toHaveBeenCalled();
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Draft changed');
@@ -332,7 +333,7 @@ describe('win, lose, reopen, archive, restore and history', () => {
     expect(document.activeElement).toBe(archive);
     await user.click(screen.getByRole('button', { name: 'Mark lost' }));
     await user.type(screen.getByLabelText('Reason (optional)'), 'Half typed');
-    await user.click(screen.getByRole('button', { name: /All Zones/ }));
+    await user.click(homeCrumb());
     expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
     expect(handlers.onHome).not.toHaveBeenCalled();
   });
@@ -394,15 +395,14 @@ describe('Zone navigation, business switching and desktop transport', () => {
     );
     await user.click(await screen.findByRole('button', { name: 'Open the Sales Zone' }));
     expect(await screen.findByText('Alpha secret deal')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: /Switch business/ }));
-    expect(screen.queryByText('Alpha secret deal')).toBeNull();
     api.calls.length = 0;
-    await user.click(await screen.findByRole('button', { name: /Beta Plumbing/ }));
+    await switchBusiness(user, /Beta Plumbing/);
+    expect(screen.queryByText('Alpha secret deal')).toBeNull();
     await user.click(await screen.findByRole('button', { name: 'Open the Sales Zone' }));
     expect(await screen.findByText('Beta deal')).toBeTruthy();
     expect(screen.queryByText('Alpha secret deal')).toBeNull();
     expect(new Set(api.calls.map((c) => c.slug))).toEqual(new Set(['beta']));
-    await user.click(screen.getByRole('button', { name: /All Zones/ }));
+    await user.click(homeCrumb());
     expect(await screen.findByText('Welcome to Beta Plumbing.')).toBeTruthy();
   });
 

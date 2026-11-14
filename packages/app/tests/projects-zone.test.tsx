@@ -8,6 +8,7 @@ import type { SessionCheck } from '../src/api/auth';
 import { ProjectsZone } from '../src/zones/projects/projects-zone';
 import { createFakeApi, customer, emptyBusiness, uuid, type FakeBusiness, type FakeMember } from './support/fake-api';
 import { emptyProjects, project, task, withProjects, type FakeProjects } from './support/fake-projects';
+import { homeCrumb, switchBusiness } from './support/shell';
 
 afterEach(() => {
   cleanup();
@@ -167,12 +168,12 @@ describe('creating and editing', () => {
     const { handlers, user } = setup();
     await user.click((await screen.findAllByRole('button', { name: 'New project' }))[0]!);
     await user.type(await screen.findByLabelText('Name'), 'Half typed');
-    await user.click(screen.getByRole('button', { name: /All Zones/ }));
+    await user.click(homeCrumb());
     const dialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
     await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Half typed');
     expect(handlers.onHome).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: /All Zones/ }));
+    await user.click(homeCrumb());
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard changes' }));
     expect(handlers.onHome).toHaveBeenCalledOnce();
   });
@@ -342,10 +343,9 @@ describe('the app: navigation, customers, business switching and desktop', () =>
     );
     await user.click(await screen.findByRole('button', { name: 'Open the Projects Zone' }));
     expect(await screen.findByRole('button', { name: 'Alpha secret project' })).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: /Switch business/ }));
-    expect(screen.queryByText('Alpha secret project')).toBeNull();
     api.calls.length = 0;
-    await user.click(await screen.findByRole('button', { name: /Beta Plumbing/ }));
+    await switchBusiness(user, /Beta Plumbing/);
+    expect(screen.queryByText('Alpha secret project')).toBeNull();
     await user.click(await screen.findByRole('button', { name: 'Open the Projects Zone' }));
     expect(await screen.findByRole('button', { name: 'Beta project' })).toBeTruthy();
     expect(screen.queryByText('Alpha secret project')).toBeNull();
@@ -355,8 +355,10 @@ describe('the app: navigation, customers, business switching and desktop', () =>
   it('without projects:read the Projects card stays closed', async () => {
     mountApp({ alpha: emptyBusiness() }, { alpha: emptyProjects() }, ['alpha'], ['business:read', 'members:read', 'customers:read']);
     await screen.findByText('Welcome to Alpha Plumbing.');
-    expect(screen.getByLabelText('Projects Zone — coming soon')).toBeTruthy();
+    // Not openable for this role, so not listed at all: no card, no "coming soon", no sidebar item.
+    expect(screen.queryByLabelText('Projects Zone — coming soon')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Open the Projects Zone' })).toBeNull();
+    expect(within(screen.getByRole('navigation', { name: 'Zones' })).queryByRole('button', { name: 'Projects' })).toBeNull();
   });
 
   it('a customer\'s page lists its projects and opens one; the project links back to the customer', async () => {

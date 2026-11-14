@@ -7,6 +7,7 @@ import { createCustomersClient, MAX_CONTACT_PAGES } from '../src/api/customers';
 import { toInstant } from '../src/zones/customers/activity-composer';
 import { CustomerZone } from '../src/zones/customers/customer-zone';
 import { activity, contact, createFakeApi, customer, emptyBusiness, uuid, type FakeBusiness } from './support/fake-api';
+import { homeCrumb, chooseAllBusinesses } from './support/shell';
 
 afterEach(() => {
   cleanup();
@@ -322,7 +323,7 @@ describe('activity', () => {
 });
 
 describe('unsaved drafts are never dropped silently', () => {
-  it('an open contact form: Cancel, All customers, All Zones and closing the window all ask first', async () => {
+  it('an open contact form: Cancel, All customers, Home and closing the window all ask first', async () => {
     const { user, handlers } = mount();
     await openAcme(user);
     await user.click(await screen.findByRole('button', { name: 'Add contact' }));
@@ -330,8 +331,8 @@ describe('unsaved drafts are never dropped silently', () => {
     const unload = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(unload);
     expect(unload.defaultPrevented).toBe(true);
-    for (const leave of [/All customers/, /All Zones/]) {
-      await user.click(screen.getByRole('button', { name: leave }));
+    for (const leave of [() => screen.getByRole('button', { name: /All customers/ }), homeCrumb]) {
+      await user.click(leave());
       await user.click(within(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).getByRole('button', { name: 'Keep editing' }));
       expect((screen.getByLabelText('First name') as HTMLInputElement).value).toBe('Draft');
     }
@@ -353,7 +354,7 @@ describe('unsaved drafts are never dropped silently', () => {
     await user.click(await screen.findByRole('button', { name: 'Make primary: Zed' }));
     await screen.findByText('Zed is now the primary contact.');
     expect((screen.getByLabelText('Subject') as HTMLInputElement).value).toBe('Half written'); // refreshed in place, not remounted
-    await user.click(screen.getByRole('button', { name: /Switch business/ }));
+    await chooseAllBusinesses(user);
     expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
     expect(handlers.onSwitch).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Discard changes' }));

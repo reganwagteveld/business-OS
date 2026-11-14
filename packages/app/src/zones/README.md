@@ -7,10 +7,13 @@ Zones get their data only from the cloud API through the typed clients in `src/a
 ## Built
 
 - **Customers** (`customers/`): directory, create/edit form, customer workspace.
+- **Sales** (`sales/`): opportunities list and board, opportunity workspace.
+- **Projects** (`projects/`): project list, project workspace with tasks and board.
 
 ## Conventions for a new Zone
 
-- Open it from the Zone home and render inside `ZoneFrame`: brand, a way back to all Zones, and the active business, always visible. No permanent sidebar.
+- Register it in `src/shell/registry.ts` and render inside `ZoneFrame`, passing the Zone's unsaved-changes `leave` guard. The application shell supplies the sidebar, breadcrumbs, business switcher and account menu (see `docs/ui/app-shell.md`); a Zone never draws its own header.
+- Lay out new screens with `ZonePage` (`src/shell/zone-page.tsx`).
 - Mount it with `key={businessSlug}`. All state lives in components, never in browser storage, and a business switch discards it. Requests name the business only through the `:slug` in the URL.
 - Read with `useLoad(key, load)`: it aborts the previous request and ignores answers for an older key, so a slow response from another business or query never renders.
 - Show every failure with `Problem` (offline, server error, forbidden, not found, ended session). An ended session hands control back to the app (`onSessionEnded`), which re-checks sign-in; offline is never treated as signed out.

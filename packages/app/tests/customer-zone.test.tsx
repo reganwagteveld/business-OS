@@ -6,6 +6,7 @@ import { App, createCustomersClient, memoryStorage, type AuthClient, type Busine
 import type { SessionCheck } from '../src/api/auth';
 import { CustomerZone } from '../src/zones/customers/customer-zone';
 import { activity, contact, createFakeApi, customer, emptyBusiness, uuid, type FakeBusiness } from './support/fake-api';
+import { homeCrumb, switchBusiness } from './support/shell';
 
 afterEach(() => {
   cleanup();
@@ -52,22 +53,26 @@ function mountApp(api: ReturnType<typeof createFakeApi>, opts: { slugs?: string[
 const heading = (name: string | RegExp) => screen.findByRole('heading', { name, level: 1 });
 
 describe('navigation into and out of the Customer Zone', () => {
-  it('the Customers card on the home page opens the Zone, shows the business, and All Zones returns home', async () => {
+  it('the Customers card on the home page opens the Zone, shows the business, and Home returns home', async () => {
     const api = createFakeApi({ alpha: { ...emptyBusiness(), customers: [customer({ displayName: 'Acme Pty Ltd' })] } });
     const { user } = mountApp(api);
     await user.click(await screen.findByRole('button', { name: 'Open the Customers Zone' }));
     expect(await heading('Customers')).toBeTruthy();
     expect(await screen.findByText('Acme Pty Ltd')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Switch business, current business Alpha Plumbing/ })).toBeTruthy(); // active business stays visible
-    await user.click(screen.getByRole('button', { name: /All Zones/ }));
+    await user.click(homeCrumb());
     expect(await screen.findByText('Welcome to Alpha Plumbing.')).toBeTruthy();
   });
 
-  it('other Zones stay honest "coming soon" cards, not buttons', async () => {
+  it('Zones not built yet stay honest "coming soon" cards, and Zones this role cannot open are not shown at all', async () => {
     mountApp(createFakeApi({ alpha: emptyBusiness() }));
     await screen.findByText('Welcome to Alpha Plumbing.');
-    for (const zone of ['Sales', 'Projects', 'Finance', 'People', 'Operations', 'Insights', 'Settings']) {
+    for (const zone of ['Finance', 'People', 'Operations', 'Insights', 'Settings']) {
       expect(screen.getByLabelText(`${zone} Zone — coming soon`)).toBeTruthy();
+      expect(screen.queryByRole('button', { name: new RegExp(`Open the ${zone}`) })).toBeNull();
+    }
+    for (const zone of ['Sales', 'Projects']) { // built, but this membership lacks the permission
+      expect(screen.queryByLabelText(`${zone} Zone — coming soon`)).toBeNull();
       expect(screen.queryByRole('button', { name: new RegExp(`Open the ${zone}`) })).toBeNull();
     }
   });
@@ -338,7 +343,7 @@ describe('editing, unsaved changes, archive and restore', () => {
     expect(screen.getByText('new@acme.example')).toBeTruthy();
   });
 
-  it('never drops unsaved changes silently: Cancel, All Zones and the window all ask first', async () => {
+  it('never drops unsaved changes silently: Cancel, Home and the window all ask first', async () => {
     const { api } = seeded();
     const onHome = vi.fn();
     const { user } = mountZone(api, { onHome });
@@ -356,7 +361,7 @@ describe('editing, unsaved changes, archive and restore', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
     expect((screen.getByLabelText('Phone') as HTMLInputElement).value).toBe('1239');
 
-    await user.click(screen.getByRole('button', { name: /All Zones/ }));
+    await user.click(homeCrumb());
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Keep editing' }));
     expect(onHome).not.toHaveBeenCalled();
 
@@ -473,12 +478,10 @@ describe('business switching never leaks the previous business', () => {
     const { user } = mountApp(api, { slugs: ['alpha', 'beta'], storage: memoryStorage({ slug: 'alpha' }) });
     await user.click(await screen.findByRole('button', { name: 'Open the Customers Zone' }));
     expect(await screen.findByText('Alpha Secret Co')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: /Switch business/ }));
-    await screen.findByRole('button', { name: /Beta Plumbing/ });
+    api.calls.length = 0;
+    await switchBusiness(user, /Beta Plumbing/);
     expect(screen.queryByText('Alpha Secret Co')).toBeNull();
     expect(document.body.textContent).not.toContain('secret@alpha.example');
-    api.calls.length = 0;
-    await user.click(screen.getByRole('button', { name: /Beta Plumbing/ }));
     await user.click(await screen.findByRole('button', { name: 'Open the Customers Zone' }));
     expect(await screen.findByText('Beta Visible Co')).toBeTruthy();
     expect(screen.queryByText('Alpha Secret Co')).toBeNull();
@@ -492,8 +495,7 @@ describe('business switching never leaks the previous business', () => {
     await screen.findByRole('button', { name: 'Open the Customers Zone' });
     const release = api.hold();
     await user.click(screen.getByRole('button', { name: 'Open the Customers Zone' }));
-    await user.click(await screen.findByRole('button', { name: /Switch business/ }));
-    await user.click(await screen.findByRole('button', { name: /Beta Plumbing/ }));
+    await switchBusiness(user, /Beta Plumbing/);
     await user.click(await screen.findByRole('button', { name: 'Open the Customers Zone' }));
     await screen.findByText('Beta Visible Co');
     release();
