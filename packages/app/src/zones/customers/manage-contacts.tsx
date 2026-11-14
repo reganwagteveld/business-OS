@@ -101,8 +101,8 @@ export function ManageContacts({ customer, client, slug, canWrite, onCustomerCha
         ordered.length ? <ul className="divide-y divide-border">{ordered.map(contact => (
           <li key={contact.id} className="py-3 first:pt-0 last:pb-0">
             <div className="flex flex-wrap gap-2 items-center">
-              <strong className="text-sm">{contact.displayName}</strong>
-              {contact.id === customer.primaryContactId ? <span className="rounded bg-muted px-2 py-0.5 text-xs">Primary</span> : null}
+              <p className="text-sm font-semibold">{contact.displayName}</p>
+              {contact.id === customer.primaryContactId ? <span aria-label="Primary contact" className="rounded bg-muted px-2 py-0.5 text-xs">Primary</span> : null}
             </div>
             {contact.jobTitle ? <p className="text-xs text-muted-foreground">{contact.jobTitle}</p> : null}
             {contact.email ? <a className="block break-all text-xs underline" href={`mailto:${contact.email}`}>{contact.email}</a> : null}
@@ -113,7 +113,7 @@ export function ManageContacts({ customer, client, slug, canWrite, onCustomerCha
               <button type="button" className="text-xs underline" onClick={() => setConfirm(contact)}>Archive</button>
             </div> : null}
           </li>
-        ))}</ul> : <p className="text-sm text-muted-foreground">No contacts yet.</p>
+        ))}</ul> : <p className="text-sm text-muted-foreground">No contacts are linked to this customer yet.</p>
       ) : null}
       {editing ? <form onSubmit={(event) => void save(event)} className="space-y-3">
         <h3 className="text-sm font-semibold">{editing === 'new' ? 'Add contact' : 'Edit contact'}</h3>
