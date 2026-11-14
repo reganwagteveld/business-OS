@@ -1,4 +1,4 @@
-# Projects Zone data model (Phase 5, PR 18)
+# Projects Zone data model (Phase 5, PR 18; board ordering PR 19)
 
 The Projects Zone's data model, written with its foundation. It follows [data-model.md](./data-model.md) and [sales-data-model.md](./sales-data-model.md): same tenancy, RLS, composite foreign keys, roles, audit and migration conventions.
 
@@ -43,7 +43,7 @@ Indexes: `(business_id, created_at DESC, id)` for the default list, `(business_i
 | `priority` | `WorkPriority`; default `MEDIUM` |
 | `assignee_user_id` | FK `(business_id, assignee_user_id) → memberships(business_id, user_id)`, nullable; ACTIVE checked by the service |
 | `due_date` | `date` |
-| `position` | Spaced integers (1000, 2000, …): a new task goes to the end. Order is `(position, id)`, so it is total even if two concurrent creates pick the same position. A later reorder can place a task between two others without renumbering. |
+| `position` | Spaced integers (1000, 2000, …): a new task goes to the end. Order is `(position, id)`, so it is total even if two concurrent creates pick the same position. Board moves (PR 19) place a task between two others, renumbering only when no gap is left (§4, "Ordering"). |
 | `completed_at` | Set exactly while the status is `DONE` (CHECK). Entering DONE stamps it, staying in DONE keeps it, leaving DONE clears it. |
 | `version`, authorship, timestamps, `archived_at` | As for projects |
 
@@ -61,6 +61,12 @@ Out of scope for this version: subtasks, cross-project tasks, dependencies, chec
 - **Archive and task changes at the same time.** Every task change (create, edit, archive, restore) first reads its project row `FOR SHARE` in the same transaction. If an archive is already in flight, the task change waits for it and is then refused (`409 project_archived`). If the task change got there first, the archive waits until it commits. So a task change can never commit after its project was archived. Regression-tested in `projects.test.ts` ("PR 18 audit").
 - **Removing a member while they are being assigned.** Member removal locks the membership row (`FOR UPDATE`) before clearing owners and assignees. An assignment already in flight commits first and is then cleared; one that starts later fails its foreign key. Either way no owner or assignee points at a removed member, and the removal does not fail.
 - **Archive and restore take no version.** They only change `archived_at` and never overwrite edited fields. They are conditional on the current archive state, and they bump the version, so an edit prepared before them is refused (`stale`/`archived`) rather than applied to an archived record.
+- **Ordering (PR 19 board).** A project's tasks have ONE order, `(position, id)`, archived tasks included. A board column is a presentation choice: the tasks whose status is in that column's set, in that order. The default board (To Do; In Progress, which also shows Blocked; Done) lives in the client (`packages/app/src/zones/projects/board-stages.ts`), not in the database, so another layout needs no schema change.
+  - `POST …/tasks/:taskId/move` with `{ version, status, afterTaskId | null }` sets the status and places the task directly after the anchor in the project's order (null: first). Because the order is project-wide, "after the card above it" is right in every column that shows both, whatever statuses a column holds.
+  - In one tenant transaction: load the task and check `version` (409 `stale`); read the project `FOR SHARE` (409 `project_archived`; same archive guarantee as every task change); take a transaction-level advisory lock on the project id so order changes in one project run one at a time (creates take it too); check the anchor is an active task of this project (409 `order_changed` otherwise, so a stale board reloads); write a position strictly between the anchor and the next task.
+  - When no integer gap is left the project's positions are renumbered (1000, 2000, …) in their current order first. Renumbering changes no task's `version`: position is not part of an edit, so it never makes someone else's pending edit stale.
+  - The write is conditional on `version` and `archived_at IS NULL`, like PATCH. Moving into DONE stamps `completed_at`, out of it clears it. A move to where the task already is changes nothing (no version bump, no audit). Audit: `projects.task.moved` (`from`, `to`, and `order: renumbered` when it happened), plus `projects.task.status_changed` when the status changed.
+  - PATCH can still change a task's status; the task keeps its place in the project order.
 - **Concurrency.** PATCH must send the `version` it was based on. The write is a conditional `UPDATE … WHERE version = $v AND archived_at IS NULL`, so of several simultaneous edits exactly one wins and the rest get `409 stale`.
 - **Customer access.** Customer names are joined into project responses only for people holding `customers:read`. Without it, `customerId` still shows a customer is linked but `customer` is `null`. Linking, changing or unlinking a customer, and listing a customer's projects, need `customers:read` (403 otherwise).
 - **Progress** (`taskCounts: { total, done }`) counts non-archived tasks, computed in one grouped query per page (no N+1).
@@ -91,7 +97,7 @@ All under `/api/v1/b/:slug`, all `tenantRoute` (tenant from the URL against the 
 | `POST /projects/:projectId/archive`, `…/restore` | `projects:archive` |
 | `GET /customers/:customerId/projects` | `projects:read` + `customers:read` |
 | `GET /projects/:projectId/tasks` (`status`, `archived`, `cursor`, `limit` ≤ 200), `POST` | `projects:read`, `projects:manage_tasks` |
-| `PATCH /projects/:projectId/tasks/:taskId`, `POST …/archive`, `…/restore` | `projects:manage_tasks` |
+| `PATCH /projects/:projectId/tasks/:taskId`, `POST …/archive`, `…/restore`, `POST …/move` (PR 19) | `projects:manage_tasks` |
 
 Lists are keyset-paginated with opaque cursors bound to their list and sort order; a cursor from another list is `400 invalid_cursor`. Bodies are strict. Another business's project, task or customer answers exactly like a missing id (`404 not_found`).
 

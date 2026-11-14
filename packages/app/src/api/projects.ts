@@ -1,5 +1,5 @@
 import {
-  CreateProjectRequest, CreateTaskRequest, endpointPath, endpoints, ListProjectsResponse, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
+  CreateProjectRequest, CreateTaskRequest, endpointPath, endpoints, ListProjectsResponse, ListTasksResponse, MoveTaskRequest, ProjectResponse, ProjectSummaryResponse,
   TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
   type Project, type ProjectStatus, type ProjectSummary, type ProjectTask, type TaskStatus,
 } from '@business-os/contracts';
@@ -38,6 +38,11 @@ export interface ProjectsClient {
   updateTask(slug: string, projectId: string, taskId: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<ProjectTask>>;
   archiveTask(slug: string, projectId: string, taskId: string, signal?: AbortSignal): Promise<Outcome<ProjectTask>>;
   restoreTask(slug: string, projectId: string, taskId: string, signal?: AbortSignal): Promise<Outcome<ProjectTask>>;
+  /**
+   * Board move: the task's new status and its place directly after `afterTaskId` (null: first). The
+   * server decides the stored position; conflicts come back as `stale` or `order_changed`.
+   */
+  moveTask(slug: string, projectId: string, taskId: string, move: unknown, signal?: AbortSignal): Promise<Outcome<ProjectTask>>;
 }
 
 function fieldErrors(error: z.ZodError): Record<string, string> {
@@ -135,6 +140,11 @@ export function createProjectsClient(baseUrl: string, transport: AuthTransport, 
     },
     async restoreTask(slug, projectId, taskId, signal) {
       return settle(await http.request('POST', task(endpoints.restoreTask.path, slug, projectId, taskId), undefined, signal), TaskResponse, (d) => d.task);
+    },
+    async moveTask(slug, projectId, taskId, move, signal) {
+      const checked = MoveTaskRequest.safeParse(move);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('POST', task(endpoints.moveTask.path, slug, projectId, taskId), checked.data, signal), TaskResponse, (d) => d.task);
     },
   };
 }
