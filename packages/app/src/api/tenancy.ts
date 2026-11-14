@@ -14,7 +14,7 @@ export type Outcome<T> =
   | { kind: 'not_found' }
   | { kind: 'conflict' }
   | { kind: 'rate_limited' }
-  | { kind: 'invalid_input'; message: string }
+  | { kind: 'invalid_input'; message: string; fields?: Record<string, string> }
   | { kind: 'unreachable' }
   | { kind: 'failed'; status: number }
   | { kind: 'invalid' };
@@ -41,7 +41,7 @@ export interface TenancyClient {
   createBusiness(input: unknown, signal?: AbortSignal): Promise<Outcome<{ slug: string }>>;
 }
 
-function classify(status: number, json: unknown): Outcome<never> | null {
+export function classify(status: number, json: unknown): Outcome<never> | null {
   if (status === 401) return { kind: 'unauthenticated' };
   if (status === 403) return (json as { error?: string } | undefined)?.error === 'email_not_verified' ? { kind: 'unverified' } : { kind: 'forbidden' };
   if (status === 404) return { kind: 'not_found' };
