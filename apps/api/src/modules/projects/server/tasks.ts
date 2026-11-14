@@ -37,11 +37,25 @@ async function projectOf(db: AppTenantDb, projectId: string) {
   if (!project) throw new RecordNotFoundError();
   return project;
 }
-/** Changes need a project that is not archived. */
+/**
+ * Changes need a project that is not archived, and it must stay that way until this unit of work
+ * commits. A plain read is not enough under READ COMMITTED: an archive could commit between the check
+ * and the task write. So the project row is read with FOR SHARE:
+ * - an archive already in flight (its UPDATE holds the row) makes this wait, and once it commits the
+ *   locking read sees the archived row, so the task change is refused (409 project_archived);
+ * - an archive that starts after this lock waits until the task change has committed.
+ * Either way a task change never commits after its project was archived. Tagged $queryRaw is part of
+ * the tenant client: it runs in the same transaction, as bos_app, under forced RLS; the explicit
+ * business_id predicate repeats the tenant scope for defence in depth.
+ */
 async function writableProject(db: AppTenantDb, projectId: string) {
-  const project = await projectOf(db, projectId);
-  if (project.archivedAt) throw new StateConflictError('project_archived');
-  return project;
+  const rows = await db.$queryRaw<{ archived: boolean }[]>`
+    SELECT archived_at IS NOT NULL AS archived FROM projects
+    WHERE id = ${projectId}::uuid AND business_id = nullif(current_setting('app.business_id', true), '')::uuid
+    FOR SHARE`;
+  const row = rows[0];
+  if (!row) throw new RecordNotFoundError();
+  if (row.archived) throw new StateConflictError('project_archived');
 }
 async function load(db: AppTenantDb, projectId: string, id: string): Promise<Row> {
   const row = (await db.projectTask.findFirst({ where: { id, projectId }, select })) as Row | null;

@@ -571,3 +571,91 @@ describe('tenant isolation', () => {
     expect((await api(both, A.slug).get(inB.id)).status).toBe(404);
   });
 });
+
+describe('PR 18 audit: archive and task changes at the same time', () => {
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  /** A second bos_app connection in A's tenant context, used to hold row locks at chosen moments. */
+  async function holder() {
+    const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await c.connect();
+    await c.query('BEGIN');
+    await c.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [A.businessId, A.people.OWNER!.id]);
+    return c;
+  }
+  const settled = async (p: Promise<unknown>) => Promise.race([p.then(() => true), pause(50).then(() => false)]);
+
+  it('a task change that already passed the project check holds the project: the archive waits for it, never the other way round', async () => {
+    const a = api(A.people.OWNER!, A.slug);
+    const p = (await a.create({ name: 'Race: edit then archive' })).body.project;
+    const t = (await a.createTask(p.id, { title: 'In flight' })).body.task;
+    const h = await holder();
+    const order: string[] = [];
+    try {
+      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [t.id]); // the task write will wait here
+      const edit = a.patchTask(p.id, t.id, { version: 1, status: 'DONE' }).then((r) => (order.push('task'), r));
+      await pause(300); // the edit has checked its project and is now waiting on the task row
+      const archive = a.archive(p.id).then((r) => (order.push('archive'), r));
+      await pause(300);
+      expect(await settled(archive)).toBe(false); // must not commit while a task change is in flight
+      await h.query('COMMIT');
+      const [e, ar] = await Promise.all([edit, archive]);
+      expect(e.status).toBe(200);
+      expect(ar.status).toBe(200);
+      expect(order).toEqual(['task', 'archive']);
+    } finally {
+      await h.end();
+    }
+  });
+
+  it('an archive in flight blocks task creates, edits, archives and restores, which are then refused; no task changes', async () => {
+    const a = api(A.people.OWNER!, A.slug);
+    const p = (await a.create({ name: 'Race: archive then task changes' })).body.project;
+    const live = (await a.createTask(p.id, { title: 'Live' })).body.task;
+    const gone = (await a.createTask(p.id, { title: 'Gone' })).body.task;
+    await a.archiveTask(p.id, gone.id);
+    const before = (await admin.query('SELECT id, version, status, archived_at FROM project_tasks WHERE project_id = $1 ORDER BY id', [p.id])).rows;
+    const attempts: [string, () => Promise<{ status: number; body: { error?: string } }>][] = [
+      ['create', () => a.createTask(p.id, { title: 'Sneaked in' })],
+      ['update', () => a.patchTask(p.id, live.id, { version: 1, status: 'DONE' })],
+      ['archive', () => a.archiveTask(p.id, live.id)],
+      ['restore', () => a.restoreTask(p.id, gone.id)],
+    ];
+    for (const [name, attempt] of attempts) {
+      const h = await holder();
+      try {
+        await h.query('UPDATE projects SET archived_at = now(), version = version + 1 WHERE id = $1', [p.id]); // archive, not yet committed
+        const pending = attempt();
+        await pause(300);
+        expect(await settled(pending), name).toBe(false); // waits for the archive to finish
+        await h.query('COMMIT');
+        expect(await pending, name).toMatchObject({ status: 409, body: { error: 'project_archived' } });
+      } finally {
+        await h.end();
+      }
+      await admin.query('UPDATE projects SET archived_at = NULL WHERE id = $1', [p.id]); // reopen for the next attempt
+    }
+    const after = (await admin.query('SELECT id, version, status, archived_at FROM project_tasks WHERE project_id = $1 ORDER BY id', [p.id])).rows;
+    expect(after).toEqual(before);
+  });
+
+  it('removing a member while they are being assigned: the assignment is cleared, never left pointing at a removed member', async () => {
+    const a = api(A.people.OWNER!, A.slug);
+    const temp = await newUser('pa-race');
+    await invite(A.slug, A.people.OWNER!, temp, 'MEMBER');
+    const p = (await a.create({ name: 'Race: removal' })).body.project;
+    const t = (await a.createTask(p.id, { title: 'About to be assigned' })).body.task;
+    const membership = (await a.members()).body.members.find((m: { userId: string }) => m.userId === temp.id);
+    const h = await holder();
+    try {
+      await h.query('UPDATE project_tasks SET assignee_user_id = $1 WHERE id = $2', [temp.id, t.id]); // assignment in flight
+      const removal = a.removeMember(membership.id);
+      await pause(300);
+      await h.query('COMMIT');
+      expect((await removal).status).toBe(200);
+    } finally {
+      await h.end();
+    }
+    expect((await admin.query('SELECT assignee_user_id FROM project_tasks WHERE id = $1', [t.id])).rows[0].assignee_user_id).toBeNull();
+    expect((await admin.query('SELECT count(*)::int AS n FROM memberships WHERE id = $1', [membership.id])).rows[0].n).toBe(0);
+  });
+});
