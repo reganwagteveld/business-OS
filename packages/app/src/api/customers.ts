@@ -1,5 +1,5 @@
 import {
-  CreateCustomerRequest, CustomerResponse, endpointPath, endpoints, ListActivitiesResponse, ListContactsResponse, ListCustomersResponse,
+  CreateActivityRequest, ActivityResponse, CreateContactRequest, ContactResponse, UpdateContactRequest, CreateCustomerRequest, CustomerResponse, endpointPath, endpoints, ListActivitiesResponse, ListContactsResponse, ListCustomersResponse,
   MembersResponse, UpdateCustomerRequest, type Activity, type Contact, type Customer, Member as MemberSchema,
 } from '@business-os/contracts';
 import type { z } from 'zod';
@@ -23,6 +23,11 @@ export interface CustomersClient {
   archive(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Customer>>;
   restore(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Customer>>;
   contacts(slug: string, customerId: string, signal?: AbortSignal): Promise<Outcome<Contact[]>>;
+  createContact(slug: string, input: unknown): Promise<Outcome<Contact>>;
+  updateContact(slug: string, id: string, input: unknown): Promise<Outcome<Contact>>;
+  archiveContact(slug: string, id: string): Promise<Outcome<Contact>>;
+  restoreContact(slug: string, id: string): Promise<Outcome<Contact>>;
+  createActivity(slug: string, input: unknown): Promise<Outcome<Activity>>;
   activities(slug: string, customerId: string, cursor?: string, signal?: AbortSignal): Promise<Outcome<ActivityPage>>;
   /** Active members, for the optional customer owner. */
   members(slug: string, signal?: AbortSignal): Promise<Outcome<Member[]>>;
@@ -94,6 +99,27 @@ export function createCustomersClient(baseUrl: string, transport: AuthTransport,
     async contacts(slug, customerId, signal) {
       const raw = await http.request('GET', path(endpoints.listContacts.path, { slug }) + qs({ customerId, status: 'active', limit: 100 }), undefined, signal);
       return settle(raw, ListContactsResponse, (d) => d.contacts);
+    },
+    async createContact(slug, input) {
+      const checked = CreateContactRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('POST', path(endpoints.createContact.path, { slug }), checked.data), ContactResponse, (d) => d.contact);
+    },
+    async updateContact(slug, id, input) {
+      const checked = UpdateContactRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('PATCH', path(endpoints.updateContact.path, { slug, contactId: id }), checked.data), ContactResponse, (d) => d.contact);
+    },
+    async archiveContact(slug, id) {
+      return settle(await http.request('POST', path(endpoints.archiveContact.path, { slug, contactId: id })), ContactResponse, (d) => d.contact);
+    },
+    async restoreContact(slug, id) {
+      return settle(await http.request('POST', path(endpoints.restoreContact.path, { slug, contactId: id })), ContactResponse, (d) => d.contact);
+    },
+    async createActivity(slug, input) {
+      const checked = CreateActivityRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('POST', path(endpoints.createActivity.path, { slug }), checked.data), ActivityResponse, (d) => d.activity);
     },
     async activities(slug, customerId, cursor, signal) {
       const raw = await http.request('GET', path(endpoints.listActivities.path, { slug }) + qs({ customerId, cursor, limit: 25 }), undefined, signal);
