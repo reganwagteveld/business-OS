@@ -11,7 +11,8 @@ import { useSyncExternalStore } from 'react';
 export type Layout = 'wide' | 'medium' | 'narrow';
 
 const WIDE = '(min-width: 1024px)';
-const MEDIUM = '(min-width: 640px)';
+/** Matches whenever the window is wider than the narrow (phone) layout. */
+export const MEDIUM = '(min-width: 640px)';
 
 function subscribe(onChange: () => void) {
   if (typeof window === 'undefined' || !window.matchMedia) return () => {};

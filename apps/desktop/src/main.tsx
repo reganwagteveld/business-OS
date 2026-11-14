@@ -1,4 +1,4 @@
-import { App, createDesktopTransport, parseClientConfig } from '@business-os/app';
+import { App, applyStoredTheme, createDesktopTransport, parseClientConfig } from '@business-os/app';
 import { invoke } from '@tauri-apps/api/core';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -15,6 +15,9 @@ const transport = createDesktopTransport(apiBaseUrl, {
   storeToken: (token) => invoke('store_session_token', { token }),
   forgetToken: () => invoke('forget_session_token'),
 });
+
+// Apply a theme chosen on this device before the first paint, so it does not flash the OS one.
+applyStoredTheme();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -23,8 +23,10 @@ type View = { name: 'list' } | { name: 'board' } | { name: 'detail'; id: string 
  * `key={slug}` so switching business discards every bit of this state (records, names, filters);
  * nothing is persisted or cached outside the component.
  */
-export function SalesZone({ sales, customers, context, userLabel, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function SalesZone({ sales, customers, context, userLabel, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
   sales: SalesClient; customers: CustomersClient; context: BusinessContext; userLabel: string;
+  /** Opens the add-opportunity form once Sales has loaded (a Home shortcut); ignored without sales:write. */
+  initialAction?: 'new';
   onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
 }) {
   const { slug, name, timeZone, locale, currency } = context.business;
@@ -89,7 +91,7 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
 
   // The default pipeline is set up only by an explicit action (POST), never by viewing Sales.
   const [settingUp, setSettingUp] = useState<string | null>(null);
-  const [addAfterSetUp, setAddAfterSetUp] = useState(false);
+  const [addAfterSetUp, setAddAfterSetUp] = useState(initialAction === 'new' && canWrite);
   const setUp = async (thenAdd = false) => {
     setSettingUp(null);
     const result = await sales.initialiseDefault(slug);
@@ -134,7 +136,7 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
   }
 
   return (
-    <ZoneFrame zone="Sales" business={name} user={userLabel} onHome={() => guard.leave(onHome)} onSwitch={() => guard.leave(onSwitch)} onSignOut={() => guard.leave(onSignOut)}>
+    <ZoneFrame zone="Sales" business={name} user={userLabel} leave={guard.leave} onHome={onHome} onSwitch={onSwitch} onSignOut={onSignOut}>
       <div ref={content}>
         {notice ? <p role="status" className="mb-5 rounded-xl border border-border bg-muted px-4 py-3 text-sm">{notice}</p> : null}
         {settingUp ? <p role="alert" className="mb-5 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">{settingUp}</p> : null}

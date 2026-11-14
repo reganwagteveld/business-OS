@@ -10,6 +10,7 @@ import { App, createCustomersClient, memoryStorage, type AuthClient, type Busine
 import type { SessionCheck } from '../src/api/auth';
 import { CustomerZone } from '../src/zones/customers/customer-zone';
 import { activity, contact, createFakeApi, customer, emptyBusiness, uuid, type FakeBusiness } from './support/fake-api';
+import { homeCrumb, switchBusiness } from './support/shell';
 
 afterEach(() => {
   cleanup();
@@ -76,7 +77,7 @@ describe('Zone home counts', () => {
     await user.click(screen.getByRole('button', { name: 'Add customer' }));
     await screen.findByRole('heading', { name: 'Brand New', level: 1 });
     expect(summaries(api)).toHaveLength(1); // nothing fetched for the home while inside the Zone
-    await user.click(screen.getByRole('button', { name: /All Zones/ }));
+    await user.click(homeCrumb());
     expect(await screen.findByText(/2 active customers/)).toBeTruthy();
     expect(summaries(api)).toHaveLength(2);
   });
@@ -84,7 +85,8 @@ describe('Zone home counts', () => {
   it('a role that cannot read customers sees no numbers and no request is made', async () => {
     const api = createFakeApi({ alpha: { ...emptyBusiness(), customers: [customer()] } });
     mountApp(api, { permissions: ['business:read'] });
-    await card();
+    await screen.findByText('Welcome to Alpha Plumbing.');
+    expect(screen.queryByRole('button', { name: 'Open the Customers Zone' })).toBeNull();
     expect(document.getElementById('customer-metrics')).toBeNull();
     expect(summaries(api)).toHaveLength(0);
   });
@@ -109,9 +111,8 @@ describe('switching business refreshes everything', () => {
     expect(await screen.findByText('Alpha Contact')).toBeTruthy();
     expect(await screen.findByText('Alpha call')).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: /Switch business/ }));
     api.calls.length = 0;
-    await user.click(await screen.findByRole('button', { name: /Beta Plumbing/ }));
+    await switchBusiness(user, /Beta Plumbing/);
     expect(await screen.findByText(/3 active customers/)).toBeTruthy();
     await user.click(await card());
     await user.click(await screen.findByRole('button', { name: 'Beta Co' }));

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { actionClass, secondaryClass } from '../shell/frame';
 import { useDialog } from './dialog';
 
@@ -24,7 +25,7 @@ export function useDraftGuard(): { dirty: boolean; markDraft: (key: string, dirt
 
   const leave = useCallback((action: () => void) => (dirty ? setPending(() => action) : action()), [dirty]);
   const dialog = pending ? (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-background/80 px-5 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-5 backdrop-blur-sm">
       <div ref={ref} onKeyDown={onKeyDown} role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-body" className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-lg">
         <h2 id="discard-title" className="text-lg font-semibold tracking-tight">Discard unsaved changes?</h2>
         <p id="discard-body" className="mt-2 text-sm text-muted-foreground">You have changes that have not been saved. If you leave now, they will be lost.</p>
@@ -35,5 +36,13 @@ export function useDraftGuard(): { dirty: boolean; markDraft: (key: string, dirt
       </div>
     </div>
   ) : null;
-  return { dirty, markDraft, clearDrafts, leave, dialog };
+  return { dirty, markDraft, clearDrafts, leave, dialog: aboveShell(dialog) };
+}
+
+/**
+ * Renders a confirmation at the top of the page, outside the shell's content area, so it stays above
+ * (and usable over) the mobile navigation drawer, which marks the content area inert while open.
+ */
+export function aboveShell(node: ReactNode): ReactNode {
+  return node && typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
 import { createCustomersClient, type CustomersClient } from './api/customers';
 import { createProjectsClient, type ProjectsClient } from './api/projects';
@@ -10,7 +10,9 @@ import { ChooseWorkspace } from './shell/choose';
 import { Startup } from './shell/frame';
 import { BusinessSetup } from './shell/onboarding';
 import { Failed, SessionExpiredNotice, Unreachable, Unverified } from './shell/states';
-import { ZoneHome, type CustomerMetrics } from './shell/zone-home';
+import { AppShell } from './shell/app-shell';
+import { Home, type CustomerMetrics } from './shell/home';
+import { canOpen, HOME, resolveNavigation, type ResolvedNavigation, type ShellRoute } from './shell/registry';
 import { useLoad } from './zones/use-load';
 import type { BusinessContext } from './api/tenancy';
 import type { CurrentUser } from '@business-os/contracts';
@@ -63,14 +65,14 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const workspace = useWorkspace({ auth, tenancy, storage });
   const { phase } = workspace;
   const [mode, setMode] = useState<Mode>('default');
-  /** Which Zone is open. Leaving a Zone (switching business, signing out) always returns to the home. */
-  const [zone, setZone] = useState<'home' | 'customers' | 'sales' | 'projects'>('home');
-  /** A record to open on entering a Zone (a project from a customer's page, a customer from a project's). */
-  const [target, setTarget] = useState<string | undefined>(undefined);
-  const open = (next: typeof zone, id?: string) => {
-    setTarget(id);
-    setZone(next);
-  };
+  /**
+   * Where the person is in the shell, remembered with the business it belongs to. Leaving a business
+   * (switching, signing out) always lands on Home. Kept in memory only: no URL routing yet.
+   */
+  const [route, setRouteState] = useState<{ slug: string | null; route: ShellRoute }>({ slug: null, route: HOME });
+  const activeSlug = 'context' in phase ? phase.context.business.slug : null;
+  const setRoute = (next: ShellRoute) => setRouteState({ slug: activeSlug, route: next });
+  const open = (next: ShellRoute) => setRoute(next);
 
   const params = new URLSearchParams(location?.search ?? '');
   const next = params.get('next');
@@ -89,7 +91,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
 
   const signOut = () => {
     setMode('default');
-    open('home');
+    setRoute(HOME);
     void workspace.signOut();
   };
 
@@ -151,72 +153,83 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         }}
         onCreate={() => setMode('new')}
         onSignOut={signOut}
+        onBack={phase.kind === 'ready' ? () => setMode('default') : undefined}
+        revoked={phase.kind === 'pick' ? phase.notice?.business : undefined}
       />
     );
   }
-  const switchBusiness = () => {
-    open('home');
+  const leaveToChooser = () => {
+    setRoute(HOME);
     setMode('choose');
   };
+  const active = phase.kind === 'switching' ? null : phase.context;
   const permissions = phase.context.membership.permissions;
-  const canReadProjects = permissions.includes('projects:read');
-  const canReadCustomers = permissions.includes('customers:read');
-  if (zone === 'customers') {
-    return (
+  const navigation = resolveNavigation(phase.kind === 'switching' ? { state: 'loading' } : { state: 'ready', permissions });
+  // A route is only ever honoured for a Zone the server's permissions open, and only in the business
+  // it was chosen in: a switch, or a role change on refresh, lands on Home.
+  const current = route.slug === phase.context.business.slug && canOpen(route.route, navigation) ? route.route : HOME;
+  const canReadProjects = navigation.available.some((z) => z.id === 'projects');
+  const canReadCustomers = navigation.available.some((z) => z.id === 'customers');
+  const userLabel = phase.user.name || phase.user.email;
+  const target = current.zone === 'home' ? undefined : current.target;
+  const intent = current.zone === 'home' ? undefined : current.intent;
+  const slug = phase.context.business.slug;
+
+  let screen: ReactNode = null;
+  if (active && current.zone === 'customers') {
+    screen = (
       <CustomerZone
-        key={`${phase.context.business.slug}|${target ?? ''}`}
-        client={customers}
-        context={phase.context}
-        userLabel={phase.user.name || phase.user.email}
-        initialCustomerId={target}
-        projects={canReadProjects ? { client: projects, onOpen: (id) => open('projects', id) } : undefined}
-        onHome={() => open('home')}
-        onSwitch={switchBusiness}
-        onSignOut={signOut}
-        onSessionEnded={workspace.retry}
+        key={`${slug}|${target ?? ''}|${intent ?? ''}`}
+        client={customers} context={active} userLabel={userLabel} initialCustomerId={target} initialAction={intent}
+        projects={canReadProjects ? { client: projects, onOpen: (id) => open({ zone: 'projects', target: id }) } : undefined}
+        onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
-  }
-  if (zone === 'sales') {
-    return (
+  } else if (active && current.zone === 'sales') {
+    screen = (
       <SalesZone
-        key={phase.context.business.slug}
-        sales={sales}
-        customers={customers}
-        context={phase.context}
-        userLabel={phase.user.name || phase.user.email}
-        onHome={() => open('home')}
-        onSwitch={switchBusiness}
-        onSignOut={signOut}
-        onSessionEnded={workspace.retry}
+        key={`${slug}|${intent ?? ''}`}
+        sales={sales} customers={customers} context={active} userLabel={userLabel} initialAction={intent}
+        onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
-  }
-  if (zone === 'projects') {
-    return (
+  } else if (active && current.zone === 'projects') {
+    screen = (
       <ProjectsZone
-        key={`${phase.context.business.slug}|${target ?? ''}`}
-        client={projects}
-        customers={customers}
-        context={phase.context}
-        userLabel={phase.user.name || phase.user.email}
-        initialProjectId={target}
-        onHome={() => open('home')}
-        onSwitch={switchBusiness}
-        onSignOut={signOut}
-        onSessionEnded={workspace.retry}
-        onOpenCustomer={canReadCustomers ? (id) => open('customers', id) : undefined}
+        key={`${slug}|${target ?? ''}|${intent ?? ''}`}
+        client={projects} customers={customers} context={active} userLabel={userLabel} initialProjectId={target} initialAction={intent}
+        onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
+        onOpenCustomer={canReadCustomers ? (id) => open({ zone: 'customers', target: id }) : undefined}
       />
     );
+  } else if (active) {
+    screen = <HomeWithMetrics key={slug} customers={customers} context={active} user={phase.user} navigation={navigation} onOpen={open} onSessionEnded={workspace.retry} />;
   }
+
   return (
-    <HomeWithMetrics
-      key={phase.context.business.slug}
-      customers={customers} context={phase.context} user={phase.user}
-      onSwitch={switchBusiness} onSignOut={signOut} onOpenCustomers={() => open('customers')}
-      onOpenSales={permissions.includes('sales:read') ? () => open('sales') : undefined}
-      onOpenProjects={canReadProjects ? () => open('projects') : undefined} onSessionEnded={workspace.retry}
-    />
+    <AppShell
+      business={{ slug, name: phase.context.business.name, role: phase.context.membership.role }}
+      businesses={phase.businesses}
+      user={phase.user}
+      navigation={navigation}
+      route={current}
+      switching={phase.kind === 'switching' ? phase.to : null}
+      notice={phase.kind === 'ready' ? phase.notice ?? null : null}
+      onDismissNotice={workspace.dismissNotice}
+      onNavigate={open}
+      onSelectBusiness={(next) => {
+        setRoute(HOME);
+        workspace.switchTo(next);
+      }}
+      onChooseBusiness={leaveToChooser}
+      onCreateBusiness={() => {
+        setRoute(HOME);
+        setMode('new');
+      }}
+      onSignOut={signOut}
+    >
+      {screen}
+    </AppShell>
   );
 }
 
@@ -224,9 +237,8 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
  * The Zone home with live Customers counts. Mounted per business (key) and each time the person comes
  * back from a Zone, so counts reflect any changes just made, with exactly one request per visit.
  */
-function HomeWithMetrics({ customers, context, user, onSwitch, onSignOut, onOpenCustomers, onOpenSales, onOpenProjects, onSessionEnded }: {
-  customers: CustomersClient; context: BusinessContext; user: CurrentUser;
-  onSwitch: () => void; onSignOut: () => void; onOpenCustomers: () => void; onOpenSales?: () => void; onOpenProjects?: () => void; onSessionEnded: () => void;
+function HomeWithMetrics({ customers, context, user, navigation, onOpen, onSessionEnded }: {
+  customers: CustomersClient; context: BusinessContext; user: CurrentUser; navigation: ResolvedNavigation; onOpen: (route: ShellRoute) => void; onSessionEnded: () => void;
 }) {
   const slug = context.business.slug;
   const canRead = context.membership.permissions.includes('customers:read');
@@ -243,7 +255,7 @@ function HomeWithMetrics({ customers, context, user, onSwitch, onSignOut, onOpen
       : { state: 'unavailable' };
   }
   return (
-    <ZoneHome business={context.business.name} user={user} role={context.membership.role} onSwitch={onSwitch} onSignOut={onSignOut}
-      onOpenCustomers={onOpenCustomers} onOpenSales={onOpenSales} onOpenProjects={onOpenProjects} customerMetrics={metrics} />
+    <Home business={context.business.name} timeZone={context.business.timeZone} role={context.membership.role} user={user}
+      permissions={context.membership.permissions} navigation={navigation} customerMetrics={metrics} onOpen={onOpen} />
   );
 }
