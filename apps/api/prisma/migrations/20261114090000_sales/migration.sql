@@ -1,5 +1,5 @@
--- Sales Zone foundation (docs/sales-data-model.md): pipelines, stages and opportunities.
--- Additive only: new types and tables; no existing table or row is changed.
+-- Sales Zone foundation (docs/sales-data-model.md): pipelines, stages, opportunities and their
+-- won/lost history. Additive only: new types and tables; no existing table or row is changed.
 
 -- CreateEnum
 CREATE TYPE "OpportunityStatus" AS ENUM ('OPEN', 'WON', 'LOST');
@@ -53,6 +53,7 @@ CREATE TABLE "opportunities" (
     "status" "OpportunityStatus" NOT NULL DEFAULT 'OPEN',
     "loss_reason" TEXT,
     "closed_at" TIMESTAMPTZ,
+    "version" INTEGER NOT NULL DEFAULT 1,
     "created_by_id" UUID,
     "updated_by_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -60,6 +61,24 @@ CREATE TABLE "opportunities" (
     "archived_at" TIMESTAMPTZ,
 
     CONSTRAINT "opportunities_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "opportunity_outcomes" (
+    "id" UUID NOT NULL,
+    "business_id" UUID NOT NULL,
+    "opportunity_id" UUID NOT NULL,
+    "status" "OpportunityStatus" NOT NULL,
+    "loss_reason" TEXT,
+    "stage_id" UUID NOT NULL,
+    "amount" DECIMAL(18,4),
+    "currency_code" CHAR(3) NOT NULL,
+    "closed_at" TIMESTAMPTZ NOT NULL,
+    "closed_by_id" UUID,
+    "reopened_at" TIMESTAMPTZ,
+    "reopened_by_id" UUID,
+
+    CONSTRAINT "opportunity_outcomes_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -98,6 +117,12 @@ CREATE INDEX "opportunities_business_id_archived_at_idx" ON "opportunities"("bus
 -- CreateIndex
 CREATE UNIQUE INDEX "opportunities_business_id_id_key" ON "opportunities"("business_id", "id");
 
+-- CreateIndex
+CREATE INDEX "opportunity_outcomes_business_id_opportunity_id_closed_at_idx" ON "opportunity_outcomes"("business_id", "opportunity_id", "closed_at" DESC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "opportunity_outcomes_business_id_id_key" ON "opportunity_outcomes"("business_id", "id");
+
 -- AddForeignKey
 ALTER TABLE "sales_pipelines" ADD CONSTRAINT "sales_pipelines_business_fkey" FOREIGN KEY ("business_id") REFERENCES "businesses"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -125,6 +150,12 @@ ALTER TABLE "opportunities" ADD CONSTRAINT "opportunities_stage_fkey" FOREIGN KE
 -- AddForeignKey
 ALTER TABLE "opportunities" ADD CONSTRAINT "opportunities_owner_fkey" FOREIGN KEY ("business_id", "owner_user_id") REFERENCES "memberships"("business_id", "user_id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 
+-- AddForeignKey
+ALTER TABLE "opportunity_outcomes" ADD CONSTRAINT "opportunity_outcomes_business_fkey" FOREIGN KEY ("business_id") REFERENCES "businesses"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "opportunity_outcomes" ADD CONSTRAINT "opportunity_outcomes_opportunity_fkey" FOREIGN KEY ("business_id", "opportunity_id") REFERENCES "opportunities"("business_id", "id") ON DELETE NO ACTION ON UPDATE NO ACTION;
+
 
 -- ---------------------------------------------------------------------------------------------
 -- Integrity checks that hold whatever code writes.
@@ -147,14 +178,25 @@ ALTER TABLE "opportunities"
   -- An open opportunity has no close date; a won or lost one always has one.
   ADD CONSTRAINT opportunities_closed_consistent CHECK (("status" = 'OPEN') = ("closed_at" IS NULL)),
   -- Only a lost opportunity carries a loss reason.
-  ADD CONSTRAINT opportunities_loss_reason_status CHECK ("loss_reason" IS NULL OR "status" = 'LOST');
+  ADD CONSTRAINT opportunities_loss_reason_status CHECK ("loss_reason" IS NULL OR "status" = 'LOST'),
+  ADD CONSTRAINT opportunities_version_positive CHECK ("version" >= 1);
+ALTER TABLE "opportunity_outcomes"
+  -- History of closes only: an outcome is WON or LOST, never OPEN.
+  ADD CONSTRAINT opportunity_outcomes_closed_status CHECK ("status" IN ('WON', 'LOST')),
+  ADD CONSTRAINT opportunity_outcomes_loss_reason_status CHECK ("loss_reason" IS NULL OR "status" = 'LOST'),
+  ADD CONSTRAINT opportunity_outcomes_loss_reason_length CHECK ("loss_reason" IS NULL OR char_length("loss_reason") <= 500),
+  ADD CONSTRAINT opportunity_outcomes_currency_format CHECK ("currency_code" ~ '^[A-Z]{3}$'),
+  ADD CONSTRAINT opportunity_outcomes_reopened_after CHECK ("reopened_at" IS NULL OR "reopened_at" >= "closed_at");
 
 -- ---------------------------------------------------------------------------------------------
 -- Least privilege for tenant code. No DELETE: pipelines and stages are archived, never deleted, so
 -- no opportunity can lose its stage; opportunities are archived and restored. bos_owner's default
 -- privileges are revoked first. Other runtime roles get nothing.
-REVOKE ALL ON "sales_pipelines", "sales_stages", "opportunities" FROM bos_app;
+REVOKE ALL ON "sales_pipelines", "sales_stages", "opportunities", "opportunity_outcomes" FROM bos_app;
 GRANT SELECT, INSERT, UPDATE ON "sales_pipelines", "sales_stages", "opportunities" TO bos_app;
+-- Outcome history is append-only apart from marking it reopened: what was recorded is never rewritten.
+GRANT SELECT, INSERT ON "opportunity_outcomes" TO bos_app;
+GRANT UPDATE ("reopened_at", "reopened_by_id") ON "opportunity_outcomes" TO bos_app;
 
 -- Tenant policy template (data-model §5.2), forced so the table owner is subject to it too.
 ALTER TABLE "sales_pipelines" ENABLE ROW LEVEL SECURITY;
@@ -172,5 +214,11 @@ CREATE POLICY tenant_isolation ON "sales_stages" FOR ALL TO bos_app
 ALTER TABLE "opportunities" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "opportunities" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "opportunities" FOR ALL TO bos_app
+  USING      ("business_id" = nullif(current_setting('app.business_id', true), '')::uuid)
+  WITH CHECK ("business_id" = nullif(current_setting('app.business_id', true), '')::uuid);
+
+ALTER TABLE "opportunity_outcomes" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "opportunity_outcomes" FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON "opportunity_outcomes" FOR ALL TO bos_app
   USING      ("business_id" = nullif(current_setting('app.business_id', true), '')::uuid)
   WITH CHECK ("business_id" = nullif(current_setting('app.business_id', true), '')::uuid);

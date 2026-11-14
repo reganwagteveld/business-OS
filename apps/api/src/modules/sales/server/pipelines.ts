@@ -35,28 +35,37 @@ function stageRows(pipelineId: string, stages: ReadonlyArray<{ name: string; def
 }
 
 /**
- * The business's default pipeline, created with the standard stages on first use. Safe under
- * concurrency: the insert is ON CONFLICT DO NOTHING on (business_id, default_slot), so when two first
- * requests race, the second waits for the first to commit, inserts nothing, and reads the winner's
- * pipeline. Only the request that created it adds the stages and the audit entry.
+ * The business's default pipeline, created with the standard stages if it does not exist yet.
+ * Called only from explicit write requests (initialise, create pipeline, create opportunity), never
+ * from a GET. Safe under concurrency: the insert is ON CONFLICT DO NOTHING on (business_id,
+ * default_slot), so when two first requests race, the second waits for the first to commit, inserts
+ * nothing, and reads the winner's pipeline. Only the request that created it adds the stages and
+ * the audit entry, and only it reports `created`.
  */
-export async function ensureDefaultPipeline(db: AppTenantDb, actorUserId: string): Promise<PipelineRow> {
+export async function ensureDefaultPipeline(db: AppTenantDb, actorUserId: string): Promise<{ pipeline: PipelineRow; created: boolean }> {
   const existing = (await db.salesPipeline.findFirst({ where: { defaultSlot: 'default' }, select: pipelineSelect })) as PipelineRow | null;
-  if (existing) return existing;
+  if (existing) return { pipeline: existing, created: false };
   const id = randomUUID();
-  const created = await db.salesPipeline.createMany({
+  const inserted = await db.salesPipeline.createMany({
     data: [{ id, name: 'Sales pipeline', defaultSlot: 'default', position: 0, createdById: actorUserId, updatedById: actorUserId }] as never,
     skipDuplicates: true,
   });
-  if (created.count === 1) {
+  if (inserted.count === 1) {
     await db.salesStage.createMany({ data: stageRows(id, DEFAULT_STAGES) as never });
     await recordAudit(db, actorUserId, 'sales.pipeline.initialized', { type: 'sales_pipeline', id }, { stages: String(DEFAULT_STAGES.length) });
   }
-  return (await db.salesPipeline.findFirstOrThrow({ where: { defaultSlot: 'default' }, select: pipelineSelect })) as PipelineRow;
+  const pipeline = (await db.salesPipeline.findFirstOrThrow({ where: { defaultSlot: 'default' }, select: pipelineSelect })) as PipelineRow;
+  return { pipeline, created: inserted.count === 1 };
 }
 
-export async function listPipelines(db: AppTenantDb, actorUserId: string) {
-  await ensureDefaultPipeline(db, actorUserId);
+/** Explicit, idempotent initialisation (POST …/sales/pipelines/default): 201 when created, 200 when it already existed. */
+export async function initialiseDefaultPipeline(db: AppTenantDb, actorUserId: string) {
+  const { pipeline, created } = await ensureDefaultPipeline(db, actorUserId);
+  return { created, pipeline: toPipeline(pipeline), stages: (await activeStages(db, pipeline.id)).map(toStage) };
+}
+
+/** Read only: an empty list until the default pipeline is initialised. */
+export async function listPipelines(db: AppTenantDb) {
   const rows = (await db.salesPipeline.findMany({ where: { archivedAt: null }, select: pipelineSelect, orderBy: [{ position: 'asc' }, { id: 'asc' }] })) as PipelineRow[];
   return { pipelines: rows.map(toPipeline) };
 }
@@ -75,9 +84,9 @@ export async function createPipeline(db: AppTenantDb, actorUserId: string, input
   return { pipeline: toPipeline(row), stages: stages.map((s) => toStage({ ...s, archivedAt: null })) };
 }
 
-/** An active pipeline of this business (the default when none is named). */
+/** An active pipeline of this business. With no id, the default, created if missing (write paths only). */
 export async function activePipeline(db: AppTenantDb, actorUserId: string, pipelineId?: string): Promise<PipelineRow> {
-  if (!pipelineId) return ensureDefaultPipeline(db, actorUserId);
+  if (!pipelineId) return (await ensureDefaultPipeline(db, actorUserId)).pipeline;
   const row = (await db.salesPipeline.findFirst({ where: { id: pipelineId }, select: pipelineSelect })) as PipelineRow | null;
   if (!row) throw new RecordNotFoundError();
   if (row.archivedAt) throw new StateConflictError('archived_reference');
@@ -88,7 +97,12 @@ export async function activeStages(db: AppTenantDb, pipelineId: string): Promise
   return (await db.salesStage.findMany({ where: { pipelineId, archivedAt: null }, select: stageSelect, orderBy: [{ position: 'asc' }, { id: 'asc' }] })) as StageRow[];
 }
 
-export async function listStages(db: AppTenantDb, actorUserId: string, query: { pipelineId?: string }) {
-  const pipeline = await activePipeline(db, actorUserId, query.pipelineId);
+/** Read only. With no pipeline named, the default; 404 until it has been initialised. */
+export async function listStages(db: AppTenantDb, query: { pipelineId?: string }) {
+  const pipeline = (await db.salesPipeline.findFirst({
+    where: query.pipelineId ? { id: query.pipelineId } : { defaultSlot: 'default' },
+    select: pipelineSelect,
+  })) as PipelineRow | null;
+  if (!pipeline) throw new RecordNotFoundError();
   return { pipeline: toPipeline(pipeline), stages: (await activeStages(db, pipeline.id)).map(toStage) };
 }

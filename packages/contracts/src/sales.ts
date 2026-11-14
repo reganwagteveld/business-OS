@@ -44,6 +44,7 @@ export const Stage = z
   .strict();
 export type Stage = z.infer<typeof Stage>;
 
+/** Active pipelines. Empty until the default pipeline is initialised (POST …/sales/pipelines/default). */
 export const ListPipelinesResponse = z.object({ pipelines: z.array(Pipeline) }).strict();
 
 const NewStage = z.object({ name: z.string().trim().min(1, 'A stage name is required').max(60), defaultProbability: Probability.nullable().optional() }).strict();
@@ -78,6 +79,8 @@ export const Opportunity = z
     status: OpportunityStatus,
     lossReason: z.string().nullable(),
     closedAt: z.string().datetime().nullable(),
+    /** Increases with every change. PATCH must send the version it was based on. */
+    version: z.number().int().min(1),
     createdById: Uuid.nullable(),
     updatedById: Uuid.nullable(),
     createdAt: z.string().datetime(),
@@ -110,8 +113,15 @@ export const CreateOpportunityRequest = z
 export const UpdateOpportunityRequest = z
   .object({ ...opportunityFields, pipelineId: Uuid, stageId: Uuid })
   .partial()
+  .extend({
+    /**
+     * Optimistic concurrency: the `version` the edit was based on. If someone else changed the
+     * opportunity since, the edit is refused (409 stale) instead of silently overwriting theirs.
+     */
+    version: z.number().int().min(1),
+  })
   .strict()
-  .refine((v) => Object.keys(v).length > 0, 'Nothing to update')
+  .refine((v) => Object.keys(v).some((k) => k !== 'version'), 'Nothing to update')
   .refine((v) => v.pipelineId === undefined || v.stageId !== undefined, 'Choose a stage in the new pipeline');
 
 export const LoseOpportunityRequest = z.object({ lossReason: optionalText(500) }).strict();
@@ -136,3 +146,21 @@ export const ListOpportunitiesQuery = z
   .strict();
 export const ListOpportunitiesResponse = z.object({ opportunities: z.array(Opportunity), nextCursor: z.string().nullable() }).strict();
 export const OpportunityResponse = z.object({ opportunity: Opportunity }).strict();
+
+/** One time an opportunity was won or lost, kept after it is reopened (docs/sales-data-model.md §4). */
+export const OpportunityOutcome = z
+  .object({
+    id: Uuid,
+    status: z.enum(['WON', 'LOST']),
+    lossReason: z.string().nullable(),
+    stageId: Uuid,
+    amount: z.string().nullable(),
+    currencyCode: z.string(),
+    closedAt: z.string().datetime(),
+    closedById: Uuid.nullable(),
+    reopenedAt: z.string().datetime().nullable(),
+    reopenedById: Uuid.nullable(),
+  })
+  .strict();
+export type OpportunityOutcome = z.infer<typeof OpportunityOutcome>;
+export const ListOutcomesResponse = z.object({ outcomes: z.array(OpportunityOutcome) }).strict();

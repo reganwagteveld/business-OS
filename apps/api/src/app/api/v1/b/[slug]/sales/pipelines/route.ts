@@ -5,9 +5,9 @@ import { tenantRoute } from '@/app/api/_lib/routes';
 
 export const dynamic = 'force-dynamic';
 
-// Reading creates the default pipeline on first use (concurrency-safe; docs/sales-data-model.md §2).
-export const GET = tenantRoute({ permission: 'sales:read', response: ListPipelinesResponse }, async ({ db, actor }) => ({
-  body: await listPipelines(db, actor.userId),
+// Read only: empty until the default pipeline is initialised with POST …/pipelines/default.
+export const GET = tenantRoute({ permission: 'sales:read', response: ListPipelinesResponse }, async ({ db }) => ({
+  body: await listPipelines(db),
 }));
 
 // Pipeline configuration is a business setting: sales:manage (OWNER, ADMIN).

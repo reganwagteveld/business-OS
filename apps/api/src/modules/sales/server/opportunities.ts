@@ -3,7 +3,7 @@ import 'server-only';
 // change is a conditional UPDATE (… WHERE status = 'OPEN' AND archived_at IS NULL), so two people
 // acting at once cannot both win, lose or move the same opportunity from a stale view.
 import { randomUUID } from 'node:crypto';
-import type { Opportunity as OpportunityDto } from '@business-os/contracts';
+import type { Opportunity as OpportunityDto, OpportunityOutcome as OutcomeDto } from '@business-os/contracts';
 import { recordAudit } from '@/core/audit';
 import type { AppTenantDb, Decimal } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
@@ -17,12 +17,12 @@ type Status = 'OPEN' | 'WON' | 'LOST';
 type Row = {
   id: string; title: string; customerId: string | null; contactId: string | null; pipelineId: string; stageId: string;
   amount: Decimal | null; currencyCode: string; probability: number | null; expectedCloseDate: Date | null; ownerUserId: string | null;
-  description: string | null; status: Status; lossReason: string | null; closedAt: Date | null; createdById: string | null;
+  description: string | null; status: Status; lossReason: string | null; closedAt: Date | null; version: number; createdById: string | null;
   updatedById: string | null; createdAt: Date; updatedAt: Date; archivedAt: Date | null;
 };
 const select = {
   id: true, title: true, customerId: true, contactId: true, pipelineId: true, stageId: true, amount: true, currencyCode: true,
-  probability: true, expectedCloseDate: true, ownerUserId: true, description: true, status: true, lossReason: true, closedAt: true,
+  probability: true, expectedCloseDate: true, ownerUserId: true, description: true, status: true, lossReason: true, closedAt: true, version: true,
   createdById: true, updatedById: true, createdAt: true, updatedAt: true, archivedAt: true,
 } as const;
 
@@ -35,6 +35,9 @@ const toDto = (r: Row): OpportunityDto => ({
   updatedAt: r.updatedAt.toISOString(),
   archivedAt: r.archivedAt?.toISOString() ?? null,
 });
+
+/** Every change bumps the version, so an edit based on an older version can be detected. */
+const BUMP = { version: { increment: 1 } };
 
 export type OpportunityInput = {
   title?: string; customerId?: string | null; contactId?: string | null; pipelineId?: string; stageId?: string;
@@ -147,9 +150,11 @@ export async function getOpportunity(db: AppTenantDb, id: string) {
  * changes its customer/contact links. Writes one audit entry for the edit plus dedicated entries for
  * a stage transition and an assignment change.
  */
-export async function updateOpportunity(db: AppTenantDb, actorUserId: string, id: string, patch: OpportunityInput) {
+export async function updateOpportunity(db: AppTenantDb, actorUserId: string, id: string, patch: OpportunityInput & { version: number }) {
   const before = await load(db, id);
   if (before.archivedAt) throw new StateConflictError('archived');
+  // Someone else changed it since this edit was prepared: refuse rather than overwrite their change.
+  if (before.version !== patch.version) throw new StateConflictError('stale');
   const moving = patch.stageId !== undefined && (patch.stageId !== before.stageId || (patch.pipelineId ?? before.pipelineId) !== before.pipelineId);
   if (moving && before.status !== 'OPEN') throw new StateConflictError('not_open'); // reopen first
 
@@ -184,14 +189,15 @@ export async function updateOpportunity(db: AppTenantDb, actorUserId: string, id
 
   const fields = changed(before as unknown as Record<string, unknown>, data);
   if (fields.length === 0) return toDto(before);
-  // Conditional write: a concurrent archive, or a concurrent win/lose while moving stage, makes this match nothing.
+  // Conditional write on the version read above: any concurrent change (edit, stage move, win/lose,
+  // archive) since then makes this match nothing, so two editors can never silently overwrite each other.
   const result = await db.opportunity.updateMany({
-    where: { id, archivedAt: null, ...(moving ? { status: 'OPEN' } : {}) },
-    data: { ...data, updatedById: actorUserId } as never,
+    where: { id, archivedAt: null, version: patch.version, ...(moving ? { status: 'OPEN' } : {}) },
+    data: { ...data, ...BUMP, updatedById: actorUserId } as never,
   });
   if (result.count === 0) {
     const now = await load(db, id);
-    throw new StateConflictError(now.archivedAt ? 'archived' : 'not_open');
+    throw new StateConflictError(now.archivedAt ? 'archived' : now.version !== patch.version ? 'stale' : 'not_open');
   }
   const after = await load(db, id);
   await recordAudit(db, actorUserId, 'sales.opportunity.updated', { type: 'opportunity', id }, { fields });
@@ -212,15 +218,28 @@ async function refuse(db: AppTenantDb, id: string, expected: 'not_open' | 'not_c
   throw new StateConflictError(now.archivedAt ? 'archived' : expected);
 }
 
-export async function winOpportunity(db: AppTenantDb, actorUserId: string, id: string) {
+/** Closes as WON or LOST and records the outcome in the history, in one unit of work. */
+async function close(db: AppTenantDb, actorUserId: string, id: string, status: 'WON' | 'LOST', lossReason: string | null) {
   await load(db, id);
+  const closedAt = new Date();
   const result = await db.opportunity.updateMany({
     where: { id, status: 'OPEN', archivedAt: null },
-    data: { status: 'WON', closedAt: new Date(), lossReason: null, updatedById: actorUserId } as never,
+    data: { status, closedAt, lossReason, ...BUMP, updatedById: actorUserId } as never,
   });
   if (result.count === 0) await refuse(db, id, 'not_open');
   const after = await load(db, id);
-  // The outcome as it stood: stage, amount and currency at the moment it was won.
+  // The outcome as it stood (stage, amount, currency, reason), kept even if it is reopened later.
+  await db.opportunityOutcome.create({
+    data: {
+      id: randomUUID(), opportunityId: id, status, lossReason, stageId: after.stageId, amount: after.amount, currencyCode: after.currencyCode,
+      closedAt, closedById: actorUserId,
+    } as never,
+  });
+  return after;
+}
+
+export async function winOpportunity(db: AppTenantDb, actorUserId: string, id: string) {
+  const after = await close(db, actorUserId, id, 'WON', null);
   await recordAudit(db, actorUserId, 'sales.opportunity.won', { type: 'opportunity', id }, {
     stageId: after.stageId, amount: formatAmount(after.amount, after.currencyCode), currencyCode: after.currencyCode,
   });
@@ -228,13 +247,8 @@ export async function winOpportunity(db: AppTenantDb, actorUserId: string, id: s
 }
 
 export async function loseOpportunity(db: AppTenantDb, actorUserId: string, id: string, input: { lossReason?: string | null }) {
-  await load(db, id);
-  const result = await db.opportunity.updateMany({
-    where: { id, status: 'OPEN', archivedAt: null },
-    data: { status: 'LOST', closedAt: new Date(), lossReason: input.lossReason ?? null, updatedById: actorUserId } as never,
-  });
-  if (result.count === 0) await refuse(db, id, 'not_open');
-  const after = await load(db, id);
+  const after = await close(db, actorUserId, id, 'LOST', input.lossReason ?? null);
+  // The reason text stays in the outcome history (tenant data under RLS), never in the audit log.
   await recordAudit(db, actorUserId, 'sales.opportunity.lost', { type: 'opportunity', id }, {
     stageId: after.stageId, amount: formatAmount(after.amount, after.currencyCode), currencyCode: after.currencyCode, hasReason: after.lossReason ? 'true' : 'false',
   });
@@ -243,7 +257,8 @@ export async function loseOpportunity(db: AppTenantDb, actorUserId: string, id: 
 
 /**
  * Explicit transition back to OPEN from WON or LOST, optionally into another active stage of the same
- * pipeline. The previous outcome and close date are kept in the audit entry; the row is open again.
+ * pipeline. The row is open again; the outcome it had (status, date, reason) stays in the history,
+ * marked as reopened.
  */
 export async function reopenOpportunity(db: AppTenantDb, actorUserId: string, id: string, input: { stageId?: string }) {
   const before = await load(db, id);
@@ -253,9 +268,12 @@ export async function reopenOpportunity(db: AppTenantDb, actorUserId: string, id
   await checkStage(db, before.pipelineId, stageId);
   const result = await db.opportunity.updateMany({
     where: { id, status: before.status, archivedAt: null },
-    data: { status: 'OPEN', closedAt: null, lossReason: null, stageId, updatedById: actorUserId } as never,
+    data: { status: 'OPEN', closedAt: null, lossReason: null, stageId, ...BUMP, updatedById: actorUserId } as never,
   });
   if (result.count === 0) await refuse(db, id, 'not_closed');
+  const reopenedAt = new Date();
+  const latest = await db.opportunityOutcome.findFirst({ where: { opportunityId: id, reopenedAt: null }, select: { id: true }, orderBy: [{ closedAt: 'desc' }] });
+  if (latest) await db.opportunityOutcome.updateMany({ where: { id: latest.id }, data: { reopenedAt, reopenedById: actorUserId } as never });
   await recordAudit(db, actorUserId, 'sales.opportunity.reopened', { type: 'opportunity', id }, {
     previousStatus: before.status, previousClosedAt: before.closedAt?.toISOString() ?? null, stageId,
   });
@@ -264,7 +282,7 @@ export async function reopenOpportunity(db: AppTenantDb, actorUserId: string, id
 
 export async function archiveOpportunity(db: AppTenantDb, actorUserId: string, id: string) {
   await load(db, id);
-  const result = await db.opportunity.updateMany({ where: { id, archivedAt: null }, data: { archivedAt: new Date(), updatedById: actorUserId } as never });
+  const result = await db.opportunity.updateMany({ where: { id, archivedAt: null }, data: { archivedAt: new Date(), ...BUMP, updatedById: actorUserId } as never });
   if (result.count === 0) throw new StateConflictError('archived');
   await recordAudit(db, actorUserId, 'sales.opportunity.archived', { type: 'opportunity', id });
   return toDto(await load(db, id));
@@ -272,10 +290,30 @@ export async function archiveOpportunity(db: AppTenantDb, actorUserId: string, i
 
 export async function restoreOpportunity(db: AppTenantDb, actorUserId: string, id: string) {
   await load(db, id);
-  const result = await db.opportunity.updateMany({ where: { id, archivedAt: { not: null } }, data: { archivedAt: null, updatedById: actorUserId } as never });
+  const result = await db.opportunity.updateMany({ where: { id, archivedAt: { not: null } }, data: { archivedAt: null, ...BUMP, updatedById: actorUserId } as never });
   if (result.count === 0) throw new StateConflictError('not_archived');
   await recordAudit(db, actorUserId, 'sales.opportunity.restored', { type: 'opportunity', id });
   return toDto(await load(db, id));
+}
+
+type OutcomeRow = {
+  id: string; status: 'WON' | 'LOST'; lossReason: string | null; stageId: string; amount: Decimal | null; currencyCode: string;
+  closedAt: Date; closedById: string | null; reopenedAt: Date | null; reopenedById: string | null;
+};
+
+/** Every time this opportunity was won or lost, newest first, including outcomes later reopened. */
+export async function listOutcomes(db: AppTenantDb, id: string): Promise<{ outcomes: OutcomeDto[] }> {
+  await load(db, id);
+  const rows = (await db.opportunityOutcome.findMany({
+    where: { opportunityId: id },
+    select: { id: true, status: true, lossReason: true, stageId: true, amount: true, currencyCode: true, closedAt: true, closedById: true, reopenedAt: true, reopenedById: true },
+    orderBy: [{ closedAt: 'desc' }, { id: 'desc' }],
+  })) as OutcomeRow[];
+  return {
+    outcomes: rows.map((r) => ({
+      ...r, amount: formatAmount(r.amount, r.currencyCode), closedAt: r.closedAt.toISOString(), reopenedAt: r.reopenedAt?.toISOString() ?? null,
+    })),
+  };
 }
 
 export type OpportunityQuery = {

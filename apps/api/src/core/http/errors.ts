@@ -14,7 +14,7 @@ export class RecordNotFoundError extends Error {
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {
   readonly status = 409;
-  constructor(readonly code: 'archived' | 'not_archived' | 'archived_reference' | 'not_open' | 'not_closed') {
+  constructor(readonly code: 'archived' | 'not_archived' | 'archived_reference' | 'not_open' | 'not_closed' | 'stale') {
     super(code);
     this.name = 'StateConflictError';
   }

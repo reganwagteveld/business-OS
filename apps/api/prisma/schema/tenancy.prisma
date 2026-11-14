@@ -31,14 +31,15 @@ model Business {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz
 
-  memberships    Membership[]
-  invitations    Invitation[]
-  customers      Customer[]
-  salesPipelines SalesPipeline[]
-  salesStages    SalesStage[]
-  opportunities  Opportunity[]
-  contacts       Contact[]
-  activities     Activity[]
+  memberships         Membership[]
+  invitations         Invitation[]
+  customers           Customer[]
+  salesPipelines      SalesPipeline[]
+  salesStages         SalesStage[]
+  opportunities       Opportunity[]
+  opportunityOutcomes OpportunityOutcome[]
+  contacts            Contact[]
+  activities          Activity[]
 
   @@map("businesses")
 }

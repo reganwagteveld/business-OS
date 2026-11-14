@@ -17,7 +17,7 @@ function appPrisma(): PrismaClient {
 const TENANT_MODELS = {
   business: 'id', membership: 'businessId', invitation: 'businessId', auditEvent: 'businessId',
   customer: 'businessId', contact: 'businessId', activity: 'businessId',
-  salesPipeline: 'businessId', salesStage: 'businessId', opportunity: 'businessId',
+  salesPipeline: 'businessId', salesStage: 'businessId', opportunity: 'businessId', opportunityOutcome: 'businessId',
 } as const;
 type AppTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;
 export type AppTenantDb = TenantDb<AppTx, keyof typeof TENANT_MODELS>;

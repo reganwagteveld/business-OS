@@ -18,6 +18,8 @@ import * as contactsRoute from '@/app/api/v1/b/[slug]/contacts/route';
 import * as contactRoute from '@/app/api/v1/b/[slug]/contacts/[contactId]/route';
 import * as archiveContactRoute from '@/app/api/v1/b/[slug]/contacts/[contactId]/archive/route';
 import * as pipelinesRoute from '@/app/api/v1/b/[slug]/sales/pipelines/route';
+import * as defaultPipelineRoute from '@/app/api/v1/b/[slug]/sales/pipelines/default/route';
+import * as outcomesRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportunityId]/outcomes/route';
 import * as stagesRoute from '@/app/api/v1/b/[slug]/sales/stages/route';
 import * as opportunitiesRoute from '@/app/api/v1/b/[slug]/sales/opportunities/route';
 import * as opportunityRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportunityId]/route';
@@ -98,7 +100,16 @@ const api = (who: User, slug: string) => {
     list: (qs = '') => opportunitiesRoute.GET(req('GET', `${base}/opportunities${qs}`, { cookie: who.cookie }), ctx({ slug })).then(json),
     create: (body: unknown) => opportunitiesRoute.POST(req('POST', `${base}/opportunities`, { cookie: who.cookie, body }), ctx({ slug })).then(json),
     get: (id: string) => opportunityRoute.GET(req('GET', `${base}/opportunities/${id}`, { cookie: who.cookie }), o(id)).then(json),
-    update: (id: string, body: unknown) => opportunityRoute.PATCH(req('PATCH', `${base}/opportunities/${id}`, { cookie: who.cookie, body }), o(id)).then(json),
+    init: () => defaultPipelineRoute.POST(req('POST', `${base}/pipelines/default`, { cookie: who.cookie }), ctx({ slug })).then(json),
+    outcomes: (id: string) => outcomesRoute.GET(req('GET', `${base}/opportunities/${id}/outcomes`, { cookie: who.cookie }), o(id)).then(json),
+    /** PATCH exactly as given (the body must carry the version it was based on). */
+    patch: (id: string, body: unknown) => opportunityRoute.PATCH(req('PATCH', `${base}/opportunities/${id}`, { cookie: who.cookie, body }), o(id)).then(json),
+    /** PATCH based on the current version: read it first, as a client showing fresh data would. */
+    update: async (id: string, body: Record<string, unknown>) => {
+      const current = await opportunityRoute.GET(req('GET', `${base}/opportunities/${id}`, { cookie: who.cookie }), o(id)).then(json);
+      const version = current.body.opportunity?.version ?? 1;
+      return opportunityRoute.PATCH(req('PATCH', `${base}/opportunities/${id}`, { cookie: who.cookie, body: { version, ...body } }), o(id)).then(json);
+    },
     win: (id: string) => winRoute.POST(req('POST', `${base}/opportunities/${id}/win`, { cookie: who.cookie }), o(id)).then(json),
     lose: (id: string, body: unknown = {}) => loseRoute.POST(req('POST', `${base}/opportunities/${id}/lose`, { cookie: who.cookie, body }), o(id)).then(json),
     reopen: (id: string, body: unknown = {}) => reopenRoute.POST(req('POST', `${base}/opportunities/${id}/reopen`, { cookie: who.cookie, body }), o(id)).then(json),
@@ -122,32 +133,55 @@ beforeAll(async () => {
 }, 120_000);
 
 describe('default pipeline and stages', () => {
-  it('is created once on first use with the standard stages, and is per business', async () => {
+  it('reading never creates anything; explicit, idempotent initialisation creates the default once, per business', async () => {
     const owner = api(A.people.OWNER!, A.slug);
-    const first = await owner.pipelines();
-    expect(first.status).toBe(200);
-    expect(first.body.pipelines).toHaveLength(1);
-    expect(first.body.pipelines[0]).toMatchObject({ isDefault: true, name: 'Sales pipeline', archivedAt: null });
-    expect((await owner.pipelines()).body.pipelines.map((p: { id: string }) => p.id)).toEqual([first.body.pipelines[0].id]);
-    const stages = (await owner.stages()).body;
-    expect(stages.pipeline.id).toBe(first.body.pipelines[0].id);
-    expect(stages.stages.map((s: { name: string; position: number; defaultProbability: number }) => [s.name, s.position, s.defaultProbability]))
+    expect((await owner.pipelines()).body).toEqual({ pipelines: [] });
+    expect((await owner.stages()).status).toBe(404);
+    expect((await admin.query('SELECT count(*)::int AS n FROM sales_pipelines WHERE business_id = $1', [A.businessId])).rows[0].n).toBe(0);
+    const first = await owner.init();
+    expect(first.status).toBe(201);
+    expect(first.body.pipeline).toMatchObject({ isDefault: true, name: 'Sales pipeline', archivedAt: null });
+    expect(first.body.stages.map((s: { name: string; position: number; defaultProbability: number }) => [s.name, s.position, s.defaultProbability]))
       .toEqual([['New', 1000, 10], ['Qualified', 2000, 25], ['Proposal', 3000, 50], ['Negotiation', 4000, 75]]);
-    const other = (await api(B.people.OWNER!, B.slug).pipelines()).body.pipelines;
-    expect(other[0].id).not.toBe(first.body.pipelines[0].id);
+    const again = await api(A.people.MEMBER!, A.slug).init();
+    expect(again.status).toBe(200);
+    expect(again.body.pipeline.id).toBe(first.body.pipeline.id);
+    expect((await owner.pipelines()).body.pipelines.map((p: { id: string }) => p.id)).toEqual([first.body.pipeline.id]);
+    expect((await owner.stages()).body.pipeline.id).toBe(first.body.pipeline.id);
+    const other = await api(B.people.OWNER!, B.slug).init();
+    expect(other.status).toBe(201);
+    expect(other.body.pipeline.id).not.toBe(first.body.pipeline.id);
+    expect((await audits(first.body.pipeline.id)).map((e) => e.action)).toEqual(['sales.pipeline.initialized']);
   });
 
-  it('concurrent first requests create exactly one default pipeline, one set of stages and one audit entry', async () => {
+  it('concurrent initialisation creates exactly one default pipeline, one set of stages and one audit entry', async () => {
     const fresh = await team('sc');
     const people = Object.values(fresh.people);
-    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => api(people[i % people.length]!, fresh.slug).pipelines()));
-    expect(results.map((r) => r.status)).toEqual(Array(8).fill(200));
-    expect(new Set(results.map((r) => r.body.pipelines[0].id)).size).toBe(1);
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => api(people[i % people.length]!, fresh.slug).init()));
+    expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+    expect(results.filter((r) => r.status === 200)).toHaveLength(7);
+    expect(new Set(results.map((r) => r.body.pipeline.id)).size).toBe(1);
+    expect(results.every((r) => r.body.stages.length === 4)).toBe(true);
     const { rows } = await admin.query(
       `SELECT (SELECT count(*)::int FROM sales_pipelines WHERE business_id = $1) AS pipelines,
               (SELECT count(*)::int FROM sales_stages WHERE business_id = $1) AS stages,
               (SELECT count(*)::int FROM audit_events WHERE business_id = $1 AND action = 'sales.pipeline.initialized') AS audits`, [fresh.businessId]);
     expect(rows[0]).toEqual({ pipelines: 1, stages: 4, audits: 1 });
+  });
+
+  it('creating the first opportunity (a write) initialises the default too, concurrency-safe', async () => {
+    const fresh = await team('sd');
+    const people = Object.values(fresh.people);
+    const results = await Promise.all(Array.from({ length: 4 }, (_, i) => api(people[i]!, fresh.slug).create({ title: `First ${i}` })));
+    expect(results.map((r) => r.status)).toEqual([201, 201, 201, 201]);
+    expect(new Set(results.map((r) => r.body.opportunity.pipelineId)).size).toBe(1);
+    expect((await admin.query('SELECT count(*)::int AS n FROM sales_pipelines WHERE business_id = $1', [fresh.businessId])).rows[0].n).toBe(1);
+  });
+
+  it('initialising needs sales:write; a read-only request cannot run it', async () => {
+    const anon = await defaultPipelineRoute.POST(req('POST', `/api/v1/b/${A.slug}/sales/pipelines/default`), ctx({ slug: A.slug }));
+    expect(anon.status).toBe(401);
+    expect((await api(B.people.OWNER!, A.slug).init()).status).toBe(404);
   });
 
   it('creating a pipeline needs sales:manage (OWNER, ADMIN) and gets the standard or given stages', async () => {
@@ -211,6 +245,7 @@ describe('opportunities: create, money and currency', () => {
     const o = (await a.create({ title: 'Strict' })).body.opportunity;
     expect((await a.update(o.id, { status: 'WON' })).status).toBe(400);
     expect((await a.update(o.id, {})).status).toBe(400);
+    expect((await a.patch(o.id, { title: 'No version' })).status).toBe(400); // the version is required
     expect((await a.create({ title: '' })).status).toBe(400);
   });
 });
@@ -356,7 +391,7 @@ describe('lists', () => {
   it('filters by status, archive state, pipeline, stage, customer and owner; searches titles; pages with a bound cursor', async () => {
     const temp = await team('sl');
     const a = api(temp.people.OWNER!, temp.slug);
-    const stages = (await a.stages()).body.stages;
+    const stages = (await a.init()).body.stages;
     const cust = (await a.createCustomer({ displayName: 'Filter Co' })).body.customer;
     const ids: string[] = [];
     for (let i = 0; i < 7; i++) ids.push((await a.create({ title: `Deal ${i}`, ...(i < 2 ? { customerId: cust.id } : {}), ...(i === 3 ? { ownerUserId: temp.people.MEMBER!.id } : {}) })).body.opportunity.id);
@@ -391,6 +426,7 @@ describe('roles, authentication and tenant isolation', () => {
     for (const role of ['OWNER', 'ADMIN', 'MANAGER', 'MEMBER']) {
       const who = api(A.people[role]!, A.slug);
       expect((await who.pipelines()).status, role).toBe(200);
+      expect((await who.init()).status, role).toBe(200);
       expect((await who.stages()).status, role).toBe(200);
       const o = await who.create({ title: `${role} deal` });
       expect(o.status, role).toBe(201);
@@ -410,7 +446,7 @@ describe('roles, authentication and tenant isolation', () => {
     expect(csrf.status).toBe(403);
     const o = (await api(A.people.OWNER!, A.slug).create({ title: 'A only' })).body.opportunity;
     const outsider = api(B.people.OWNER!, A.slug);
-    const results = [await outsider.pipelines(), await outsider.stages(), await outsider.list(), await outsider.create({ title: 'x' }), await outsider.get(o.id),
+    const results = [await outsider.pipelines(), await outsider.stages(), await outsider.init(), await outsider.outcomes(o.id), await outsider.list(), await outsider.create({ title: 'x' }), await outsider.get(o.id),
       await outsider.update(o.id, { title: 'x' }), await outsider.win(o.id), await outsider.lose(o.id), await outsider.reopen(o.id), await outsider.archive(o.id),
       await outsider.restore(o.id), await outsider.createPipeline({ name: 'x' })];
     expect(results.map((r) => r.status)).toEqual(Array(results.length).fill(404));
@@ -466,5 +502,98 @@ describe('roles, authentication and tenant isolation', () => {
     }
     const { rows } = await admin.query("SELECT relname FROM pg_class WHERE relname IN ('opportunities','sales_stages','sales_pipelines') AND relrowsecurity AND relforcerowsecurity");
     expect(rows).toHaveLength(3);
+  });
+});
+
+describe('PR 15 review: concurrent edits and outcome history', () => {
+  it('two people editing the same opportunity: the second, based on an old version, is refused, not merged over', async () => {
+    const ana = api(A.people.MANAGER!, A.slug);
+    const ben = api(A.people.MEMBER!, A.slug);
+    const o = (await ana.create({ title: 'Shared', amount: '100' })).body.opportunity;
+    expect(o.version).toBe(1);
+    const first = await ana.patch(o.id, { version: 1, amount: '150' });
+    expect(first.body.opportunity).toMatchObject({ amount: '150.00', version: 2 });
+    const second = await ben.patch(o.id, { version: 1, probability: 90 }); // Ben still sees version 1
+    expect(second).toMatchObject({ status: 409, body: { error: 'stale' } });
+    expect((await ana.get(o.id)).body.opportunity).toMatchObject({ amount: '150.00', probability: null, version: 2 });
+    expect((await ben.patch(o.id, { version: 2, probability: 90 })).body.opportunity).toMatchObject({ amount: '150.00', probability: 90, version: 3 });
+  });
+
+  it('simultaneous edits from the same version: exactly one wins, the rest get 409 stale', async () => {
+    const a = api(A.people.OWNER!, A.slug);
+    const o = (await a.create({ title: 'Race edit' })).body.opportunity;
+    const results = await Promise.all(Array.from({ length: 6 }, (_, i) => a.patch(o.id, { version: 1, title: `Edit ${i}` })));
+    expect(results.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(results.filter((r) => r.status === 409 && r.body.error === 'stale')).toHaveLength(5);
+    const winner = results.find((r) => r.status === 200)!.body.opportunity.title;
+    expect((await a.get(o.id)).body.opportunity).toMatchObject({ title: winner, version: 2 });
+    expect((await audits(o.id)).filter((e) => e.action === 'sales.opportunity.updated')).toHaveLength(1);
+  });
+
+  it('every change bumps the version, so an edit prepared before a win, stage move or archive is refused', async () => {
+    const a = api(A.people.OWNER!, A.slug);
+    const stages = (await a.stages()).body.stages;
+    const o = (await a.create({ title: 'Versioned' })).body.opportunity;
+    await a.patch(o.id, { version: 1, stageId: stages[1].id }); // v2
+    await a.win(o.id); // v3
+    expect((await a.patch(o.id, { version: 2, title: 'From before the win' })).body.error).toBe('stale');
+    await a.reopen(o.id); // v4
+    await a.archive(o.id); // v5
+    expect((await a.patch(o.id, { version: 4, title: 'x' })).body.error).toBe('archived');
+    await a.restore(o.id); // v6
+    expect((await a.get(o.id)).body.opportunity.version).toBe(6);
+    expect((await a.patch(o.id, { version: 6, title: 'Fresh' })).status).toBe(200);
+  });
+
+  it('won/lost history survives reopening, with the loss reason kept under RLS and never in the audit log', async () => {
+    const a = api(A.people.MEMBER!, A.slug);
+    const stages = (await a.stages()).body.stages;
+    const o = (await a.create({ title: 'History', amount: '2500' })).body.opportunity;
+    await a.lose(o.id, { lossReason: 'Budget frozen until next year' });
+    await a.reopen(o.id, { stageId: stages[2].id });
+    await a.update(o.id, { amount: '3000' });
+    await a.win(o.id);
+    const { body } = await a.outcomes(o.id);
+    expect(body.outcomes).toHaveLength(2);
+    const [won, lost] = body.outcomes;
+    expect(won).toMatchObject({ status: 'WON', lossReason: null, stageId: stages[2].id, amount: '3000.00', currencyCode: 'AUD', closedById: A.people.MEMBER!.id, reopenedAt: null });
+    expect(lost).toMatchObject({ status: 'LOST', lossReason: 'Budget frozen until next year', stageId: stages[0].id, amount: '2500.00', closedById: A.people.MEMBER!.id, reopenedById: A.people.MEMBER!.id });
+    expect(lost.reopenedAt).not.toBeNull();
+    expect((await a.get(o.id)).body.opportunity).toMatchObject({ status: 'WON', lossReason: null });
+    const log = JSON.stringify(await audits(o.id));
+    expect(log).not.toMatch(/Budget frozen/);
+    // Another business sees neither the history nor its reason.
+    expect((await api(B.people.OWNER!, B.slug).outcomes(o.id)).status).toBe(404);
+  });
+
+  it('outcome history is append-only for tenant code: recorded facts cannot be rewritten or deleted', async () => {
+    const a = api(A.people.OWNER!, A.slug);
+    const o = (await a.create({ title: 'Immutable' })).body.opportunity;
+    await a.lose(o.id, { lossReason: 'Original reason' });
+    const run = async (sql: string) => {
+      await app.query('BEGIN');
+      try {
+        await app.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [A.businessId, A.people.OWNER!.id]);
+        await app.query(sql, [o.id]);
+      } finally {
+        await app.query('ROLLBACK');
+      }
+    };
+    await expect(run("UPDATE opportunity_outcomes SET loss_reason = 'Rewritten' WHERE opportunity_id = $1")).rejects.toThrow(/permission denied/);
+    await expect(run('DELETE FROM opportunity_outcomes WHERE opportunity_id = $1')).rejects.toThrow(/permission denied/);
+    const { rows } = await admin.query("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'opportunity_outcomes'");
+    expect(rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
+    expect((await admin.query('SELECT loss_reason FROM opportunity_outcomes WHERE opportunity_id = $1', [o.id])).rows[0].loss_reason).toBe('Original reason');
+  });
+
+  it('decision: MEMBER may win, lose, reopen and archive (MVP); pipeline configuration stays OWNER/ADMIN', async () => {
+    const member = api(A.people.MEMBER!, A.slug);
+    const o = (await member.create({ title: 'Member closes' })).body.opportunity;
+    expect((await member.win(o.id)).status).toBe(200);
+    expect((await member.reopen(o.id)).status).toBe(200);
+    expect((await member.lose(o.id)).status).toBe(200);
+    expect((await member.archive(o.id)).status).toBe(200);
+    expect((await member.restore(o.id)).status).toBe(200);
+    expect((await member.createPipeline({ name: 'Not allowed' })).status).toBe(403);
   });
 });

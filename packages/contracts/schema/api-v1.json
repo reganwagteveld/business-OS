@@ -4096,6 +4096,133 @@
         "additionalProperties": false
       }
     },
+    "initialiseDefaultPipeline": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/sales/pipelines/default",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "pipeline": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "isDefault": {
+                "type": "boolean"
+              },
+              "position": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "archivedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "isDefault",
+              "position",
+              "createdAt",
+              "updatedAt",
+              "archivedAt"
+            ],
+            "additionalProperties": false
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "pipelineId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "position": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "defaultProbability": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "archivedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "pipelineId",
+                "name",
+                "position",
+                "defaultProbability",
+                "archivedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "pipeline",
+          "stages"
+        ],
+        "additionalProperties": false
+      }
+    },
     "listStages": {
       "method": "GET",
       "path": "/api/v1/b/:slug/sales/stages",
@@ -4426,6 +4553,11 @@
                     }
                   ]
                 },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
                 "createdById": {
                   "anyOf": [
                     {
@@ -4489,6 +4621,7 @@
                 "status",
                 "lossReason",
                 "closedAt",
+                "version",
                 "createdById",
                 "updatedById",
                 "createdAt",
@@ -4745,6 +4878,11 @@
                   }
                 ]
               },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
               "createdById": {
                 "anyOf": [
                   {
@@ -4808,6 +4946,7 @@
               "status",
               "lossReason",
               "closedAt",
+              "version",
               "createdById",
               "updatedById",
               "createdAt",
@@ -4946,6 +5085,11 @@
                   }
                 ]
               },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
               "createdById": {
                 "anyOf": [
                   {
@@ -5009,6 +5153,7 @@
               "status",
               "lossReason",
               "closedAt",
+              "version",
               "createdById",
               "updatedById",
               "createdAt",
@@ -5130,8 +5275,16 @@
             "type": "string",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           }
         },
+        "required": [
+          "version"
+        ],
         "additionalProperties": false
       },
       "response": {
@@ -5254,6 +5407,11 @@
                   }
                 ]
               },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
               "createdById": {
                 "anyOf": [
                   {
@@ -5317,6 +5475,7 @@
               "status",
               "lossReason",
               "closedAt",
+              "version",
               "createdById",
               "updatedById",
               "createdAt",
@@ -5455,6 +5614,11 @@
                   }
                 ]
               },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
               "createdById": {
                 "anyOf": [
                   {
@@ -5518,6 +5682,7 @@
               "status",
               "lossReason",
               "closedAt",
+              "version",
               "createdById",
               "updatedById",
               "createdAt",
@@ -5674,6 +5839,11 @@
                   }
                 ]
               },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
               "createdById": {
                 "anyOf": [
                   {
@@ -5737,6 +5907,7 @@
               "status",
               "lossReason",
               "closedAt",
+              "version",
               "createdById",
               "updatedById",
               "createdAt",
@@ -5887,6 +6058,11 @@
                   }
                 ]
               },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
               "createdById": {
                 "anyOf": [
                   {
@@ -5950,6 +6126,7 @@
               "status",
               "lossReason",
               "closedAt",
+              "version",
               "createdById",
               "updatedById",
               "createdAt",
@@ -5961,6 +6138,114 @@
         },
         "required": [
           "opportunity"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "listOpportunityOutcomes": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/sales/opportunities/:opportunityId/outcomes",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "WON",
+                    "LOST"
+                  ]
+                },
+                "lossReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "stageId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "amount": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "currencyCode": {
+                  "type": "string"
+                },
+                "closedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "closedById": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reopenedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reopenedById": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "lossReason",
+                "stageId",
+                "amount",
+                "currencyCode",
+                "closedAt",
+                "closedById",
+                "reopenedAt",
+                "reopenedById"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "outcomes"
         ],
         "additionalProperties": false
       }
@@ -6088,6 +6373,11 @@
                   }
                 ]
               },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
               "createdById": {
                 "anyOf": [
                   {
@@ -6151,6 +6441,7 @@
               "status",
               "lossReason",
               "closedAt",
+              "version",
               "createdById",
               "updatedById",
               "createdAt",
@@ -6289,6 +6580,11 @@
                   }
                 ]
               },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
               "createdById": {
                 "anyOf": [
                   {
@@ -6352,6 +6648,7 @@
               "status",
               "lossReason",
               "closedAt",
+              "version",
               "createdById",
               "updatedById",
               "createdAt",

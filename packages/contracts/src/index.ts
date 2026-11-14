@@ -13,7 +13,7 @@ export * from './customers.ts';
 export * from './sales.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
-  ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, UpdateOpportunityRequest,
+  ListOutcomesResponse, ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, UpdateOpportunityRequest,
 } from './sales.ts';
 import {
   ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse,
@@ -59,6 +59,8 @@ export const endpoints = {
   // Sales Zone (docs/sales-data-model.md)
   listPipelines: { method: 'GET', path: '/api/v1/b/:slug/sales/pipelines', response: ListPipelinesResponse },
   createPipeline: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines', request: CreatePipelineRequest, response: PipelineResponse },
+  /** Idempotent: creates the default pipeline and standard stages if missing (201), else returns them (200). */
+  initialiseDefaultPipeline: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines/default', response: PipelineResponse },
   listStages: { method: 'GET', path: '/api/v1/b/:slug/sales/stages', query: ListStagesQuery, response: ListStagesResponse },
   listOpportunities: { method: 'GET', path: '/api/v1/b/:slug/sales/opportunities', query: ListOpportunitiesQuery, response: ListOpportunitiesResponse },
   createOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities', request: CreateOpportunityRequest, response: OpportunityResponse },
@@ -67,6 +69,7 @@ export const endpoints = {
   winOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/win', response: OpportunityResponse },
   loseOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/lose', request: LoseOpportunityRequest, response: OpportunityResponse },
   reopenOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/reopen', request: ReopenOpportunityRequest, response: OpportunityResponse },
+  listOpportunityOutcomes: { method: 'GET', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/outcomes', response: ListOutcomesResponse },
   archiveOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/archive', response: OpportunityResponse },
   restoreOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/restore', response: OpportunityResponse },
 } as const;

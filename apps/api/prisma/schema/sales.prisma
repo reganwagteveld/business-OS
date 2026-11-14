@@ -75,18 +75,21 @@ model Opportunity {
   status            OpportunityStatus @default(OPEN)
   lossReason        String?           @map("loss_reason")
   closedAt          DateTime?         @map("closed_at") @db.Timestamptz
+  /// Optimistic concurrency: +1 on every change; an edit must name the version it was based on.
+  version           Int               @default(1)
   createdById       String?           @map("created_by_id") @db.Uuid
   updatedById       String?           @map("updated_by_id") @db.Uuid
   createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt        DateTime?         @map("archived_at") @db.Timestamptz
 
-  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "opportunities_business_fkey")
-  customer Customer?     @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_customer_fkey")
-  contact  Contact?      @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_contact_fkey")
-  pipeline SalesPipeline @relation(fields: [businessId, pipelineId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_pipeline_fkey")
-  stage    SalesStage    @relation(fields: [businessId, pipelineId, stageId], references: [businessId, pipelineId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_stage_fkey")
-  owner    Membership?   @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_owner_fkey")
+  business Business             @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "opportunities_business_fkey")
+  customer Customer?            @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_customer_fkey")
+  contact  Contact?             @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_contact_fkey")
+  pipeline SalesPipeline        @relation(fields: [businessId, pipelineId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_pipeline_fkey")
+  stage    SalesStage           @relation(fields: [businessId, pipelineId, stageId], references: [businessId, pipelineId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_stage_fkey")
+  owner    Membership?          @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_owner_fkey")
+  outcomes OpportunityOutcome[]
 
   @@unique([businessId, id])
   @@index([businessId, status, createdAt(sort: Desc), id])
@@ -95,4 +98,28 @@ model Opportunity {
   @@index([businessId, ownerUserId])
   @@index([businessId, archivedAt])
   @@map("opportunities")
+}
+
+/// One row per time an opportunity was won or lost, kept when it is reopened. The loss reason lives
+/// here (tenant data under RLS, same access as the opportunity), never in the audit log.
+model OpportunityOutcome {
+  id            String            @id @db.Uuid
+  businessId    String            @map("business_id") @db.Uuid
+  opportunityId String            @map("opportunity_id") @db.Uuid
+  status        OpportunityStatus
+  lossReason    String?           @map("loss_reason")
+  stageId       String            @map("stage_id") @db.Uuid
+  amount        Decimal?          @db.Decimal(18, 4)
+  currencyCode  String            @map("currency_code") @db.Char(3)
+  closedAt      DateTime          @map("closed_at") @db.Timestamptz
+  closedById    String?           @map("closed_by_id") @db.Uuid
+  reopenedAt    DateTime?         @map("reopened_at") @db.Timestamptz
+  reopenedById  String?           @map("reopened_by_id") @db.Uuid
+
+  business    Business    @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "opportunity_outcomes_business_fkey")
+  opportunity Opportunity @relation(fields: [businessId, opportunityId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunity_outcomes_opportunity_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, opportunityId, closedAt(sort: Desc)])
+  @@map("opportunity_outcomes")
 }
