@@ -2,9 +2,11 @@ import type { ComponentProps } from 'react';
 import { cn } from '../lib/utils';
 
 const TONES = {
-  ok: 'bg-emerald-500',
-  pending: 'bg-amber-500',
+  ok: 'bg-success',
+  pending: 'bg-warning',
   error: 'bg-destructive',
+  info: 'bg-info',
+  neutral: 'bg-muted-foreground',
 } as const;
 
 export type StatusTone = keyof typeof TONES;
