@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
+import { createCustomersClient, type CustomersClient } from './api/customers';
 import { createTenancyClient, type TenancyClient } from './api/tenancy';
 import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
 import type { ClientPlatform } from './config';
@@ -8,6 +9,7 @@ import { Startup } from './shell/frame';
 import { BusinessSetup } from './shell/onboarding';
 import { Failed, SessionExpiredNotice, Unreachable, Unverified } from './shell/states';
 import { ZoneHome } from './shell/zone-home';
+import { CustomerZone } from './zones/customers/customer-zone';
 import { browserStorage, type WorkspaceStorage } from './workspace/storage';
 import { useWorkspace } from './workspace/use-workspace';
 
@@ -25,6 +27,7 @@ export interface AppProps {
   /** Injected in tests; production uses the default fetch-based clients and localStorage. */
   auth?: AuthClient;
   tenancy?: TenancyClient;
+  customers?: CustomersClient;
   storage?: WorkspaceStorage;
 }
 
@@ -40,14 +43,17 @@ type Mode = 'default' | 'choose' | 'new';
  * open the right one. Offline, server errors and an ended session each get their own screen, and
  * the active business is only ever one the server lists for you.
  */
-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, storage: storageOverride }: AppProps) {
+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, storage: storageOverride }: AppProps) {
   const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
   const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
+  const customers = useMemo(() => customersOverride ?? createCustomersClient(apiBaseUrl, resolvedTransport), [customersOverride, apiBaseUrl, resolvedTransport]);
   const storage = useMemo(() => storageOverride ?? browserStorage(), [storageOverride]);
   const workspace = useWorkspace({ auth, tenancy, storage });
   const { phase } = workspace;
   const [mode, setMode] = useState<Mode>('default');
+  /** Which Zone is open. Leaving a Zone (switching business, signing out) always returns to the home. */
+  const [zone, setZone] = useState<'home' | 'customers'>('home');
 
   const params = new URLSearchParams(location?.search ?? '');
   const next = params.get('next');
@@ -66,6 +72,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
 
   const signOut = () => {
     setMode('default');
+    setZone('home');
     void workspace.signOut();
   };
 
@@ -130,5 +137,23 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       />
     );
   }
-  return <ZoneHome business={phase.context.business.name} user={phase.user} role={phase.context.membership.role} onSwitch={() => setMode('choose')} onSignOut={signOut} />;
+  const switchBusiness = () => {
+    setZone('home');
+    setMode('choose');
+  };
+  if (zone === 'customers') {
+    return (
+      <CustomerZone
+        key={phase.context.business.slug}
+        client={customers}
+        context={phase.context}
+        userLabel={phase.user.name || phase.user.email}
+        onHome={() => setZone('home')}
+        onSwitch={switchBusiness}
+        onSignOut={signOut}
+        onSessionEnded={workspace.retry}
+      />
+    );
+  }
+  return <ZoneHome business={phase.context.business.name} user={phase.user} role={phase.context.membership.role} onSwitch={switchBusiness} onSignOut={signOut} onOpenCustomers={() => setZone('customers')} />;
 }

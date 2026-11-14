@@ -7,3 +7,4 @@ export { createTenancyClient, type BusinessContext, type BusinessSummary, type O
 export type { SessionCheck } from './api/auth';
 export { createBusinessFlow, resolveWorkspace, type CreateFlowResult, type Phase, type Resolved } from './workspace/resolve';
 export { browserStorage, memoryStorage, type WorkspaceStorage } from './workspace/storage';
+export { createCustomersClient, type CustomersClient } from './api/customers';
