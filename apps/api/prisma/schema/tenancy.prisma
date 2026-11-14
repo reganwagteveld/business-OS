@@ -31,17 +31,26 @@ model Business {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz
 
-  memberships         Membership[]
-  invitations         Invitation[]
-  customers           Customer[]
-  salesPipelines      SalesPipeline[]
-  salesStages         SalesStage[]
-  opportunities       Opportunity[]
-  opportunityOutcomes OpportunityOutcome[]
-  contacts            Contact[]
-  activities          Activity[]
-  projects            Project[]
-  projectTasks        ProjectTask[]
+  memberships              Membership[]
+  invitations              Invitation[]
+  customers                Customer[]
+  salesPipelines           SalesPipeline[]
+  salesStages              SalesStage[]
+  opportunities            Opportunity[]
+  opportunityOutcomes      OpportunityOutcome[]
+  contacts                 Contact[]
+  activities               Activity[]
+  projects                 Project[]
+  projectTasks             ProjectTask[]
+  financeSettings          FinanceSettings?
+  financeNumberSeries      FinanceNumberSeries[]
+  financeTaxRates          FinanceTaxRate[]
+  financeDocuments         FinanceDocument[]
+  financeDocumentLines     FinanceDocumentLine[]
+  financePayments          FinancePayment[]
+  financeAllocations       FinancePaymentAllocation[]
+  financeExpenseCategories FinanceExpenseCategory[]
+  financeExpenses          FinanceExpense[]
 
   @@map("businesses")
 }

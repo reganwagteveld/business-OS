@@ -17,6 +17,11 @@ export const ZONE_PERMISSIONS = {
   // Projects and their tasks (docs/projects-data-model.md §5). Owners and assignees of projects and
   // tasks are work assignments, not security principals: being one never grants any of these.
   projects: ['projects:read', 'projects:create', 'projects:update', 'projects:archive', 'projects:manage_tasks'],
+  // Finance (docs/finance-data-model.md §7.1, owner decision FD-P1). Separate from every other Zone:
+  // customer, sales or project keys (or being a project owner or assignee) grant no finance access,
+  // and finance keys grant nothing elsewhere. write = drafts; issue = issue, accept, decline, expire,
+  // void; payments and expenses are for F2/F3; manage = numbering, tax rates, finance settings.
+  finance: ['finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage'],
 } as const;
 
 export type Zone = keyof typeof ZONE_PERMISSIONS;
@@ -30,6 +35,9 @@ export type Role = (typeof ROLES)[number];
 const RANK: Record<Role, number> = { OWNER: 4, ADMIN: 3, MANAGER: 2, MEMBER: 1 };
 
 const PROJECTS_WORK: Permission[] = ['projects:read', 'projects:create', 'projects:update', 'projects:manage_tasks'];
+/** FD-P1 defaults: MANAGER drafts and enters expenses; OWNER and ADMIN also issue, record payments and manage settings. */
+const FINANCE_WORK: Permission[] = ['finance:read', 'finance:write', 'finance:expenses'];
+const FINANCE_ALL: Permission[] = [...FINANCE_WORK, 'finance:issue', 'finance:payments', 'finance:manage'];
 const DATA: Permission[] = [
   'customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK, 'projects:archive',
 ];
@@ -39,11 +47,12 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   // (archive) the business or, later, manage billing.
   OWNER: new Set(ALL_PERMISSIONS),
   // Manages members below owner and the business settings; full data access.
-  ADMIN: new Set<Permission>(['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read', 'sales:manage', ...DATA]),
+  ADMIN: new Set<Permission>(['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read', 'sales:manage', ...DATA, ...FINANCE_ALL]),
   // Runs day-to-day work; can invite and manage MEMBERs only; no settings or audit log.
-  MANAGER: new Set<Permission>(['business:read', 'members:read', 'members:invite', 'members:manage', ...DATA]),
+  MANAGER: new Set<Permission>(['business:read', 'members:read', 'members:invite', 'members:manage', ...DATA, ...FINANCE_WORK]),
   // Reads and writes business data; no member or settings management. Works on projects and their
-  // tasks but cannot archive or restore a project (a decision for whoever runs the work).
+  // tasks but cannot archive or restore a project (a decision for whoever runs the work). No finance
+  // access (FD-P1).
   MEMBER: new Set<Permission>([
     'business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK,
   ]),

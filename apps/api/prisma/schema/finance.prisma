@@ -1,0 +1,356 @@
+// finance module (docs/finance-data-model.md, ADR 0007). Tenant tables: forced RLS, composite
+// (business_id, …) foreign keys, and the integrity CHECKs, guard triggers, column grants and partial
+// indexes that Prisma cannot express, all in the migration. Every finance table references
+// businesses ON DELETE RESTRICT (retention, FD-L3): a business with finance records cannot be purged.
+//
+// Columns marked "database-owned" are written only by the guard triggers (numbers, hashes, counters,
+// transition times, snapshots of tax rates and categories). Services never set them; anything a
+// client sends for them is overwritten or refused by the database.
+
+enum FinanceDocumentKind {
+  QUOTE
+  INVOICE
+  CREDIT_NOTE
+}
+
+/// Invoices and credit notes use only DRAFT, ISSUED and VOID (CHECK). Paid, partly paid and overdue
+/// are derived, never stored.
+enum FinanceDocumentStatus {
+  DRAFT
+  ISSUED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  VOID
+}
+
+/// How line prices relate to tax. F1 supports tax-exclusive prices only (FD-T1); other modes are added
+/// as enum values with their own formulas in the issue guard, which refuses any mode it does not know.
+enum FinanceTaxMode {
+  EXCLUSIVE
+}
+
+enum FinancePaymentStatus {
+  RECORDED
+  REVERSED
+}
+
+enum FinancePaymentMethod {
+  BANK_TRANSFER
+  CASH
+  CARD
+  CHEQUE
+  OTHER
+}
+
+enum FinanceExpenseStatus {
+  DRAFT
+  RECORDED
+  VOID
+}
+
+/// One row per business: the seller details snapshotted onto issued documents, document defaults and
+/// the retention policy. Created on first use.
+model FinanceSettings {
+  businessId               String   @id @map("business_id") @db.Uuid
+  /// Seller details for snapshots. Empty values fall back to the business's legal or trading name.
+  sellerLegalName          String?  @map("seller_legal_name")
+  sellerAddress            String?  @map("seller_address")
+  sellerEmail              String?  @map("seller_email")
+  sellerPhone              String?  @map("seller_phone")
+  /// Legal and tax identifiers as [{ "label": "ABN", "value": "…" }]: configurable, no country rules.
+  sellerIdentifiers        Json     @default("[]") @map("seller_identifiers")
+  paymentInstructions      String?  @map("payment_instructions")
+  /// Optional defaults; nothing is assumed when they are empty.
+  defaultPaymentTermsDays  Int?     @map("default_payment_terms_days") @db.SmallInt
+  defaultQuoteValidityDays Int?     @map("default_quote_validity_days") @db.SmallInt
+  defaultTaxRateId         String?  @map("default_tax_rate_id") @db.Uuid
+  /// Retention policy (FD-L3): at least 7 years, longer where a jurisdiction requires it. Expiry never
+  /// authorises deletion; a legal hold marks records that must be kept regardless.
+  retentionYears           Int      @default(7) @map("retention_years") @db.SmallInt
+  legalHold                Boolean  @default(false) @map("legal_hold")
+  version                  Int      @default(1)
+  createdById              String?  @map("created_by_id") @db.Uuid
+  updatedById              String?  @map("updated_by_id") @db.Uuid
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business       Business        @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_settings_business_fkey")
+  defaultTaxRate FinanceTaxRate? @relation(fields: [businessId, defaultTaxRateId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_settings_default_tax_rate_fkey")
+
+  @@map("finance_settings")
+}
+
+/// One gapless numbering series per business and document kind (FD-L1). next_value moves only from
+/// the issue trigger, by exactly one, inside the issuing transaction.
+model FinanceNumberSeries {
+  id            String              @id @db.Uuid
+  businessId    String              @map("business_id") @db.Uuid
+  kind          FinanceDocumentKind
+  prefix        String              @default("")
+  minDigits     Int                 @default(4) @map("min_digits") @db.SmallInt
+  /// Settable only while the series is unused; next_value follows it (guard).
+  startingValue BigInt              @default(1) @map("starting_value")
+  /// Database-owned: moved only by the issue trigger.
+  nextValue     BigInt              @default(1) @map("next_value")
+  version       Int                 @default(1)
+  createdById   String?             @map("created_by_id") @db.Uuid
+  updatedById   String?             @map("updated_by_id") @db.Uuid
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_number_series_business_fkey")
+
+  @@unique([businessId, kind])
+  @@unique([businessId, id])
+  @@map("finance_number_series")
+}
+
+/// A tax rate is referenced for convenience; lines snapshot its name and percentage. The percentage
+/// never changes after creation (column grants): a new percentage is a new rate.
+model FinanceTaxRate {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  ratePercent Decimal   @map("rate_percent") @db.Decimal(7, 4)
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  business   Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_tax_rates_business_fkey")
+  lines      FinanceDocumentLine[]
+  defaultFor FinanceSettings[]
+
+  @@unique([businessId, id])
+  @@index([businessId, archivedAt, name])
+  @@map("finance_tax_rates")
+}
+
+/// Quotes, invoices and credit notes in one table: one numbering, snapshot, sealing and immutability
+/// mechanism. Kind-, customer- and currency-bound links are composite FKs that include those columns.
+model FinanceDocument {
+  id                  String                @id @db.Uuid
+  businessId          String                @map("business_id") @db.Uuid
+  kind                FinanceDocumentKind
+  status              FinanceDocumentStatus @default(DRAFT)
+  customerId          String                @map("customer_id") @db.Uuid
+  contactId           String?               @map("contact_id") @db.Uuid
+  opportunityId       String?               @map("opportunity_id") @db.Uuid
+  projectId           String?               @map("project_id") @db.Uuid
+  /// Invoice created from a quote (kind pinned to QUOTE by CHECK and FK).
+  sourceQuoteId       String?               @map("source_quote_id") @db.Uuid
+  sourceQuoteKind     FinanceDocumentKind   @default(QUOTE) @map("source_quote_kind")
+  /// Credit note for an invoice of the same customer and currency (FK).
+  creditedInvoiceId   String?               @map("credited_invoice_id") @db.Uuid
+  creditedInvoiceKind FinanceDocumentKind   @default(INVOICE) @map("credited_invoice_kind")
+  currencyCode        String                @map("currency_code") @db.Char(3)
+  /// ISO 4217 minor units, snapshotted when the document is created.
+  currencyScale       Int                   @map("currency_scale") @db.SmallInt
+  taxMode             FinanceTaxMode        @default(EXCLUSIVE) @map("tax_mode")
+  issueDate           DateTime?             @map("issue_date") @db.Date
+  dueDate             DateTime?             @map("due_date") @db.Date
+  validUntil          DateTime?             @map("valid_until") @db.Date
+  /// Database-owned: assigned at issue.
+  numberValue         BigInt?               @map("number_value")
+  number              String?
+  sellerSnapshot      Json?                 @map("seller_snapshot")
+  billToSnapshot      Json?                 @map("bill_to_snapshot")
+  subtotal            Decimal               @default(0) @db.Decimal(18, 4)
+  taxTotal            Decimal               @default(0) @map("tax_total") @db.Decimal(18, 4)
+  total               Decimal               @default(0) @db.Decimal(18, 4)
+  /// Database-owned: maintained by the allocation triggers only.
+  allocatedTotal      Decimal               @default(0) @map("allocated_total") @db.Decimal(18, 4)
+  /// Database-owned: SHA-256 of the canonical content, computed at issue.
+  contentSha256       String?               @map("content_sha256")
+  notes               String?
+  /// Optional client key for a create request, so a retried create returns the first draft.
+  idempotencyKey      String?               @map("idempotency_key")
+  requestHash         String?               @map("request_hash")
+  /// Database-owned transition times.
+  issuedAt            DateTime?             @map("issued_at") @db.Timestamptz
+  statusChangedAt     DateTime?             @map("status_changed_at") @db.Timestamptz
+  voidedAt            DateTime?             @map("voided_at") @db.Timestamptz
+  /// Accepted only in the void transition, fixed afterwards.
+  voidReason          String?               @map("void_reason")
+  version             Int                   @default(1)
+  createdById         String?               @map("created_by_id") @db.Uuid
+  updatedById         String?               @map("updated_by_id") @db.Uuid
+  issuedById          String?               @map("issued_by_id") @db.Uuid
+  statusChangedById   String?               @map("status_changed_by_id") @db.Uuid
+  voidedById          String?               @map("voided_by_id") @db.Uuid
+  createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  /// Database-owned: stamped by the guard on every change.
+  updatedAt           DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business          Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_documents_business_fkey")
+  customer          Customer                   @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_customer_fkey")
+  contact           Contact?                   @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_contact_fkey")
+  opportunity       Opportunity?               @relation(fields: [businessId, opportunityId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_opportunity_fkey")
+  project           Project?                   @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_project_fkey")
+  sourceQuote       FinanceDocument?           @relation("QuoteConversions", fields: [businessId, sourceQuoteId, sourceQuoteKind], references: [businessId, id, kind], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_source_quote_fkey")
+  convertedInvoices FinanceDocument[]          @relation("QuoteConversions")
+  creditedInvoice   FinanceDocument?           @relation("CreditNotes", fields: [businessId, creditedInvoiceId, creditedInvoiceKind, currencyCode, customerId], references: [businessId, id, kind, currencyCode, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_credited_invoice_fkey")
+  creditNotes       FinanceDocument[]          @relation("CreditNotes")
+  lines             FinanceDocumentLine[]
+  allocations       FinancePaymentAllocation[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, kind], map: "finance_documents_kind_key")
+  @@unique([businessId, id, kind, currencyCode, customerId], map: "finance_documents_link_key")
+  @@unique([businessId, kind, numberValue])
+  @@unique([businessId, kind, number])
+  @@index([businessId, kind, status, issueDate])
+  @@index([businessId, kind, createdAt(sort: Desc), id])
+  @@index([businessId, customerId])
+  @@index([businessId, projectId])
+  @@index([businessId, opportunityId])
+  @@index([businessId, sourceQuoteId])
+  @@index([businessId, creditedInvoiceId])
+  @@map("finance_documents")
+}
+
+/// Written, updated and deleted only while the document is a DRAFT (guard). The tax name and
+/// percentage are copied from the referenced rate by the database.
+model FinanceDocumentLine {
+  id             String   @id @db.Uuid
+  businessId     String   @map("business_id") @db.Uuid
+  documentId     String   @map("document_id") @db.Uuid
+  position       Int
+  description    String
+  quantity       Decimal  @db.Decimal(18, 6)
+  unitPrice      Decimal  @map("unit_price") @db.Decimal(18, 6)
+  discountAmount Decimal  @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  taxRateId      String?  @map("tax_rate_id") @db.Uuid
+  /// Database-owned snapshot of the rate.
+  taxName        String?  @map("tax_name")
+  taxRatePercent Decimal  @default(0) @map("tax_rate_percent") @db.Decimal(7, 4)
+  lineNet        Decimal  @map("line_net") @db.Decimal(18, 4)
+  lineTax        Decimal  @map("line_tax") @db.Decimal(18, 4)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_document_lines_business_fkey")
+  document FinanceDocument @relation(fields: [businessId, documentId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_document_lines_document_fkey")
+  taxRate  FinanceTaxRate? @relation(fields: [businessId, taxRateId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_document_lines_tax_rate_fkey")
+
+  @@unique([businessId, id])
+  @@unique([businessId, documentId, position])
+  @@index([businessId, taxRateId])
+  @@map("finance_document_lines")
+}
+
+/// Manual payment records (F2 services; the table and its guards are part of F1's schema).
+model FinancePayment {
+  id             String               @id @db.Uuid
+  businessId     String               @map("business_id") @db.Uuid
+  customerId     String               @map("customer_id") @db.Uuid
+  currencyCode   String               @map("currency_code") @db.Char(3)
+  currencyScale  Int                  @map("currency_scale") @db.SmallInt
+  amount         Decimal              @db.Decimal(18, 4)
+  receivedOn     DateTime             @map("received_on") @db.Date
+  method         FinancePaymentMethod
+  reference      String?
+  status         FinancePaymentStatus @default(RECORDED)
+  /// Database-owned: maintained by the allocation triggers only.
+  allocatedTotal Decimal              @default(0) @map("allocated_total") @db.Decimal(18, 4)
+  reversedAt     DateTime?            @map("reversed_at") @db.Timestamptz
+  reversalReason String?              @map("reversal_reason")
+  idempotencyKey String?              @map("idempotency_key")
+  requestHash    String?              @map("request_hash")
+  version        Int                  @default(1)
+  recordedById   String?              @map("recorded_by_id") @db.Uuid
+  reversedById   String?              @map("reversed_by_id") @db.Uuid
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business    Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_payments_business_fkey")
+  customer    Customer                   @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_payments_customer_fkey")
+  allocations FinancePaymentAllocation[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, customerId, currencyCode], map: "finance_payments_link_key")
+  @@index([businessId, receivedOn, id])
+  @@index([businessId, customerId])
+  @@map("finance_payments")
+}
+
+/// Allocation of a payment to an invoice: same business, customer and currency on both sides, and the
+/// target is an INVOICE, all through the two composite FKs that share those columns.
+model FinancePaymentAllocation {
+  id           String              @id @db.Uuid
+  businessId   String              @map("business_id") @db.Uuid
+  paymentId    String              @map("payment_id") @db.Uuid
+  invoiceId    String              @map("invoice_id") @db.Uuid
+  invoiceKind  FinanceDocumentKind @default(INVOICE) @map("invoice_kind")
+  customerId   String              @map("customer_id") @db.Uuid
+  currencyCode String              @map("currency_code") @db.Char(3)
+  amount       Decimal             @db.Decimal(18, 4)
+  createdById  String?             @map("created_by_id") @db.Uuid
+  reversedById String?             @map("reversed_by_id") @db.Uuid
+  /// Database-owned: stamped at insert and at reversal.
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  reversedAt   DateTime?           @map("reversed_at") @db.Timestamptz
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_payment_allocations_business_fkey")
+  payment  FinancePayment  @relation(fields: [businessId, paymentId, customerId, currencyCode], references: [businessId, id, customerId, currencyCode], onDelete: NoAction, onUpdate: NoAction, map: "finance_payment_allocations_payment_fkey")
+  invoice  FinanceDocument @relation(fields: [businessId, invoiceId, invoiceKind, currencyCode, customerId], references: [businessId, id, kind, currencyCode, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_payment_allocations_invoice_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, invoiceId])
+  @@index([businessId, paymentId])
+  @@map("finance_payment_allocations")
+}
+
+model FinanceExpenseCategory {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  business Business         @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_expense_categories_business_fkey")
+  expenses FinanceExpense[]
+
+  @@unique([businessId, id])
+  @@map("finance_expense_categories")
+}
+
+/// Expenses (F3 services; the table and its guards are part of F1's schema).
+model FinanceExpense {
+  id               String               @id @db.Uuid
+  businessId       String               @map("business_id") @db.Uuid
+  status           FinanceExpenseStatus @default(DRAFT)
+  categoryId       String               @map("category_id") @db.Uuid
+  /// Database-owned: the category name when the expense was recorded.
+  categoryName     String?              @map("category_name")
+  projectId        String?              @map("project_id") @db.Uuid
+  description      String
+  supplierName     String?              @map("supplier_name")
+  incurredOn       DateTime             @map("incurred_on") @db.Date
+  currencyCode     String               @map("currency_code") @db.Char(3)
+  currencyScale    Int                  @map("currency_scale") @db.SmallInt
+  amount           Decimal              @db.Decimal(18, 4)
+  taxAmount        Decimal              @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  receiptReference String?              @map("receipt_reference")
+  recordedAt       DateTime?            @map("recorded_at") @db.Timestamptz
+  voidedAt         DateTime?            @map("voided_at") @db.Timestamptz
+  voidReason       String?              @map("void_reason")
+  version          Int                  @default(1)
+  createdById      String?              @map("created_by_id") @db.Uuid
+  updatedById      String?              @map("updated_by_id") @db.Uuid
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business               @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_expenses_business_fkey")
+  category FinanceExpenseCategory @relation(fields: [businessId, categoryId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_category_fkey")
+  project  Project?               @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_project_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, incurredOn, id])
+  @@index([businessId, projectId])
+  @@map("finance_expenses")
+}

@@ -101,3 +101,26 @@ describe('Projects Zone permissions (docs/projects-data-model.md §5)', () => {
     }
   });
 });
+
+describe('Finance Zone permissions (docs/finance-data-model.md §7.1, owner decision FD-P1)', () => {
+  const FINANCE = ['finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage'] as const;
+
+  it('grants exactly the approved default matrix', () => {
+    const matrix = Object.fromEntries(ROLES.map((role) => [role, FINANCE.filter((p) => ROLE_PERMISSIONS[role].has(p))]));
+    expect(matrix).toEqual({
+      OWNER: [...FINANCE],
+      ADMIN: [...FINANCE],
+      MANAGER: ['finance:read', 'finance:write', 'finance:expenses'],
+      MEMBER: [],
+    });
+    expect(ZONE_PERMISSIONS.finance).toEqual([...FINANCE]);
+  });
+
+  it('is not implied by any other Zone: a role holding every customer, sales and project key may still have no finance key', () => {
+    const member = ROLE_PERMISSIONS.MEMBER;
+    for (const key of ['customers:read', 'customers:write', 'sales:read', 'sales:write', 'projects:read', 'projects:update'] as const) expect(member.has(key)).toBe(true);
+    for (const key of FINANCE) expect(member.has(key)).toBe(false);
+    // …and finance keys sit in their own namespace, so holding them implies nothing elsewhere.
+    for (const key of FINANCE) expect(key.startsWith('finance:')).toBe(true);
+  });
+});
