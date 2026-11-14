@@ -6,3 +6,4 @@ export { createWithTenant, TenantContextError, TenantScopeError } from './with-t
 export type { TenantContext, TenantDb, TenantRole } from './with-tenant';
 export { acceptInvitation, createBusiness, myMemberships, TrustedPathError, withTenant } from './app-client';
 export type { AppTenantDb, MembershipRow, NewBusiness } from './app-client';
+export { Decimal } from './decimal';

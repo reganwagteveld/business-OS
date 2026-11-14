@@ -70,6 +70,7 @@ export async function removeMember(db: AppTenantDb, actor: Actor, membershipId: 
   // Customers they own keep existing but lose the owner: the (business_id, owner_user_id) FK to
   // memberships would otherwise block the removal.
   await db.customer.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null } as never });
+  await db.opportunity.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null } as never });
   await db.membership.delete({ where: { id: membershipId } });
   await audit(db, actor, 'membership.removed', 'membership', membershipId, { role: target.role });
 }

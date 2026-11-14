@@ -1,0 +1,98 @@
+// sales module (docs/sales-data-model.md). Tenant tables: forced RLS, composite (business_id, …)
+// foreign keys, and integrity CHECKs that live in the migration because Prisma cannot express them.
+
+enum OpportunityStatus {
+  OPEN
+  WON
+  LOST
+}
+
+/// A configurable sales process. Each business gets exactly one default pipeline, created on first
+/// use: `default_slot` is 'default' on that pipeline and NULL on the rest, and (business_id,
+/// default_slot) is unique, so concurrent first requests cannot create two.
+model SalesPipeline {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  defaultSlot String?   @map("default_slot")
+  position    Int       @default(0)
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "sales_pipelines_business_fkey")
+  stages        SalesStage[]
+  opportunities Opportunity[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, defaultSlot])
+  @@index([businessId, position, id])
+  @@map("sales_pipelines")
+}
+
+/// An ordered step in one pipeline. Positions are spaced (1000, 2000, …) so a later drag-and-drop
+/// reorder can move one stage without renumbering the rest. Won and Lost are outcomes, not stages.
+model SalesStage {
+  id                 String    @id @db.Uuid
+  businessId         String    @map("business_id") @db.Uuid
+  pipelineId         String    @map("pipeline_id") @db.Uuid
+  name               String
+  position           Int
+  defaultProbability Int?      @map("default_probability")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt         DateTime? @map("archived_at") @db.Timestamptz
+
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "sales_stages_business_fkey")
+  pipeline      SalesPipeline @relation(fields: [businessId, pipelineId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "sales_stages_pipeline_fkey")
+  opportunities Opportunity[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, pipelineId, id])
+  @@index([businessId, pipelineId, position, id])
+  @@map("sales_stages")
+}
+
+/// A potential sale. Customer and contact are the Customer Zone's own records (no copies); the stage
+/// must belong to the opportunity's pipeline (three-column FK). Money is an exact decimal plus an
+/// ISO 4217 code: never a float, never an assumed currency.
+model Opportunity {
+  id                String            @id @db.Uuid
+  businessId        String            @map("business_id") @db.Uuid
+  title             String
+  customerId        String?           @map("customer_id") @db.Uuid
+  contactId         String?           @map("contact_id") @db.Uuid
+  pipelineId        String            @map("pipeline_id") @db.Uuid
+  stageId           String            @map("stage_id") @db.Uuid
+  amount            Decimal?          @db.Decimal(18, 4)
+  currencyCode      String            @map("currency_code") @db.Char(3)
+  probability       Int?
+  expectedCloseDate DateTime?         @map("expected_close_date") @db.Date
+  ownerUserId       String?           @map("owner_user_id") @db.Uuid
+  description       String?
+  status            OpportunityStatus @default(OPEN)
+  lossReason        String?           @map("loss_reason")
+  closedAt          DateTime?         @map("closed_at") @db.Timestamptz
+  createdById       String?           @map("created_by_id") @db.Uuid
+  updatedById       String?           @map("updated_by_id") @db.Uuid
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt        DateTime?         @map("archived_at") @db.Timestamptz
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "opportunities_business_fkey")
+  customer Customer?     @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_customer_fkey")
+  contact  Contact?      @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_contact_fkey")
+  pipeline SalesPipeline @relation(fields: [businessId, pipelineId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_pipeline_fkey")
+  stage    SalesStage    @relation(fields: [businessId, pipelineId, stageId], references: [businessId, pipelineId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_stage_fkey")
+  owner    Membership?   @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_owner_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, status, createdAt(sort: Desc), id])
+  @@index([businessId, pipelineId, stageId])
+  @@index([businessId, customerId])
+  @@index([businessId, ownerUserId])
+  @@index([businessId, archivedAt])
+  @@map("opportunities")
+}
