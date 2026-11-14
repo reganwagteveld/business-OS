@@ -15,6 +15,7 @@
     "showcase": "vite --config showcase/vite.config.ts"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.3.1",
     "clsx": "^2.1.1",
     "tailwind-merge": "^3.3.1"
   },
@@ -24,10 +25,14 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.10",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.0",
     "eslint": "^9.0.0",
+    "jsdom": "^31.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.0.0",

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Atmosphere, Badge, Button, Card, Dialog, DialogTitle, Field, Input, Skeleton, Spinner, StatusIndicator, Surface, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, cn, glassClass } from '../src';
+import { Atmosphere, Badge, Button, Card, Field, Input, Skeleton, Spinner, StatusIndicator, Surface, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, cn, glassClass } from '../src';
 
 describe('@business-os/ui', () => {
   it('merges conflicting Tailwind classes', () => {
@@ -51,13 +51,6 @@ describe('design system components', () => {
     expect(html).toContain(`id="${id}"`);
     expect(html).toContain(`aria-describedby="${id}-hint ${id}-error"`);
     expect(html).toContain('aria-invalid="true"');
-  });
-
-  it('renders a modal dialog only while open', () => {
-    expect(renderToStaticMarkup(<Dialog open={false}>x</Dialog>)).toBe('');
-    const html = renderToStaticMarkup(<Dialog open aria-labelledby="t"><DialogTitle id="t">Delete?</DialogTitle></Dialog>);
-    expect(html).toContain('role="dialog"');
-    expect(html).toContain('aria-modal="true"');
   });
 
   it('announces a labelled spinner and hides skeletons from assistive tech', () => {

@@ -25,12 +25,18 @@ Theme selection is unchanged: the OS preference by default; a `.dark` or `.light
 
 | Component | Notes |
 |---|---|
-| `Button`, `buttonClass` | `primary`, `secondary`, `ghost`, `destructive`; sizes `sm`, `md`, `lg`, `icon`. Defaults to `type="button"`. |
+| `Button`, `buttonClass` | `primary`, `secondary`, `outline`, `ghost`, `destructive`; sizes `sm`, `md`, `lg`, `icon`. Defaults to `type="button"`. `loading` disables it, sets `aria-busy` and shows a spinner. |
 | `Card` (+ `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`) | Opaque by default; `variant="glass"` with an optional `strength`. |
 | `Surface` | `opaque`, `raised` or `glass`. |
 | `Atmosphere` | Background: `aurora`, `dusk`, `horizon`, or `calm` for dense screens. |
 | `Input`, `Textarea`, `Select`, `Label`, `Field` | `Field` wires label, hint and error to the control (`aria-describedby`, `aria-invalid`). |
-| `Dialog` (+ `DialogTitle`, `DialogDescription`, `DialogFooter`) | Overlay and panel, portalled to `<body>`. Focus handling stays with the caller (`useDialog` in the app). |
+| `Dialog` (+ `DialogTrigger`, `DialogContent`, `DialogTitle`, `DialogDescription`, `DialogFooter`, `DialogClose`) | Built on Radix UI Dialog: initial focus, focus trap, Escape and overlay dismissal, page hidden from assistive tech, focus returned to the opener (also without a trigger), labelled by its title and description. Every dialog needs a `DialogTitle`. |
+| `Alert` (+ `AlertTitle`, `AlertDescription`) | `info`, `success`, `warning`, `danger`; warning and danger are `role="alert"`, the others `role="status"`. |
+| `PageHeader`, `SectionHeader` | Page h1 (with eyebrow, description, actions) and section h2/h3. |
+| `StatCard` | A figure, its label and a text change with an optional trend colour. |
+| `EmptyState` | What is missing and the next action. |
+| `FormSection` | A fieldset with a legend, so the group name is announced with each field. |
+| `Separator` | Decorative by default; `decorative={false}` exposes it as a separator. |
 | `Badge` | `neutral`, `brand`, `success`, `warning`, `danger`, `info`. |
 | `StatusIndicator` | `ok`, `pending`, `error`, `info`, `neutral`; the text label carries the meaning. |
 | `Spinner`, `Skeleton` | Loading states; respect reduced motion. |
@@ -47,3 +53,9 @@ Theme selection is unchanged: the OS preference by default; a `.dark` or `.light
 ## Rules
 
 Enforced by `pnpm boundaries`: no data fetching, no API client, no imports from `@business-os/app` or any `apps/*` package, no database or server-only packages. Tenant data reaches components only as props.
+
+## Tests
+
+- `tests/tokens.test.ts`: dark blocks identical; WCAG AA contrast for every token pair in both themes.
+- `tests/ui.test.tsx`: rendered markup and variants.
+- `tests/interaction.test.tsx` (jsdom + Testing Library user-event): dialog focus, trap, Escape, focus return and labelling; keyboard activation; disabled and loading buttons; form labels, hints, errors, grouping and submission; alert and status roles.

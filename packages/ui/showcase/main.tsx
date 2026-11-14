@@ -1,8 +1,9 @@
-import { StrictMode, useEffect, useRef, useState, type ReactNode } from 'react';
+import { StrictMode, useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Atmosphere, Badge, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Dialog, DialogDescription,
-  DialogFooter, DialogTitle, Field, Input, Select, Skeleton, Spinner, StatusIndicator, Surface, Table, TableBody, TableCaption,
+  Alert, AlertDescription, AlertTitle, Atmosphere, Badge, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle,
+  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger, EmptyState, Field, FormSection, Input,
+  PageHeader, SectionHeader, Select, Separator, Skeleton, Spinner, StatCard, StatusIndicator, Surface, Table, TableBody, TableCaption,
   TableCell, TableHead, TableHeader, TableRow, Textarea, cn, type AtmosphereVariant,
 } from '../src';
 import './showcase.css';
@@ -74,9 +75,11 @@ function Controls() {
       <div className="flex flex-wrap items-center gap-3">
         <Button>Create invoice</Button>
         <Button variant="secondary">Export</Button>
+        <Button variant="outline">Filter</Button>
         <Button variant="ghost">Cancel</Button>
         <Button variant="destructive">Delete</Button>
         <Button disabled>Disabled</Button>
+        <Button loading>Saving</Button>
         <Button size="sm" variant="secondary">Small</Button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -138,13 +141,16 @@ function OperationsTable() {
 
 function OperationsForm() {
   return (
-    <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => e.preventDefault()}>
+    <form onSubmit={(e) => e.preventDefault()}>
+      <FormSection title="Invoice details" description="Grouped as a fieldset, so the section name is announced with each field." className="[&>div]:sm:grid-cols-2">
       <Field label="Customer">{(p) => <Select {...p} defaultValue="hp"><option value="hp">Harbour &amp; Pine Ltd</option><option value="nl">Northlight Studio</option></Select>}</Field>
       <Field label="Due date">{(p) => <Input {...p} type="date" defaultValue="2026-12-01" />}</Field>
       <Field label="Amount (GBP)" hint="Excluding VAT">{(p) => <Input {...p} inputMode="decimal" defaultValue="4,820.00" />}</Field>
       <Field label="Purchase order">{(p) => <Input {...p} placeholder="Optional" />}</Field>
       <Field label="Notes" className="sm:col-span-2">{(p) => <Textarea {...p} placeholder="Shown on the invoice" />}</Field>
-      <div className="flex justify-end gap-3 sm:col-span-2">
+      </FormSection>
+      <Separator className="my-6" />
+      <div className="flex justify-end gap-3">
         <Button variant="ghost">Cancel</Button>
         <Button type="submit">Save invoice</Button>
       </div>
@@ -153,21 +159,18 @@ function OperationsForm() {
 }
 
 function DialogDemo() {
-  const [open, setOpen] = useState(false);
-  const opener = useRef<HTMLButtonElement>(null);
-  const close = () => { setOpen(false); opener.current?.focus(); };
   return (
-    <>
-      <Button ref={opener} variant="secondary" onClick={() => setOpen(true)}>Open dialog</Button>
-      <Dialog open={open} aria-labelledby="demo-title" aria-describedby="demo-desc" onKeyDown={(e) => e.key === 'Escape' && close()}>
-        <DialogTitle id="demo-title">Archive this customer?</DialogTitle>
-        <DialogDescription id="demo-desc">Harbour &amp; Pine Ltd will be hidden from lists. Invoices and projects stay as they are, and you can restore the customer at any time.</DialogDescription>
+    <Dialog>
+      <DialogTrigger asChild><Button variant="outline">Open dialog</Button></DialogTrigger>
+      <DialogContent>
+        <DialogTitle>Archive this customer?</DialogTitle>
+        <DialogDescription>Harbour &amp; Pine Ltd will be hidden from lists. Invoices and projects stay as they are, and you can restore the customer at any time.</DialogDescription>
         <DialogFooter>
-          <Button variant="ghost" autoFocus onClick={close}>Keep customer</Button>
-          <Button variant="destructive" onClick={close}>Archive</Button>
+          <DialogClose asChild><Button variant="ghost" autoFocus>Keep customer</Button></DialogClose>
+          <DialogClose asChild><Button variant="destructive">Archive</Button></DialogClose>
         </DialogFooter>
-      </Dialog>
-    </>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -250,12 +253,33 @@ function Showcase() {
         </div>
       </Section>
 
+      <Section title="Page structure and feedback" description="Page and section headers, figures, empty states and alerts for every Zone.">
+        <Card className="p-6">
+          <PageHeader eyebrow="Finance" title="Invoices" description="Everything billed to customers this year." actions={<><Button variant="outline">Export</Button><Button>New invoice</Button></>} />
+          <Separator className="my-6" />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Billed this month" value="£48,210" change="+12% vs last month" trend="up" />
+            <StatCard label="Outstanding" value="£9,340" change="3 invoices" />
+            <StatCard label="Overdue" value="£960" change="+1 since last week" trend="down" />
+            <StatCard label="Average days to pay" value="18" change="−2 days" trend="up" />
+          </div>
+          <SectionHeader className="mt-8" title="Drafts" description="Invoices you have not sent yet." actions={<Button size="sm" variant="ghost">View all</Button>} />
+          <EmptyState className="mt-4" icon={<span className="text-lg">✦</span>} title="No drafts" description="Invoices you start but do not send appear here." action={<Button variant="secondary">Start an invoice</Button>} />
+          <div className="mt-6 grid gap-3 lg:grid-cols-2">
+            <Alert tone="info"><AlertTitle>Bank feed connected</AlertTitle><AlertDescription>Payments will match to invoices automatically.</AlertDescription></Alert>
+            <Alert tone="success"><AlertTitle>Invoice INV-1042 sent</AlertTitle><AlertDescription>Harbour &amp; Pine Ltd will receive it by email.</AlertDescription></Alert>
+            <Alert tone="warning"><AlertTitle>VAT number missing</AlertTitle><AlertDescription>Add it before sending invoices to EU customers.</AlertDescription></Alert>
+            <Alert tone="danger"><AlertTitle>Payment failed</AlertTitle><AlertDescription>The card ending 4242 was declined.</AlertDescription></Alert>
+          </div>
+        </Card>
+      </Section>
+
       <Atmosphere variant="calm" className="border-t">
         <Section title="Operational table and form" description="Dense work uses the calm background and opaque surfaces so text keeps full contrast.">
           <div className="grid gap-6">
             <OperationsTable />
             <Card><CardHeader><CardTitle>New invoice</CardTitle><CardDescription>Form on an opaque card</CardDescription></CardHeader><CardContent><OperationsForm /></CardContent></Card>
-            <Card variant="glass" strength="strong"><CardHeader><CardTitle>Dialog</CardTitle><CardDescription>Escape or either button closes it and returns focus to the opener.</CardDescription></CardHeader><CardContent><DialogDemo /></CardContent></Card>
+            <Card variant="glass" strength="strong"><CardHeader><CardTitle>Dialog</CardTitle><CardDescription>Focus moves in, Tab stays inside, Escape or either button closes it and returns focus to the opener.</CardDescription></CardHeader><CardContent><DialogDemo /></CardContent></Card>
           </div>
         </Section>
       </Atmosphere>

@@ -4,6 +4,7 @@ import { cn } from '../lib/utils';
 const VARIANTS = {
   primary: 'bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.14)] hover:bg-primary-hover',
   secondary: 'border border-border bg-secondary text-secondary-foreground hover:bg-secondary-hover',
+  outline: 'border border-input bg-transparent text-foreground hover:bg-accent',
   ghost: 'text-foreground hover:bg-accent',
   destructive: 'bg-destructive text-destructive-foreground hover:opacity-90',
 } as const;
@@ -30,7 +31,15 @@ export function buttonClass({ variant = 'primary', size = 'md', className }: { v
   );
 }
 
-/** Button. Defaults to type="button" so it never submits a form by accident. */
-export function Button({ variant, size, className, type = 'button', ...props }: ComponentProps<'button'> & { variant?: ButtonVariant; size?: ButtonSize }) {
-  return <button type={type} className={buttonClass({ variant, size, className })} {...props} />;
+/**
+ * Button. Defaults to type="button" so it never submits a form by accident. With `loading` it is
+ * disabled, marked aria-busy and shows a spinner next to its label (the label stays, so its name does not change).
+ */
+export function Button({ variant, size, className, type = 'button', loading = false, disabled, children, ...props }: ComponentProps<'button'> & { variant?: ButtonVariant; size?: ButtonSize; loading?: boolean }) {
+  return (
+    <button type={type} disabled={disabled || loading} aria-busy={loading || undefined} className={buttonClass({ variant, size, className })} {...props}>
+      {loading && <span aria-hidden className="size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-[spin_2s_linear_infinite]" />}
+      {children}
+    </button>
+  );
 }
