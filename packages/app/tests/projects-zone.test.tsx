@@ -83,8 +83,11 @@ describe('project overview', () => {
     const { api, user } = setup({ projects: { projects: [project({ name: 'Relocation', status: 'ACTIVE' }), project({ name: 'Renovation' })] } });
     await screen.findByRole('button', { name: 'Relocation' });
     await user.type(screen.getByLabelText('Search projects by name'), 'reloc');
+    // The search is debounced, so a slow runner can send it mid-typing: 'rel' already hides
+    // Renovation. Wait for the request with the whole term, then for the list it returns.
+    await waitFor(() => expect(api.callsTo(/GET .*\/projects$/).some((c) => c.query.q === 'reloc')).toBe(true));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Renovation' })).toBeNull());
-    expect(api.callsTo(/GET .*\/projects$/).some((c) => c.query.q === 'reloc')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Relocation' })).toBeTruthy();
     await user.click(within(screen.getByRole('group', { name: 'Filter by status' })).getByRole('button', { name: /^On hold/ }));
     expect(await screen.findByText('No projects match')).toBeTruthy();
     expect(api.callsTo(/GET .*\/projects$/).at(-1)!.query).toMatchObject({ status: 'ON_HOLD', q: 'reloc' });
