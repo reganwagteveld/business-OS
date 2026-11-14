@@ -71,13 +71,14 @@ async function dto(db: AppTenantDb, p: PaymentRow): Promise<PaymentDto> {
 
 /** A payment of this business; another business's id answers exactly like a missing one (404). */
 async function load(db: AppTenantDb, id: string): Promise<PaymentRow> {
-  const row = (await db.financePayment.findFirst({ where: { id }, select: paymentSelect })) as PaymentRow | null;
+  // F3: this module serves payments RECEIVED from customers; payments made (PAID) are expense-payments.ts's.
+  const row = (await db.financePayment.findFirst({ where: { id, direction: 'RECEIVED' }, select: paymentSelect })) as PaymentRow | null;
   if (!row) throw new RecordNotFoundError();
   return row;
 }
 
 /** Locks payments FOR NO KEY UPDATE in id order: the first class of the global lock order (ADR 0007 §3). */
-async function lockPayments(db: AppTenantDb, ids: string[]) {
+export async function lockPayments(db: AppTenantDb, ids: string[]) {
   if (ids.length === 0) return;
   await db.$queryRaw<{ id: string }[]>`
     SELECT id::text FROM finance_payments
@@ -286,7 +287,7 @@ export type ListPaymentsQuery = {
 
 /** Most recently received first, keyset-paginated on (received_on, id): both round-trip exactly. */
 export async function listPayments(db: AppTenantDb, query: ListPaymentsQuery) {
-  const where: Record<string, unknown>[] = [];
+  const where: Record<string, unknown>[] = [{ direction: 'RECEIVED' }];
   if (query.status !== 'all') where.push({ status: query.status.toUpperCase() });
   if (query.customerId) where.push({ customerId: query.customerId });
   if (query.currencyCode) where.push({ currencyCode: query.currencyCode });

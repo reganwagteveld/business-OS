@@ -113,7 +113,10 @@ describe('Home', () => {
 
   it('launches only the Zones the role can open; Zones not built yet are honest, non-clickable "coming soon" cards', () => {
     for (const zone of ['Customers', 'Sales', 'Projects']) expect(html).toContain(`Open the ${zone} Zone`);
-    for (const zone of ['Finance', 'People', 'Operations', 'Insights', 'Settings']) expect(html).toContain(`${zone} Zone — coming soon`);
+    for (const zone of ['People', 'Operations', 'Insights', 'Settings']) expect(html).toContain(`${zone} Zone — coming soon`);
+    // Finance is built (F3): shown only to roles holding finance:read, never as coming soon.
+    expect(html).not.toContain('Finance Zone — coming soon');
+    expect(render(['business:read', 'finance:read'])).toContain('Open the Finance Zone');
     const limited = render(['business:read', 'customers:read']);
     expect(limited).not.toContain('Open the Sales Zone');
     expect(limited).not.toContain('Sales Zone — coming soon');

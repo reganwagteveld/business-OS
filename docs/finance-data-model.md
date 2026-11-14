@@ -1,6 +1,6 @@
-# Finance Zone data model (F1 and F2, implemented)
+# Finance Zone data model (F1, F2 and F3, implemented)
 
-> Status: **F1 implemented** (Phase 6): migration `20261115000000_finance`, the finance module, and the API for quotes, invoices, credit notes and finance settings. **F2 implemented** (PR #34, awaiting audit): migration `20261116000000_finance_payments`, payments, allocations, reversals, credit applications, settlement projections, customer balances and on-demand **internal integrity** reconciliation (§18; not bank-statement reconciliation). The owner approved FD-L1, FD-L2, FD-L3, FD-T1, FD-T2 and FD-P1 (§14); every other FD-* decision is still open. F2's choices on open decisions (§18.8) are **provisional pending owner approval**, not ratified policy. §17 lists what F1 built and where it differs from the F0 design below. Expenses have tables and database guards but no services until F3.
+> Status: **F1 implemented** (Phase 6): migration `20261115000000_finance`, the finance module, and the API for quotes, invoices, credit notes and finance settings. **F2 implemented** (PR #34, awaiting audit): migration `20261116000000_finance_payments`, payments, allocations, reversals, credit applications, settlement projections, customer balances and on-demand **internal integrity** reconciliation (§18; not bank-statement reconciliation). The owner approved FD-L1, FD-L2, FD-L3, FD-T1, FD-T2 and FD-P1 (§14); every other FD-* decision is still open. F2's choices on open decisions (§18.8) are **provisional pending owner approval**, not ratified policy. §17 lists what F1 built and where it differs from the F0 design below. **F3** (this PR, awaiting audit): migration `20261117000000_finance_expenses`, expense categories, expenses with tax treatments, payments made against expenses in the same payments ledger (direction `PAID`), receipt metadata, payables, and the first Finance Zone screens (§19). F3's choices on open decisions (§19.11) are provisional pending owner approval.
 > It follows [data-model.md](./data-model.md), [sales-data-model.md](./sales-data-model.md), [projects-data-model.md](./projects-data-model.md) and [scheduling-data-model.md](./scheduling-data-model.md): same tenancy, forced RLS, composite FKs, `<zone>:<action>` permission keys, audit and migration conventions.
 > Evidence: `apps/api/tests/integration/finance-integrity.test.ts` (the F0 spike suite moved onto the migrated tables, plus new tests) and `apps/api/tests/integration/finance.test.ts` (services and API). The F0 spike (`tests/isolation/finance-spike.test.ts` and its fixture) is kept as the design-time evidence.
 >
@@ -590,8 +590,8 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 |---|---|
 | F1 | Migration (this fixture's shape, with authorship and indexes), permissions, services and API for quotes, invoices, credit notes (drafts, issue, void), settings; the spike moves to the real tables; no UI. Needs ★ decisions. |
 | F2 | Payments, allocations, reversal; credit applications (refunds wait for FD-A2); on-demand reconciliation (**implemented**, §18) |
-| F3 | Expenses and categories; receipt references |
-| F4 | Finance UI (web and desktop): documents, payments, expenses |
+| F3 | Expenses and categories; payments made against expenses; receipt metadata; expense and category screens (**implemented**, §19) |
+| F4 | Finance UI (web and desktop): quotes, invoices, credit notes, payments received (expenses are in F3) |
 | F5 | Reports (§9) and the customer and project finance tabs |
 | Later | PDF rendering and email sending, online payment links, accounting export, e-invoicing modules, multi-currency conversion |
 
@@ -844,3 +844,152 @@ Declared in `packages/contracts/src/finance.ts` as `FinanceSettlementErrorCode`.
 | `invalid_cursor` | 400 | `GET /payments`, `GET /customer-balances` | Cursor not issued by that list |
 
 Contract responses: `FinancePaymentResponse` (payment with every allocation) for record, get, patch, allocate, reverse-allocation and reverse; `CreditNoteCreditResponse` for the application endpoints; `InvoiceSettlementResponse`, `ListPaymentsResponse`, `ListCustomerBalancesResponse` and `ReconciliationResponse` for the reads. Document responses gain `creditAppliedTotal` and `settlementState`.
+
+## 19. F3 implementation: expenses and categories
+
+### 19.1 What F3 built
+
+- **Migration** `20261117000000_finance_expenses`. Additive, no privileged SQL. It adds:
+  - two enum types: `FinancePaymentDirection` (`RECEIVED`, `PAID`) and `FinanceExpenseTaxTreatment` (`NO_TAX`, `TAX_EXCLUSIVE`, `TAX_INCLUSIVE`);
+  - columns on `finance_expense_categories` (`position`, `system_key`, `version`) and `finance_expenses` (`subtotal`, `tax_treatment`, `tax_rate_id`, `tax_name`, `tax_rate_percent`, `paid_total`, `customer_id`, `due_date`, `reference_number`, `notes`, `recorded_by_id`, `voided_by_id`);
+  - `finance_payments.direction` (default `RECEIVED`, so every existing row keeps its meaning) and `payee_name`; `customer_id` becomes nullable, but a CHECK requires it for `RECEIVED` and forbids it for `PAID`;
+  - two tables: `finance_expense_allocations` and `finance_expense_receipts`, with forced RLS, the `tenant_isolation` policy, `ON DELETE RESTRICT` to `businesses`, composite FKs and no DELETE grant;
+  - CHECKs, partial unique indexes, the trigger function `finance_apply_expense_allocation`, the guard `finance_guard_expense_receipt`, and a replacement of F1's `finance_guard_expense` (§19.8).
+- **Services**: `apps/api/src/modules/finance/server/expenses.ts` (categories, expenses, payables, receipts) and `expense-payments.ts` (payments made). F2's `payments.ts`, `settlement.ts` and `reconciliation.ts` gain a direction filter and the expense checks (§19.8).
+- **API** under `/api/v1/b/:slug/finance` (contracts in `packages/contracts/src/finance-expenses.ts`; snapshot regenerated):
+
+| Endpoint | Permission |
+|---|---|
+| `GET /expense-categories?archived=` (seeds the defaults on first use) | `finance:read` |
+| `POST /expense-categories`, `PATCH /expense-categories/:id` (rename, reorder, archive, restore; `version`) | `finance:manage` |
+| `GET /expenses` (filters: status, payment state, category, project, customer, currency, incurred-date range, `q`, `supplier`; keyset on `(incurred_on, id)`), `GET /expenses/:id` | `finance:read` |
+| `POST /expenses`, `PATCH /expenses/:id` (draft, `version`), `POST /expenses/:id/record`, `POST /expenses/:id/void` | `finance:expenses` (record with `paidInFull` also needs `finance:payments`) |
+| `GET /expense-payables` | `finance:read` |
+| `POST /expenses/:id/receipts`, `POST /expenses/:id/receipts/:receiptId/remove` | `finance:expenses` |
+| `GET /expenses/:id/receipts/:receiptId/download` (409 `receipt_not_stored` until storage exists) | `finance:read` |
+| `GET /expense-payments`, `GET /expense-payments/:id` | `finance:read` |
+| `POST /expense-payments` (**`Idempotency-Key` required**), `POST /expense-payments/:id/allocations`, `…/allocations/:allocationId/reverse`, `POST /expense-payments/:id/reverse` | `finance:payments` |
+
+- **UI**: the Finance Zone is now `built` in the shell registry, gated on `finance:read` (§19.7).
+- **No permission or role changed**: F3 uses the FD-P1 keys exactly as approved (`finance:expenses` for MANAGER, OWNER, ADMIN; `finance:payments` and `finance:manage` for OWNER, ADMIN).
+
+### 19.2 Categories
+
+- Tenant-scoped, ordered by `position` then name. One **active** category per name per business, case-insensitive (partial unique index); an archived name can be reused.
+- **Defaults** (15 generic headings, no tax meaning) are seeded per business by `INSERT … ON CONFLICT DO NOTHING` keyed by `(business_id, system_key)`, on first use of the category or expense endpoints, as the Sales default pipeline is. Idempotent and safe under concurrency (test: eight simultaneous first reads seed exactly once). A renamed or archived default is never recreated; a default whose name an active custom category already holds is skipped. Business creation (a privileged path) is not changed.
+- Defaults are ordinary categories: renamable, reorderable, archivable. `system_key` never changes (column grants).
+- **No DELETE** (no grant). Archiving hides a category from new use: a draft or new expense cannot newly use it (`409 archived_reference`) and a draft that uses it cannot be recorded (service check, and FN017 in the guard). Recorded expenses keep their reference and the name snapshotted when they were recorded.
+- Changes are audited as `finance.settings.changed` with `setting: expense_category`, field names, old and new positions and the archive flag (never the name text).
+
+### 19.3 Expenses, amounts and tax
+
+| Treatment | Entered `amount` is | Tax | Subtotal / total |
+|---|---|---|---|
+| `NO_TAX` | the total | 0 (no rate allowed) | subtotal = total |
+| `TAX_EXCLUSIVE` | the subtotal | `round(subtotal × rate / 100, scale)` | total = subtotal + tax |
+| `TAX_INCLUSIVE` | the total | `round(total × rate / (100 + rate), scale)` | subtotal = total − tax |
+
+- Exact decimals end to end; one rounding, half away from zero, at the currency's snapshotted scale (FD-T2). The API takes only the entered figure; `subtotal`, `taxAmount` and `total` are server-computed (a client sending them is `400 invalid_input`).
+- **No tax rate is assumed.** Taxed treatments need a tax rate of this business (`400 tax_rate_required`); the guard copies the rate's name and percentage onto the expense on every draft write, exactly as `finance_guard_line` does for lines, and they are frozen when the expense is recorded. A newly used rate must be active.
+- The database recomputes the split (CHECK `finance_expenses_tax_treatment`) and `subtotal + tax_amount = amount` (CHECK `finance_expenses_subtotal`), so a forged tax amount, subtotal or percentage is refused.
+- Dates: `incurred_on` not in the future in the business's time zone; `due_date ≥ incurred_on` (service and CHECK).
+- Optional links: a **project** and a **customer** of the same business (composite FKs; newly linked ones must be active). Linking grants nothing: Finance permissions alone govern expenses, and no project or customer permission is needed or implied.
+- **Supplier** stays free text (`supplier_name`), plus `reference_number`; suppliers as entities remain FD-P5. No contact link: contacts belong to customers, not suppliers.
+- Lifecycle as F1 designed: `DRAFT` (editable, optimistic `version`) → `RECORDED` ("posted": immutable except voiding and its payment counter) → `VOID`; `DRAFT` → `VOID` is discarding. `recorded_by_id` and `voided_by_id` exist only through their transitions.
+
+### 19.4 Payments made against expenses (bills)
+
+- **One ledger.** A payment made is a `finance_payments` row with `direction = 'PAID'`: same idempotency, immutability guard, reversal rules (`RECORDED → REVERSED`, reason required), counter (`allocated_total`) and lock class as F2's payments received. It links to expenses through `finance_expense_allocations`, which is built like F2's credit applications: composite FKs on `(business_id, payment_id, payment_direction, currency_code)` and `(business_id, expense_id, currency_code)`, direction pinned to `PAID` by CHECK, one live allocation per pair, `reversed_at` one way, no DELETE.
+- Directions cannot cross: F2's invoice-allocation FK carries `customer_id`, which a `PAID` row never has, so a payment made can never settle an invoice; a payment received can never settle an expense (pinned direction). F2's endpoints and reports read `RECEIVED` only (customer balances, payment lists, `GET /payments/:id`).
+- **Derived state, never stored**: for a `RECORDED` expense, `UNPAID` / `PARTIALLY_PAID` / `PAID` from `paid_total` against the total; `overdue` when not fully paid and `due_date` is before today in the business's time zone. The counter `paid_total` is maintained only by the allocation triggers (FN010 on direct writes) and bounded by CHECK (`0 ≤ paid_total ≤ amount`, and 0 unless `RECORDED`).
+- "Simple paid expense" and "bill" use the same record: recording with `paidInFull` creates a payment of the whole total and its allocation in the recording unit of work; without it the expense is unpaid until payments are recorded. The partial-payment API exists; the UI offers "paid in full" only for now (§19.7).
+- **Payables** (`GET /expense-payables`): per currency, `Σ (amount − paid_total)` of `RECORDED` expenses not fully paid, and the overdue part, in one statement. Drafts and voids never count.
+- **Lock order**: payment, then expenses by id (the global order of §6.3, with expenses after documents). Recording with `paidInFull` locks the expense and then inserts a new payment, which no other transaction can see or lock, so no cycle is possible.
+- Races (tests): 12 concurrent 10.00 payments of one 50.00 expense commit exactly 5 (the rest `409 over_payment` or `503 retryable`); a void racing a payment on six expenses leaves exactly one winner each and never money on a void expense.
+
+### 19.5 Voiding and adjustment rules (with payments)
+
+- A recorded expense is never edited. A correction is: reverse its payment allocations (or the payments), void it with a reason, and record a new expense.
+- **Void is refused while any live allocation exists** (`409 has_payments`; guard FN016; CHECK `finance_expenses_paid`). Reversal keeps every allocation row with its database-stamped `reversed_at`, so payment history is never erased to make a balance look right.
+- Reversing a payment made reverses all its live allocations and then the payment, in one unit of work with their audit entries (test: a failing audit write leaves every allocation live).
+- A void expense is final and cannot be paid (FN018 / `409 expense_not_open`).
+
+### 19.6 Receipts (FD-P6 open)
+
+- Business OS has no file storage, so F3 stores **metadata only**: file name (no path separators or control characters), content type from an allow-list (`application/pdf`, `image/jpeg`, `image/png`, `image/webp`, `image/heic`), size (1 byte to 10 MiB), SHA-256, created by and at. Status `PENDING`; a `STORED` row (a later PR) carries an opaque provider key, never a URL. No URL, local path or bytes are accepted anywhere (strict bodies).
+- Tenant-authorised: RLS and composite FKs; another business's expense or receipt answers 404. The download endpoint checks both and answers `409 receipt_not_stored` (never a redirect or public link).
+- One active registration per file per expense (`409 duplicate_receipt`). Receipts of a draft can be removed (one-way soft removal, kept); receipts of a recorded expense are kept (`409 receipt_locked`, FN019).
+- The F1 column `receipt_reference` (free text) is not used or exposed by F3, because it could hold a public link.
+
+### 19.7 UI (Finance Zone)
+
+- `packages/app/src/zones/finance`: expense list (server-side search, status, payment-state, category and date filters, keyset paging, loading, empty and error states, per-currency unpaid totals from the server), expense form (draft create and edit; only the receipt figure is entered, the server computes the split), expense detail (amounts, payments live and reversed, receipt metadata, record with optional paid-in-full, discard, void with reason and the has-payments explanation), and category management (add, rename, reorder, archive, restore; read-only without `finance:manage`).
+- Built on `ZonePage` and `@business-os/ui` (Pixakova tokens); no other Zone changed. Write controls follow the permission keys for presentation only; the API enforces every rule.
+- Not in the F3 UI (API exists): partial payments and payment reversal screens, receipt registration (no storage to upload to), project and customer pickers on the form.
+
+### 19.8 Changes to F1/F2 objects, for the audit
+
+1. `finance_guard_expense` is replaced. F1's rules are kept; added: the tax snapshot on draft writes, `paid_total` (refused at trigger depth < 2, mutable after recording only for its trigger), recorder and voider only in their transitions, FN016 and FN017.
+2. `finance_payments`: `direction` (default `RECEIVED`), `payee_name`, `customer_id` nullable with the direction CHECK, and a second link key `(business_id, id, direction, currency_code)`. `finance_guard_payment` is unchanged (its deny-by-default freeze already covers the new columns).
+3. `finance_expense_categories`: UPDATE becomes column-level (`name`, `position`, `archived_at`, `version`, `updated_by_id`, `updated_at`).
+4. Services: F2's payment list, get, patch, allocate and reverse load `RECEIVED` rows only; customer balances filter `RECEIVED`; reconciliation's payment counter check sums invoice **and** expense allocations, and adds `expense_paid_total`, `expense_settlement`, `duplicate_live_expense_allocation` and expense links in `live_link_state` (contract enums extended additively).
+5. Tests: `finance-integrity.test.ts` inventories list the new tables, triggers and functions; expense fixtures give the subtotal and a tax treatment; R1's cash definition reads `RECEIVED` payments.
+6. New SQLSTATEs FN016–FN019 and constraint mappings (`over_payment`, `already_allocated`, `duplicate_name`, `duplicate_receipt`) in the route wrapper.
+
+### 19.9 Error codes of the F3 endpoints
+
+Declared as `FinanceExpenseErrorCode`. As for F2, 400 bodies are `{ error, message }`, 409 bodies `{ error }`, another business's ids answer 404, and deadlocks or lock timeouts `503 retryable`.
+
+| Code | Status | Meaning |
+|---|---|---|
+| `invalid_category`, `invalid_project`, `invalid_customer`, `invalid_tax_rate`, `invalid_expense` | 400 | Not a record of this business (or a rate on an untaxed expense) |
+| `archived_reference` | 409 | Newly linking (or recording into) an archived category, rate, project or customer |
+| `tax_rate_required` | 400 | Taxed treatment without a rate |
+| `invalid_amount`, `invalid_currency`, `invalid_dates` | 400 | Zero, negative or over-precise amount; unknown currency; future date or due before incurred |
+| `duplicate_name` | 409 | An active category already has the name |
+| `stale` | 409 | `version` is not current |
+| `invalid_state` | 409 | Editing or recording a non-draft; voiding a void expense |
+| `reason_required` | 400 | Voiding a recorded expense without a reason |
+| `has_payments` | 409 | Voiding while payments are allocated (FN016) |
+| `expense_not_open` | 409 | Paying a draft or void expense (FN018) |
+| `over_payment`, `over_allocation`, `already_allocated`, `already_reversed` | 409 | Settlement limits and one-live-link rule |
+| `payment_not_open`, `currency_mismatch` | 409 / 400 | Reversed payment; other currency |
+| `idempotency_key_required`, `invalid_idempotency_key`, `idempotency_conflict` | 400 / 400 / 409 | As F2 (one key space for both directions) |
+| `duplicate_receipt`, `receipt_locked`, `receipt_not_stored` | 409 | Receipt rules (§19.6) |
+
+### 19.10 Evidence
+
+| Check | Result |
+|---|---|
+| `finance-expenses.test.ts` (route handlers and database guards, X1–X6) | 24/24 locally (PostgreSQL 16.10, docker) |
+| `finance-integrity.test.ts`, `finance-payments.test.ts`, `finance.test.ts` (F1/F2, with the fixture updates of §19.8) | pass locally |
+| Whole integration suite on a fresh database; the three finance suites again on the same database | see the PR |
+| Behind PgBouncer | CI step "Finance integrity, payments and expenses suites behind the pooler" (PgBouncer is not installed on the development Mac) |
+| `packages/app` Finance Zone tests (`finance-zone.test.tsx`, 13) and updated shell tests | pass |
+| `pnpm lint`, `typecheck`, `boundaries`, `test`, `contracts:check`, `db:check-migrations` | pass |
+
+### 19.11 Open decisions: provisional pending owner approval
+
+| # | Decision (open) | Provisional implementation |
+|---|---|---|
+| FD-E1 | How payables are modelled | Outgoing payments in F2's ledger (`direction = PAID`) settling expenses through their own link table; no separate bill entity |
+| FD-T6 | Tax on expenses: which treatments | `NO_TAX`, `TAX_EXCLUSIVE`, `TAX_INCLUSIVE` with a business tax rate; no manual tax override (a receipt whose tax differs by rounding from the formula cannot be entered exactly yet) |
+| FD-T5 | Expenses reported net or gross | Both stored (`subtotal`, `total`); reports are F5 |
+| FD-P5 | Suppliers as entities | Free-text supplier and payee names |
+| FD-P6 | Receipt storage provider and limits | Metadata only; 10 MiB and PDF/JPEG/PNG/WebP/HEIC allow-list as placeholders |
+| FD-E2 | Default category list | 15 generic defaults (§19.2), editable |
+| FD-E3 | Future-dated expenses; recording into archived categories | Both refused |
+| FD-E4 | Who may record "paid in full" | Needs `finance:payments` as well as `finance:expenses` (MANAGER cannot) |
+
+### 19.12 Migration safety, rollout and rollback
+
+- Additive; must be applied **after** `20261115000000_finance` and `20261116000000_finance_payments` (neither is in production yet). Production migrations need the owner's explicit approval and a Neon recovery branch, as for every Zone.
+- **Precondition:** `finance_expenses` is empty (no service wrote expenses before F3). The new CHECKs validate existing rows, so the migration fails whole rather than mis-state an expense.
+- Existing payments become `RECEIVED` by default; every F1/F2 constraint on them keeps its meaning.
+- **Rollout:** migrate, then deploy. The routes need `finance:*` keys that already exist; until the deploy the new tables are simply unused.
+- **Rollback before real use:** drop `finance_expense_allocations`, `finance_expense_receipts`, the new functions, CHECKs, indexes and columns; restore F1's `finance_guard_expense` and the category table grant; drop the two enum types and delete the migration's `_prisma_migrations` row. `finance_payments.customer_id` can be made `NOT NULL` again only if no `PAID` row exists.
+- **Rollback after real use:** do not drop. Expenses and payments made are financial records: hide the routes and the Zone, keep the data, fix forward.
+
+### 19.13 Out of scope (unchanged)
+
+Bank feeds and bank reconciliation, OCR, AI categorisation, recurring expenses, purchase orders, employee reimbursements, payroll, a general ledger, reporting (F5) and tax filings.

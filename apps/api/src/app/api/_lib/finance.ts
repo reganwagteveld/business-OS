@@ -23,3 +23,6 @@ const idOf = (name: string) => (params: Record<string, string>): string => {
 export const paymentIdOf = idOf('paymentId');
 export const allocationIdOf = idOf('allocationId');
 export const applicationIdOf = idOf('applicationId');
+export const expenseIdOf = idOf('expenseId');
+export const categoryIdOf = idOf('categoryId');
+export const receiptIdOf = idOf('receiptId');

@@ -50,7 +50,8 @@ export const ZONES: readonly ZoneDefinition[] = [
   { id: 'customers', name: 'Customers', description: 'Every relationship in one place', icon: 'customers', route: '/customers', order: 10, requires: ['customers:read'], availability: 'built' },
   { id: 'sales', name: 'Sales', description: 'From first contact to closed deal', icon: 'sales', route: '/sales', order: 20, requires: ['sales:read'], availability: 'built' },
   { id: 'projects', name: 'Projects', description: 'Work, organised and connected', icon: 'projects', route: '/projects', order: 30, requires: ['projects:read'], availability: 'built' },
-  { id: 'finance', name: 'Finance', description: 'Understand your business finances', icon: 'finance', route: '/finance', order: 40, requires: [], availability: 'planned' },
+  // F3: the Finance Zone's client screens start with expenses and categories (quotes, invoices and payments come later).
+  { id: 'finance', name: 'Finance', description: 'Understand your business finances', icon: 'finance', route: '/finance', order: 40, requires: ['finance:read'], availability: 'built' },
   { id: 'people', name: 'People', description: 'Your team and their work', icon: 'people', route: '/people', order: 50, requires: [], availability: 'planned' },
   { id: 'operations', name: 'Operations', description: 'Keep everything moving', icon: 'operations', route: '/operations', order: 60, requires: [], availability: 'planned' },
   { id: 'insights', name: 'Insights', description: 'See what matters', icon: 'insights', route: '/insights', order: 70, requires: [], availability: 'planned' },

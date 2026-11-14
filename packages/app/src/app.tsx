@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
 import { createCustomersClient, type CustomersClient } from './api/customers';
 import { createProjectsClient, type ProjectsClient } from './api/projects';
+import { createFinanceClient, type FinanceClient } from './api/finance';
 import { createSalesClient, type SalesClient } from './api/sales';
 import { createTenancyClient, type TenancyClient } from './api/tenancy';
 import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
@@ -18,6 +19,7 @@ import type { BusinessContext } from './api/tenancy';
 import type { CurrentUser } from '@business-os/contracts';
 import { CustomerZone } from './zones/customers/customer-zone';
 import { ProjectsZone } from './zones/projects/projects-zone';
+import { FinanceZone } from './zones/finance/finance-zone';
 import { SalesZone } from './zones/sales/sales-zone';
 import { browserStorage, type WorkspaceStorage } from './workspace/storage';
 import { useWorkspace } from './workspace/use-workspace';
@@ -39,6 +41,7 @@ export interface AppProps {
   customers?: CustomersClient;
   sales?: SalesClient;
   projects?: ProjectsClient;
+  finance?: FinanceClient;
   storage?: WorkspaceStorage;
 }
 
@@ -54,13 +57,14 @@ type Mode = 'default' | 'choose' | 'new';
  * open the right one. Offline, server errors and an ended session each get their own screen, and
  * the active business is only ever one the server lists for you.
  */
-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, storage: storageOverride }: AppProps) {
+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, finance: financeOverride, storage: storageOverride }: AppProps) {
   const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
   const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
   const customers = useMemo(() => customersOverride ?? createCustomersClient(apiBaseUrl, resolvedTransport), [customersOverride, apiBaseUrl, resolvedTransport]);
   const sales = useMemo(() => salesOverride ?? createSalesClient(apiBaseUrl, resolvedTransport), [salesOverride, apiBaseUrl, resolvedTransport]);
   const projects = useMemo(() => projectsOverride ?? createProjectsClient(apiBaseUrl, resolvedTransport), [projectsOverride, apiBaseUrl, resolvedTransport]);
+  const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
   const storage = useMemo(() => storageOverride ?? browserStorage(), [storageOverride]);
   const workspace = useWorkspace({ auth, tenancy, storage });
   const { phase } = workspace;
@@ -200,6 +204,14 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         client={projects} customers={customers} context={active} userLabel={userLabel} initialProjectId={target} initialAction={intent}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
         onOpenCustomer={canReadCustomers ? (id) => open({ zone: 'customers', target: id }) : undefined}
+      />
+    );
+  } else if (active && current.zone === 'finance') {
+    screen = (
+      <FinanceZone
+        key={`${slug}|${target ?? ''}|${intent ?? ''}`}
+        client={finance} context={active} userLabel={userLabel} initialExpenseId={target} initialAction={intent}
+        onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
   } else if (active) {

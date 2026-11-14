@@ -35,7 +35,7 @@ The registry only describes Zones. Access comes from the server: `membership.per
 
 - **Built Zone, permissions held:** shown in the sidebar and on Home.
 - **Built Zone, permissions missing:** not shown anywhere. It is not shown as disabled either, so the shell reveals nothing about what other roles can see.
-- **Planned Zone** (Finance, People, Operations, Insights, Settings): shown on Home as "coming soon" and never openable. It is not in the sidebar.
+- **Planned Zone** (People, Operations, Insights, Settings; Finance became built in F3, gated on `finance:read`): shown on Home as "coming soon" and never openable. It is not in the sidebar.
 - **Loading** (a business is opening): skeleton items, and nothing from the previous business.
 - **Failed:** a plain message, and no Zones listed.
 

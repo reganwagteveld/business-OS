@@ -50,6 +50,7 @@ model Customer {
   projects         Project[]
   financeDocuments FinanceDocument[]
   financePayments  FinancePayment[]
+  financeExpenses  FinanceExpense[]
 
   @@unique([businessId, id])
   @@index([businessId, ownerUserId])

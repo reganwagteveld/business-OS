@@ -167,7 +167,7 @@ export async function listCustomerBalances(db: AppTenantDb, query: { customerId?
       UNION ALL
       SELECT p.customer_id, p.currency_code, p.currency_scale, 0, 0, p.amount - p.allocated_total, 0
         FROM finance_payments p, b
-       WHERE p.business_id = b.id AND p.status = 'RECORDED')
+       WHERE p.business_id = b.id AND p.status = 'RECORDED' AND p.direction = 'RECEIVED')
     SELECT customer_id::text, currency_code::text, max(currency_scale)::int AS currency_scale, sum(receivable) AS receivable, sum(overdue) AS overdue,
            sum(unallocated) AS unallocated, sum(unapplied) AS unapplied
       FROM parts

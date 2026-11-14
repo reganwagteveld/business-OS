@@ -67,11 +67,11 @@ describe('navigation into and out of the Customer Zone', () => {
   it('Zones not built yet stay honest "coming soon" cards, and Zones this role cannot open are not shown at all', async () => {
     mountApp(createFakeApi({ alpha: emptyBusiness() }));
     await screen.findByText('Welcome to Alpha Plumbing.');
-    for (const zone of ['Finance', 'People', 'Operations', 'Insights', 'Settings']) {
+    for (const zone of ['People', 'Operations', 'Insights', 'Settings']) {
       expect(screen.getByLabelText(`${zone} Zone — coming soon`)).toBeTruthy();
       expect(screen.queryByRole('button', { name: new RegExp(`Open the ${zone}`) })).toBeNull();
     }
-    for (const zone of ['Sales', 'Projects']) { // built, but this membership lacks the permission
+    for (const zone of ['Sales', 'Projects', 'Finance']) { // built, but this membership lacks the permission
       expect(screen.queryByLabelText(`${zone} Zone — coming soon`)).toBeNull();
       expect(screen.queryByRole('button', { name: new RegExp(`Open the ${zone}`) })).toBeNull();
     }

@@ -52,6 +52,8 @@ model Business {
   financeAllocations        FinancePaymentAllocation[]
   financeExpenseCategories  FinanceExpenseCategory[]
   financeExpenses           FinanceExpense[]
+  financeExpenseAllocations FinanceExpenseAllocation[]
+  financeExpenseReceipts    FinanceExpenseReceipt[]
 
   @@map("businesses")
 }
