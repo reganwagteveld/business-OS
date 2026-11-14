@@ -15,6 +15,7 @@ const doc = {
         method: e.method,
         path: e.path,
         ...('request' in e ? { request: z.toJSONSchema(e.request, { io: 'input' }) } : {}),
+        ...('query' in e ? { query: z.toJSONSchema(e.query, { io: 'input' }) } : {}),
         response: z.toJSONSchema(e.response),
       },
     ]),

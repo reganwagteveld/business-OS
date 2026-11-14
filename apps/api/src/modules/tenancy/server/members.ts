@@ -67,6 +67,9 @@ export async function changeRole(db: AppTenantDb, actor: Actor, membershipId: st
 export async function removeMember(db: AppTenantDb, actor: Actor, membershipId: string) {
   const target = await findMember(db, membershipId);
   if (!canManageMember(actor, target.role, target.userId === actor.userId)) throw new ForbiddenError();
+  // Customers they own keep existing but lose the owner: the (business_id, owner_user_id) FK to
+  // memberships would otherwise block the removal.
+  await db.customer.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null } as never });
   await db.membership.delete({ where: { id: membershipId } });
   await audit(db, actor, 'membership.removed', 'membership', membershipId, { role: target.role });
 }

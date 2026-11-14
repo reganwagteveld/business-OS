@@ -14,7 +14,10 @@ function appPrisma(): PrismaClient {
 }
 
 /** Tenant models and the column that carries the tenant id. */
-const TENANT_MODELS = { business: 'id', membership: 'businessId', invitation: 'businessId', auditEvent: 'businessId' } as const;
+const TENANT_MODELS = {
+  business: 'id', membership: 'businessId', invitation: 'businessId', auditEvent: 'businessId',
+  customer: 'businessId', contact: 'businessId', activity: 'businessId',
+} as const;
 type AppTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;
 export type AppTenantDb = TenantDb<AppTx, keyof typeof TENANT_MODELS>;
 

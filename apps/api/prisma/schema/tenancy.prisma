@@ -33,6 +33,9 @@ model Business {
 
   memberships Membership[]
   invitations Invitation[]
+  customers   Customer[]
+  contacts    Contact[]
+  activities  Activity[]
 
   @@map("businesses")
 }
@@ -48,6 +51,8 @@ model Membership {
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  ownedCustomers Customer[]
 
   @@unique([businessId, userId])
   @@unique([businessId, id])
