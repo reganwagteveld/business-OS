@@ -1,5 +1,6 @@
 import {
-  CreateActivityRequest, ActivityResponse, CreateContactRequest, ContactResponse, UpdateContactRequest, CreateCustomerRequest, CustomerResponse, endpointPath, endpoints, ListActivitiesResponse, ListContactsResponse, ListCustomersResponse,
+  ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, endpointPath, endpoints,
+  ListActivitiesResponse, ListContactsResponse, ListCustomersResponse, UpdateContactRequest,
   MembersResponse, UpdateCustomerRequest, type Activity, type Contact, type Customer, Member as MemberSchema,
 } from '@business-os/contracts';
 import type { z } from 'zod';
@@ -22,12 +23,14 @@ export interface CustomersClient {
   update(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<Customer>>;
   archive(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Customer>>;
   restore(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Customer>>;
-  contacts(slug: string, customerId: string, signal?: AbortSignal): Promise<Outcome<Contact[]>>;
-  createContact(slug: string, input: unknown): Promise<Outcome<Contact>>;
-  updateContact(slug: string, id: string, input: unknown): Promise<Outcome<Contact>>;
-  archiveContact(slug: string, id: string): Promise<Outcome<Contact>>;
-  restoreContact(slug: string, id: string): Promise<Outcome<Contact>>;
-  createActivity(slug: string, input: unknown): Promise<Outcome<Activity>>;
+  /** Every contact of one customer in the given state, following the server's cursors (so the primary is never cut off). */
+  contacts(slug: string, customerId: string, status?: 'active' | 'archived', signal?: AbortSignal): Promise<Outcome<Contact[]>>;
+  createContact(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Contact>>;
+  updateContact(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Contact>>;
+  archiveContact(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Contact>>;
+  restoreContact(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Contact>>;
+  /** Logs a note, call, meeting or email. The server attributes it to the signed-in person. */
+  createActivity(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Activity>>;
   activities(slug: string, customerId: string, cursor?: string, signal?: AbortSignal): Promise<Outcome<ActivityPage>>;
   /** Active members, for the optional customer owner. */
   members(slug: string, signal?: AbortSignal): Promise<Outcome<Member[]>>;
@@ -96,30 +99,40 @@ export function createCustomersClient(baseUrl: string, transport: AuthTransport,
     async restore(slug, id, signal) {
       return settle(await http.request('POST', path(endpoints.restoreCustomer.path, { slug, customerId: id }), undefined, signal), CustomerResponse, (d) => d.customer);
     },
-    async contacts(slug, customerId, signal) {
-      const raw = await http.request('GET', path(endpoints.listContacts.path, { slug }) + qs({ customerId, status: 'active', limit: 100 }), undefined, signal);
-      return settle(raw, ListContactsResponse, (d) => d.contacts);
+    async contacts(slug, customerId, status = 'active', signal) {
+      const all: Contact[] = [];
+      let cursor: string | undefined;
+      // 100 per page; a customer with more than 5,000 contacts is beyond what this panel is for.
+      for (let page = 0; page < 50; page++) {
+        const raw = await http.request('GET', path(endpoints.listContacts.path, { slug }) + qs({ customerId, status, limit: 100, cursor }), undefined, signal);
+        const outcome = settle(raw, ListContactsResponse, (d) => d);
+        if (outcome.kind !== 'ok') return outcome;
+        all.push(...outcome.data.contacts);
+        if (!outcome.data.nextCursor) break;
+        cursor = outcome.data.nextCursor;
+      }
+      return { kind: 'ok', data: all };
     },
-    async createContact(slug, input) {
+    async createContact(slug, input, signal) {
       const checked = CreateContactRequest.safeParse(input);
       if (!checked.success) return invalid(checked.error);
-      return settle(await http.request('POST', path(endpoints.createContact.path, { slug }), checked.data), ContactResponse, (d) => d.contact);
+      return settle(await http.request('POST', path(endpoints.createContact.path, { slug }), checked.data, signal), ContactResponse, (d) => d.contact);
     },
-    async updateContact(slug, id, input) {
+    async updateContact(slug, id, input, signal) {
       const checked = UpdateContactRequest.safeParse(input);
       if (!checked.success) return invalid(checked.error);
-      return settle(await http.request('PATCH', path(endpoints.updateContact.path, { slug, contactId: id }), checked.data), ContactResponse, (d) => d.contact);
+      return settle(await http.request('PATCH', path(endpoints.updateContact.path, { slug, contactId: id }), checked.data, signal), ContactResponse, (d) => d.contact);
     },
-    async archiveContact(slug, id) {
-      return settle(await http.request('POST', path(endpoints.archiveContact.path, { slug, contactId: id })), ContactResponse, (d) => d.contact);
+    async archiveContact(slug, id, signal) {
+      return settle(await http.request('POST', path(endpoints.archiveContact.path, { slug, contactId: id }), undefined, signal), ContactResponse, (d) => d.contact);
     },
-    async restoreContact(slug, id) {
-      return settle(await http.request('POST', path(endpoints.restoreContact.path, { slug, contactId: id })), ContactResponse, (d) => d.contact);
+    async restoreContact(slug, id, signal) {
+      return settle(await http.request('POST', path(endpoints.restoreContact.path, { slug, contactId: id }), undefined, signal), ContactResponse, (d) => d.contact);
     },
-    async createActivity(slug, input) {
+    async createActivity(slug, input, signal) {
       const checked = CreateActivityRequest.safeParse(input);
       if (!checked.success) return invalid(checked.error);
-      return settle(await http.request('POST', path(endpoints.createActivity.path, { slug }), checked.data), ActivityResponse, (d) => d.activity);
+      return settle(await http.request('POST', path(endpoints.createActivity.path, { slug }), checked.data, signal), ActivityResponse, (d) => d.activity);
     },
     async activities(slug, customerId, cursor, signal) {
       const raw = await http.request('GET', path(endpoints.listActivities.path, { slug }) + qs({ customerId, cursor, limit: 25 }), undefined, signal);
