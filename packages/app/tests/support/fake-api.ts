@@ -3,7 +3,7 @@
  * (paths, query, status codes, strict bodies) and keeps each business's records apart. The app's real
  * client and contract schemas sit in front of it, so a response that breaks the contract fails the test.
  */
-import { CreateCustomerRequest, UpdateCustomerRequest, type Activity, type Contact, type Customer } from '@business-os/contracts';
+import { CreateActivityRequest, CreateContactRequest, UpdateContactRequest, CreateCustomerRequest, UpdateCustomerRequest, type Activity, type Contact, type Customer } from '@business-os/contracts';
 import { randomUUID } from 'node:crypto';
 
 export interface FakeMember { id: string; userId: string; name: string | null; role: 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER'; status: 'ACTIVE' | 'SUSPENDED'; createdAt: string }
@@ -97,6 +97,36 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
         return json(200, { activities: rows.slice(start, start + limit), nextCursor: start + limit < rows.length ? cursorOf(start + limit) : null });
       }
 
+      if (resource === 'contacts') {
+        if (!id && method === 'POST') {
+          const parsed = CreateContactRequest.safeParse(call.body);
+          if (!parsed.success) return json(400, { error: 'invalid_input' });
+          const row = contact(parsed.data.customerId ?? null, { ...parsed.data, id: uuid(), displayName: parsed.data.displayName || [parsed.data.firstName, parsed.data.lastName].filter(Boolean).join(' ') || parsed.data.email || '', createdAt: now, updatedAt: now } as Contact);
+          biz.contacts.push(row);
+          return json(201, { contact: row });
+        }
+        const found = biz.contacts.find((c) => c.id === id);
+        if (!found) return json(404, { error: 'not_found' });
+        if (method === 'PATCH') {
+          const parsed = UpdateContactRequest.safeParse(call.body);
+          if (!parsed.success) return json(400, { error: 'invalid_input' });
+          if (found.archivedAt) return json(409, { error: 'archived' });
+          Object.assign(found, parsed.data, { updatedAt: now });
+          return json(200, { contact: found });
+        }
+        if (method === 'POST' && (action === 'archive' || action === 'restore')) {
+          found.archivedAt = action === 'archive' ? now : null;
+          if (action === 'archive') for (const c of biz.customers) if (c.primaryContactId === found.id) c.primaryContactId = null;
+          return json(200, { contact: found });
+        }
+      }
+      if (resource === 'activities' && method === 'POST') {
+        const parsed = CreateActivityRequest.safeParse(call.body);
+        if (!parsed.success) return json(400, { error: 'invalid_input' });
+        const row = activity(parsed.data.customerId ?? null, { ...parsed.data, id: uuid(), occurredAt: parsed.data.occurredAt ?? now, createdAt: now } as Activity);
+        biz.activities.push(row);
+        return json(201, { activity: row });
+      }
       if (resource !== 'customers') return json(404, { error: 'not_found' });
 
       if (!id && method === 'GET') {
