@@ -54,8 +54,8 @@ const safeHref = (site: string) => {
  * One customer's workspace. Everything shown is a real record from the API; contacts and activity
  * are managed through the existing tenant-scoped API. Archive asks first and restore is one click.
  */
-export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, onBack, onEdit, onSessionEnded }: {
-  client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean;
+export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, onBack, onEdit, onSessionEnded }: {
+  client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
   onBack: () => void; onEdit: (c: Customer) => void; onSessionEnded: () => void;
 }) {
   const customer = useLoad(`customer|${slug}|${id}`, (signal) => client.get(slug, id, signal));
@@ -75,7 +75,7 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, o
       {customer.state.status === 'done' && customer.state.outcome.kind === 'ok' ? (
         <Loaded
           key={`${customer.state.outcome.data.id}:${customer.state.outcome.data.updatedAt}`}
-          customer={customer.state.outcome.data} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite}
+          customer={customer.state.outcome.data} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity}
           names={names} onEdit={onEdit} onChanged={customer.reload} onSessionEnded={onSessionEnded}
         />
       ) : null}
@@ -83,8 +83,8 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, o
   );
 }
 
-function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onEdit, onChanged, onSessionEnded }: {
-  customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean;
+function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, names, onEdit, onChanged, onSessionEnded }: {
+  customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
   names: Map<string, string> | null; onEdit: (c: Customer) => void; onChanged: () => void; onSessionEnded: () => void;
 }) {
   const archived = customer.archivedAt !== null;
@@ -174,7 +174,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
           </Panel>
         </div>
         <div className="lg:col-span-2 lg:row-start-3">
-          <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} canWrite={canWrite && !archived} onSessionEnded={onSessionEnded} />
+          <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} canWrite={canLogActivity && !archived} onSessionEnded={onSessionEnded} />
         </div>
         <section aria-label="Sales and Finance" className="self-start rounded-2xl border border-dashed border-border px-5 py-4 lg:col-start-3 lg:row-start-3">
           <div className="flex items-center justify-between gap-3">
