@@ -1,0 +1,151 @@
+// Scheduling S0 spike client (docs/scheduling-data-model.md, ADR 0006). Generated for the isolation
+// tests only; it mirrors tests/isolation/fixtures/scheduling-spike-schema.sql (schema scheduling_spike)
+// and is never used by the running API. It also pins how the S1 Prisma schema must state the
+// generated and copied columns so that `prisma migrate diff` stays clean.
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma-scheduling"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["scheduling_spike"]
+}
+
+enum ScheduleResourceKind {
+  MEMBER
+  PLACE
+  EQUIPMENT
+
+  @@schema("scheduling_spike")
+}
+
+enum ScheduleEventKind {
+  APPOINTMENT
+  JOB
+  RESERVATION
+  INTERNAL
+  TIME_OFF
+
+  @@schema("scheduling_spike")
+}
+
+enum ScheduleEventStatus {
+  TENTATIVE
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+
+  @@schema("scheduling_spike")
+}
+
+enum ScheduleVisibility {
+  STANDARD
+  PRIVATE
+
+  @@schema("scheduling_spike")
+}
+
+enum ScheduleAssignmentRole {
+  REQUIRED
+  OPTIONAL
+
+  @@schema("scheduling_spike")
+}
+
+enum ScheduleRemovalReason {
+  EDITED
+  DECLINED
+  MEMBER_REMOVED
+  REASSIGNED
+
+  @@schema("scheduling_spike")
+}
+
+model ScheduleResource {
+  id         String               @id @db.Uuid
+  businessId String               @map("business_id") @db.Uuid
+  kind       ScheduleResourceKind
+  userId     String?              @map("user_id") @db.Uuid
+  name       String
+  exclusive  Boolean              @default(true)
+  version    Int                  @default(1)
+  archivedAt DateTime?            @map("archived_at") @db.Timestamptz
+
+  assignments ScheduleEventResource[]
+
+  @@unique([businessId, id], map: "schedule_resources_business_id_id_key")
+  @@unique([businessId, id, exclusive], map: "schedule_resources_exclusive_key")
+  @@map("schedule_resources")
+  @@schema("scheduling_spike")
+}
+
+model ScheduleEvent {
+  id              String              @id @db.Uuid
+  businessId      String              @map("business_id") @db.Uuid
+  kind            ScheduleEventKind
+  status          ScheduleEventStatus @default(CONFIRMED)
+  visibility      ScheduleVisibility  @default(STANDARD)
+  organizerUserId String?             @map("organizer_user_id") @db.Uuid
+  startsAt        DateTime            @map("starts_at") @db.Timestamptz
+  endsAt          DateTime            @map("ends_at") @db.Timestamptz
+  timeZone        String              @map("time_zone")
+  blocksTime      Boolean             @default(true) @map("blocks_time")
+  /// GENERATED ALWAYS (tstzrange(starts_at, ends_at, '[)')) STORED. Read-only; never written by the app.
+  during          Unsupported("tstzrange")? @default(dbgenerated("tstzrange(starts_at, ends_at, '[)'::text)"))
+  /// GENERATED ALWAYS (blocks_time AND status <> 'CANCELLED') STORED. Read-only; the scoped client strips it from writes.
+  occupying       Boolean?            @default(dbgenerated("(blocks_time AND (status <> 'CANCELLED'::scheduling_spike.\"ScheduleEventStatus\"))"))
+  version         Int                 @default(1)
+
+  details     ScheduleEventDetails?
+  assignments ScheduleEventResource[]
+
+  @@unique([businessId, id], map: "schedule_events_business_id_id_key")
+  @@unique([businessId, id, during, occupying], map: "schedule_events_occupancy_key")
+  @@index([businessId(ops: raw("gist_uuid_ops")), during(ops: raw("range_ops"))], map: "schedule_events_business_id_during_idx", type: Gist)
+  @@map("schedule_events")
+  @@schema("scheduling_spike")
+}
+
+/// Sensitive content, 1:1 with an event, behind the restrictive private_details policy.
+model ScheduleEventDetails {
+  businessId    String  @map("business_id") @db.Uuid
+  eventId       String  @map("event_id") @db.Uuid
+  title         String
+  description   String?
+  location      String?
+  customerId    String? @map("customer_id") @db.Uuid
+  contactId     String? @map("contact_id") @db.Uuid
+  projectId     String? @map("project_id") @db.Uuid
+  projectTaskId String? @map("project_task_id") @db.Uuid
+  cancelReason  String? @map("cancel_reason")
+
+  event ScheduleEvent @relation(fields: [businessId, eventId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "schedule_event_details_event_fkey")
+
+  @@id([businessId, eventId], map: "schedule_event_details_pkey")
+  @@map("schedule_event_details")
+  @@schema("scheduling_spike")
+}
+
+/// `during`, `occupying` and `exclusive` are copies maintained by composite FKs ON UPDATE CASCADE.
+/// Rows are inserted only by raw SQL that selects the copies from their sources.
+model ScheduleEventResource {
+  id            String                 @id @db.Uuid
+  businessId    String                 @map("business_id") @db.Uuid
+  eventId       String                 @map("event_id") @db.Uuid
+  resourceId    String                 @map("resource_id") @db.Uuid
+  role          ScheduleAssignmentRole @default(REQUIRED)
+  during        Unsupported("tstzrange")
+  occupying     Boolean
+  exclusive     Boolean
+  removedAt     DateTime?              @map("removed_at") @db.Timestamptz
+  removedById   String?                @map("removed_by_id") @db.Uuid
+  removalReason ScheduleRemovalReason? @map("removal_reason")
+
+  event    ScheduleEvent    @relation(fields: [businessId, eventId, during, occupying], references: [businessId, id, during, occupying], onDelete: NoAction, onUpdate: Cascade, map: "schedule_event_resources_event_fkey")
+  resource ScheduleResource @relation(fields: [businessId, resourceId, exclusive], references: [businessId, id, exclusive], onDelete: NoAction, onUpdate: Cascade, map: "schedule_event_resources_resource_fkey")
+
+  @@map("schedule_event_resources")
+  @@schema("scheduling_spike")
+}
