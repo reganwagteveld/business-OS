@@ -1,0 +1,115 @@
+// customers and activity modules (docs/data-model.md §4.5–4.7, implementation plan Phase 1d).
+// Tenant tables: forced RLS, composite (business_id, …) foreign keys and the hand-written FK
+// actions Prisma cannot express live in the migration.
+
+enum CustomerKind {
+  COMPANY
+  INDIVIDUAL
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  AI
+}
+
+model Customer {
+  id               String       @id @db.Uuid
+  businessId       String       @map("business_id") @db.Uuid
+  kind             CustomerKind @default(COMPANY)
+  displayName      String       @map("display_name")
+  legalName        String?      @map("legal_name")
+  email            String?
+  phone            String?
+  website          String?
+  taxNumber        String?      @map("tax_number")
+  taxNumberType    String?      @map("tax_number_type")
+  addressLine1     String?      @map("address_line1")
+  addressLine2     String?      @map("address_line2")
+  city             String?
+  region           String?
+  postalCode       String?      @map("postal_code")
+  countryCode      String?      @map("country_code") @db.Char(2)
+  notes            String?
+  ownerUserId      String?      @map("owner_user_id") @db.Uuid
+  primaryContactId String?      @map("primary_contact_id") @db.Uuid
+  createdById      String?      @map("created_by_id") @db.Uuid
+  updatedById      String?      @map("updated_by_id") @db.Uuid
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt       DateTime?    @map("archived_at") @db.Timestamptz
+
+  business       Business    @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "customers_business_fkey")
+  /// The account owner must be a member of the same business (composite FK to memberships).
+  owner          Membership? @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "customers_owner_fkey")
+  /// The primary contact must be one of THIS customer's contacts (three-column FK, deferred).
+  primaryContact Contact?    @relation("PrimaryContact", fields: [businessId, id, primaryContactId], references: [businessId, customerId, id], onDelete: NoAction, onUpdate: NoAction, map: "customers_primary_contact_fkey")
+  contacts       Contact[]
+  activities     Activity[]
+
+  @@unique([businessId, id])
+  @@index([businessId, ownerUserId])
+  @@index([businessId, displayName, id])
+  @@index([businessId, archivedAt])
+  @@map("customers")
+}
+
+model Contact {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  customerId  String?   @map("customer_id") @db.Uuid
+  firstName   String?   @map("first_name")
+  lastName    String?   @map("last_name")
+  displayName String    @map("display_name")
+  email       String?
+  phone       String?
+  mobile      String?
+  jobTitle    String?   @map("job_title")
+  notes       String?
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "contacts_business_fkey")
+  customer   Customer?  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "contacts_customer_fkey")
+  primaryOf  Customer[] @relation("PrimaryContact")
+  activities Activity[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, customerId, id])
+  @@index([businessId, customerId])
+  @@index([businessId, email])
+  @@index([businessId, displayName, id])
+  @@map("contacts")
+}
+
+/// Business-facing history (not the security audit log). Partition-ready primary key (business_id, id).
+model Activity {
+  id            String    @db.Uuid
+  businessId    String    @map("business_id") @db.Uuid
+  type          String
+  occurredAt    DateTime  @map("occurred_at") @db.Timestamptz
+  actorType     ActorType @default(USER) @map("actor_type")
+  actorUserId   String?   @map("actor_user_id") @db.Uuid
+  customerId    String?   @map("customer_id") @db.Uuid
+  contactId     String?   @map("contact_id") @db.Uuid
+  subject       String?
+  body          String?
+  data          Json      @default("{}")
+  schemaVersion Int       @default(1) @map("schema_version")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "activities_business_fkey")
+  customer Customer? @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_customer_fkey")
+  contact  Contact?  @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_contact_fkey")
+
+  @@id([businessId, id])
+  @@index([businessId, customerId, occurredAt(sort: Desc)])
+  @@index([businessId, contactId, occurredAt(sort: Desc)])
+  @@index([businessId, occurredAt(sort: Desc)])
+  @@map("activities")
+}

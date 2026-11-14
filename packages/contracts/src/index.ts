@@ -9,6 +9,12 @@ import {
 export { HealthResponse } from './health.ts';
 export * from './auth.ts';
 export * from './tenancy.ts';
+export * from './customers.ts';
+import {
+  ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse,
+  ListActivitiesQuery, ListActivitiesResponse, ListContactsQuery, ListContactsResponse, ListCustomersQuery, ListCustomersResponse,
+  UpdateContactRequest, UpdateCustomerRequest,
+} from './customers.ts';
 import {
   AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, ChangeRoleRequest, CreateBusinessRequest, CreateBusinessResponse,
   CreateInvitationRequest, InvitationResponse, InvitationsResponse, ListBusinessesResponse, MemberResponse, MembersResponse, OkResponse,
@@ -30,6 +36,20 @@ export const endpoints = {
   listInvitations: { method: 'GET', path: '/api/v1/b/:slug/invitations', response: InvitationsResponse },
   createInvitation: { method: 'POST', path: '/api/v1/b/:slug/invitations', request: CreateInvitationRequest, response: InvitationResponse },
   revokeInvitation: { method: 'DELETE', path: '/api/v1/b/:slug/invitations/:invitationId', response: OkResponse },
+  listCustomers: { method: 'GET', path: '/api/v1/b/:slug/customers', query: ListCustomersQuery, response: ListCustomersResponse },
+  createCustomer: { method: 'POST', path: '/api/v1/b/:slug/customers', request: CreateCustomerRequest, response: CustomerResponse },
+  getCustomer: { method: 'GET', path: '/api/v1/b/:slug/customers/:customerId', response: CustomerResponse },
+  updateCustomer: { method: 'PATCH', path: '/api/v1/b/:slug/customers/:customerId', request: UpdateCustomerRequest, response: CustomerResponse },
+  archiveCustomer: { method: 'POST', path: '/api/v1/b/:slug/customers/:customerId/archive', response: CustomerResponse },
+  restoreCustomer: { method: 'POST', path: '/api/v1/b/:slug/customers/:customerId/restore', response: CustomerResponse },
+  listContacts: { method: 'GET', path: '/api/v1/b/:slug/contacts', query: ListContactsQuery, response: ListContactsResponse },
+  createContact: { method: 'POST', path: '/api/v1/b/:slug/contacts', request: CreateContactRequest, response: ContactResponse },
+  getContact: { method: 'GET', path: '/api/v1/b/:slug/contacts/:contactId', response: ContactResponse },
+  updateContact: { method: 'PATCH', path: '/api/v1/b/:slug/contacts/:contactId', request: UpdateContactRequest, response: ContactResponse },
+  archiveContact: { method: 'POST', path: '/api/v1/b/:slug/contacts/:contactId/archive', response: ContactResponse },
+  restoreContact: { method: 'POST', path: '/api/v1/b/:slug/contacts/:contactId/restore', response: ContactResponse },
+  listActivities: { method: 'GET', path: '/api/v1/b/:slug/activities', query: ListActivitiesQuery, response: ListActivitiesResponse },
+  createActivity: { method: 'POST', path: '/api/v1/b/:slug/activities', request: CreateActivityRequest, response: ActivityResponse },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */
