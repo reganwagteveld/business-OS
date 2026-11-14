@@ -37,9 +37,10 @@ export const ownerName = (refData: SalesRef, id: string | null) => (id ? refData
  * Opportunities from the API: searched and filtered on the server, newest first, paged with the
  * server's cursors. Linked customers and contacts are the Customer Zone's own records, named by id.
  */
-export function OpportunityList({ sales, slug, locale, refData, names, query, onQuery, canWrite, onOpen, onAdd, onSetUp, onSessionEnded }: {
+export function OpportunityList({ sales, slug, locale, refData, names, query, onQuery, canWrite, onOpen, onAdd, onSetUp, onSessionEnded, viewToggle }: {
   sales: SalesClient; slug: string; locale?: string; refData: SalesRef; names: Names; query: ListQuery; onQuery: (q: ListQuery) => void;
   canWrite: boolean; onOpen: (id: string) => void; onAdd: () => void; onSetUp: () => void; onSessionEnded: () => void;
+  viewToggle?: ReactNode;
 }) {
   const uid = useId();
   const [text, setText] = useState(query.q);
@@ -76,7 +77,10 @@ export function OpportunityList({ sales, slug, locale, refData, names, query, on
           <h1 id={`${uid}-title`} className="text-3xl font-semibold tracking-tight">Sales</h1>
           <p className="mt-1 text-sm text-muted-foreground">Opportunities with your customers, from first contact to won or lost.</p>
         </div>
-        {canWrite ? <button type="button" className={actionClass} onClick={onAdd}>Add opportunity</button> : null}
+        <div className="flex items-center gap-3">
+          {viewToggle}
+          {canWrite ? <button type="button" className={actionClass} onClick={onAdd}>Add opportunity</button> : null}
+        </div>
       </div>
 
       {!setUp ? (
