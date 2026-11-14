@@ -2,8 +2,9 @@ import { z } from 'zod';
 import { FinancePaymentMethod, FinancePaymentStatus } from './finance.ts';
 import { CalendarDate, CurrencyCode, Money } from './sales.ts';
 
-// Finance Zone F3 (docs/finance-data-model.md §19): expense categories, expenses, payments made against
-// expenses, and receipt metadata. Same rules as F1/F2: every path is under /api/v1/b/:slug/finance, so
+// Finance Zone F3 (docs/finance-data-model.md §19): expense categories, expenses and payments made against
+// expenses. Receipt attachments are deferred (FD-P6): no receipt records, uploads or downloads.
+// Same rules as F1/F2: every path is under /api/v1/b/:slug/finance, so
 // no request carries a business id; bodies are strict (an unknown field is rejected, never ignored);
 // amounts are exact decimal strings, never JSON numbers; counters, snapshots and transition times
 // belong to the database.
@@ -80,23 +81,6 @@ export const ExpenseAllocation = z
   .strict();
 export type ExpenseAllocation = z.infer<typeof ExpenseAllocation>;
 
-export const ExpenseReceipt = z
-  .object({
-    id: Uuid,
-    expenseId: Uuid,
-    fileName: z.string(),
-    contentType: z.string(),
-    sizeBytes: z.number().int(),
-    sha256: z.string(),
-    /** PENDING: metadata only, the file is not stored yet (no storage provider is configured). */
-    storageStatus: z.enum(['PENDING', 'STORED']),
-    createdAt: z.string().datetime(),
-    createdById: Uuid.nullable(),
-    removedAt: z.string().datetime().nullable(),
-  })
-  .strict();
-export type ExpenseReceipt = z.infer<typeof ExpenseReceipt>;
-
 const expenseFields = {
   id: Uuid,
   status: FinanceExpenseStatus,
@@ -142,7 +126,7 @@ const expenseFields = {
 export const FinanceExpenseListItem = z.object(expenseFields).strict();
 export type FinanceExpenseListItem = z.infer<typeof FinanceExpenseListItem>;
 export const FinanceExpense = z
-  .object({ ...expenseFields, allocations: z.array(ExpenseAllocation), receipts: z.array(ExpenseReceipt) })
+  .object({ ...expenseFields, allocations: z.array(ExpenseAllocation) })
   .strict();
 export type FinanceExpense = z.infer<typeof FinanceExpense>;
 
@@ -245,27 +229,6 @@ export const ExpensePayables = z
   .strict();
 export const ExpensePayablesResponse = z.object({ payables: ExpensePayables }).strict();
 
-// ---- receipts (metadata only until a storage provider is approved, FD-P6) --------------------------
-
-export const ReceiptContentType = z.enum(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic']);
-export const RegisterReceiptRequest = z
-  .object({
-    fileName: z
-      .string()
-      .trim()
-      .min(1)
-      .max(200)
-      .refine((v) => !/[/\\]/.test(v) && !/\p{Cc}/u.test(v) && v !== '.' && v !== '..', 'Use a plain file name'),
-    contentType: ReceiptContentType,
-    /** At most 10 MiB. */
-    sizeBytes: z.number().int().min(1).max(10 * 1024 * 1024),
-    /** SHA-256 of the file's bytes, lowercase hex. */
-    sha256: z.string().regex(/^[0-9a-f]{64}$/, 'Use the lowercase hex SHA-256 of the file'),
-  })
-  .strict();
-export const ReceiptResponse = z.object({ receipt: ExpenseReceipt }).strict();
-export const RemoveReceiptRequest = z.object({}).strict();
-
 // ---- payments made (direction PAID) ----------------------------------------------------------------
 
 const ExpenseSettlementItem = z.object({ expenseId: Uuid, amount: Money }).strict();
@@ -337,7 +300,7 @@ export const FinanceExpenseErrorCode = z.enum([
   'invalid_category', 'archived_reference', 'duplicate_name', 'invalid_tax_rate', 'tax_rate_required', 'invalid_project', 'invalid_customer',
   'invalid_currency', 'invalid_amount', 'invalid_dates', 'stale', 'invalid_state', 'immutable', 'has_payments', 'expense_not_open',
   'payment_not_open', 'over_payment', 'over_allocation', 'already_allocated', 'already_reversed', 'idempotency_key_required',
-  'invalid_idempotency_key', 'idempotency_conflict', 'invalid_expense', 'currency_mismatch', 'duplicate_receipt', 'receipt_locked',
-  'receipt_not_stored', 'reason_required', 'invalid_cursor',
+  'invalid_idempotency_key', 'idempotency_conflict', 'invalid_expense', 'currency_mismatch', 'reason_required',
+  'invalid_cursor',
 ]);
 export type FinanceExpenseErrorCode = z.infer<typeof FinanceExpenseErrorCode>;

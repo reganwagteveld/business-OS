@@ -19,8 +19,8 @@ export type StateConflictCode =
   // Finance F2: payments, allocations and credit applications.
   | 'payment_not_open' | 'credit_note_not_open' | 'over_allocation' | 'over_settlement' | 'over_application' | 'already_allocated'
   | 'already_applied' | 'already_reversed' | 'has_credit_applications'
-  // Finance F3: expenses, categories, payments made and receipts.
-  | 'duplicate_name' | 'has_payments' | 'expense_not_open' | 'over_payment' | 'duplicate_receipt' | 'receipt_locked' | 'receipt_not_stored';
+  // Finance F3: expenses, categories, and payments made.
+  | 'duplicate_name' | 'has_payments' | 'expense_not_open' | 'over_payment';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

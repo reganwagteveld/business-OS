@@ -30,7 +30,7 @@ import {
 import {
   AllocateExpensePaymentRequest, CreateExpenseCategoryRequest, CreateExpenseRequest, ExpenseCategoryResponse, ExpensePayablesResponse, ExpensePaymentResponse,
   FinanceExpenseResponse, ListExpenseCategoriesQuery, ListExpenseCategoriesResponse, ListExpensePaymentsQuery, ListExpensePaymentsResponse, ListExpensesQuery,
-  ListExpensesResponse, ReceiptResponse, RecordExpensePaymentRequest, RecordExpenseRequest, RegisterReceiptRequest, RemoveReceiptRequest,
+  ListExpensesResponse, RecordExpensePaymentRequest, RecordExpenseRequest,
   ReverseExpenseAllocationRequest, ReverseExpensePaymentRequest, UpdateExpenseCategoryRequest, UpdateExpenseRequest, VoidExpenseRequest,
 } from './finance-expenses.ts';
 import {
@@ -169,7 +169,7 @@ export const endpoints = {
   listCustomerBalances: { method: 'GET', path: '/api/v1/b/:slug/finance/customer-balances', query: ListCustomerBalancesQuery, response: ListCustomerBalancesResponse },
   /** Internal integrity reconciliation (read-only); not bank-statement reconciliation. */
   getReconciliation: { method: 'GET', path: '/api/v1/b/:slug/finance/reconciliation', response: ReconciliationResponse },
-  // Finance F3: expense categories, expenses, payments made against expenses, receipt metadata. No DELETE:
+  // Finance F3: expense categories, expenses, payments made against expenses. No DELETE:
   // categories are archived, drafts discarded, recorded expenses voided, payments reversed.
   listExpenseCategories: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-categories', query: ListExpenseCategoriesQuery, response: ListExpenseCategoriesResponse },
   createExpenseCategory: { method: 'POST', path: '/api/v1/b/:slug/finance/expense-categories', request: CreateExpenseCategoryRequest, response: ExpenseCategoryResponse },
@@ -183,13 +183,6 @@ export const endpoints = {
   recordExpense: { method: 'POST', path: '/api/v1/b/:slug/finance/expenses/:expenseId/record', request: RecordExpenseRequest, response: FinanceExpenseResponse },
   voidExpense: { method: 'POST', path: '/api/v1/b/:slug/finance/expenses/:expenseId/void', request: VoidExpenseRequest, response: FinanceExpenseResponse },
   getExpensePayables: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-payables', response: ExpensePayablesResponse },
-  /** Receipt metadata only (no file storage yet, FD-P6). */
-  registerExpenseReceipt: { method: 'POST', path: '/api/v1/b/:slug/finance/expenses/:expenseId/receipts', request: RegisterReceiptRequest, response: ReceiptResponse },
-  removeExpenseReceipt: {
-    method: 'POST', path: '/api/v1/b/:slug/finance/expenses/:expenseId/receipts/:receiptId/remove', request: RemoveReceiptRequest, response: ReceiptResponse,
-  },
-  /** 409 receipt_not_stored until a storage provider exists; never a public URL. */
-  downloadExpenseReceipt: { method: 'GET', path: '/api/v1/b/:slug/finance/expenses/:expenseId/receipts/:receiptId/download', response: ReceiptResponse },
   listExpensePayments: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-payments', query: ListExpensePaymentsQuery, response: ListExpensePaymentsResponse },
   /** Idempotency-Key required. */
   recordExpensePayment: { method: 'POST', path: '/api/v1/b/:slug/finance/expense-payments', request: RecordExpensePaymentRequest, response: ExpensePaymentResponse },

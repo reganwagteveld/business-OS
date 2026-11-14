@@ -37,10 +37,10 @@ function expense(over: Partial<FinanceExpense> = {}): FinanceExpense {
     referenceNumber: null, notes: null, incurredOn: '2026-11-02', dueDate: null, currencyCode: 'AUD', currencyScale: 2, subtotal: '100.00', taxAmount: '10.00',
     total: '110.00', taxTreatment: 'TAX_INCLUSIVE', taxRateId: randomUUID(), taxName: 'GST', taxRatePercent: '10', paidTotal: '0.00', outstanding: '0.00',
     paymentState: null, overdue: false, recordedAt: null, voidedAt: null, voidReason: null, version: 1, createdById: null, updatedById: null, recordedById: null,
-    voidedById: null, createdAt: NOW, updatedAt: NOW, allocations: [], receipts: [], ...over,
+    voidedById: null, createdAt: NOW, updatedAt: NOW, allocations: [], ...over,
   };
 }
-const listItem = (e: FinanceExpense) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== 'allocations' && k !== 'receipts'));
+const listItem = (e: FinanceExpense) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== 'allocations'));
 
 /** In-memory F3 API: strict bodies through the contracts, versioned edits, and a call log. */
 function fakeApi(data: { categories: ExpenseCategory[]; expenses: FinanceExpense[] }) {
@@ -235,16 +235,13 @@ describe('expense form and lifecycle', () => {
     expect(within(screen.getByRole('dialog')).queryByRole('button', { name: 'Void expense' })).toBeNull();
   });
 
-  it('a recorded expense offers no edit; receipts say storage is not set up', async () => {
-    const { user } = setup({ expenses: [expense({ status: 'RECORDED', paymentState: 'UNPAID', receipts: [
-      { id: randomUUID(), expenseId: randomUUID(), fileName: 'receipt.pdf', contentType: 'application/pdf', sizeBytes: 2048, sha256: '0'.repeat(64), storageStatus: 'PENDING', createdAt: NOW, createdById: null, removedAt: null },
-    ] })] });
+  it('a recorded expense offers no edit and shows no receipt upload or download', async () => {
+    const { user } = setup({ expenses: [expense({ status: 'RECORDED', paymentState: 'UNPAID' })] });
     await user.click(await screen.findByRole('button', { name: 'Air Co' }));
     await heading('Air Co');
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    expect(screen.getByText(/File storage for receipts is not set up yet/)).toBeTruthy();
-    expect(screen.getByText('receipt.pdf')).toBeTruthy();
-    expect(document.querySelectorAll('a[href^="http"], a[href^="blob:"], a[download]')).toHaveLength(0); // no receipt link of any kind
+    expect(screen.queryByText(/receipt/i)).toBeNull();
+    expect(document.querySelectorAll('a[href^="http"], a[href^="blob:"], a[download], input[type="file"]')).toHaveLength(0);
   });
 });
 

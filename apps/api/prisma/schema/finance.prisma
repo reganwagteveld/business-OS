@@ -421,7 +421,7 @@ model FinanceExpense {
   taxRatePercent   Decimal                    @default(0) @map("tax_rate_percent") @db.Decimal(7, 4)
   /// Database-owned (F3): maintained only by the expense-allocation triggers.
   paidTotal        Decimal                    @default(0) @map("paid_total") @db.Decimal(18, 4)
-  /// F1 column, not used by F3: receipts are finance_expense_receipts (no URLs).
+  /// F1 column, not used or exposed by F3 (could hold a public link). Receipts are deferred (FD-P6).
   receiptReference String?                    @map("receipt_reference")
   recordedAt       DateTime?                  @map("recorded_at") @db.Timestamptz
   voidedAt         DateTime?                  @map("voided_at") @db.Timestamptz
@@ -440,7 +440,6 @@ model FinanceExpense {
   customer    Customer?                  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_customer_fkey")
   taxRate     FinanceTaxRate?            @relation(fields: [businessId, taxRateId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_tax_rate_fkey")
   allocations FinanceExpenseAllocation[]
-  receipts    FinanceExpenseReceipt[]
 
   @@unique([businessId, id])
   @@unique([businessId, id, currencyCode], map: "finance_expenses_link_key")
@@ -479,29 +478,3 @@ model FinanceExpenseAllocation {
   @@map("finance_expense_allocations")
 }
 
-/// F3: receipt metadata. Business OS has no file storage yet (FD-P6), so a receipt is registered as
-/// PENDING with its declared name, type, size and SHA-256; the bytes are stored by a later PR. No URL
-/// or local path is ever stored. Removal is a one-way soft removal, only while the expense is a draft.
-model FinanceExpenseReceipt {
-  id            String    @id @db.Uuid
-  businessId    String    @map("business_id") @db.Uuid
-  expenseId     String    @map("expense_id") @db.Uuid
-  fileName      String    @map("file_name")
-  contentType   String    @map("content_type")
-  sizeBytes     Int       @map("size_bytes")
-  sha256        String
-  /// PENDING (metadata only) or STORED (bytes held by the storage provider, under storage_key).
-  storageStatus String    @default("PENDING") @map("storage_status")
-  storageKey    String?   @map("storage_key")
-  createdById   String?   @map("created_by_id") @db.Uuid
-  removedById   String?   @map("removed_by_id") @db.Uuid
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  removedAt     DateTime? @map("removed_at") @db.Timestamptz
-
-  business Business       @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_expense_receipts_business_fkey")
-  expense  FinanceExpense @relation(fields: [businessId, expenseId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expense_receipts_expense_fkey")
-
-  @@unique([businessId, id])
-  @@index([businessId, expenseId])
-  @@map("finance_expense_receipts")
-}

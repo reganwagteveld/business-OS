@@ -1,6 +1,6 @@
 /**
  * Finance Zone F3 (docs/finance-data-model.md §19): expense categories, expenses, tax treatments,
- * payments made against expenses (direction PAID in the F2 payments ledger), receipt metadata and
+ * payments made against expenses (direction PAID in the F2 payments ledger) and
  * payables, through the real route handlers against PostgreSQL with the migrations applied as in
  * production. Database-level checks (guards, counters and races without the services) run through the
  * admin connection and bos_app transactions at the end of the file (X1–X6).
@@ -43,9 +43,6 @@ import * as expensesRoute from '@/app/api/v1/b/[slug]/finance/expenses/route';
 import * as expenseRoute from '@/app/api/v1/b/[slug]/finance/expenses/[expenseId]/route';
 import * as expenseRecord from '@/app/api/v1/b/[slug]/finance/expenses/[expenseId]/record/route';
 import * as expenseVoid from '@/app/api/v1/b/[slug]/finance/expenses/[expenseId]/void/route';
-import * as receiptsRoute from '@/app/api/v1/b/[slug]/finance/expenses/[expenseId]/receipts/route';
-import * as receiptRemove from '@/app/api/v1/b/[slug]/finance/expenses/[expenseId]/receipts/[receiptId]/remove/route';
-import * as receiptDownload from '@/app/api/v1/b/[slug]/finance/expenses/[expenseId]/receipts/[receiptId]/download/route';
 import * as payablesRoute from '@/app/api/v1/b/[slug]/finance/expense-payables/route';
 import * as xPaymentsRoute from '@/app/api/v1/b/[slug]/finance/expense-payments/route';
 import * as xPaymentRoute from '@/app/api/v1/b/[slug]/finance/expense-payments/[paymentId]/route';
@@ -54,6 +51,10 @@ import * as xAllocationReverse from '@/app/api/v1/b/[slug]/finance/expense-payme
 import * as xPaymentReverse from '@/app/api/v1/b/[slug]/finance/expense-payments/[paymentId]/reverse/route';
 import * as paymentsRoute from '@/app/api/v1/b/[slug]/finance/payments/route';
 import * as paymentRoute from '@/app/api/v1/b/[slug]/finance/payments/[paymentId]/route';
+import * as rAllocationsRoute from '@/app/api/v1/b/[slug]/finance/payments/[paymentId]/allocations/route';
+import * as rPaymentReverse from '@/app/api/v1/b/[slug]/finance/payments/[paymentId]/reverse/route';
+import * as invoicesRoute from '@/app/api/v1/b/[slug]/finance/invoices/route';
+import * as invoiceIssue from '@/app/api/v1/b/[slug]/finance/invoices/[documentId]/issue/route';
 import * as balancesRoute from '@/app/api/v1/b/[slug]/finance/customer-balances/route';
 import * as reconciliationRoute from '@/app/api/v1/b/[slug]/finance/reconciliation/route';
 import { devOutbox } from '@/core/email';
@@ -147,9 +148,6 @@ const api = (who: User, slug: string) => {
     patch: (id: string, body: unknown) => call(expenseRoute.PATCH, 'PATCH', `/expenses/${id}`, e(id), body),
     record: (id: string, body: unknown) => call(expenseRecord.POST, 'POST', `/expenses/${id}/record`, e(id), body),
     void: (id: string, body: unknown) => call(expenseVoid.POST, 'POST', `/expenses/${id}/void`, e(id), body),
-    receipt: (id: string, body: unknown) => call(receiptsRoute.POST, 'POST', `/expenses/${id}/receipts`, e(id), body),
-    removeReceipt: (id: string, receiptId: string) => call(receiptRemove.POST, 'POST', `/expenses/${id}/receipts/${receiptId}/remove`, ctx({ slug, expenseId: id, receiptId }), {}),
-    download: (id: string, receiptId: string) => call(receiptDownload.GET, 'GET', `/expenses/${id}/receipts/${receiptId}/download`, ctx({ slug, expenseId: id, receiptId })),
     payables: () => call(payablesRoute.GET, 'GET', '/expense-payables', ctx({ slug })),
     pay: (body: unknown, key: string | null = `xp-${randomUUID()}`) =>
       call(xPaymentsRoute.POST, 'POST', '/expense-payments', ctx({ slug }), body, key === null ? undefined : { 'idempotency-key': key }),
@@ -162,6 +160,11 @@ const api = (who: User, slug: string) => {
     reversePayment: (paymentId: string, body: unknown) => call(xPaymentReverse.POST, 'POST', `/expense-payments/${paymentId}/reverse`, p(paymentId), body),
     receivedPayments: () => call(paymentsRoute.GET, 'GET', '/payments', ctx({ slug })),
     receivedPayment: (paymentId: string) => call(paymentRoute.GET, 'GET', `/payments/${paymentId}`, p(paymentId)),
+    receive: (body: unknown) => call(paymentsRoute.POST, 'POST', '/payments', ctx({ slug }), body, { 'idempotency-key': `rp-${randomUUID()}` }),
+    allocateReceived: (paymentId: string, allocations: unknown) => call(rAllocationsRoute.POST, 'POST', `/payments/${paymentId}/allocations`, p(paymentId), { allocations }),
+    reverseReceived: (paymentId: string, body: unknown) => call(rPaymentReverse.POST, 'POST', `/payments/${paymentId}/reverse`, p(paymentId), body),
+    createInvoice: (body: unknown) => call(invoicesRoute.POST, 'POST', '/invoices', ctx({ slug }), body),
+    issueInvoice: (documentId: string, body: unknown) => call(invoiceIssue.POST, 'POST', `/invoices/${documentId}/issue`, ctx({ slug, documentId }), body),
     balances: () => call(balancesRoute.GET, 'GET', '/customer-balances', ctx({ slug })),
     reconcile: () => call(reconciliationRoute.GET, 'GET', '/reconciliation', ctx({ slug })),
     createTaxRate: (body: unknown) => call(taxRatesRoute.POST, 'POST', '/tax-rates', ctx({ slug }), body),
@@ -182,7 +185,6 @@ let own: ReturnType<typeof api>;
 let gst: string; // A's 10% rate
 let travel: string; // A's seeded "travel" category
 const DAY = '2026-03-02';
-const SHA = (n: number) => n.toString(16).padStart(64, '0');
 
 beforeAll(async () => {
   A = await team('fx-a');
@@ -500,6 +502,77 @@ describe('payments made', () => {
   });
 });
 
+describe('payment direction (F3-D1) and allocation reversal (F3-D3)', () => {
+  it('directions never cross: a payment made is invisible to the received-payment routes and cannot settle an invoice; a payment received cannot pay an expense', async () => {
+    const cust = (await own.createCustomer({ displayName: `Dir ${randomUUID().slice(0, 4)}` })).body.customer.id;
+    const inv = (await own.createInvoice({ customerId: cust, lines: [{ description: 'Work', quantity: '1', unitPrice: '50' }] })).body.document;
+    expect((await own.issueInvoice(inv.id, { version: 1, issueDate: '2026-01-01', dueDate: '2099-01-01' })).status).toBe(200);
+    const received = (await own.receive({ customerId: cust, amount: '50', receivedOn: DAY, method: 'CASH' })).body.payment;
+    const made = (await own.pay({ amount: '50', ...payment })).body.payment;
+    const e = await recorded({ amount: '20', taxTreatment: 'NO_TAX', taxRateId: null });
+    // Received-payment routes answer 404 for a payment made, and vice versa.
+    expect((await own.receivedPayment(made.id)).status).toBe(404);
+    expect((await own.allocateReceived(made.id, [{ invoiceId: inv.id, amount: '1' }])).status).toBe(404);
+    expect((await own.reverseReceived(made.id, { version: 1, reason: 'x' })).status).toBe(404);
+    expect((await own.payment(received.id)).status).toBe(404);
+    expect((await own.allocate(received.id, [{ expenseId: e.id, amount: '1' }])).status).toBe(404);
+    expect((await own.reversePayment(received.id, { version: 1, reason: 'x' })).status).toBe(404);
+    // F2 behaviour is unchanged for the received payment.
+    expect((await own.allocateReceived(received.id, [{ invoiceId: inv.id, amount: '50' }])).body.payment.allocatedTotal).toBe('50.00');
+    expect((await own.receivedPayments()).body.payments.map((x: { id: string }) => x.id)).toContain(received.id);
+    expect((await own.receivedPayments()).body.payments.map((x: { id: string }) => x.id)).not.toContain(made.id);
+    // Existing (and new) received payments are RECEIVED; direction is fixed once written.
+    const dirs = await admin.query(`SELECT id::text, direction::text FROM finance_payments WHERE id = ANY($1::uuid[])`, [[received.id, made.id]]);
+    expect(Object.fromEntries(dirs.rows.map((r) => [r.id, r.direction]))).toEqual({ [received.id]: 'RECEIVED', [made.id]: 'PAID' });
+    const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await c.connect();
+    try {
+      for (const [id, dir] of [[made.id, 'RECEIVED'], [received.id, 'PAID']] as const) {
+        await c.query('BEGIN');
+        await c.query(`SELECT set_config('app.business_id', $1, true)`, [A.businessId]);
+        const out = await c.query(`UPDATE finance_payments SET direction = $2 WHERE id = $1`, [id, dir]).then(() => 'ok', (err: { code?: string }) => err.code);
+        await c.query('ROLLBACK');
+        expect(out, `${id} -> ${dir}`).toBe('FN001');
+      }
+    } finally {
+      await c.end();
+    }
+    expect((await own.reconcile()).body.report.ok).toBe(true);
+  });
+
+  it('no double-spend: one 30.00 payment made allocated concurrently to six 10.00 expenses commits exactly three', { timeout: 60_000 }, async () => {
+    const pay = (await own.pay({ amount: '30', ...payment })).body.payment;
+    const expenses = await Promise.all(Array.from({ length: 6 }, () => recorded({ amount: '10', taxTreatment: 'NO_TAX', taxRateId: null })));
+    const results = await Promise.all(expenses.map((e) => own.allocate(pay.id, [{ expenseId: e.id, amount: '10' }])));
+    expect(results.filter((r) => r.status === 200)).toHaveLength(3);
+    for (const r of results.filter((x) => x.status !== 200)) expect(['over_allocation', 'retryable']).toContain(r.body.error);
+    const after = (await own.payment(pay.id)).body.payment;
+    expect(after).toMatchObject({ allocatedTotal: '30.00', unallocatedAmount: '0.00' });
+    expect(after.allocations).toHaveLength(3);
+  });
+
+  it('reversing an allocation keeps the payment recorded (its money becomes unallocated) and leaves a complete audit trail', async () => {
+    const e = await recorded({ amount: '40', taxTreatment: 'NO_TAX', taxRateId: null });
+    const pay = (await own.pay({ amount: '40', ...payment, allocations: [{ expenseId: e.id, amount: '40' }] })).body.payment;
+    const alloc = pay.allocations[0].id;
+    // Atomic: if the reversal's audit entry cannot be written, nothing changes.
+    auditFailure.action = 'finance.expense_allocation.reversed';
+    expect((await own.unallocate(pay.id, alloc)).status).toBe(500);
+    auditFailure.action = null;
+    expect((await own.get(e.id)).body.expense.paidTotal).toBe('40.00');
+    const after = (await own.unallocate(pay.id, alloc)).body.payment;
+    expect(after).toMatchObject({ status: 'RECORDED', allocatedTotal: '0.00', unallocatedAmount: '40.00', reversedAt: null });
+    expect(after.allocations[0].reversedAt).not.toBeNull();
+    expect((await audits(alloc)).map((a) => a.action)).toEqual(['finance.expense_allocation.created', 'finance.expense_allocation.reversed']);
+    expect((await audits(pay.id)).map((a) => a.action)).toEqual(['finance.payment.recorded']); // the payment itself was not reversed
+    // The freed money can settle another expense; the voided one keeps its history.
+    const v = (await own.get(e.id)).body.expense;
+    expect((await own.void(e.id, { version: v.version, reason: 'Wrong supplier' })).body.expense.allocations).toHaveLength(1);
+    const other = await recorded({ amount: '40', taxTreatment: 'NO_TAX', taxRateId: null });
+    expect((await own.allocate(pay.id, [{ expenseId: other.id, amount: '40' }])).status).toBe(200);
+  });
+});
+
 describe('links, search and pagination', () => {
   it('links projects and customers of this business only; archived links are refused for new use', async () => {
     const proj = (await own.createProject({ name: `Fit-out ${randomUUID().slice(0, 4)}` })).body.project;
@@ -548,34 +621,6 @@ describe('links, search and pagination', () => {
     expect((await c.list('?from=2026-02-02&to=2026-02-04')).body.expenses).toHaveLength(2);
     expect((await c.list('?status=recorded')).body.expenses).toEqual([]);
     expect((await c.list('?limit=500')).body.error).toBe('invalid_query');
-  });
-});
-
-describe('receipts (metadata only)', () => {
-  it('registers safe metadata, refuses paths, unsafe types and oversize files, and never serves a URL', async () => {
-    const d = await draft();
-    const ok = await own.receipt(d.id, { fileName: 'receipt.pdf', contentType: 'application/pdf', sizeBytes: 2048, sha256: SHA(1) });
-    expect(ok.status).toBe(201);
-    expect(ok.body.receipt).toMatchObject({ storageStatus: 'PENDING', fileName: 'receipt.pdf' });
-    expect(JSON.stringify(ok.body)).not.toMatch(/https?:|storageKey/);
-    for (const bad of [
-      { fileName: '../etc/passwd' }, { fileName: 'a\\b.pdf' }, { contentType: 'text/html' }, { contentType: 'image/svg+xml' },
-      { sizeBytes: 10 * 1024 * 1024 + 1 }, { sizeBytes: 0 }, { sha256: 'XYZ' }, { url: 'https://example.com/r.pdf' },
-    ]) {
-      expect((await own.receipt(d.id, { fileName: 'r.pdf', contentType: 'application/pdf', sizeBytes: 1, sha256: SHA(2), ...bad })).body.error, JSON.stringify(bad)).toBe('invalid_input');
-    }
-    expect((await own.receipt(d.id, { fileName: 'copy.pdf', contentType: 'application/pdf', sizeBytes: 2048, sha256: SHA(1) })).body.error).toBe('duplicate_receipt');
-    expect((await own.download(d.id, ok.body.receipt.id)).body.error).toBe('receipt_not_stored');
-    // Another business cannot see, download or attach to it.
-    const b = api(B.people.OWNER!, B.slug);
-    expect((await b.download(d.id, ok.body.receipt.id)).status).toBe(404);
-    expect((await b.receipt(d.id, { fileName: 'x.pdf', contentType: 'application/pdf', sizeBytes: 1, sha256: SHA(3) })).status).toBe(404);
-    // Removal only while a draft; receipts of a recorded expense are kept.
-    const r2 = (await own.receipt(d.id, { fileName: 'photo.jpg', contentType: 'image/jpeg', sizeBytes: 100, sha256: SHA(4) })).body.receipt;
-    expect((await own.removeReceipt(d.id, r2.id)).body.receipt.removedAt).not.toBeNull();
-    await own.record(d.id, { version: d.version });
-    expect((await own.removeReceipt(d.id, ok.body.receipt.id)).body.error).toBe('receipt_locked');
-    expect((await own.get(d.id)).body.expense.receipts).toHaveLength(2);
   });
 });
 
@@ -662,7 +707,6 @@ describe('database guards (X)', () => {
     expect(await code(asA((c) => c.query(`UPDATE finance_expense_allocations SET amount = 1 WHERE id = $1`, [alloc])))).toBe('42501');
     expect(await code(asA((c) => c.query(`DELETE FROM finance_expense_allocations WHERE id = $1`, [alloc])))).toBe('42501');
     expect(await code(asA((c) => c.query(`DELETE FROM finance_expenses WHERE id = $1`, [e.id])))).toBe('42501');
-    expect(await code(asA((c) => c.query(`DELETE FROM finance_expense_receipts`)))).toBe('42501');
     expect(await code(asA((c) => c.query(`UPDATE finance_expenses SET status = 'VOID', void_reason = 'x' WHERE id = $1`, [e.id])))).toBe('FN016');
     await asA((c) => c.query(`UPDATE finance_expense_allocations SET reversed_at = now() WHERE id = $1`, [alloc]));
     expect(await code(asA((c) => c.query(`UPDATE finance_expense_allocations SET reversed_at = NULL WHERE id = $1`, [alloc])))).toBe('FN001');
@@ -679,21 +723,21 @@ describe('database guards (X)', () => {
     expect(await code(asA((c) => c.query(`UPDATE finance_expenses SET voided_by_id = gen_random_uuid() WHERE id = $1`, [e.id])))).toBe('FN010');
   });
 
-  it('X4: RLS: another business sees no expense, allocation or receipt rows and cannot insert into this one', async () => {
-    const d = await draft();
-    await own.receipt(d.id, { fileName: 'r.png', contentType: 'image/png', sizeBytes: 9, sha256: SHA(77) });
+  it('X4: RLS: another business sees no expense or allocation rows and cannot insert into this one', async () => {
+    const e = await recorded({ amount: '10', taxTreatment: 'NO_TAX', taxRateId: null });
+    const pay = (await own.pay({ amount: '10', ...payment, allocations: [{ expenseId: e.id, amount: '5' }] })).body.payment;
     const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await c.connect();
     try {
       await c.query('BEGIN');
       await c.query(`SELECT set_config('app.business_id', $1, true)`, [B.businessId]);
-      for (const t of ['finance_expenses', 'finance_expense_receipts', 'finance_expense_allocations']) {
+      for (const t of ['finance_expenses', 'finance_expense_allocations', 'finance_payments']) {
         const { rows } = await c.query(`SELECT count(*)::int AS n FROM ${t} WHERE business_id = $1`, [A.businessId]);
         expect(rows[0].n, t).toBe(0);
       }
-      // Refused either by the guard (the other business's expense is invisible to it: FN019) or by RLS (42501).
-      expect(['FN019', '42501']).toContain(await code(c.query(`INSERT INTO finance_expense_receipts (id, business_id, expense_id, file_name, content_type, size_bytes, sha256)
-        VALUES (gen_random_uuid(), $1, $2, 'x.pdf', 'application/pdf', 1, $3)`, [A.businessId, d.id, SHA(78)])));
+      await c.query('SAVEPOINT s');
+      expect(await code(c.query(`INSERT INTO finance_expense_allocations (id, business_id, payment_id, expense_id, currency_code, amount)
+        VALUES (gen_random_uuid(), $1, $2, $3, 'AUD', 1)`, [A.businessId, pay.id, e.id]))).toBe('42501');
     } finally {
       await c.query('ROLLBACK').catch(() => undefined);
       await c.end();

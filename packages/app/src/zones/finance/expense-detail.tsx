@@ -17,8 +17,8 @@ type Action = null | 'record' | 'void';
 const WRAP = '[overflow-wrap:anywhere]';
 
 /**
- * One expense: its amounts and tax split as the server computed them, its payments (live and reversed,
- * never hidden) and its receipt metadata. Drafts can be edited, recorded or discarded; a recorded
+ * One expense: its amounts and tax split as the server computed them, and its payments (live and reversed,
+ * never hidden). Receipt attachments are deferred (FD-P6). Drafts can be edited, recorded or discarded; a recorded
  * expense can only be voided, and only once its payments are reversed.
  */
 export function ExpenseDetail({ client, slug, id, locale, timeZone, today, categoryName, canWrite, canPay, onBack, onEdit, onChanged, onSessionEnded }: {
@@ -108,26 +108,6 @@ export function ExpenseDetail({ client, slug, id, locale, timeZone, today, categ
               ))}
             </ul>
           )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Receipts</CardTitle></CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            File storage for receipts is not set up yet, so receipts can't be uploaded or opened here.
-            {e.receipts.length > 0 ? ' Registered receipt details are listed below.' : ''}
-          </p>
-          {e.receipts.length > 0 ? (
-            <ul className="mt-3 divide-y text-sm">
-              {e.receipts.map((r) => (
-                <li key={r.id} className={`flex flex-wrap justify-between gap-2 py-2 ${WRAP}`}>
-                  <span>{r.fileName}{r.removedAt ? ' (removed)' : ''}</span>
-                  <span className="text-muted-foreground">{r.contentType} · {Math.max(1, Math.round(r.sizeBytes / 1024))} KB</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </CardContent>
       </Card>
 

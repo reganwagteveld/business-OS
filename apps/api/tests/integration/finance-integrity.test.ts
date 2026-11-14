@@ -235,7 +235,7 @@ const FINANCE_TABLES = [
   'finance_settings', 'finance_number_series', 'finance_tax_rates', 'finance_documents', 'finance_document_lines', 'finance_payments',
   'finance_payment_allocations', 'finance_expense_categories', 'finance_expenses', 'finance_credit_applications',
   // F3
-  'finance_expense_allocations', 'finance_expense_receipts',
+  'finance_expense_allocations',
 ];
 
 describe('T: tenant isolation and composite FKs', () => {
@@ -619,7 +619,6 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       'finance_expense_allocations.finance_apply_expense_allocation_reversal→finance_apply_expense_allocation',
       'finance_expense_allocations.finance_stamp_allocation→finance_stamp_allocation',
       'finance_expense_categories.finance_stamp_times→finance_stamp_times',
-      'finance_expense_receipts.finance_guard_expense_receipt→finance_guard_expense_receipt',
       'finance_expenses.finance_guard_expense→finance_guard_expense',
       'finance_number_series.finance_guard_number_series→finance_guard_number_series',
       'finance_payment_allocations.finance_apply_allocation_insert→finance_apply_allocation',
@@ -637,7 +636,7 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname LIKE 'finance%' ORDER BY 1`);
     expect(rows.map((r) => r.name)).toEqual([
       'finance_apply_allocation', 'finance_apply_credit_application', 'finance_apply_expense_allocation', 'finance_content_hash', 'finance_document_content',
-      'finance_guard_document', 'finance_guard_expense', 'finance_guard_expense_receipt', 'finance_guard_line', 'finance_guard_number_series', 'finance_guard_payment', 'finance_stamp_allocation', 'finance_stamp_times',
+      'finance_guard_document', 'finance_guard_expense', 'finance_guard_line', 'finance_guard_number_series', 'finance_guard_payment', 'finance_stamp_allocation', 'finance_stamp_times',
     ]);
     for (const r of rows) {
       expect(r.definer, r.name).toBe(false);

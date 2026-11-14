@@ -1,14 +1,14 @@
 import 'server-only';
-// Expense categories, expenses and receipt metadata (docs/finance-data-model.md §2.8, §4.3, §19; ADR 0007).
+// Expense categories and expenses (docs/finance-data-model.md §2.8, §4.3, §19; ADR 0007).
 // Runs inside one tenant unit of work per request: the change and its audit entry, nothing else.
 //
 // Every write to an expense first locks it (FOR NO KEY UPDATE) and is then conditional on the state
 // and version it read. The database holds every rule again (migration 20261117000000_finance_expenses):
 // amounts and the tax split, the tax and category snapshots, immutability once recorded, the payment
-// counter, voiding only while unpaid, tenant-consistent links and receipt rules.
+// counter, voiding only while unpaid and tenant-consistent links. Receipts are deferred (FD-P6).
 import { randomUUID } from 'node:crypto';
 import type {
-  ExpenseAllocation as AllocationDto, ExpenseCategory as CategoryDto, ExpenseReceipt as ReceiptDto, FinanceExpense as ExpenseDto,
+  ExpenseAllocation as AllocationDto, ExpenseCategory as CategoryDto, FinanceExpense as ExpenseDto,
   FinanceExpenseListItem as ListItemDto,
 } from '@business-os/contracts';
 import { recordAudit } from '@/core/audit';
@@ -209,31 +209,13 @@ export async function expenseAllocationsOf(db: AppTenantDb, where: { paymentId?:
   return (await db.financeExpenseAllocation.findMany({ where, select: allocationSelect, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })) as AllocationRow[];
 }
 
-type ReceiptRow = {
-  id: string; expenseId: string; fileName: string; contentType: string; sizeBytes: number; sha256: string; storageStatus: string;
-  createdAt: Date; createdById: string | null; removedAt: Date | null;
-};
-const receiptSelect = {
-  id: true, expenseId: true, fileName: true, contentType: true, sizeBytes: true, sha256: true, storageStatus: true, createdAt: true, createdById: true,
-  removedAt: true,
-} as const;
-const receiptDto = (r: ReceiptRow): ReceiptDto => ({
-  id: r.id, expenseId: r.expenseId, fileName: r.fileName, contentType: r.contentType, sizeBytes: r.sizeBytes, sha256: r.sha256,
-  storageStatus: r.storageStatus === 'STORED' ? 'STORED' : 'PENDING', createdAt: r.createdAt.toISOString(), createdById: r.createdById,
-  removedAt: iso(r.removedAt),
-});
-
 async function today(db: AppTenantDb) {
   return todayIn((await businessProfile(db)).timeZone);
 }
 
 async function dto(db: AppTenantDb, row: ExpenseRow): Promise<ExpenseDto> {
-  const [allocations, receipts, day] = await Promise.all([
-    expenseAllocationsOf(db, { expenseId: row.id }),
-    db.financeExpenseReceipt.findMany({ where: { expenseId: row.id }, select: receiptSelect, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }),
-    today(db),
-  ]);
-  return { ...headerDto(row, day), allocations: allocations.map(expenseAllocationDto), receipts: (receipts as ReceiptRow[]).map(receiptDto) };
+  const [allocations, day] = await Promise.all([expenseAllocationsOf(db, { expenseId: row.id }), today(db)]);
+  return { ...headerDto(row, day), allocations: allocations.map(expenseAllocationDto) };
 }
 
 /** An expense of this business; another business's id answers exactly like a missing one (404). */
@@ -537,62 +519,4 @@ export async function expensePayables(db: AppTenantDb) {
       overdue: formatAmount(new Decimal(r.overdue), r.currency_scale), openCount: Number(r.open_count), overdueCount: Number(r.overdue_count),
     })),
   };
-}
-
-// ---- receipts (metadata only; FD-P6) ----------------------------------------------------------------
-
-export type ReceiptInput = { fileName: string; contentType: string; sizeBytes: number; sha256: string };
-
-/**
- * Registers a receipt's metadata on a draft or recorded expense (not a void one). No bytes, URL or
- * path are accepted: storage is a later, separately approved PR. The same file (SHA-256) is registered
- * once per expense (409 duplicate_receipt).
- */
-export async function registerReceipt(db: AppTenantDb, actorUserId: string, expenseId: string, input: ReceiptInput) {
-  await lockExpenses(db, [expenseId]);
-  const expense = await load(db, expenseId);
-  if (expense.status === 'VOID') throw new StateConflictError('invalid_state');
-  const id = randomUUID();
-  try {
-    await db.financeExpenseReceipt.create({
-      data: { id, expenseId, fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes, sha256: input.sha256, createdById: actorUserId } as never,
-    });
-  } catch (error) {
-    if (isUniqueViolation(error, 'finance_expense_receipts_active_hash_key')) throw new StateConflictError('duplicate_receipt');
-    throw error;
-  }
-  await recordAudit(db, actorUserId, 'finance.expense_receipt.registered', { type: 'finance_expense_receipt', id }, {
-    expenseId, contentType: input.contentType, sizeBytes: String(input.sizeBytes),
-  });
-  return receiptDto((await db.financeExpenseReceipt.findFirstOrThrow({ where: { id }, select: receiptSelect })) as ReceiptRow);
-}
-
-async function loadReceipt(db: AppTenantDb, expenseId: string, receiptId: string): Promise<ReceiptRow> {
-  const row = (await db.financeExpenseReceipt.findFirst({ where: { id: receiptId, expenseId }, select: receiptSelect })) as ReceiptRow | null;
-  if (!row) throw new RecordNotFoundError();
-  return row;
-}
-
-/** Removes (one way, kept as history) a receipt of a draft. Receipts of recorded expenses are kept (409 receipt_locked). */
-export async function removeReceipt(db: AppTenantDb, actorUserId: string, expenseId: string, receiptId: string) {
-  await lockExpenses(db, [expenseId]);
-  const expense = await load(db, expenseId);
-  const receipt = await loadReceipt(db, expenseId, receiptId);
-  if (receipt.removedAt) throw new StateConflictError('already_reversed');
-  if (expense.status !== 'DRAFT') throw new StateConflictError('receipt_locked');
-  await db.financeExpenseReceipt.updateMany({ where: { id: receiptId, removedAt: null }, data: { removedAt: new Date(), removedById: actorUserId } });
-  await recordAudit(db, actorUserId, 'finance.expense_receipt.removed', { type: 'finance_expense_receipt', id: receiptId }, { expenseId });
-  return receiptDto(await loadReceipt(db, expenseId, receiptId));
-}
-
-/**
- * The download is authorised per tenant (the expense and receipt must be this business's), and would
- * stream the stored bytes. No storage provider exists yet, so every receipt is PENDING and this answers
- * 409 receipt_not_stored. It never returns a public URL.
- */
-export async function receiptForDownload(db: AppTenantDb, expenseId: string, receiptId: string) {
-  await load(db, expenseId);
-  const receipt = await loadReceipt(db, expenseId, receiptId);
-  if (receipt.removedAt || receipt.storageStatus !== 'STORED') throw new StateConflictError('receipt_not_stored');
-  return receiptDto(receipt);
 }
