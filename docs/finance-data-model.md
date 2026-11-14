@@ -1,8 +1,10 @@
-# Finance Zone data model (F0, proposed)
+# Finance Zone data model (F1, implemented)
 
-> Status: **Proposed for architectural review** (F0, Phase 6). Nothing here is built. There is no migration, no endpoint and no UI. F1 (the first operational PR) starts only after ChatGPT's audit and Regan's approval of this document and [ADR 0007](./adr/0007-finance-integrity-and-concurrency.md), and after the owner decisions in §14 that F1 depends on are settled.
+> Status: **F1 implemented** (Phase 6): migration `20261115000000_finance`, the finance module, and the API for quotes, invoices, credit notes and finance settings. The owner approved FD-L1, FD-L2, FD-L3, FD-T1, FD-T2 and FD-P1 (§14); every other FD-* decision is still open. §17 lists what F1 built and where it differs from the F0 design below. Payments, allocations and expenses have tables and database guards but no services until F2 and F3.
 > It follows [data-model.md](./data-model.md), [sales-data-model.md](./sales-data-model.md), [projects-data-model.md](./projects-data-model.md) and [scheduling-data-model.md](./scheduling-data-model.md): same tenancy, forced RLS, composite FKs, `<zone>:<action>` permission keys, audit and migration conventions.
-> Evidence: `apps/api/tests/isolation/finance-spike.test.ts` (30 tests) with its fixture `tests/isolation/fixtures/finance-spike-schema.sql`. The fixture is the shape F1 must migrate. §12 says exactly what the spike proves and what it does not.
+> Evidence: `apps/api/tests/integration/finance-integrity.test.ts` (the F0 spike suite moved onto the migrated tables, plus new tests) and `apps/api/tests/integration/finance.test.ts` (services and API). The F0 spike (`tests/isolation/finance-spike.test.ts` and its fixture) is kept as the design-time evidence.
+>
+> **Not a compliance product.** This is a financial record engine. It is not a certified accounting, tax-filing or jurisdiction-compliant invoicing product, and nothing in it makes a document satisfy Australian GST, EU VAT or any other invoicing regulation. The seven-year retention baseline is a product policy, not a statement of any jurisdiction's legal requirement.
 
 ## 1. Principles
 
@@ -543,9 +545,9 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 
 | # | Decision | Recommendation |
 |---|---|---|
-| FD-L1 ★ | Numbering: one gapless series per business and kind (as designed)? Per-year or per-branch series? Custom starting number when migrating from another system? | One series per kind; `starting_value` settable only while unused (as designed, I19) with `finance:manage`, audited; prefix editable; per-year series later |
-| FD-L2 ★ | May an issued invoice be voided, or must every correction be a credit note? | Allow void only while unpaid and not credited (as designed); a per-business setting to require credit notes |
-| FD-L3 ★ | Retention: how long must finance records (and their audit events) be kept after issue and after a business closes? What does business deletion do? | Keep for a configurable period (default 7 years, owner to confirm); business purge skips finance until then |
+| FD-L1 ★ **approved** | Numbering: one gapless series per business and kind (as designed)? Per-year or per-branch series? Custom starting number when migrating from another system? | One series per kind; `starting_value` settable only while unused (as designed, I19) with `finance:manage`, audited; prefix editable; per-year series later |
+| FD-L2 ★ **approved** | May an issued invoice be voided, or must every correction be a credit note? | Allow void only while unpaid and not credited (as designed); a per-business setting to require credit notes |
+| FD-L3 ★ **approved (7 years, provisional)** | Retention: how long must finance records (and their audit events) be kept after issue and after a business closes? What does business deletion do? | Keep for a configurable period (default 7 years, owner to confirm); business purge skips finance until then |
 | FD-L4 | Customer erasure vs retention of issued documents | Erasure leaves issued documents within retention; scrubs drafts and quotes |
 | FD-L5 | Is a content hash enough, or do some jurisdictions need signed, chained or government-reported invoices (e-invoicing)? | Hash only in F1; e-invoicing as per-country modules |
 | FD-L6 | Mandatory document content (seller tax id, buyer tax id, legal wording) per jurisdiction | Make the seller and bill-to snapshot fields configurable; no country rules in core |
@@ -554,8 +556,8 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 
 | # | Decision | Recommendation |
 |---|---|---|
-| FD-T1 ★ | Tax-exclusive prices only in F1, or tax-inclusive too? | Exclusive only in F1 |
-| FD-T2 ★ | Rounding: line level, half away from zero (as designed)? | Yes for F1 |
+| FD-T1 ★ **approved** | Tax-exclusive prices only in F1, or tax-inclusive too? | Exclusive only in F1 |
+| FD-T2 ★ **approved** | Rounding: line level, half away from zero (as designed)? | Yes for F1 |
 | FD-T3 | One tax per line, or several (compound, multiple authorities)? | One in F1 |
 | FD-T4 | Reverse charge, exemptions, withholding | Later, per jurisdiction |
 | FD-T5 | Expenses: report net of tax (recoverable) or gross? | Show both; net as the default where the business is tax-registered |
@@ -564,7 +566,7 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 
 | # | Decision | Recommendation |
 |---|---|---|
-| FD-P1 ★ | Default role grants (§7.1). Should MANAGER issue invoices or record payments? Should MEMBER enter expenses? | As in §7.1: MANAGER drafts and expenses, OWNER/ADMIN issue and payments, MEMBER none |
+| FD-P1 ★ **approved** | Default role grants (§7.1). Should MANAGER issue invoices or record payments? Should MEMBER enter expenses? | As in §7.1: MANAGER drafts and expenses, OWNER/ADMIN issue and payments, MEMBER none |
 | FD-P2 | Enforce "preparer ≠ issuer" (four-eyes) per business? | Not in F1; possible as a setting |
 | FD-P3 | Quote conversion: only from ACCEPTED? Allow invoicing beyond the quote total? | Any issued or accepted quote; no limit, but show the invoiced-vs-quoted amount |
 | FD-P4 | Automatic quote or invoice from a won opportunity | Not automatic; a "create quote" action from the opportunity later |
@@ -594,3 +596,50 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 - Checked against `main` at `849a5dd` (Scheduling S0 merged) and PR #19 (open at `2fa7c35`, Projects Board). PR #19 changes no tables. Finance takes no locks on projects (the FK check's `FOR KEY SHARE` only), so it cannot conflict with PR #19's project-wide task ordering (`FOR SHARE` on the project, then an advisory lock).
 - PR #22 (CI optimisation) changes how CI is split; the isolation suite still runs all `tests/isolation/**/*.test.ts`.
 - **Repeat this check on the merged `main` immediately before F1.**
+
+## 17. F1 implementation
+
+### 17.1 What F1 built
+
+- **Migration** `20261115000000_finance` (additive; no existing table, column or row changes; no privileged SQL): the eight F0 tables with authorship, timestamps and list indexes, plus `finance_settings`; 6 enum types (F0's five and `FinanceTaxMode`); 10 functions (8 trigger functions, 2 content-hash helpers), all `SECURITY INVOKER` with a fixed `search_path`; forced RLS and the `tenant_isolation` policy on every table; column grants; partial unique indexes for idempotency keys and live allocations.
+- **Permissions** (`finance:*`, FD-P1 matrix exactly as §7.1), checked by key in every route.
+- **Services and API** under `/api/v1/b/:slug/finance` (contracts in `packages/contracts/src/finance.ts`, snapshot in `schema/api-v1.json`):
+
+| Endpoint | Permission |
+|---|---|
+| `GET/POST /quotes`, `GET/PATCH /quotes/:id` | `finance:read` / `finance:write` |
+| `POST /quotes/:id/issue`, `/accept`, `/decline`, `/expire`, `/void` | `finance:issue` |
+| `POST /quotes/:id/discard`, `/convert` | `finance:write` |
+| `GET/POST /invoices`, `GET/PATCH /invoices/:id`, `POST /invoices/:id/discard`, `POST /invoices/:id/credit-notes` | `finance:read` / `finance:write` |
+| `POST /invoices/:id/issue`, `/void` | `finance:issue` |
+| `GET /credit-notes`, `GET/PATCH /credit-notes/:id`, `POST /credit-notes/:id/discard` | `finance:read` / `finance:write` |
+| `POST /credit-notes/:id/issue`, `/void` | `finance:issue` |
+| `GET/PATCH /settings`, `GET /number-series`, `PATCH /number-series/:kind`, `GET/POST /tax-rates`, `PATCH /tax-rates/:id` | `finance:read` / `finance:manage` |
+
+### 17.2 Owner decisions as implemented
+
+| Decision | Implementation |
+|---|---|
+| FD-L1 numbering | One series per business and kind (defaults `Q-`, `INV-`, `CN-`, 4 digits), created on first use or first save. Prefix and padding editable; `starting_value` settable only while unused, then fixed in both directions (guard, FN008); `next_value` moves only in the issue trigger, by one, in the issuing transaction; voided documents keep their numbers. Changes audited with old and new values (`finance.settings.changed`). |
+| FD-L2 voiding | `POST …/void` (reason required, 1–500) on issued documents (and accepted quotes). Invoices only while `allocated_total = 0` (FN007, CHECK) and no non-void credit note points at them (FN006; a draft credit note counts as live). Number, lines, snapshots, amounts and hash are kept; `voided_at`/`status_changed_at` stamped by the database; VOID is final. No per-business "credit notes only" setting yet; the place for it is `finance_settings` and the void service. Drafts are discarded (`…/discard`, `finance:write`), never numbered. |
+| FD-L3 retention | Every finance table references `businesses` `ON DELETE RESTRICT`, so deleting or purging a business with any finance row fails whole; the error names the finance constraint (the blocker), and `GET /settings` reports `hasRetainedRecords`. `finance_settings.retention_years` (≥ 7, CHECK) and `legal_hold` record the policy; nothing deletes finance records or their audit events automatically, and retention expiry is not a deletion trigger. Customer hard deletion is refused while a finance record references the customer (FD-L4 stays open). Non-finance deletion behaviour is unchanged. |
+| FD-T1 tax-exclusive | `tax_mode` on documents, only `EXCLUSIVE` exists; any other mode is refused by the service (400 `unsupported_tax_mode`) and by the issue guard (FN011). One tax per line, only through a tax rate; the line guard copies the rate's name and percentage onto the line. |
+| FD-T2 rounding | Exact decimals end to end (`Prisma.Decimal`, numeric columns, decimal strings in the API; JSON numbers rejected). Line-level formulas of §3.3, half away from zero at the document's snapshotted `currency_scale`; the issue guard recomputes lines and totals and refuses any difference (FN003). |
+| FD-P1 roles | §7.1 matrix; unit and route-level tests; no inheritance from other Zones. |
+
+### 17.3 Differences from the F0 design, for the audit
+
+1. **SQLSTATEs.** Guards raise class `FN` codes (FN001–FN013, listed at the top of the migration's hand-written part), not `F0xxx` as §5 suggested: class `F0` is PostgreSQL's configuration-file class. The route wrapper maps each to one stable error; no database detail is forwarded. Deadlock, serialization failure and lock timeout map to `503 retryable`.
+2. **`finance_settings`** (new table): seller legal name, address, email, phone, configurable identifiers (`[{label, value}]`, no country rules), payment instructions, optional default payment terms and quote validity, optional default tax rate, retention years and legal hold. The seller snapshot comes from here (falling back to the business's legal or trading name).
+3. **Credit-note cap** (addition): the issue guard refuses a credit note that would take the issued credit notes of its invoice above the invoice total (FN012). To make that exact under concurrency, it locks the credited invoice `FOR NO KEY UPDATE` (F0: `FOR SHARE`). Lock order is unchanged (the credit note, then the invoice it references, then the series).
+4. **Tax snapshot owned by the database**: the line guard copies `tax_name` and `tax_rate_percent` from the referenced rate on every line write; a line without a rate has no tax (CHECK).
+5. **Date CHECKs by kind**: due dates only on invoices and required once an invoice is issued; `valid_until` only on quotes and not before the issue date.
+6. **Database-owned `created_at`/`updated_at`** on documents (and the other finance tables): stamped by the guards. `created_at` is truncated to milliseconds so the `(created_at, id)` list cursor round-trips through JavaScript exactly.
+7. **Identity fixed**: `id`, `business_id`, `kind`, `created_at`, `created_by_id` and the idempotency columns never change, even on a draft.
+8. **Idempotent creates** (addition): `POST /quotes`, `/invoices`, `/quotes/:id/convert` and `/invoices/:id/credit-notes` accept an optional `Idempotency-Key`; a repeat with the same request returns the first draft (200), a different request is `409 idempotency_conflict`; racing duplicates are serialised by a transaction-scoped advisory lock and backed by a partial unique index.
+9. **Quote conversion** (FD-P3 open): provisional rule, issued or accepted quotes only, no limit on how much of a quote is invoiced, the quote never changes. Contact and opportunity consistency with the customer are service rules, as in Sales.
+10. **Issue preconditions in the service**: optimistic `version` on issue and on every transition; an invoice needs a due date from the request, the draft or the default payment terms (`400 due_date_required`, nothing is assumed).
+
+### 17.4 Not in F1
+
+Payments, allocations, reversals and credit applications (F2), expenses (F3), UI (F4), reports (F5), PDF and email, and any jurisdiction's mandatory document fields or tax rules (FD-L6, FD-T3, FD-T4). Where a supported jurisdiction has mandatory invoice content (for example a tax invoice's wording, the buyer's tax id above a threshold, or registration numbers), F1 does not check it: the identifiers are configurable and snapshotted, but their presence is not enforced.

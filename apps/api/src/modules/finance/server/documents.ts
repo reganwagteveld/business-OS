@@ -14,7 +14,7 @@ import { Decimal, type AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
 import { checkCurrency, currencyScale, documentTotals, formatAmount, formatPlain, lineAmounts, toAmount, type LineAmounts } from './money';
-import { activeTaxRate, ensureSeries, loadSettings, sellerSnapshot } from './settings';
+import { ensureSeries, loadSettings, sellerSnapshot } from './settings';
 import {
   addDays, BUMP, businessProfile, changedFields, dateOf, dayOf, lockDocuments, lockIdempotencyKey, requestHash, todayIn,
   type Kind, type Status,
