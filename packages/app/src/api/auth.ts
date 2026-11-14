@@ -31,8 +31,13 @@ const GENERIC: Record<number, string> = {
 
 const INVITE_INVALID = 'This invitation is not valid for your account. It may have expired, been used already, or been sent to a different email address.';
 
+/** The session, with "cannot reach the server" kept separate from "not signed in". */
+export type SessionCheck = { kind: 'signed-in'; user: CurrentUser } | { kind: 'signed-out' } | { kind: 'unreachable' } | { kind: 'failed' };
+
 export interface AuthClient {
   me(): Promise<CurrentUser | null>;
+  /** Like me(), but distinguishes offline and server errors from being signed out. */
+  session(signal?: AbortSignal): Promise<SessionCheck>;
   signUp(input: { email: string; password: string; name: string }): Promise<AuthResult>;
   signIn(input: { email: string; password: string }): Promise<AuthResult>;
   signOut(): Promise<void>;
@@ -86,6 +91,23 @@ export function createAuthClient(baseUrl: string, transport: AuthTransport, fetc
       } catch {
         return null;
       }
+    },
+    async session(signal) {
+      let res: Response;
+      try {
+        res = await fetchImpl(`${baseUrl}${endpoints.me.path}`, {
+          headers: await headers(false),
+          credentials: transport.kind === 'cookie' ? 'include' : 'omit',
+          cache: 'no-store',
+          signal,
+        });
+      } catch {
+        return { kind: 'unreachable' };
+      }
+      if (res.status === 401) return { kind: 'signed-out' };
+      if (!res.ok) return { kind: 'failed' };
+      const parsed = MeResponse.safeParse(await res.json().catch(() => undefined));
+      return parsed.success ? { kind: 'signed-in', user: parsed.data.user } : { kind: 'failed' };
     },
     async signUp(input) {
       const parsed = SignUpRequest.safeParse(input);
