@@ -1,20 +1,36 @@
 // Opaque keyset-pagination cursors (data-model §6: lists use keyset pagination, not OFFSET).
 // The cursor only says where the previous page ended; it carries no authority, and the query it
 // feeds still runs inside the tenant unit of work.
+import { RuleViolationError } from '@/core/http/errors';
 
-export function encodeCursor(value: Record<string, string>): string {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+/** A cursor that was not issued by this list (tampered, truncated, or from another list): 400 invalid_cursor. */
+export function invalidCursor(): never {
+  throw new RuleViolationError('invalid_cursor', 'This page position is not valid. Start again from the first page.');
 }
 
-/** Returns null for anything malformed, so a tampered cursor just restarts from the first page. */
-export function decodeCursor<K extends string>(cursor: string | undefined, keys: readonly K[]): Record<K, string> | null {
-  if (!cursor) return null;
+/** `list` names the list the cursor belongs to, so a cursor from one list is refused by another. */
+export function encodeCursor(list: string, value: Record<string, string>): string {
+  return Buffer.from(JSON.stringify({ k: list, ...value }), 'utf8').toString('base64url');
+}
+
+/**
+ * Null when there is no cursor (first page). Anything malformed is rejected with invalid_cursor rather
+ * than silently restarting from the first page, which a client would show as duplicated rows.
+ */
+export function decodeCursor<K extends string>(cursor: string | undefined, list: string, keys: readonly K[]): Record<K, string> | null {
+  if (cursor === undefined) return null;
+  let value: unknown;
   try {
-    const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Record<string, unknown>;
-    if (!value || typeof value !== 'object') return null;
-    for (const key of keys) if (typeof value[key] !== 'string' || (value[key] as string).length > 300) return null;
-    return Object.fromEntries(keys.map((k) => [k, value[k] as string])) as Record<K, string>;
+    value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
   } catch {
-    return null;
+    return invalidCursor();
   }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalidCursor();
+  const record = value as Record<string, unknown>;
+  if (record.k !== list || Object.keys(record).length !== keys.length + 1) return invalidCursor();
+  for (const key of keys) {
+    const v = record[key];
+    if (typeof v !== 'string' || v.length === 0 || v.length > 300) return invalidCursor();
+  }
+  return Object.fromEntries(keys.map((k) => [k, record[k] as string])) as Record<K, string>;
 }

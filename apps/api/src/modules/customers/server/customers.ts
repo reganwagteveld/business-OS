@@ -36,12 +36,12 @@ async function checkOwner(db: AppTenantDb, ownerUserId: string | null | undefine
 
 export async function listCustomers(db: AppTenantDb, query: { q?: string; status: Status; cursor?: string; limit: number }) {
   const rows = (await db.customer.findMany({
-    where: { AND: [statusFilter(query.status), searchFilter(query.q, ['displayName', 'legalName', 'email', 'phone']), afterName(query.cursor)] },
+    where: { AND: [statusFilter(query.status), searchFilter(query.q, ['displayName', 'legalName', 'email', 'phone']), afterName('customers', query.cursor)] },
     select,
     orderBy: [{ displayName: 'asc' }, { id: 'asc' }],
     take: query.limit + 1,
   })) as Row[];
-  const { items, nextCursor } = page(rows, query.limit);
+  const { items, nextCursor } = page('customers', rows, query.limit);
   return { customers: items.map(toDto), nextCursor };
 }
 

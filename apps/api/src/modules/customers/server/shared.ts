@@ -1,5 +1,7 @@
 import 'server-only';
-import { decodeCursor, encodeCursor } from '@/core/db/cursor';
+import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type Status = 'active' | 'archived' | 'all';
 
@@ -15,16 +17,17 @@ export function searchFilter(q: string | undefined, fields: string[]): Record<st
 }
 
 /** Keyset position after (displayName, id) for name-ordered lists. */
-export function afterName(cursor: string | undefined): Record<string, unknown> {
-  const after = decodeCursor(cursor, ['n', 'i'] as const);
+export function afterName(list: 'customers' | 'contacts', cursor: string | undefined): Record<string, unknown> {
+  const after = decodeCursor(cursor, list, ['n', 'i'] as const);
   if (!after) return {};
+  if (!UUID.test(after.i)) invalidCursor();
   return { OR: [{ displayName: { gt: after.n } }, { displayName: after.n, id: { gt: after.i } }] };
 }
 
-export function page<T extends { displayName: string; id: string }>(rows: T[], limit: number) {
+export function page<T extends { displayName: string; id: string }>(list: 'customers' | 'contacts', rows: T[], limit: number) {
   const items = rows.slice(0, limit);
   const last = items[items.length - 1];
-  return { items, nextCursor: rows.length > limit && last ? encodeCursor({ n: last.displayName, i: last.id }) : null };
+  return { items, nextCursor: rows.length > limit && last ? encodeCursor(list, { n: last.displayName, i: last.id }) : null };
 }
 
 /** Field names that changed, for activity/audit metadata (values are not logged: they may be personal data). */

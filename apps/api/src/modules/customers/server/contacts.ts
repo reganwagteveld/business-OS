@@ -36,15 +36,28 @@ async function checkCustomer(db: AppTenantDb, customerId: string | null | undefi
   if (customer.archivedAt) throw new StateConflictError('archived_reference');
 }
 
-/** "Ada Lovelace", else the email, else nothing (which the caller rejects). */
-function nameFor(input: Input, fallback?: Row): string | null {
+type NameParts = { firstName?: string | null; lastName?: string | null; email?: string | null };
+
+/** The name a contact gets when nobody chose one: "Ada Lovelace", else the email, else nothing. */
+function derivedName(p: NameParts): string | null {
+  const joined = [p.firstName, p.lastName].filter(Boolean).join(' ').trim();
+  return joined || p.email || null;
+}
+
+/**
+ * The display name after a create or update. A name the person typed is kept until they change or
+ * clear it; a derived name (from first/last name or the email fallback) follows the fields it came
+ * from, so changing the email of an email-named contact renames it instead of leaving a stale name.
+ */
+function nameFor(input: Input, before?: Row): string | null {
   if (input.displayName) return input.displayName;
-  const first = input.firstName !== undefined ? input.firstName : fallback?.firstName;
-  const last = input.lastName !== undefined ? input.lastName : fallback?.lastName;
-  const joined = [first, last].filter(Boolean).join(' ').trim();
-  if (joined) return joined;
-  if (fallback && input.displayName === undefined) return fallback.displayName;
-  return (input.email !== undefined ? input.email : fallback?.email) ?? null;
+  const after: NameParts = {
+    firstName: input.firstName !== undefined ? input.firstName : before?.firstName,
+    lastName: input.lastName !== undefined ? input.lastName : before?.lastName,
+    email: input.email !== undefined ? input.email : before?.email,
+  };
+  const custom = before && input.displayName === undefined && before.displayName !== derivedName(before);
+  return custom ? before.displayName : derivedName(after);
 }
 
 /** If this contact is its customer's primary contact, clear that first (the FK would reject leaving it). */
@@ -63,14 +76,14 @@ export async function listContacts(db: AppTenantDb, query: { q?: string; status:
         statusFilter(query.status),
         query.customerId ? { customerId: query.customerId } : {},
         searchFilter(query.q, ['displayName', 'email', 'phone', 'mobile']),
-        afterName(query.cursor),
+        afterName('contacts', query.cursor),
       ],
     },
     select,
     orderBy: [{ displayName: 'asc' }, { id: 'asc' }],
     take: query.limit + 1,
   })) as Row[];
-  const { items, nextCursor } = page(rows, query.limit);
+  const { items, nextCursor } = page('contacts', rows, query.limit);
   return { contacts: items.map(toDto), nextCursor };
 }
 
@@ -104,13 +117,9 @@ export async function updateContact(db: AppTenantDb, actorUserId: string, id: st
     await checkCustomer(db, patch.customerId);
     await releasePrimary(db, actorUserId, before);
   }
-  const touchesName = patch.firstName !== undefined || patch.lastName !== undefined || patch.displayName !== undefined || (patch.email !== undefined && !before.firstName && !before.lastName);
-  const data: Record<string, unknown> = { ...patch, updatedById: actorUserId };
-  if (touchesName) {
-    const displayName = nameFor(patch, before);
-    if (!displayName) throw new RuleViolationError('name_required', 'Enter a name or an email address.');
-    data.displayName = displayName;
-  }
+  const displayName = nameFor(patch, before);
+  if (!displayName) throw new RuleViolationError('name_required', 'Enter a name or an email address.');
+  const data: Record<string, unknown> = { ...patch, displayName, updatedById: actorUserId };
   const fields = changedFields(before, data).filter((f) => f !== 'updatedById');
   if (fields.length === 0) return toDto(before);
   const row = (await db.contact.update({ where: { id }, data: data as never, select })) as Row;

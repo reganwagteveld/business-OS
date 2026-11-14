@@ -5,7 +5,10 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { Activity as ActivityDto } from '@business-os/contracts';
 import type { AppTenantDb } from '@/core/db';
-import { decodeCursor, encodeCursor } from '@/core/db/cursor';
+import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
+import { recordAudit } from '@/core/audit';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
 
 /** Types a person can log, and the system types this module knows. Unknown types are rejected. */
@@ -94,6 +97,9 @@ export async function createActivity(
     } as never,
     select,
   })) as Row;
+  // Security audit in the same unit of work: who logged what kind of entry where. No subject or
+  // body (business content, possibly personal data) goes into the audit log (data-model §4.8).
+  await recordAudit(db, actorUserId, 'activity.created', { type: 'activity', id: row.id }, { activityType: input.type, customerId, contactId });
   return toActivity(row);
 }
 
@@ -102,13 +108,14 @@ export async function listActivities(
   db: AppTenantDb,
   query: { customerId?: string; contactId?: string; cursor?: string; limit: number },
 ): Promise<{ activities: ActivityDto[]; nextCursor: string | null }> {
-  const after = decodeCursor(query.cursor, ['t', 'i'] as const);
+  const after = decodeCursor(query.cursor, 'activities', ['t', 'i'] as const);
   const where: Record<string, unknown> = { deletedAt: null };
   if (query.customerId) where.customerId = query.customerId;
   if (query.contactId) where.contactId = query.contactId;
   if (after) {
     const t = new Date(after.t);
-    if (!Number.isNaN(t.getTime())) where.OR = [{ occurredAt: { lt: t } }, { occurredAt: t, id: { lt: after.i } }];
+    if (Number.isNaN(t.getTime()) || !UUID.test(after.i)) invalidCursor();
+    where.OR = [{ occurredAt: { lt: t } }, { occurredAt: t, id: { lt: after.i } }];
   }
   const rows = (await db.activity.findMany({
     where, select, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: query.limit + 1,
@@ -117,6 +124,6 @@ export async function listActivities(
   const last = page[page.length - 1];
   return {
     activities: page.map(toActivity),
-    nextCursor: rows.length > query.limit && last ? encodeCursor({ t: last.occurredAt.toISOString(), i: last.id }) : null,
+    nextCursor: rows.length > query.limit && last ? encodeCursor('activities', { t: last.occurredAt.toISOString(), i: last.id }) : null,
   };
 }

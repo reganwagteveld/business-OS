@@ -244,6 +244,30 @@ describe('contacts and the primary contact', () => {
     expect((await owner.listContacts(`?customerId=${cust.id}`)).body.contacts.map((c: { id: string }) => c.id)).toEqual([linked.body.contact.id]);
   });
 
+  it('an email-named contact follows email changes; a typed name is kept; names fall back to the email', async () => {
+    const owner = api(A.people.OWNER!, A.slug);
+    const tag = randomUUID().slice(0, 6);
+    // derived from the email: changing the email renames it (regression: the old name used to stay)
+    const byEmail = (await owner.createContact({ email: `old-${tag}@example.com` })).body.contact;
+    expect(byEmail.displayName).toBe(`old-${tag}@example.com`);
+    const renamed = await owner.updateContact(byEmail.id, { email: `New-${tag}@Example.com` });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.contact).toMatchObject({ email: `new-${tag}@example.com`, displayName: `new-${tag}@example.com` });
+    // removing the only name source is refused
+    expect((await owner.updateContact(byEmail.id, { email: null })).status).toBe(400);
+    // adding a first name takes over from the email; clearing it falls back to the email again
+    expect((await owner.updateContact(byEmail.id, { firstName: 'Grace' })).body.contact.displayName).toBe('Grace');
+    expect((await owner.updateContact(byEmail.id, { email: `other-${tag}@example.com` })).body.contact.displayName).toBe('Grace');
+    expect((await owner.updateContact(byEmail.id, { firstName: null })).body.contact.displayName).toBe(`other-${tag}@example.com`);
+    // a name the person typed is not overwritten by email or name changes, until they clear it
+    const typed = (await owner.createContact({ displayName: 'Accounts desk', email: `desk-${tag}@example.com` })).body.contact;
+    expect((await owner.updateContact(typed.id, { email: `desk2-${tag}@example.com`, firstName: 'Ada' })).body.contact.displayName).toBe('Accounts desk');
+    expect((await owner.updateContact(typed.id, { displayName: null })).body.contact.displayName).toBe('Ada');
+    // the stored row agrees with the API
+    const { rows } = await admin.query('SELECT display_name FROM contacts WHERE id = $1', [byEmail.id]);
+    expect(rows[0].display_name).toBe(`other-${tag}@example.com`);
+  });
+
   it("the primary contact must be one of this customer's own contacts (service and database)", async () => {
     const owner = api(A.people.OWNER!, A.slug);
     const c1 = (await owner.createCustomer({ displayName: 'Primary One' })).body.customer;
@@ -323,6 +347,40 @@ describe('activities', () => {
     expect(all).toEqual(['Newer meeting', 'customer.created', 'Older call']);
   });
 
+  it('a logged activity writes a security audit event in the same transaction, without its content', async () => {
+    const member = api(A.people.MEMBER!, A.slug);
+    const cust = (await member.createCustomer({ displayName: 'Audited Co' })).body.customer;
+    const contact = (await member.createContact({ firstName: 'Audit', customerId: cust.id })).body.contact;
+    const logged = await member.createActivity({ type: 'call', contactId: contact.id, subject: 'Private subject', body: 'Private body' });
+    expect(logged.status).toBe(201);
+    const { rows } = await admin.query(
+      "SELECT business_id, actor_user_id, target_type, metadata FROM audit_events WHERE action = 'activity.created' AND target_id = $1", [logged.body.activity.id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ business_id: A.businessId, actor_user_id: A.people.MEMBER!.id, target_type: 'activity' });
+    expect(rows[0].metadata).toEqual({ activityType: 'call', customerId: cust.id, contactId: contact.id });
+    expect(JSON.stringify(rows[0].metadata)).not.toMatch(/Private/);
+    // a refused activity leaves neither an activity nor an audit event behind
+    const before = await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'activity.created' AND actor_user_id = $1", [A.people.MEMBER!.id]);
+    expect((await member.createActivity({ type: 'note', customerId: cust.id, contactId: randomUUID(), body: 'x' })).status).toBe(404);
+    const after = await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'activity.created' AND actor_user_id = $1", [A.people.MEMBER!.id]);
+    expect(after.rows[0].n).toBe(before.rows[0].n);
+  });
+
+  it('the activity and its audit event commit or roll back together (database-level)', async () => {
+    // bos_app inside a tenant transaction: the audit insert for another business fails RLS, and the
+    // activity written just before it in the same transaction is gone too.
+    const owner = api(A.people.OWNER!, A.slug);
+    const cust = (await owner.createCustomer({ displayName: 'Atomic Co' })).body.customer;
+    const id = randomUUID();
+    await app.query('BEGIN');
+    await app.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [A.businessId, A.people.OWNER!.id]);
+    await app.query("INSERT INTO activities (id, business_id, type, occurred_at, actor_type, actor_user_id, customer_id) VALUES ($1, $2, 'note', now(), 'USER', $3, $4)", [id, A.businessId, A.people.OWNER!.id, cust.id]);
+    await expect(app.query("INSERT INTO audit_events (id, business_id, actor_user_id, action, target_type, target_id) VALUES ($1, $2, $3, 'activity.created', 'activity', $4)", [randomUUID(), B.businessId, A.people.OWNER!.id, id])).rejects.toThrow(/row-level security/);
+    await app.query('ROLLBACK');
+    const { rows } = await admin.query('SELECT count(*)::int AS n FROM activities WHERE id = $1', [id]);
+    expect(rows[0].n).toBe(0);
+  });
+
   it('rejects system types, a mismatched customer, unlinked or empty activities, and dates years ahead', async () => {
     const owner = api(A.people.OWNER!, A.slug);
     const c1 = (await owner.createCustomer({ displayName: 'Act One' })).body.customer;
@@ -335,6 +393,59 @@ describe('activities', () => {
     expect((await owner.createActivity({ type: 'note', customerId: c1.id, body: 'x', occurredAt: '2099-01-01T00:00:00Z' })).status).toBe(400);
     expect((await owner.createActivity({ type: 'note', customerId: c1.id, body: 'x', actorUserId: A.people.MEMBER!.id })).status).toBe(400);
     expect((await owner.listActivities(`?customerId=${c1.id}&contactId=${contact.id}`)).status).toBe(400);
+  });
+});
+
+describe('pagination cursors', () => {
+  const b64 = (v: unknown) => Buffer.from(typeof v === 'string' ? v : JSON.stringify(v), 'utf8').toString('base64url');
+
+  it('malformed or foreign cursors are a 400 invalid_cursor, never a silent restart', async () => {
+    const owner = api(A.people.OWNER!, A.slug);
+    const cust = (await owner.createCustomer({ displayName: 'Cursor Co' })).body.customer;
+    await owner.createContact({ firstName: 'C1', customerId: cust.id });
+    await owner.createContact({ firstName: 'C2', customerId: cust.id });
+    await owner.createActivity({ type: 'note', customerId: cust.id, body: 'one' });
+    const customerCursor = (await owner.listCustomers('?limit=1')).body.nextCursor as string;
+    const activityCursor = (await owner.listActivities(`?customerId=${cust.id}&limit=1`)).body.nextCursor as string;
+    expect(customerCursor).toBeTruthy();
+    expect(activityCursor).toBeTruthy();
+
+    const bad = [
+      b64('not json'), b64('[]'), b64('"text"'), b64({}), b64({ n: 'x', i: randomUUID() }), b64({ k: 'customers', n: 'x' }),
+      b64({ k: 'customers', n: 'x', i: 'not-a-uuid' }), b64({ k: 'customers', n: 'x', i: randomUUID(), extra: '1' }),
+      b64({ k: 'customers', n: 1, i: randomUUID() }), b64({ k: 'customers', n: '', i: randomUUID() }), 'AAAA',
+    ];
+    for (const cursor of [...bad, activityCursor]) {
+      const res = await owner.listCustomers(`?cursor=${cursor}`);
+      expect(res.status, cursor).toBe(400);
+      expect(res.body.error, cursor).toBe('invalid_cursor');
+    }
+    for (const cursor of [...bad, customerCursor]) {
+      expect((await owner.listContacts(`?cursor=${cursor}`)).body.error, cursor).toBe('invalid_cursor');
+    }
+    for (const cursor of [b64({ k: 'activities', t: 'yesterday', i: randomUUID() }), b64({ k: 'activities', t: new Date().toISOString(), i: 'x' }), customerCursor, ...bad]) {
+      const res = await owner.listActivities(`?customerId=${cust.id}&cursor=${cursor}`);
+      expect(res.status, cursor).toBe(400);
+      expect(res.body.error, cursor).toBe('invalid_cursor');
+    }
+    // syntactically invalid cursors are rejected by the contract before reaching the service
+    expect((await owner.listCustomers('?cursor=')).status).toBe(400);
+    expect((await owner.listActivities(`?customerId=${cust.id}&cursor=${'a'.repeat(501)}`)).status).toBe(400);
+  });
+
+  it('valid cursors still page forward, and a cursor carries no authority in another business', async () => {
+    const owner = api(A.people.OWNER!, A.slug);
+    const first = await owner.listCustomers('?limit=1');
+    const second = await owner.listCustomers(`?limit=1&cursor=${first.body.nextCursor}`);
+    expect(second.status).toBe(200);
+    expect(second.body.customers[0].id).not.toBe(first.body.customers[0].id);
+    // replaying A's cursor in B is just a position: it returns only B's own rows
+    const b = api(B.people.OWNER!, B.slug);
+    const replay = await b.listCustomers(`?cursor=${first.body.nextCursor}`);
+    expect(replay.status).toBe(200);
+    const ids = replay.body.customers.map((c: { id: string }) => c.id);
+    const { rows } = await admin.query('SELECT count(*)::int AS n FROM customers WHERE id = ANY($1) AND business_id <> $2', [ids, B.businessId]);
+    expect(rows[0].n).toBe(0);
   });
 });
 
