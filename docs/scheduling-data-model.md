@@ -10,7 +10,8 @@
 - **One business data model.** Entries link to the Customer Zone's own customers and contacts and the Projects Zone's own projects and tasks. Nothing is copied.
 - **Double-booking is impossible, not unlikely.** A database exclusion constraint holds under any concurrency (ADR 0006 §2).
 - **Privacy is enforced by the database.** A private entry is "Busy" to everyone except its organizer and the members on it (§4).
-- **History is kept.** No DELETE for tenant code on any scheduling table. Entries are cancelled (reversible), assignments are soft-removed, and resources are archived.
+- **History is kept.** Tenant code has no DELETE on any scheduling table that records what happened: entries are cancelled (reversible), assignments are soft-removed, and resources are archived.
+  - **The one exception is `schedule_working_hours`.** It holds configuration (a resource's weekly hours), not history. Replacing a week deletes and re-inserts that resource's rows in one unit of work, and the change is audited with the before and after rule sets. No other scheduling table grants DELETE (§3).
 - **Assignments are not permissions**, with one narrow, explicit exception: an organizer or participant may **see** that one entry's details (§4).
 
 ## 2. Tables
@@ -68,7 +69,7 @@ Indexes: `UNIQUE (business_id, id, during, occupying)`, GiST `(business_id, duri
 
 ### 2.5 `schedule_working_hours`
 
-Weekday, local `start_time`/`end_time`, effective dates. Expanded in the resource's zone. Configuration, so whole-week replace (DELETE allowed) and audited. Produces soft warnings only.
+Weekday, local `start_time`/`end_time`, effective dates. Expanded in the resource's zone. Produces soft warnings only. This is the **only scheduling table with DELETE** (§1): rows are configuration, a week is replaced as a whole, and the audit entry keeps the previous rules.
 
 ## 3. Grants
 
@@ -76,7 +77,7 @@ Weekday, local `start_time`/`end_time`, effective dates. Expanded in the resourc
 |---|---|
 | `schedule_resources`, `schedule_events`, `schedule_event_details` | SELECT, INSERT, UPDATE |
 | `schedule_event_resources` | SELECT, INSERT, UPDATE (`removed_at`, `removed_by_id`, `removal_reason`) |
-| `schedule_working_hours` | SELECT, INSERT, UPDATE, DELETE |
+| `schedule_working_hours` | SELECT, INSERT, UPDATE, DELETE (the configuration exception in §1) |
 | Anything | No other runtime role gets anything, except `bos_maint` on details for erasure (§8) |
 
 ## 4. Privacy
@@ -181,8 +182,35 @@ Unchanged from the proposal:
 
 **Neon-specific findings:**
 1. A function owner change needs `CREATE` on the schema for the new owner. A superuser skips that check, so it only showed up on Neon. The fixture now grants it for the change, as privileged/001 does.
-2. Schema-only branches are refused for this project ("legacy web access role": `bos_definer`), so verification branches copy production data. The test branch expires automatically after 24 hours and was deleted after the run.
-3. On the first Neon runs, tests failed with Prisma `P2028` ("unable to start a transaction in the given time"). Opening a cold TLS connection to Neon's pooler can take longer than Prisma's 2 s interactive-transaction `maxWait`, so 50 simultaneous units of work timed out *before reaching the database*. That is a connection-latency limit, not a correctness failure: no wrong booking was ever accepted. The suite now opens its pool first, after which C6 (50 concurrent bookings, exactly one wins) passed on Neon in 2.7 s. The same latency can hit production after idle periods (Vercel functions open fresh connections), so S1 maps `P2028` to a retryable `503` and measures the pool size (`max: 5` today) and `maxWait` (open choice U6).
+2. Schema-only branches are refused for this project ("legacy web access role": `bos_definer`), so verification branches copy production data. They are handled under §10.1.
+3. On the first Neon runs, tests failed with Prisma `P2028` ("unable to start a transaction in the given time"). Opening a cold TLS connection to Neon's pooler can take longer than Prisma's 2 s interactive-transaction `maxWait`, so 50 simultaneous units of work gave up *while waiting for a connection, before any statement ran*. That is a connection-acquisition limit, not a correctness failure: no wrong booking was ever accepted. The suite now opens its pool first, after which C6 (50 concurrent bookings, exactly one wins) passed on Neon in 2.7 s. The same latency can hit production after idle periods, so S1 handles it as in §10.2.
+
+### 10.1 Test copies of production data
+
+Until schema-only branches work (U7), every Neon verification branch is a copy of production and is treated as production data:
+
+- **Minimum access.** Only the roles a check needs:
+  - the owner role, for the privileged extension step and the fixture, which writes only to its own `scheduling_spike*` schemas;
+  - `bos_app` through the pooler, for the tests.
+
+  No query reads tenant tables. The only reads outside the fixture are catalog and role checks (version, extension availability, role membership, privileges).
+- **No exports.** No `pg_dump`, no row copies, and no test output containing row data. Connection strings are fetched into environment variables for the run and never printed, logged or saved, and the helper that built them is deleted afterwards. Neither the Phase 1b isolation suite (it rebuilds `public` tables) nor anything else that touches existing tables runs on such a branch.
+- **Short-lived, with deletion confirmed.** The branch is created with an expiry of at most 24 hours and deleted as soon as the run ends. Deletion is then confirmed by listing the project's branches.
+- **Record of the S0 run.** Branch `s0-scheduling-spike` (`br-patient-thunder-bb52udkz`) was created from `production` at 12:52 UTC on 2026-11-14 with a 24 h expiry, deleted at about 12:57 UTC the same day, and confirmed absent from the branch list. The remaining branches are `production` and the three earlier pre-migration branches, which are also production copies, outside this work.
+
+### 10.2 Connection acquisition vs transaction failures (rule for S1)
+
+`P2028` covers more than one situation, so the API must tell them apart:
+
+| Failure | How S1 recognises it | Response | Retry |
+|---|---|---|---|
+| **No connection was acquired; the unit of work never started** | `withTenant` sets a flag on the first line inside the transaction callback. A failure with the flag unset proves no statement ran, so nothing could have committed. | `503 service_unavailable` with `Retry-After` and `retryable: true` | The **client** may resubmit. The API never re-executes a mutation by itself. |
+| **The transaction started and then failed** (timeout inside the unit of work, connection lost mid-way, commit outcome unknown) | Flag set | `500` (or the mapped `409`/`400` for known database errors). **Not** marked retryable. | Never automatic. The client re-reads, and the user decides. |
+| Read-only requests (GET) | Any of the above | As above | The client may retry reads freely |
+
+- **No automatic retries of mutations anywhere in the API.** A resubmitted booking is a new request.
+- For exclusive resources, the exclusion constraint stops a resubmission from double-booking: the second attempt gets `409 resource_conflict`. Entries with no exclusive resource (unassigned jobs, non-blocking entries) could still be created twice. So S1 adds an optional `Idempotency-Key` on `POST /schedule/events`, stored with a business-scoped unique index, which returns the first result for a repeated key (open choice U8).
+- Pool size (`max: 5` today) and `maxWait` are measured in S1 before any change (U6).
 
 ## 11. Reconciliation with PR #19
 
@@ -200,5 +228,6 @@ Unchanged from the proposal:
 | U3 | Permission for erasure | Keep Phase 1e's `customers:delete` (OWNER, ADMIN) for contact/customer erasure; the same for departed-member scrubbing |
 | U4 | Legally authorised access | Platform-operated break-glass only, with a written procedure before first use. No tenant feature. |
 | U5 | Owner export of the owner's *own* private entries | Included (RLS already allows it) |
-| U6 | Connection pool and `maxWait` for bursty booking | Map `P2028` to `503 retry`. Measure in S1 before changing the pool (today `max: 5`). |
-| U7 | Schema-only Neon branches are blocked by the legacy role | Accept full-copy test branches with a 24 h expiry for now, or migrate the role (separate change with its own approval) |
+| U6 | Connection pool and `maxWait` for bursty booking | `503 retryable` only when the unit of work provably never started (§10.2). Never auto-retry mutations. Measure in S1 before changing the pool (today `max: 5`). |
+| U7 | Schema-only Neon branches are blocked by the legacy role | Accept full-copy test branches under §10.1 for now. Migrating the role is a separate change with its own approval. |
+| U8 | Idempotency for creating entries | Optional `Idempotency-Key` on `POST /schedule/events` (business-scoped, unique), in S1 |

@@ -29,6 +29,7 @@ Both must hold under the existing isolation design (ADR 0004): forced RLS, `bos_
 - `schedule_event_resources` carries copies of `during` and `occupying` (from the event) and of `exclusive` (from the resource). The copies are kept equal by composite FKs `ON UPDATE CASCADE` that target `UNIQUE (business_id, id, during, occupying)` on events and `UNIQUE (business_id, id, exclusive)` on resources.
 - `EXCLUDE USING gist (business_id WITH =, resource_id WITH =, during WITH &&) WHERE (occupying AND exclusive AND role = 'REQUIRED' AND removed_at IS NULL)`.
 - `bos_app` cannot update the copies (column grants) and cannot forge them on insert (the FK). Assignments are soft-removed (`removed_at`) and never deleted.
+- Deletion: no scheduling table that records what happened grants DELETE. The single exception is `schedule_working_hours` (configuration).
 - **Fallback (variant B, tested in S0):** `SECURITY INVOKER` triggers maintain the copies, with a column-level `UPDATE` grant guarded by a trigger that re-derives them. It is never `SECURITY DEFINER` (see consequence 3).
 
 ### 3. Extensions: privileged pre-migration step
@@ -88,6 +89,8 @@ The `tests/isolation/scheduling-spike.test.ts` suite (23 tests) passes:
 5. The schema guard must accept named restrictive policies next to `tenant_isolation`, GiST indexes and exclusion constraints that lead with `business_id`.
 6. Generated columns are not published by logical replication before PG 18. This only matters for the future CDC path (architecture §13.4).
 7. A Prisma, adapter, pooler or PostgreSQL upgrade re-runs this suite, as for ADR 0004.
+8. Failing to get a connection (`P2028` before the unit of work starts) is reported as a retryable `503`. Any failure after it starts is not. The API never retries a mutation itself (scheduling-data-model.md §10.2).
+9. Neon verification branches are full production copies while schema-only branches are blocked. They follow the minimum-access, no-export, confirmed-deletion rules in scheduling-data-model.md §10.1.
 
 ## Alternatives considered
 
