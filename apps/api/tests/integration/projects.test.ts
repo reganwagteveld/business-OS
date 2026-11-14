@@ -39,6 +39,7 @@ import * as archiveTaskRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/ta
 import * as restoreTaskRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/tasks/[taskId]/restore/route';
 import * as moveTaskRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/tasks/[taskId]/move/route';
 import { devOutbox } from '@/core/email';
+import { backendPid, finishesOrBlocks, firstLockedByUnorderedScan, waitUntilBlocked } from './support/locks';
 
 const BASE = process.env.APP_BASE_URL!;
 const ORIGIN = new URL(BASE).origin;
@@ -595,9 +596,10 @@ describe('PR 18 audit: archive and task changes at the same time', () => {
     try {
       await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [t.id]); // the task write will wait here
       const edit = a.patchTask(p.id, t.id, { version: 1, status: 'DONE' }).then((r) => (order.push('task'), r));
-      await pause(300); // the edit has checked its project and is now waiting on the task row
+      const hPid = await backendPid(h);
+      await waitUntilBlocked(admin, hPid); // the edit has checked its project and is now waiting on the task row
       const archive = a.archive(p.id).then((r) => (order.push('archive'), r));
-      await pause(300);
+      await waitUntilBlocked(admin, hPid, { count: 2 }); // the archive is waiting behind the edit
       expect(await settled(archive)).toBe(false); // must not commit while a task change is in flight
       await h.query('COMMIT');
       const [e, ar] = await Promise.all([edit, archive]);
@@ -627,7 +629,7 @@ describe('PR 18 audit: archive and task changes at the same time', () => {
       try {
         await h.query('UPDATE projects SET archived_at = now(), version = version + 1 WHERE id = $1', [p.id]); // archive, not yet committed
         const pending = attempt();
-        await pause(300);
+        await waitUntilBlocked(admin, await backendPid(h));
         expect(await settled(pending), name).toBe(false); // waits for the archive to finish
         await h.query('COMMIT');
         expect(await pending, name).toMatchObject({ status: 409, body: { error: 'project_archived' } });
@@ -651,7 +653,7 @@ describe('PR 18 audit: archive and task changes at the same time', () => {
     try {
       await h.query('UPDATE project_tasks SET assignee_user_id = $1 WHERE id = $2', [temp.id, t.id]); // assignment in flight
       const removal = a.removeMember(membership.id);
-      await pause(300);
+      await finishesOrBlocks(admin, await backendPid(h), removal); // either order must clear the assignment
       await h.query('COMMIT');
       expect((await removal).status).toBe(200);
     } finally {
@@ -841,7 +843,7 @@ describe('PR 19 board: moving tasks between and within columns', () => {
       await h.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [A.businessId, A.people.OWNER!.id]);
       await h.query('UPDATE projects SET archived_at = now(), version = version + 1 WHERE id = $1', [p.id]);
       const pending = a.moveTask(p.id, tasks.w!.id, { version: 1, status: 'DONE', afterTaskId: null });
-      await pause(300);
+      await waitUntilBlocked(admin, await backendPid(h));
       expect(await settled(pending)).toBe(false);
       await h.query('COMMIT');
       expect(await pending).toMatchObject({ status: 409, body: { error: 'project_archived' } });
@@ -862,9 +864,10 @@ describe('PR 19 board: moving tasks between and within columns', () => {
       await h.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [A.businessId, A.people.OWNER!.id]);
       await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [tasks.v!.id]); // the move's write waits here
       const move = a.moveTask(p.id, tasks.v!.id, { version: 1, status: 'DONE', afterTaskId: null }).then((r) => (order.push('move'), r));
-      await pause(300);
+      const hPid = await backendPid(h);
+      await waitUntilBlocked(admin, hPid);
       const archive = a.archive(p.id).then((r) => (order.push('archive'), r));
-      await pause(300);
+      await waitUntilBlocked(admin, hPid, { count: 2 }); // the archive is waiting behind the move
       expect(await settled(archive)).toBe(false);
       await h.query('COMMIT');
       const [mv, ar] = await Promise.all([move, archive]);
@@ -937,16 +940,7 @@ describe('PR 19 review: archive/restore vs move, and row-lock order (docs/projec
       await c.end();
     }
   };
-  /**
-   * Makes an unordered scan meet `first` before the others (an UPDATE writes a new row version at the
-   * end of the table), so a writer that does NOT lock in id order would block on it while holding
-   * nothing, and the probe below would catch that.
-   */
-  async function physicallyFirst(first: string, ids: string[]) {
-    await admin.query('UPDATE project_tasks SET updated_at = updated_at WHERE id = ANY($1) AND id <> $2', [ids, first]);
-    const order = (await admin.query('SELECT id FROM project_tasks WHERE id = ANY($1) ORDER BY ctid', [ids])).rows.map((r) => r.id);
-    expect(order[0]).toBe(first);
-  }
+  const tenantA = () => ({ connectionString: process.env.DATABASE_URL!, businessId: A.businessId, userId: A.people.OWNER!.id });
   async function board(name: string, titles: string[]) {
     const a = api(A.people.OWNER!, A.slug);
     const p = (await a.create({ name })).body.project;
@@ -962,7 +956,7 @@ describe('PR 19 review: archive/restore vs move, and row-lock order (docs/projec
     try {
       await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [t.T!.id]); // stall the move at its final write
       move = a.moveTask(p.id, t.T!.id, { version: 1, status: 'TODO', afterTaskId: t.A!.id });
-      await pause(300); // the move has validated A and is waiting on T's row
+      await waitUntilBlocked(admin, await backendPid(h)); // the move has validated A and is waiting on T's row
       expect((await a.archiveTask(p.id, t.A!.id)).status).toBe(200); // not serialised with the move, by design
       await h.query('COMMIT');
     } finally {
@@ -984,7 +978,7 @@ describe('PR 19 review: archive/restore vs move, and row-lock order (docs/projec
     try {
       await h.query('UPDATE project_tasks SET archived_at = now(), version = version + 1 WHERE id = $1', [t.A!.id]); // archive, not yet committed
       move = a.moveTask(p.id, t.T!.id, { version: 1, status: 'TODO', afterTaskId: t.A!.id });
-      await pause(300);
+      await waitUntilBlocked(admin, await backendPid(h));
       expect(await settled(move)).toBe(false); // the renumber waits for A's row
       await h.query('COMMIT');
     } finally {
@@ -1001,8 +995,7 @@ describe('PR 19 review: archive/restore vs move, and row-lock order (docs/projec
     try {
       await h.query('UPDATE project_tasks SET archived_at = NULL, version = version + 1 WHERE id = $1', [t.A!.id]); // restore, not yet committed
       const move = a.moveTask(p.id, t.T!.id, { version: 1, status: 'TODO', afterTaskId: t.A!.id });
-      await pause(300);
-      expect(await settled(move)).toBe(true);
+      expect(await finishesOrBlocks(admin, await backendPid(h), move)).toBe('finished'); // never waits on the restore
       expect(await move).toMatchObject({ status: 409, body: { error: 'order_changed' } });
       await h.query('COMMIT');
     } finally {
@@ -1015,21 +1008,23 @@ describe('PR 19 review: archive/restore vs move, and row-lock order (docs/projec
     const { a, p, t } = await board('Review lock order: renumber', ['r1', 'r2', 'r3', 'r4']);
     await admin.query('UPDATE project_tasks SET position = 10 + (SELECT count(*) FROM project_tasks x WHERE x.project_id = project_tasks.project_id AND x.title < project_tasks.title) WHERE project_id = $1', [p.id]);
     const ids = (await admin.query('SELECT id FROM project_tasks WHERE project_id = $1 ORDER BY id', [p.id])).rows.map((r) => r.id as string);
-    const [lowest, highest] = [ids[0]!, ids[ids.length - 1]!];
-    await physicallyFirst(highest, ids);
+    const lowest = ids[0]!;
+    // The row a renumber without ORDER BY id would lock first; never the lowest id. Holding it, an
+    // id-ordered writer must already hold the lowest id, while an unordered one would hold nothing.
+    const held = await firstLockedByUnorderedScan(admin, tenantA(), { sql: "project_id = $1 AND business_id = nullif(current_setting('app.business_id', true), '')::uuid", params: [p.id] }, ids);
     // A real move that needs a renumber: the mover is not one of the probed rows, and the anchor has
     // another task after it (not the mover itself, which would be a no-op).
     const ordered = (await rows(p.id)).map((r) => t[r.title]!.id);
-    const mover = { id: ordered.find((id) => id !== lowest && id !== highest)! };
+    const mover = { id: ordered.find((id) => id !== lowest && id !== held)! };
     const others = ordered.filter((id) => id !== mover.id);
     const anchor = { id: others.slice(0, -1).find((id) => ordered[ordered.indexOf(id) + 1] !== mover.id)! };
     const h = await holder();
     let move;
     try {
-      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [highest]);
+      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [held]);
       move = a.moveTask(p.id, mover.id, { version: 1, status: 'TODO', afterTaskId: anchor.id }); // no gap anywhere: renumbers
-      await pause(300);
-      expect(await settled(move)).toBe(false); // waiting on the highest id …
+      await waitUntilBlocked(admin, await backendPid(h));
+      expect(await settled(move)).toBe(false); // waiting on the held row …
       expect(await locked(lowest)).toBe(true); // … while already holding the lowest
       await h.query('COMMIT');
     } finally {
@@ -1046,14 +1041,15 @@ describe('PR 19 review: archive/restore vs move, and row-lock order (docs/projec
     const p = (await a.create({ name: 'Review lock order: removal' })).body.project;
     for (const title of ['m1', 'm2', 'm3']) await a.createTask(p.id, { title, assigneeUserId: temp.id });
     const ids = (await admin.query('SELECT id FROM project_tasks WHERE assignee_user_id = $1 ORDER BY id', [temp.id])).rows.map((r) => r.id as string);
-    await physicallyFirst(ids[ids.length - 1]!, ids);
+    // Same for member removal: the row its scan would lock first if it were not in id order.
+    const held = await firstLockedByUnorderedScan(admin, tenantA(), { sql: "assignee_user_id = $1 AND business_id = nullif(current_setting('app.business_id', true), '')::uuid", params: [temp.id] }, ids);
     const membership = (await a.members()).body.members.find((m: { userId: string }) => m.userId === temp.id);
     const h = await holder();
     let removal;
     try {
-      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [ids[ids.length - 1]]);
+      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [held]);
       removal = a.removeMember(membership.id);
-      await pause(300);
+      await waitUntilBlocked(admin, await backendPid(h));
       expect(await settled(removal)).toBe(false);
       expect(await locked(ids[0]!)).toBe(true);
       await h.query('COMMIT');
