@@ -37,8 +37,10 @@ jobs:
           # A pull_request checkout is the merge commit; its first parent is the current base tip.
           fetch-depth: 2
           persist-credentials: false
-      - name: Self-test the change classifier
-        run: .github/scripts/classify-changes.test.sh
+      - name: Self-test the change classifier and the gate verdict
+        run: |
+          .github/scripts/classify-changes.test.sh
+          .github/scripts/ci-gate.test.sh
       - name: Decide whether the desktop matrix is needed
         id: classify
         env:
@@ -292,29 +294,9 @@ jobs:
               echo "Total wall-clock time to this gate: **$((total / 60))m $((total % 60))s**"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
       - name: Require every applicable check
-        run: |
-          fail=0
-          require() {
-            if [ "$2" != success ]; then
-              echo "::error title=$1 did not pass::$1 finished as '$2'; it must succeed."
-              fail=1
-            else
-              echo "ok   $1"
-            fi
-          }
-          require "Detect changes" "$CHANGES"
-          require "Static checks" "$STATIC"
-          require "Unit tests" "$UNIT"
-          require "Database tests" "$DATABASE"
-          require "Build verification" "$BUILD"
-          # Fail closed: anything other than an explicit "false" from the classifier requires desktop.
-          if [ "$DESKTOP_REQUIRED" != false ]; then
-            require "Desktop shell" "$DESKTOP"
-          elif [ "$DESKTOP" != skipped ] && [ "$DESKTOP" != success ]; then
-            echo "::error title=Desktop shell did not pass::Desktop shell ran and finished as '$DESKTOP'."
-            fail=1
-          else
-            echo "skip Desktop shell (not needed: $DESKTOP_REASON)"
-          fi
-          exit "$fail"
+        run: .github/scripts/ci-gate.sh
