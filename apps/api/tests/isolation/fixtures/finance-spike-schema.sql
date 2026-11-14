@@ -56,16 +56,22 @@ CREATE TYPE "FinanceExpenseStatus" AS ENUM ('DRAFT', 'RECORDED', 'VOID');
 -- One numbering series per business and document kind. next_value only ever moves by +1, and only
 -- from the issue trigger (guard_number_series), so numbers are assigned by the database, never by a
 -- client, and are gapless across committed transactions (a rolled-back issue returns its number).
+-- The initial state is explicit: a series starts at starting_value (default 1; a business moving from
+-- another system continues its numbering), with next_value = starting_value. starting_value can be
+-- changed only while the series is unused, and next_value follows it; once a number has been issued
+-- it is fixed (guard_number_series).
 CREATE TABLE finance_number_series (
   id          uuid PRIMARY KEY,
   business_id uuid NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
   kind        "FinanceDocumentKind" NOT NULL,
   prefix      text NOT NULL DEFAULT '',
   min_digits  smallint NOT NULL DEFAULT 4,
+  starting_value bigint NOT NULL DEFAULT 1,
   next_value  bigint NOT NULL DEFAULT 1,
+  CONSTRAINT finance_number_series_starting_value CHECK (starting_value BETWEEN 1 AND 999999999999),
   CONSTRAINT finance_number_series_prefix_length CHECK (char_length(prefix) <= 20),
   CONSTRAINT finance_number_series_min_digits CHECK (min_digits BETWEEN 1 AND 12),
-  CONSTRAINT finance_number_series_next_value CHECK (next_value >= 1),
+  CONSTRAINT finance_number_series_next_value CHECK (next_value >= starting_value),
   CONSTRAINT finance_number_series_business_id_kind_key UNIQUE (business_id, kind),
   CONSTRAINT finance_number_series_business_id_id_key UNIQUE (business_id, id)
 );
@@ -141,7 +147,7 @@ CREATE TABLE finance_documents (
     OR (number_value IS NOT NULL AND issue_date IS NOT NULL AND seller_snapshot IS NOT NULL AND bill_to_snapshot IS NOT NULL AND content_sha256 IS NOT NULL)),
   CONSTRAINT finance_documents_invoice_due CHECK (due_date IS NULL OR issue_date IS NULL OR due_date >= issue_date),
   CONSTRAINT finance_documents_notes_length CHECK (notes IS NULL OR char_length(notes) <= 5000),
-  CONSTRAINT finance_documents_void_reason_length CHECK (void_reason IS NULL OR char_length(void_reason) <= 500),
+  CONSTRAINT finance_documents_void_reason_length CHECK (void_reason IS NULL OR (status = 'VOID' AND char_length(void_reason) <= 500)),
   CONSTRAINT finance_documents_business_id_id_key UNIQUE (business_id, id),
   -- Target of kind-, customer- and currency-constrained composite FKs (allocations, credit notes, conversions).
   CONSTRAINT finance_documents_link_key UNIQUE (business_id, id, kind, currency_code, customer_id),
@@ -209,6 +215,7 @@ CREATE TABLE finance_payments (
   CONSTRAINT finance_payments_amount CHECK (amount > 0 AND amount = round(amount, currency_scale)),
   CONSTRAINT finance_payments_allocated CHECK (allocated_total >= 0 AND allocated_total <= amount),
   CONSTRAINT finance_payments_reversal CHECK ((status = 'REVERSED') = (reversed_at IS NOT NULL) AND (status <> 'REVERSED' OR allocated_total = 0)),
+  CONSTRAINT finance_payments_reversal_reason CHECK (reversal_reason IS NULL OR (status = 'REVERSED' AND char_length(reversal_reason) <= 500)),
   CONSTRAINT finance_payments_reference_length CHECK (reference IS NULL OR char_length(reference) <= 200),
   CONSTRAINT finance_payments_idempotency CHECK ((idempotency_key IS NULL) = (request_hash IS NULL) AND (idempotency_key IS NULL OR char_length(idempotency_key) BETWEEN 1 AND 200)),
   CONSTRAINT finance_payments_business_id_id_key UNIQUE (business_id, id),
@@ -279,7 +286,7 @@ CREATE TABLE finance_expenses (
   CONSTRAINT finance_expenses_supplier_length CHECK (supplier_name IS NULL OR char_length(supplier_name) <= 200),
   CONSTRAINT finance_expenses_receipt_length CHECK (receipt_reference IS NULL OR char_length(receipt_reference) <= 500),
   CONSTRAINT finance_expenses_recorded CHECK (status <> 'RECORDED' OR (recorded_at IS NOT NULL AND category_name IS NOT NULL)),
-  CONSTRAINT finance_expenses_void CHECK ((status = 'VOID') = (voided_at IS NOT NULL)),
+  CONSTRAINT finance_expenses_void CHECK ((status = 'VOID') = (voided_at IS NOT NULL) AND (void_reason IS NULL OR (status = 'VOID' AND char_length(void_reason) <= 500))),
   CONSTRAINT finance_expenses_business_id_id_key UNIQUE (business_id, id),
   CONSTRAINT finance_expenses_category_fkey FOREIGN KEY (business_id, category_id) REFERENCES finance_expense_categories(business_id, id),
   CONSTRAINT finance_expenses_project_fkey FOREIGN KEY (business_id, project_id) REFERENCES projects(business_id, id)
@@ -324,7 +331,9 @@ DECLARE
   series record;
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    IF NEW.status <> 'DRAFT' OR NEW.allocated_total <> 0 OR NEW.number_value IS NOT NULL OR NEW.content_sha256 IS NOT NULL THEN
+    IF NEW.status <> 'DRAFT' OR NEW.allocated_total <> 0 OR NEW.number_value IS NOT NULL OR NEW.number IS NOT NULL
+       OR NEW.content_sha256 IS NOT NULL OR NEW.issued_at IS NOT NULL
+       OR NEW.status_changed_at IS NOT NULL OR NEW.voided_at IS NOT NULL OR NEW.void_reason IS NOT NULL THEN
       RAISE EXCEPTION 'documents are created as unnumbered drafts' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
@@ -335,14 +344,29 @@ BEGIN
     RAISE EXCEPTION 'allocated_total is maintained by the database' USING ERRCODE = '42501';
   END IF;
 
+  -- Transition metadata belongs to the database. A status change stamps status_changed_at (and
+  -- voided_at when voiding) with the transaction time, overwriting anything the client sent; the void
+  -- reason can be given only in the void transition. Without a status change, none of them may change,
+  -- so they can never be fabricated, cleared or rewritten afterwards.
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    NEW.status_changed_at := now();
+    IF NEW.status = 'VOID' THEN
+      NEW.voided_at := now();
+    ELSIF NEW.voided_at IS DISTINCT FROM OLD.voided_at OR NEW.void_reason IS DISTINCT FROM OLD.void_reason THEN
+      RAISE EXCEPTION 'void metadata belongs to the void transition' USING ERRCODE = '42501';
+    END IF;
+  ELSIF NEW.status_changed_at IS DISTINCT FROM OLD.status_changed_at OR NEW.voided_at IS DISTINCT FROM OLD.voided_at
+        OR NEW.void_reason IS DISTINCT FROM OLD.void_reason THEN
+    RAISE EXCEPTION 'transition metadata is set only by its transition' USING ERRCODE = '42501';
+  END IF;
+
   IF OLD.status = 'DRAFT' THEN
-    IF NEW.status = 'DRAFT' THEN
-      IF NEW.number_value IS NOT NULL OR NEW.content_sha256 IS NOT NULL OR NEW.issued_at IS NOT NULL THEN
+    IF NEW.status IN ('DRAFT', 'VOID') THEN
+      -- A draft, or a discarded draft, is never numbered or sealed.
+      IF NEW.number_value IS NOT NULL OR NEW.number IS NOT NULL OR NEW.content_sha256 IS NOT NULL OR NEW.issued_at IS NOT NULL THEN
         RAISE EXCEPTION 'drafts are unnumbered' USING ERRCODE = '42501';
       END IF;
       RETURN NEW;
-    ELSIF NEW.status = 'VOID' THEN
-      RETURN NEW; -- a discarded draft: never numbered, kept as history
     ELSIF NEW.status <> 'ISSUED' THEN
       RAISE EXCEPTION 'invalid transition % -> %', OLD.status, NEW.status USING ERRCODE = '55000';
     END IF;
@@ -424,17 +448,31 @@ BEGIN
 END $$;
 CREATE TRIGGER guard_line BEFORE INSERT OR UPDATE OR DELETE ON finance_document_lines FOR EACH ROW EXECUTE FUNCTION guard_line();
 
--- Numbering series: next_value moves only from the issue trigger, by exactly one.
+-- Numbering series. Created unused (next_value = starting_value). next_value then moves only from the
+-- issue trigger, by exactly one. starting_value may change only while the series is unused (no number
+-- has been committed: next_value = starting_value), and next_value follows it.
 CREATE FUNCTION guard_number_series() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, finance_spike AS $$
 BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.next_value IS DISTINCT FROM NEW.starting_value THEN
+      RAISE EXCEPTION 'a series starts unused at its starting value' USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF NEW.kind IS DISTINCT FROM OLD.kind THEN RAISE EXCEPTION 'series kind is fixed' USING ERRCODE = '42501'; END IF;
   IF NEW.next_value IS DISTINCT FROM OLD.next_value AND (pg_trigger_depth() < 2 OR NEW.next_value <> OLD.next_value + 1) THEN
     RAISE EXCEPTION 'numbers are assigned by the database' USING ERRCODE = '42501';
   END IF;
-  IF NEW.kind IS DISTINCT FROM OLD.kind THEN RAISE EXCEPTION 'series kind is fixed' USING ERRCODE = '42501'; END IF;
+  IF NEW.starting_value IS DISTINCT FROM OLD.starting_value THEN
+    IF OLD.next_value <> OLD.starting_value OR pg_trigger_depth() >= 2 THEN
+      RAISE EXCEPTION 'the starting value is fixed once a number has been issued' USING ERRCODE = '42501';
+    END IF;
+    NEW.next_value := NEW.starting_value;
+  END IF;
   RETURN NEW;
 END $$;
-CREATE TRIGGER guard_number_series BEFORE UPDATE ON finance_number_series FOR EACH ROW EXECUTE FUNCTION guard_number_series();
+CREATE TRIGGER guard_number_series BEFORE INSERT OR UPDATE ON finance_number_series FOR EACH ROW EXECUTE FUNCTION guard_number_series();
 
 -- Payments: amounts and parties are frozen; RECORDED -> REVERSED is the only transition, one way.
 CREATE FUNCTION guard_payment() RETURNS trigger
@@ -442,7 +480,7 @@ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, finance_spike AS
 DECLARE mutable text[] := ARRAY['status', 'allocated_total', 'reversed_at', 'reversal_reason', 'reference', 'version'];
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    IF NEW.status <> 'RECORDED' OR NEW.allocated_total <> 0 THEN
+    IF NEW.status <> 'RECORDED' OR NEW.allocated_total <> 0 OR NEW.reversed_at IS NOT NULL OR NEW.reversal_reason IS NOT NULL THEN
       RAISE EXCEPTION 'payments are created recorded and unallocated' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
@@ -452,6 +490,13 @@ BEGIN
   END IF;
   IF (to_jsonb(NEW) - mutable) IS DISTINCT FROM (to_jsonb(OLD) - mutable) THEN
     RAISE EXCEPTION 'recorded payments are immutable' USING ERRCODE = '42501';
+  END IF;
+  -- Reversal metadata: reversed_at is stamped by the database in the reversal; the reason is given only
+  -- there. Without a status change neither may change.
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    NEW.reversed_at := now();
+  ELSIF NEW.reversed_at IS DISTINCT FROM OLD.reversed_at OR NEW.reversal_reason IS DISTINCT FROM OLD.reversal_reason THEN
+    RAISE EXCEPTION 'reversal metadata belongs to the reversal' USING ERRCODE = '42501';
   END IF;
   IF OLD.status = 'REVERSED' THEN RAISE EXCEPTION 'reversed payments are final' USING ERRCODE = '42501'; END IF;
   RETURN NEW;
@@ -485,6 +530,18 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'invoice is not open' USING ERRCODE = '55000'; END IF;
   RETURN NEW;
 END $$;
+-- Allocation times are the database's: created_at at insert, reversed_at at reversal (transaction time).
+CREATE FUNCTION stamp_allocation() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, finance_spike AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    NEW.created_at := now();
+  ELSIF OLD.reversed_at IS NULL AND NEW.reversed_at IS NOT NULL THEN
+    NEW.reversed_at := now();
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER stamp_allocation BEFORE INSERT OR UPDATE ON finance_payment_allocations FOR EACH ROW EXECUTE FUNCTION stamp_allocation();
 CREATE TRIGGER apply_allocation_insert AFTER INSERT ON finance_payment_allocations FOR EACH ROW EXECUTE FUNCTION apply_allocation();
 CREATE TRIGGER apply_allocation_reversal AFTER UPDATE ON finance_payment_allocations FOR EACH ROW EXECUTE FUNCTION apply_allocation();
 
@@ -494,17 +551,23 @@ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, finance_spike AS
 DECLARE mutable text[] := ARRAY['status', 'voided_at', 'void_reason', 'version'];
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    IF NEW.status <> 'DRAFT' OR NEW.recorded_at IS NOT NULL THEN
+    IF NEW.status <> 'DRAFT' OR NEW.recorded_at IS NOT NULL OR NEW.category_name IS NOT NULL OR NEW.voided_at IS NOT NULL OR NEW.void_reason IS NOT NULL THEN
       RAISE EXCEPTION 'expenses are created as drafts' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
+  END IF;
+  -- Void metadata: voided_at is stamped by the database when voiding; the reason is given only there.
+  IF NEW.status IS DISTINCT FROM OLD.status AND NEW.status = 'VOID' THEN
+    NEW.voided_at := now();
+  ELSIF NEW.voided_at IS DISTINCT FROM OLD.voided_at OR NEW.void_reason IS DISTINCT FROM OLD.void_reason THEN
+    RAISE EXCEPTION 'void metadata belongs to the void transition' USING ERRCODE = '42501';
   END IF;
   IF OLD.status = 'DRAFT' THEN
     IF NEW.status = 'RECORDED' THEN
       SELECT c.name INTO NEW.category_name FROM finance_spike.finance_expense_categories c
        WHERE c.business_id = NEW.business_id AND c.id = NEW.category_id;
       NEW.recorded_at := now();
-    ELSIF NEW.status = 'DRAFT' AND (NEW.recorded_at IS NOT NULL OR NEW.category_name IS NOT NULL) THEN
+    ELSIF NEW.recorded_at IS NOT NULL OR NEW.category_name IS NOT NULL THEN -- a draft, or a discarded draft
       RAISE EXCEPTION 'drafts are unrecorded' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
@@ -519,7 +582,7 @@ BEGIN
 END $$;
 CREATE TRIGGER guard_expense BEFORE INSERT OR UPDATE ON finance_expenses FOR EACH ROW EXECUTE FUNCTION guard_expense();
 
-REVOKE ALL ON FUNCTION guard_document(), guard_line(), guard_number_series(), guard_payment(), apply_allocation(), guard_expense() FROM PUBLIC;
+REVOKE ALL ON FUNCTION guard_document(), guard_line(), guard_number_series(), guard_payment(), apply_allocation(), stamp_allocation(), guard_expense() FROM PUBLIC;
 REVOKE ALL ON FUNCTION document_content(finance_documents), content_hash(finance_documents) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION document_content(finance_documents), content_hash(finance_documents) TO bos_app;
 
@@ -531,7 +594,7 @@ GRANT SELECT, INSERT, UPDATE ON businesses, memberships, customers, contacts, op
 GRANT SELECT, INSERT, UPDATE ON finance_documents, finance_payments, finance_expenses, finance_expense_categories TO bos_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON finance_document_lines TO bos_app;
 GRANT SELECT, INSERT ON finance_number_series, finance_tax_rates, finance_payment_allocations TO bos_app;
-GRANT UPDATE (prefix, min_digits, next_value) ON finance_number_series TO bos_app; -- next_value: guarded, trigger only
+GRANT UPDATE (prefix, min_digits, starting_value, next_value) ON finance_number_series TO bos_app; -- guarded: starting_value while unused, next_value by the issue trigger only
 GRANT UPDATE (name, archived_at) ON finance_tax_rates TO bos_app;
 GRANT UPDATE (reversed_at) ON finance_payment_allocations TO bos_app;
 

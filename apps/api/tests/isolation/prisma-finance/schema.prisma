@@ -63,6 +63,8 @@ model FinanceNumberSeries {
   kind       FinanceDocumentKind
   prefix     String              @default("")
   minDigits  Int                 @default(4) @map("min_digits") @db.SmallInt
+  /// Settable only while the series is unused; next_value follows it (guard_number_series).
+  startingValue BigInt           @default(1) @map("starting_value")
   /// Moved only by the issue trigger (guard_number_series).
   nextValue  BigInt              @default(1) @map("next_value")
 

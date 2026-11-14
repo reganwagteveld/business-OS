@@ -200,6 +200,9 @@ const unallocate = (paymentId: string, invoiceId: string, businessId = A) => as(
   if (r.count !== 1) throw Object.assign(new Error('no live allocation'), { code: 'not_found' });
 });
 
+/** A database-stamped time: the transaction time of the change, never a client-supplied backdate. */
+const BACKDATE = new Date(Date.UTC(2020, 0, 1));
+const recent = (t: Date | string | null) => t !== null && Math.abs(new Date(t).getTime() - Date.now()) < 60_000;
 const doc = (id: string) => admin.query(`SELECT * FROM finance_spike.finance_documents WHERE id = $1`, [id]).then((r) => r.rows[0]);
 const pay = (id: string) => admin.query(`SELECT * FROM finance_spike.finance_payments WHERE id = $1`, [id]).then((r) => r.rows[0]);
 
@@ -375,7 +378,7 @@ describe('L: lifecycle, numbering and immutability', () => {
     // Void: allowed while unsettled, then final.
     expect(await change({ status: 'VOID', voidedAt: new Date(), voidReason: 'Raised in error', version: { increment: 1 } })).toBe('ok');
     expect(await change({ voidReason: 'changed my mind' })).toBe('42501');
-    expect(await change({ status: 'ISSUED', voidedAt: null })).toBe('55000');
+    expect(await change({ status: 'ISSUED' })).toBe('55000');
     const row = await doc(id);
     expect(row.number).toMatch(/^INV-/); // a void invoice keeps its number: the sequence has no hole
   });
@@ -427,6 +430,63 @@ describe('L: lifecycle, numbering and immutability', () => {
     const cn = await as(A, alice, async (db) => { const id = await createDraft(db, A, { kind: 'CREDIT_NOTE', creditedInvoiceId: inv, lines: [{ qty: '1', price: '20' }] }); return (await issue(db, id)).number; });
     expect(cn).toMatch(/^CN-/);
     expect(await outcome(as(A, alice, (db) => db.financeDocument.updateMany({ where: { id: inv }, data: { status: 'VOID', voidedAt: new Date() } })))).toBe('55000');
+  });
+
+  it('L8: a numbering series starts unused at an explicit starting value, which is fixed once a number has been issued', async () => {
+    const series = (data: { startingValue?: bigint; nextValue?: bigint }) => as(B, dave, (db) => db.financeNumberSeries.create({
+      data: { id: uuid(), businessId: B, kind: 'QUOTE', prefix: 'AN-', ...data } }));
+    // Refused: a series created part-way through its numbers, or with an invalid start.
+    expect(await outcome(series({ nextValue: BigInt(500) }))).toBe('42501');
+    expect(await outcome(series({ startingValue: BigInt(1043), nextValue: BigInt(1) }))).toBe('42501');
+    expect(await outcome(series({ startingValue: BigInt(0), nextValue: BigInt(0) }))).toBe('23514');
+    // Allowed: a business moving from another system continues at 1043.
+    expect(await outcome(series({ startingValue: BigInt(1043), nextValue: BigInt(1043) }))).toBe('ok');
+    expect(await outcome(series({}))).toBe('23505'); // one series per kind
+    const update = (data: { startingValue?: bigint; nextValue?: bigint }) => outcome(as(B, dave, (db) => db.financeNumberSeries.updateMany({ where: { kind: 'QUOTE' }, data })));
+    // While unused, the starting value may be corrected, and next_value follows it; next_value alone may not move.
+    expect(await update({ startingValue: BigInt(2001) })).toBe('ok');
+    expect(await update({ nextValue: BigInt(5000) })).toBe('42501');
+    const row = (await admin.query(`SELECT starting_value::int AS s, next_value::int AS n FROM finance_spike.finance_number_series WHERE business_id = $1 AND kind = 'QUOTE'`, [B])).rows[0];
+    expect(row).toEqual({ s: 2001, n: 2001 });
+    const issued = await as(B, dave, async (db) => issue(db, await createDraft(db, B, { kind: 'QUOTE', customerId: custB, currency: 'EUR' })));
+    expect(issued.number).toBe('AN-2001');
+    // Once used, the start is history: no change, in either direction, and no reset through next_value.
+    expect(await update({ startingValue: BigInt(1) })).toBe('42501');
+    expect(await update({ startingValue: BigInt(9000) })).toBe('42501');
+    expect(await update({ nextValue: BigInt(2001) })).toBe('42501');
+    expect(await update({ startingValue: BigInt(2002), nextValue: BigInt(2002) })).toBe('42501');
+  });
+
+  it('L9: document transition metadata is stamped by the database and cannot be fabricated, cleared or rewritten', async () => {
+    const create = (extra: Record<string, unknown>) => outcome(as(A, alice, (db) => db.financeDocument.create({
+      data: { id: uuid(), businessId: A, kind: 'INVOICE', customerId: cust1, currencyCode: 'USD', currencyScale: 2, ...extra } })));
+    for (const extra of [{ voidReason: 'x' }, { voidedAt: BACKDATE }, { statusChangedAt: BACKDATE }, { issuedAt: BACKDATE }, { number: 'INV-0001' }]) {
+      expect(await create(extra), JSON.stringify(extra)).toBe('42501');
+    }
+    const set = (id: string, data: Prisma.FinanceDocumentUpdateManyMutationInput) => outcome(as(A, alice, (db) => db.financeDocument.updateMany({ where: { id }, data })));
+    // Drafts: no metadata, and a discarded draft cannot be dressed up as a voided issued invoice.
+    const draft = await as(A, alice, (db) => createDraft(db, A, {}));
+    expect(await set(draft, { voidReason: 'x' })).toBe('42501');
+    expect(await set(draft, { statusChangedAt: BACKDATE })).toBe('42501');
+    expect(await set(draft, { status: 'VOID', numberValue: BigInt(7), number: 'INV-0007', issuedAt: BACKDATE })).toBe('42501');
+    // Issued: nothing changes without its transition.
+    const inv = await invoice('100');
+    expect(await set(inv, { statusChangedAt: BACKDATE })).toBe('42501');
+    expect(await set(inv, { voidedAt: BACKDATE })).toBe('42501');
+    expect(await set(inv, { voidReason: 'Raised in error' })).toBe('42501');
+    const quote = await as(A, alice, async (db) => { const id = await createDraft(db, A, { kind: 'QUOTE' }); await issue(db, id); return id; });
+    expect(await set(quote, { status: 'ACCEPTED', voidReason: 'x' })).toBe('42501');
+    expect(await set(quote, { status: 'ACCEPTED', voidedAt: BACKDATE })).toBe('42501');
+    expect(await set(quote, { status: 'ACCEPTED', statusChangedAt: BACKDATE })).toBe('ok');
+    expect(recent((await doc(quote)).status_changed_at)).toBe(true); // stamped, not the backdate
+    // The void transition: the database stamps both times; the reason is accepted only here.
+    expect(await set(inv, { status: 'VOID', voidedAt: BACKDATE, statusChangedAt: BACKDATE, voidReason: 'Raised in error' })).toBe('ok');
+    const v = await doc(inv);
+    expect([recent(v.voided_at), recent(v.status_changed_at), v.void_reason]).toEqual([true, true, 'Raised in error']);
+    // Afterwards: fixed.
+    for (const data of [{ voidReason: 'Other reason' }, { voidReason: null }, { voidedAt: BACKDATE }, { voidedAt: null }, { statusChangedAt: BACKDATE }, { version: { increment: 1 } }]) {
+      expect(await set(inv, data), JSON.stringify(data)).toBe('42501');
+    }
   });
 
   it('L7: a tax rate\'s percentage is fixed; lines keep the name and rate they were issued with', async () => {
@@ -516,6 +576,37 @@ describe('P: payments, allocations, reversal, idempotency', () => {
     expect(await outcome(as(A, alice, (db) => recordPayment(db, A, { amount: '25', key, hash: 'sha256:25' })))).toBe('23505');
     // Keys are per business.
     expect(await outcome(as(B, dave, (db) => recordPayment(db, B, { amount: '25', key, hash: 'sha256:25', customerId: custB, currency: 'EUR' })))).toBe('ok');
+  });
+  it('P6: payment and allocation times are stamped by the database; reversal metadata exists only through the reversal', async () => {
+    expect(await outcome(as(A, alice, (db) => db.financePayment.create({ data: { id: uuid(), businessId: A, customerId: cust1, currencyCode: 'USD', currencyScale: 2, amount: '5', receivedOn: new Date(), method: 'CASH', reversalReason: 'x' } })))).toBe('42501');
+    expect(await outcome(as(A, alice, (db) => db.financePayment.create({ data: { id: uuid(), businessId: A, customerId: cust1, currencyCode: 'USD', currencyScale: 2, amount: '5', receivedOn: new Date(), method: 'CASH', reversedAt: BACKDATE } })))).toBe('42501');
+    const inv = await invoice('100');
+    const p = await payment('40');
+    const setPay = (data: Prisma.FinancePaymentUpdateManyMutationInput) => outcome(as(A, alice, (db) => db.financePayment.updateMany({ where: { id: p }, data })));
+    expect(await setPay({ reversalReason: 'Bounced' })).toBe('42501');
+    expect(await setPay({ reversedAt: BACKDATE })).toBe('42501');
+    // Allocation times: a backdated created_at or reversed_at is replaced by the transaction time.
+    await as(A, alice, async (db) => {
+      await lockPayments(db, [p]);
+      await lockDocuments(db, [inv]);
+      await db.financePaymentAllocation.create({ data: { id: uuid(), businessId: A, paymentId: p, invoiceId: inv, customerId: cust1, currencyCode: 'USD', amount: '40', createdAt: BACKDATE } });
+    });
+    const alloc = async () => (await admin.query(`SELECT created_at, reversed_at FROM finance_spike.finance_payment_allocations WHERE payment_id = $1`, [p])).rows[0];
+    expect(recent((await alloc()).created_at)).toBe(true);
+    await as(A, alice, async (db) => {
+      await lockPayments(db, [p]);
+      await lockDocuments(db, [inv]);
+      await db.financePaymentAllocation.updateMany({ where: { paymentId: p, reversedAt: null }, data: { reversedAt: BACKDATE } });
+    });
+    expect(recent((await alloc()).reversed_at)).toBe(true);
+    expect(await outcome(as(A, alice, (db) => db.financePaymentAllocation.updateMany({ where: { paymentId: p }, data: { reversedAt: new Date() } })))).toBe('42501');
+    // The payment reversal: reversed_at stamped, reason accepted, then both fixed.
+    expect(await setPay({ status: 'REVERSED', reversedAt: BACKDATE, reversalReason: 'Bounced' })).toBe('ok');
+    const r = await pay(p);
+    expect([recent(r.reversed_at), r.reversal_reason]).toEqual([true, 'Bounced']);
+    for (const data of [{ reversalReason: 'Other' }, { reversalReason: null }, { reversedAt: BACKDATE }]) {
+      expect(await setPay(data), JSON.stringify(data)).toBe('42501');
+    }
   });
 });
 
@@ -720,9 +811,34 @@ describe('E: expenses', () => {
       expect(await outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data }))), JSON.stringify(data)).not.toBe('ok');
     }
     expect(await outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data: { status: 'VOID', voidedAt: new Date(), voidReason: 'Duplicate' } })))).toBe('ok');
-    expect(await outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data: { status: 'RECORDED', voidedAt: null } })))).toBe('55000');
+    expect(await outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data: { status: 'RECORDED' } })))).toBe('55000');
     expect(await outcome(as(A, alice, (db) => db.financeExpense.create({ data: { id: uuid(), businessId: A, status: 'RECORDED', categoryId: catTravel, description: 'x', incurredOn: new Date(), currencyCode: 'USD', currencyScale: 2, amount: '1' } })))).toBe('42501');
     await as(A, alice, (db) => db.financeExpenseCategory.updateMany({ where: { id: catTravel }, data: { name: 'Travel' } }));
+  });
+
+  it('E2: expense void metadata is stamped by the database and exists only through the void transition', async () => {
+    const base = { businessId: A, categoryId: catTravel, description: 'Taxi', incurredOn: new Date(Date.UTC(2031, 0, 4)), currencyCode: 'USD', currencyScale: 2, amount: '20' };
+    for (const extra of [{ voidReason: 'x' }, { voidedAt: BACKDATE }, { recordedAt: BACKDATE }, { categoryName: 'Forged' }]) {
+      expect(await outcome(as(A, alice, (db) => db.financeExpense.create({ data: { id: uuid(), ...base, ...extra } }))), JSON.stringify(extra)).toBe('42501');
+    }
+    const id = uuid();
+    await as(A, alice, (db) => db.financeExpense.create({ data: { id, ...base } }));
+    const set = (data: Prisma.FinanceExpenseUpdateManyMutationInput) => outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data })));
+    expect(await set({ voidReason: 'x' })).toBe('42501');
+    expect(await set({ recordedAt: BACKDATE })).toBe('42501');
+    const discard = uuid();
+    await as(A, alice, (db) => db.financeExpense.create({ data: { id: discard, ...base } }));
+    expect(await outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id: discard }, data: { status: 'VOID', recordedAt: BACKDATE } })))).toBe('42501');
+    expect(await set({ status: 'RECORDED', recordedAt: BACKDATE })).toBe('ok');
+    expect(recent((await admin.query(`SELECT recorded_at FROM finance_spike.finance_expenses WHERE id = $1`, [id])).rows[0].recorded_at)).toBe(true);
+    expect(await set({ voidReason: 'Duplicate' })).toBe('42501');
+    expect(await set({ voidedAt: BACKDATE })).toBe('42501');
+    expect(await set({ status: 'VOID', voidedAt: BACKDATE, voidReason: 'Duplicate' })).toBe('ok');
+    const row = (await admin.query(`SELECT voided_at, void_reason FROM finance_spike.finance_expenses WHERE id = $1`, [id])).rows[0];
+    expect([recent(row.voided_at), row.void_reason]).toEqual([true, 'Duplicate']);
+    for (const data of [{ voidReason: 'Other' }, { voidReason: null }, { voidedAt: BACKDATE }, { voidedAt: null }]) {
+      expect(await set(data), JSON.stringify(data)).toBe('42501');
+    }
   });
 });
 

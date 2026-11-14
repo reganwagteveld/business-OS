@@ -73,7 +73,9 @@ One table for the three kinds: one numbering, snapshot, sealing and immutability
 | `subtotal`, `tax_total`, `total` | `numeric(18,4)`, `total = subtotal + tax_total`, rounded to `currency_scale` (CHECKs) |
 | `allocated_total` | `numeric(18,4)`, `0 ≤ allocated_total ≤ total`, non-zero only for invoices. **Maintained only by the allocation triggers** (§5). |
 | `content_sha256` | Hash of the canonical issued content, computed by the database at issue (§10) |
-| `notes` (≤ 5000), `issued_at`, `status_changed_at`, `voided_at`, `void_reason` (≤ 500), `version` | |
+| `notes` (≤ 5000), `version` | |
+| `issued_at`, `status_changed_at`, `voided_at` | **Stamped by the database** in their transition (§4.4); clients cannot set, clear or rewrite them |
+| `void_reason` (≤ 500) | Accepted only in the void transition, fixed afterwards; NULL unless `VOID` (CHECK) |
 
 ### 2.3 `finance_document_lines`
 
@@ -84,7 +86,16 @@ One table for the three kinds: one numbering, snapshot, sealing and immutability
 
 ### 2.4 `finance_number_series`
 
-One row per `(business_id, kind)`: `prefix` (≤ 20), `min_digits` (1–12), `next_value ≥ 1`. `next_value` moves only from the issue trigger and only by +1 (guard). `prefix` and `min_digits` are editable settings (`finance:manage`); an issued document keeps the number it was given. Created on first use with `INSERT … ON CONFLICT DO NOTHING`, as the Sales default pipeline is. Per-series variants (per branch, per year) are decision FD-L1.
+One row per `(business_id, kind)`: `prefix` (≤ 20), `min_digits` (1–12), `starting_value` (1 to 999 999 999 999, default 1), `next_value` (`≥ starting_value`, CHECK).
+
+**Initial state and starting numbers** (guard `guard_number_series`, test L8):
+- A series is created **unused**: `next_value = starting_value`. Creating one part-way through its numbers (any other `next_value`) is refused.
+- `starting_value` is how a business that moves from another system continues its numbering (for example from 1043). It is a recorded setting, not a hidden counter value, and its change is audited (`finance.settings.changed`, old and new value).
+- It can be changed **only while the series is unused** (no number committed: `next_value = starting_value`); `next_value` follows it. Once a number has been issued it is fixed, in both directions. A start change racing a first issue queues on the series row and is then refused.
+- `next_value` itself never moves except from the issue trigger, by exactly +1.
+- Whether the starting value needs more than `finance:manage` (for example an owner-only confirmation) is part of FD-L1.
+
+`prefix` and `min_digits` are editable settings (`finance:manage`); an issued document keeps the number it was given. Created on first use with `INSERT … ON CONFLICT DO NOTHING`, as the Sales default pipeline is. Per-series variants (per branch, per year) are decision FD-L1.
 
 ### 2.5 `finance_tax_rates`
 
@@ -101,7 +112,8 @@ One row per `(business_id, kind)`: `prefix` (≤ 20), `min_digits` (1–12), `ne
 | `reference` (≤ 200) | Editable after recording (the only business field that is) |
 | `status` | `RECORDED` → `REVERSED` (one way) |
 | `allocated_total` | `0 ≤ allocated_total ≤ amount`; maintained only by the allocation triggers. `REVERSED` requires it to be 0. |
-| `reversed_at`, `reversal_reason` | |
+| `reversed_at` | Stamped by the database in the reversal |
+| `reversal_reason` (≤ 500) | Accepted only in the reversal, fixed afterwards; NULL unless `REVERSED` (CHECK) |
 | `idempotency_key`, `request_hash` | Both or neither. `UNIQUE (business_id, idempotency_key)` (§6.4). |
 
 Unallocated money (`amount − allocated_total`) stays on the payment as customer credit, for a later allocation.
@@ -111,6 +123,7 @@ Unallocated money (`amount − allocated_total`) stays on the payment as custome
 `payment_id`, `invoice_id`, `invoice_kind` (= `INVOICE`), `customer_id`, `currency_code`, `amount > 0`, `created_at`, `reversed_at`.
 
 - One live allocation per `(payment, invoice)` (partial unique index): a double-submitted allocation is refused.
+- `created_at` and `reversed_at` are stamped by the database (a client-supplied time is replaced).
 - `bos_app` may update only `reversed_at`, and only from NULL to a time (one way). An allocation is never edited or deleted: a correction is a reversal plus a new allocation.
 
 ### 2.8 `finance_expense_categories` and `finance_expenses`
@@ -126,7 +139,9 @@ Unallocated money (`amount − allocated_total`) stays on the payment as custome
 | `description` (1–500), `supplier_name` (≤ 200) | Supplier is free text in F1; a supplier entity is decision FD-P5 |
 | `incurred_on`, `currency_code`, `currency_scale`, `amount` (gross), `tax_amount` (≤ amount) | Rounded to the currency |
 | `receipt_reference` (≤ 500) | An opaque reference to a receipt (an external link or, later, a file id). Business OS has no file storage yet; attachments are decision FD-P6. |
-| `recorded_at`, `voided_at`, `void_reason`, `version` | |
+| `recorded_at`, `voided_at` | Stamped by the database in their transition |
+| `void_reason` (≤ 500) | Accepted only in the void transition, fixed afterwards |
+| `version` | |
 
 A recorded expense is immutable except voiding (E1).
 
@@ -186,7 +201,7 @@ CREDIT_NOTE:  DRAFT ──issue──▶ ISSUED ──void──▶ VOID
   4. stamps `issued_at` and computes `content_sha256`.
   Anything a client sends for the number or hash is overwritten (L1).
 - **Issued:** immutable. The guard compares the whole row (as jsonb) minus an allow-list (`status`, `allocated_total`, `status_changed_at`, `voided_at`, `void_reason`, `version`), so a column added later is frozen by default. Lines are frozen too (L2).
-- **Void:** an issued invoice can be voided only while nothing is allocated to it (CHECK) and no live credit note points at it (guard). It keeps its number, so the sequence has no hole. `VOID` is final.
+- **Void:** an issued invoice can be voided only while nothing is allocated to it (CHECK) and no live credit note points at it (guard). It keeps its number, so the sequence has no hole. `VOID` is final. A discarded draft stays unnumbered: it cannot be given a number, hash or issue time on the way to `VOID` (L9).
 - **Corrections** never edit an issued document. Before payment, void and reissue (a new number). After payment, or where the law requires it, issue a **credit note** and, if needed, a new invoice. Whether voiding is allowed at all once an invoice has been sent, or only credit notes, is jurisdiction-dependent (FD-L2).
 - **Quote to invoice:** "convert" creates an invoice *draft* copying the quote's lines, with `source_quote_id`. One quote may lead to several invoices (deposits, progress billing). Whether conversion requires `ACCEPTED`, and whether a quote may be invoiced beyond its total, is FD-P3.
 - **Expiry** of quotes is an explicit transition (by a user, or later a scheduled job), not a computed status, so history records when it happened.
@@ -217,6 +232,22 @@ allocation: live ──reverse──▶ reversed
 
 `DRAFT` (editable) → `RECORDED` (category name snapshotted, `recorded_at` stamped, immutable) → `VOID`. A draft can be discarded (`VOID`). Payment status of expenses (bills, payables) is out of scope (FD-P5).
 
+### 4.4 Transition metadata
+
+When and why a record changed state is part of the financial record, so the database owns it (tests L9, P6, E2):
+
+| Record | Stamped by the database | Given only in the transition | Outside the transition |
+|---|---|---|---|
+| Document | `issued_at` and `status_changed_at` (issue, accept, decline, expire, void); `voided_at` (void) | `void_reason` (void) | None of them may be set, changed or cleared |
+| Payment | `reversed_at` (reversal) | `reversal_reason` (reversal) | Same |
+| Allocation | `created_at` (insert), `reversed_at` (reversal) | | `created_at` is not updatable; `reversed_at` is one way |
+| Expense | `recorded_at` (record), `voided_at` (void) | `void_reason` (void) | Same |
+
+- Stamps are the **transaction time** (`now()`), so every stamp in one unit of work is the same instant, and a client-supplied value (for example a backdate) is replaced, not trusted.
+- New records start with all of them empty (insert guards).
+- The business dates a user legitimately chooses (`issue_date`, `due_date`, `received_on`, `incurred_on`) are separate columns: they are validated by the service and frozen with the record.
+- The jsonb freeze still lists these columns as "may change after issue", because their transition changes them; the metadata guard then decides when.
+
 ## 5. Integrity invariants
 
 Each is held by the database, as `bos_app` under forced RLS, independently of service code. "Test" names the spike test that fails if the mechanism is removed (§12.2).
@@ -241,6 +272,8 @@ Each is held by the database, as `bos_app` under forced RLS, independently of se
 | I16 | Lifecycle transitions follow §4 | Document and expense guards | L4, L2, E1 |
 | I17 | Recorded expenses are immutable, keep their category name, and are voided not deleted | Expense guard | E1 |
 | I18 | A tax rate's percentage never changes | Column grants | L7 |
+| I19 | A numbering series starts unused at an explicit starting value, which is fixed once a number has been issued | Series guard (insert and update) + `next_value ≥ starting_value` CHECK | L8 |
+| I20 | Transition times are stamped by the database; reasons exist only through their transition; none can be fabricated, cleared or rewritten | Document, payment and expense guards; allocation stamp trigger; reason CHECKs | L9, P6, E2 |
 
 **Error codes.** The spike uses standard SQLSTATEs: `23514` (an amount or total rule), `23503` (link), `23505` (duplicate), `55000` (wrong state), `42501` (immutable or not allowed). F1 gives each guard its own SQLSTATE in a custom class (for example `F0001`–`F0099`) and maps them to stable API error codes (`over_allocated`, `invoice_not_open`, `immutable`, …), because `42501` also means "RLS refused" and must not be confused with an integrity refusal. No database error detail is forwarded to clients.
 
@@ -390,7 +423,8 @@ Additional safeguards for financial records:
 4. **Database-maintained counters** that clients cannot write (P3).
 5. **Content hash** at issue: `sha256` of the canonical document content (header, snapshots, lines; jsonb text form, lines ordered by position). Recomputing it later proves the stored content is what was issued (L1, L3, K7). It detects accidental change by anything that bypasses the guards (a migration, an administrative fix); it is not a signature and does not prove authorship (FD-L5: whether a jurisdiction needs signed or chained hashes).
 6. **Reconciliation check** (Z1 is its prototype): a scheduled read-only job in F2 compares every counter with the sum of its live allocations and every series with its issued numbers, and alerts on any difference.
-7. **Audit retention** for finance events must be at least the statutory retention of the records themselves (FD-L3), longer than the network-data scrubbing in data-model §7.
+7. **Database-owned transition metadata** (§4.4): times stamped by the database, reasons fixed after their transition, starting numbers fixed after first use.
+8. **Audit retention** for finance events must be at least the statutory retention of the records themselves (FD-L3), longer than the network-data scrubbing in data-model §7.
 
 ## 11. Migration safety and rollback (F1)
 
@@ -409,10 +443,10 @@ Additional safeguards for financial records:
 
 | Check | PostgreSQL 16.10 (local docker, the CI image) | PostgreSQL 18.7 (local docker, temporary container) | CI (16.10 behind PgBouncer, transaction mode) |
 |---|---|---|---|
-| Finance spike suite | 30/30, 15 runs on the final code | 30/30, 3 runs | see the PR |
-| Whole isolation suite (Phase 1b, Scheduling S0, Finance F0) | 71/71, 3 runs (direct, no pooler) | 71/71, 3 runs (direct) | see the PR |
+| Finance spike suite | 34/34: 6 standalone runs and 3 whole-suite runs on the final code | 34/34 (in the 3 whole-suite runs) | see the PR |
+| Whole isolation suite (Phase 1b, Scheduling S0, Finance F0) | 75/75, 3 runs (direct, no pooler) | 75/75, 3 runs (direct) | see the PR |
 | K4 alone (deterministic deadlock and its fix) | 10/10 | | |
-| Mutation check (§12.2) | 48 mutations: 46 fail at least one test on their own; the 2 deliberately layered pairs fail when removed together | | |
+| Mutation check (§12.2) | 67 mutations (62 single removals, 5 layered pairs): 57 singles fail at least one test on their own; the other 5 are deliberate backstops, and each fails when removed with the mechanism it backs | | |
 | `pnpm typecheck`, `pnpm lint`, `pnpm boundaries`, `pnpm test`, `pnpm contracts:check` | pass | | |
 
 Commands (local throwaway database, local-only credentials from `docker/init/01-roles.sql`):
@@ -430,7 +464,7 @@ No Neon branch was used. Neon adds pooler latency (scheduling-data-model §10), 
 
 ### 12.2 Mutation check
 
-Each guard, CHECK, FK column, unique index and grant was removed in turn (48 mutations) and the suite re-run. Every removal makes at least one test fail, except two mechanisms that are deliberately layered with another and fail only when removed together (marked below):
+Each guard, CHECK, FK column, unique index and grant was removed in turn and the suite re-run (67 mutations, re-run after the audit corrections). Every removal makes at least one test fail, except five backstops that are deliberately layered behind another mechanism and fail only when removed together with it (marked below):
 
 | Removed | Fails |
 |---|---|
@@ -454,6 +488,15 @@ Each guard, CHECK, FK column, unique index and grant was removed in turn (48 mut
 | No DELETE on documents | L5, T1 |
 | Amount-precision CHECK | M2 |
 | Tenant column in a composite FK (customer) | T3 |
+| Series: insert must start unused / start fixed once used / `next_value` follows the start | L8 |
+| Series `next_value ≥ starting_value` CHECK | Backstop behind the insert guard; removing both fails L8 |
+| Document: `status_changed_at` stamp / `voided_at` stamp / void metadata only in the void transition / metadata fixed without a transition | L9 |
+| Document `void_reason` only when `VOID` CHECK | Backstop; removing it with the metadata guard fails L9 |
+| Void is final | L9 (a version bump on a void document) |
+| Payment: `reversed_at` stamp / reversal metadata fixed | P6 |
+| Payment `reversal_reason` only when `REVERSED` CHECK | Backstop; removing it with the metadata guard fails P6 |
+| Allocation: `created_at` stamp / `reversed_at` stamp | P6 |
+| Expense: `voided_at` stamp / void metadata fixed | E2 |
 
 ### 12.3 What the spike proves, and what it does not
 
@@ -479,7 +522,8 @@ Each guard, CHECK, FK column, unique index and grant was removed in turn (48 mut
 6. **Erasure vs retention** is unresolved (FD-L4); until then, erasure does not touch issued finance records.
 7. **The bill-to snapshot is personal data** retained on purpose. Its access is `finance:read`; exports include it.
 8. **Reports from current counters** are "as known now"; an auditor wanting historical balances needs the as-of variant (§9).
-9. **Time zones.** "Overdue" and report periods use the business's time zone; a business changing its zone shifts boundaries for past periods. Reports should state the zone used.
+9. **Transaction-time stamps.** `now()` is the start of the unit of work; with the 5 s timeout the difference from wall-clock commit time is bounded, but stamps are not commit order. Ordering by stamp within the same second is by id, not by commit.
+10. **Time zones.** "Overdue" and report periods use the business's time zone; a business changing its zone shifts boundaries for past periods. Reports should state the zone used.
 
 ## 14. Decisions needed from the owner
 
@@ -499,7 +543,7 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 
 | # | Decision | Recommendation |
 |---|---|---|
-| FD-L1 ★ | Numbering: one gapless series per business and kind (as designed)? Per-year or per-branch series? Custom starting number when migrating from another system? | One series per kind, starting number settable before the first issue, prefix editable; per-year series later |
+| FD-L1 ★ | Numbering: one gapless series per business and kind (as designed)? Per-year or per-branch series? Custom starting number when migrating from another system? | One series per kind; `starting_value` settable only while unused (as designed, I19) with `finance:manage`, audited; prefix editable; per-year series later |
 | FD-L2 ★ | May an issued invoice be voided, or must every correction be a credit note? | Allow void only while unpaid and not credited (as designed); a per-business setting to require credit notes |
 | FD-L3 ★ | Retention: how long must finance records (and their audit events) be kept after issue and after a business closes? What does business deletion do? | Keep for a configurable period (default 7 years, owner to confirm); business purge skips finance until then |
 | FD-L4 | Customer erasure vs retention of issued documents | Erasure leaves issued documents within retention; scrubs drafts and quotes |
