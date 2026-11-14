@@ -40,6 +40,11 @@ function setWidth(px: number) {
   });
 }
 
+const resize = (px: number) => act(() => {
+  width = px;
+  listeners.forEach((cb) => cb());
+});
+
 beforeEach(() => {
   localStorage.clear();
   resetPreferenceMemory();
@@ -72,17 +77,19 @@ function mountApp(opts: {
     session: vi.fn(async () => opts.session?.() ?? ({ kind: 'signed-in', user: USER } as SessionCheck)),
     signOut: vi.fn(async () => undefined),
   } as unknown as AuthClient;
-  const defaultList = async () => ({ kind: 'ok' as const, data: slugs.map((s) => ({ slug: s, name: ctx(s).business.name, role: 'MANAGER' as const })) });
+  const defaultList = async () => ({ kind: 'ok' as const, data: slugs.filter((s) => listed.has(s)).map((s) => ({ slug: s, name: ctx(s).business.name, role: 'MANAGER' as const })) });
   const tenancy: TenancyClient = {
     listBusinesses: vi.fn(opts.list ?? defaultList),
-    businessContext: vi.fn(opts.context ?? (async (slug: string) => ({ kind: 'ok' as const, data: ctx(slug, opts.permissions?.(slug)) }))),
+    businessContext: vi.fn(opts.context ?? (async (slug: string) => (listed.has(slug) ? { kind: 'ok' as const, data: ctx(slug, opts.permissions?.(slug)) } : { kind: 'not_found' as const }))),
     createBusiness: vi.fn(),
   };
   const storage = memoryStorage({ slug: slugs[0] });
+  // Membership can change while the app is open: `listed` is what the server lists right now.
+  const listed = new Set(slugs);
   render(<App platform="web" apiBaseUrl={BASE} auth={auth} tenancy={tenancy} storage={storage}
     customers={createCustomersClient(BASE, { kind: 'cookie' }, api.fetch)} sales={createSalesClient(BASE, { kind: 'cookie' }, api.fetch)}
     projects={createProjectsClient(BASE, { kind: 'cookie' }, api.fetch)} />);
-  return { api, auth, tenancy, storage, user: userEvent.setup() };
+  return { api, auth, tenancy, storage, listed, user: userEvent.setup() };
 }
 
 const zonesNav = () => screen.getByRole('navigation', { name: 'Zones' });
@@ -286,6 +293,65 @@ describe('business switching', () => {
     expect(within(screen.getByRole('menu')).queryByRole('menuitemradio', { name: /Beta/ })).toBeNull();
   });
 
+  it('requested business revoked, current one still valid: you stay in it, even if this device forgot it', async () => {
+    const { user, storage, listed } = mountApp({ slugs: ['alpha', 'beta', 'gamma'] });
+    await h1('Welcome to Alpha Plumbing.');
+    listed.delete('beta');
+    storage.clearSlug(); // no saved choice to fall back on: the open business must still be preferred
+    await switchBusiness(user, /Beta Plumbing/);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('You no longer have access to Beta Plumbing');
+    expect(alert.textContent).toContain("You're in Alpha Plumbing");
+    expect(screen.getByRole('heading', { level: 1, name: 'Welcome to Alpha Plumbing.' })).toBeTruthy();
+    expect(switcher().getAttribute('aria-label')).toBe('Switch business, current business Alpha Plumbing');
+    expect(storage.getSlug()).toBe('alpha');
+  });
+
+  it('requested business still listed but refused when opened (revoked in between): you stay where you were, told why', async () => {
+    const { user, tenancy } = mountApp({
+      slugs: ['alpha', 'beta'],
+      context: async (slug) => (slug === 'beta' ? { kind: 'not_found' } : { kind: 'ok', data: ctx(slug) }),
+    });
+    await h1('Welcome to Alpha Plumbing.');
+    await switchBusiness(user, /Beta Plumbing/);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('You no longer have access to Beta Plumbing');
+    expect(alert.textContent).toContain("You're in Alpha Plumbing");
+    expect(screen.getByRole('heading', { level: 1, name: 'Welcome to Alpha Plumbing.' })).toBeTruthy();
+    expect(vi.mocked(tenancy.businessContext).mock.calls.map((c) => c[0])).toEqual(['alpha', 'beta', 'alpha']);
+  });
+
+  it('requested and current business both revoked, one left: opens the one the server still lists, and the notice says so', async () => {
+    const { user, listed, storage } = mountApp({ slugs: ['alpha', 'beta', 'gamma'] });
+    await user.click(await screen.findByRole('button', { name: 'Open the Customers Zone' }));
+    await screen.findByText('alpha customer');
+    listed.delete('alpha');
+    listed.delete('beta');
+    await switchBusiness(user, /Beta Plumbing/);
+    await h1('Welcome to Gamma Plumbing.');
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('You no longer have access to Beta Plumbing');
+    expect(alert.textContent).toContain("You're in Gamma Plumbing");
+    expect(switcher().getAttribute('aria-label')).toBe('Switch business, current business Gamma Plumbing');
+    expect(screen.queryByText('alpha customer')).toBeNull();
+    expect(storage.getSlug()).toBe('gamma');
+  });
+
+  it('requested and current business both revoked, several left: the chooser lists only those, says why, and has no way back', async () => {
+    const { user, listed } = mountApp({ slugs: ['alpha', 'beta', 'gamma', 'delta'] });
+    await h1('Welcome to Alpha Plumbing.');
+    listed.delete('alpha');
+    listed.delete('beta');
+    await switchBusiness(user, /Beta Plumbing/);
+    await h1('Choose your workspace');
+    expect(screen.getByRole('alert').textContent).toContain('You no longer have access to Beta Plumbing');
+    expect(screen.queryByRole('button', { name: /Alpha Plumbing/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Zones' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: /Delta Plumbing/ }));
+    await h1('Welcome to Delta Plumbing.');
+  });
+
   it('a switch that finds the session ended goes to sign-in, showing nothing from either business', async () => {
     let ended = false;
     const { user } = mountApp({ session: () => (ended ? { kind: 'signed-out' } : { kind: 'signed-in', user: USER }) as SessionCheck });
@@ -424,6 +490,69 @@ describe('responsive', () => {
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Sales' }));
     await h1('Sales');
     expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull();
+  });
+
+  it('leaving the phone layout with the drawer open closes it without a render-time update, and it stays closed', async () => {
+    setWidth(390);
+    const errors = vi.spyOn(console, 'error');
+    const { user } = mountApp();
+    await h1('Welcome to Alpha Plumbing.');
+    await user.click(screen.getByRole('button', { name: 'Open navigation' }));
+    expect(screen.getByRole('dialog', { name: 'Navigation' })).toBeTruthy();
+    await resize(1280);
+    expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull();
+    expect(zonesNav()).toBeTruthy(); // the desktop sidebar took over
+    expect(document.getElementById('bos-content')!.closest('[inert]')).toBeNull();
+    expect(document.body.style.overflow).toBe('');
+    await resize(390);
+    expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull(); // not reopened by coming back
+    expect(screen.getByRole('button', { name: 'Open navigation' }).getAttribute('aria-expanded')).toBe('false');
+    await resize(800);
+    await resize(390);
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it('mobile: navigating from the drawer with unsaved work asks first; Keep editing leaves the drawer open, Discard closes it and navigates', async () => {
+    setWidth(390);
+    const { user } = mountApp();
+    await user.click(await screen.findByRole('button', { name: 'Open the Projects Zone' }));
+    await user.click((await screen.findAllByRole('button', { name: 'New project' }))[0]!);
+    await user.type(await screen.findByLabelText('Name'), 'Half typed');
+    await user.click(screen.getByRole('button', { name: 'Open navigation' }));
+    const drawer = screen.getByRole('dialog', { name: 'Navigation' });
+    const customers = within(drawer).getByRole('button', { name: 'Customers' });
+    await user.click(customers);
+    const confirm = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    expect(confirm.closest('[inert]')).toBeNull(); // usable above the drawer
+    expect(screen.getByRole('dialog', { name: 'Navigation' })).toBe(drawer); // still open while asking
+    await user.click(within(confirm).getByRole('button', { name: 'Keep editing' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Navigation' })).toBe(drawer);
+    expect(document.activeElement).toBe(customers); // focus back where the person was
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Half typed');
+    expect(screen.getByRole('heading', { level: 1, name: /New project/i })).toBeTruthy();
+
+    await user.click(customers);
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard changes' }));
+    await h1('Customers');
+    expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull();
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('mobile: switching business from the drawer with unsaved work and cancelling keeps the drawer and the business', async () => {
+    setWidth(390);
+    const { user } = mountApp();
+    await user.click(await screen.findByRole('button', { name: 'Open the Projects Zone' }));
+    await user.click((await screen.findAllByRole('button', { name: 'New project' }))[0]!);
+    await user.type(await screen.findByLabelText('Name'), 'Half typed');
+    await user.click(screen.getByRole('button', { name: 'Open navigation' }));
+    const drawer = screen.getByRole('dialog', { name: 'Navigation' });
+    await user.click(within(drawer).getByRole('button', { name: /Switch business/ }));
+    await user.click(within(drawer).getByRole('menuitemradio', { name: /Beta Plumbing/ }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Keep editing' }));
+    expect(screen.getByRole('dialog', { name: 'Navigation' })).toBe(drawer);
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Half typed');
+    expect(within(drawer).getByRole('button', { name: /Switch business/ }).getAttribute('aria-label')).toContain('Alpha Plumbing');
   });
 
   it('mobile: the active business stays visible in the top bar', async () => {

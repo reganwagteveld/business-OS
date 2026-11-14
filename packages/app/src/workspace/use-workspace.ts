@@ -113,12 +113,18 @@ export function useWorkspace(deps: { auth: AuthClient; tenancy: TenancyClient; s
     const mine = ++run.current;
     const stay = (kind: SwitchNotice['kind']) => setPhase({ kind: 'ready', user: from.user, businesses: from.businesses, context: from.context, notice: { kind, business: to.name, current: from.context.business.name } });
     setPhase({ kind: 'switching', user: from.user, businesses: from.businesses, context: from.context, to });
-    void resolveWorkspace({ auth, tenancy, storage, preferredSlug: slug, signal: abort.signal }).then(
+    // Membership is re-read: the requested business first, else the one already open (if still yours),
+    // else whatever the server still lists. The resulting active business always comes from the server.
+    void resolveWorkspace({ auth, tenancy, storage, preferredSlug: slug, fallbackSlug: from.context.business.slug, signal: abort.signal }).then(
       (resolved) => {
         if (mine !== run.current) return; // a newer switch or retry took over
         if (resolved.kind === 'ready') {
-          // Not where we asked to go: the server no longer lists the membership.
+          // Not where we asked to go: the server no longer lists that membership. The notice names the
+          // business actually open now (the previous one if still valid, otherwise another listed one).
           setPhase(resolved.context.business.slug === slug ? resolved : { ...resolved, notice: { kind: 'access-revoked', business: to.name, current: resolved.context.business.name } });
+        } else if (resolved.kind === 'pick') {
+          // Neither the requested nor the previous business is still yours: choose from what is listed.
+          setPhase({ ...resolved, notice: { kind: 'access-revoked', business: to.name } });
         } else if (resolved.kind === 'unreachable' || resolved.kind === 'failed') {
           stay('switch-failed');
         } else {

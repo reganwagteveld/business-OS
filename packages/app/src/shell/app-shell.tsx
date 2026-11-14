@@ -2,7 +2,7 @@ import { Alert, AlertDescription, AlertTitle, Button, cn, glassClass, Skeleton, 
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import type { BusinessSummary } from '../api/tenancy';
 import { useDialog } from '../zones/dialog';
-import { useLayout } from '../zones/use-layout';
+import { MEDIUM, useLayout } from '../zones/use-layout';
 import { BusinessOsMark } from './business-os-mark';
 import { ROLE_LABEL } from './choose';
 import { Icon, type IconName } from './icons';
@@ -98,7 +98,19 @@ export function AppShell(props: AppShellProps) {
 
   // The drawer only exists on narrow screens.
   const narrow = layout === 'narrow';
-  if (!narrow && drawerOpen) setDrawerOpen(false);
+  // Leaving the narrow layout (rotating a tablet, widening a window) closes the drawer: the state is
+  // reset from the media-query change event, never during render. `drawerShown` also keeps the
+  // drawer out of any render where the layout is already wider, so it can never show on desktop.
+  useEffect(() => {
+    if (!drawerOpen || typeof window === 'undefined' || !window.matchMedia) return;
+    const wider = window.matchMedia(MEDIUM);
+    const onChange = () => {
+      if (wider.matches) setDrawerOpen(false);
+    };
+    wider.addEventListener('change', onChange);
+    return () => wider.removeEventListener('change', onChange);
+  }, [drawerOpen]);
+  const drawerShown = narrow && drawerOpen;
 
   const zone = route.zone === 'home' ? null : navigation.available.find((z) => z.id === route.zone) ?? null;
   const pageLabel = route.zone === 'home' ? 'Home' : zone?.name ?? props.currentLabel ?? 'Zone';
@@ -116,10 +128,10 @@ export function AppShell(props: AppShellProps) {
       <div data-shell="" className="bos-atmosphere flex h-dvh overflow-hidden text-foreground" data-atmosphere="calm">
         <a href="#bos-content" className={cn('sr-only z-50 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground focus:not-sr-only focus:absolute focus:top-3 focus:left-3', focusRing)}>Skip to content</a>
         {narrow ? null : <Sidebar {...shared} onToggle={layout === 'wide' ? () => setPreference(mode === 'expanded' ? 'compact' : 'expanded') : undefined} />}
-        <div className="flex min-w-0 flex-1 flex-col" inert={drawerOpen || undefined}>
+        <div className="flex min-w-0 flex-1 flex-col" inert={drawerShown || undefined}>
           <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-background/70 px-3 sm:px-6">
             {narrow ? (
-              <button ref={menuButton} type="button" aria-label="Open navigation" aria-expanded={drawerOpen} aria-controls="bos-drawer" onClick={() => setDrawerOpen(true)} className={cn('flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent', focusRing)}>
+              <button ref={menuButton} type="button" aria-label="Open navigation" aria-expanded={drawerShown} aria-controls="bos-drawer" onClick={() => setDrawerOpen(true)} className={cn('flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent', focusRing)}>
                 <Icon name="menu" />
               </button>
             ) : null}
@@ -144,7 +156,7 @@ export function AppShell(props: AppShellProps) {
             </div>
           </main>
         </div>
-        {narrow && drawerOpen ? <Drawer {...shared} onClose={() => setDrawerOpen(false)} /> : null}
+        {drawerShown ? <Drawer {...shared} onClose={() => setDrawerOpen(false)} /> : null}
       </div>
     </ShellContext.Provider>
   );
@@ -154,7 +166,10 @@ interface NavProps extends AppShellProps {
   mode: SidebarMode;
   guarded: Guard;
   pageZone: ShellRoute['zone'];
-  /** Closes the drawer after a choice. */
+  /**
+   * Closes the drawer. Called only once a navigation actually goes ahead (inside the guarded
+   * action), so cancelling at "Discard unsaved changes?" leaves the drawer open where it was.
+   */
   onAfterNavigate: () => void;
 }
 
@@ -200,8 +215,10 @@ function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; 
 function ZoneNav({ navigation, mode, pageZone, route, guarded, onNavigate, onAfterNavigate, switching }: NavProps) {
   const compact = mode === 'compact';
   const go = (next: ShellRoute) => {
-    onAfterNavigate();
-    guarded(() => onNavigate(next));
+    guarded(() => {
+      onAfterNavigate();
+      onNavigate(next);
+    });
   };
   const state = switching ? 'loading' : navigation.state;
   return (
@@ -272,10 +289,10 @@ function BusinessSwitcher({ business, businesses, switching, guarded, onSelectBu
       </div>
     );
   }
-  const run = (action: () => void) => {
+  const run = (action: () => void) => guarded(() => {
     onAfterNavigate();
-    guarded(action);
-  };
+    action();
+  });
   const entries: MenuEntry[] = [];
   if (onSelectBusiness && businesses.length > 0) {
     entries.push({ kind: 'heading', id: 'h', label: 'Your businesses' });

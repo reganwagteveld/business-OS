@@ -15,13 +15,16 @@ export type Phase =
   | { kind: 'failed' }
   | { kind: 'unverified'; user: CurrentUser }
   | { kind: 'no-workspace'; user: CurrentUser }
-  | { kind: 'pick'; user: CurrentUser; businesses: BusinessSummary[] }
+  | { kind: 'pick'; user: CurrentUser; businesses: BusinessSummary[]; notice?: PickNotice }
   | { kind: 'ready'; user: CurrentUser; businesses: BusinessSummary[]; context: BusinessContext; notice?: SwitchNotice }
   /** Opening another business from inside the shell. Nothing from the previous business is shown meanwhile. */
   | { kind: 'switching'; user: CurrentUser; businesses: BusinessSummary[]; context: BusinessContext; to: BusinessSummary };
 
 /** Why the last in-shell switch did not land where the person asked (shown once, then dismissed). */
 export type SwitchNotice = { kind: 'switch-failed' | 'access-revoked'; business: string; current: string };
+
+/** On the business chooser after a switch found neither the requested nor the previous business still yours. */
+export type PickNotice = { kind: 'access-revoked'; business: string };
 
 export type Resolved = Exclude<Phase, { kind: 'booting' } | { kind: 'switching' }>;
 
@@ -31,6 +34,11 @@ export interface ResolveDeps {
   storage: WorkspaceStorage;
   /** An explicit choice made in this session (the picker or the switcher). Still checked against the server. */
   preferredSlug?: string | null;
+  /**
+   * Where to go if the preferred business is no longer listed: the business that was open when a
+   * switch began. Only used if the server still lists it, so it never outranks the membership list.
+   */
+  fallbackSlug?: string | null;
   signal?: AbortSignal;
 }
 
@@ -63,6 +71,8 @@ export async function resolveWorkspace(deps: ResolveDeps, attempt = 0): Promise<
   const choice =
     deps.preferredSlug && known.has(deps.preferredSlug)
       ? deps.preferredSlug
+      : deps.fallbackSlug && known.has(deps.fallbackSlug)
+        ? deps.fallbackSlug
       : saved !== null && known.has(saved)
         ? saved
         : businesses.length === 1

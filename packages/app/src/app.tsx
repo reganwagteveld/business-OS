@@ -154,6 +154,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         onCreate={() => setMode('new')}
         onSignOut={signOut}
         onBack={phase.kind === 'ready' ? () => setMode('default') : undefined}
+        revoked={phase.kind === 'pick' ? phase.notice?.business : undefined}
       />
     );
   }

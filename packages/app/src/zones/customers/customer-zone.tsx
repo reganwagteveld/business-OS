@@ -4,6 +4,7 @@ import type { CustomersClient } from '../../api/customers';
 import type { BusinessContext } from '../../api/tenancy';
 import { actionClass, secondaryClass } from '../../shell/frame';
 import { useDialog } from '../dialog';
+import { aboveShell } from '../drafts';
 import { ZoneFrame } from '../zone-frame';
 import { CustomerDetail, type ProjectsLink } from './customer-detail';
 import { CustomerForm } from './customer-form';
@@ -92,8 +93,8 @@ export function CustomerZone({ client, context, userLabel, projects, initialCust
           />
         ) : null}
       </div>
-      {pending ? (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-background/80 px-5 backdrop-blur-sm">
+      {aboveShell(pending ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-5 backdrop-blur-sm">
           <div ref={discardRef} onKeyDown={onDiscardKey} role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-body" className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-lg">
             <h2 id="discard-title" className="text-lg font-semibold tracking-tight">Discard unsaved changes?</h2>
             <p id="discard-body" className="mt-2 text-sm text-muted-foreground">You have changes that have not been saved. If you leave now, they will be lost.</p>
@@ -103,7 +104,7 @@ export function CustomerZone({ client, context, userLabel, projects, initialCust
             </div>
           </div>
         </div>
-      ) : null}
+      ) : null)}
     </ZoneFrame>
   );
 }
