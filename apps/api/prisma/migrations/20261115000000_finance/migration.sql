@@ -349,7 +349,7 @@ ALTER TABLE "finance_documents" ADD CONSTRAINT "finance_documents_opportunity_fk
 ALTER TABLE "finance_documents" ADD CONSTRAINT "finance_documents_project_fkey" FOREIGN KEY ("business_id", "project_id") REFERENCES "projects"("business_id", "id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 
 -- AddForeignKey
-ALTER TABLE "finance_documents" ADD CONSTRAINT "finance_documents_source_quote_fkey" FOREIGN KEY ("business_id", "source_quote_id", "source_quote_kind") REFERENCES "finance_documents"("business_id", "id", "kind") ON DELETE NO ACTION ON UPDATE NO ACTION;
+ALTER TABLE "finance_documents" ADD CONSTRAINT "finance_documents_source_quote_fkey" FOREIGN KEY ("business_id", "source_quote_id", "source_quote_kind", "currency_code", "customer_id") REFERENCES "finance_documents"("business_id", "id", "kind", "currency_code", "customer_id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 
 -- AddForeignKey
 ALTER TABLE "finance_documents" ADD CONSTRAINT "finance_documents_credited_invoice_fkey" FOREIGN KEY ("business_id", "credited_invoice_id", "credited_invoice_kind", "currency_code", "customer_id") REFERENCES "finance_documents"("business_id", "id", "kind", "currency_code", "customer_id") ON DELETE NO ACTION ON UPDATE NO ACTION;
@@ -520,21 +520,29 @@ CREATE UNIQUE INDEX "finance_payments_idempotency_key" ON "finance_payments" ("b
 CREATE UNIQUE INDEX "finance_payment_allocations_active_key" ON "finance_payment_allocations" ("business_id", "payment_id", "invoice_id") WHERE "reversed_at" IS NULL;
 
 -- ---------------------------------------------------------------------------------------------
--- Content hash. The canonical content of an issued document: header, snapshots and lines (ordered by
--- position, id), as jsonb, whose text form is deterministic. Computed by the issue guard; recomputing
--- it later proves the stored content is what was issued. Not a signature (FD-L5).
+-- Content hash. The canonical content of an issued document: everything that is financially or legally
+-- part of what was issued, as jsonb, whose text form is deterministic. Included: identity (business,
+-- document, kind, number), dates, currency and precision, tax mode, amounts, every link (customer,
+-- contact, opportunity, project, source quote, credited invoice), the seller and bill-to snapshots, the
+-- notes printed on the document, and every line (position, description, quantities, prices, discount,
+-- tax rate, tax snapshot, net and tax), ordered by (position, id). Excluded on purpose: lifecycle and
+-- bookkeeping fields that legitimately change or say nothing about the content (status, allocated_total,
+-- void fields, version, authorship, timestamps, idempotency key). Computed by the issue guard;
+-- recomputing it later proves the stored content is what was issued. Not a signature (FD-L5).
 CREATE FUNCTION finance_document_content(d "finance_documents") RETURNS jsonb
 LANGUAGE sql STABLE SECURITY INVOKER SET search_path = pg_catalog, public AS $$
   SELECT jsonb_build_object(
-    'kind', d.kind, 'number', d.number, 'issueDate', d.issue_date, 'dueDate', d.due_date, 'validUntil', d.valid_until,
+    'businessId', d.business_id, 'id', d.id, 'kind', d.kind, 'number', d.number, 'numberValue', d.number_value::text,
+    'issueDate', d.issue_date, 'dueDate', d.due_date, 'validUntil', d.valid_until,
     'currency', d.currency_code, 'currencyScale', d.currency_scale, 'taxMode', d.tax_mode,
     'subtotal', d.subtotal::text, 'taxTotal', d.tax_total::text, 'total', d.total::text,
-    'customerId', d.customer_id, 'sourceQuoteId', d.source_quote_id, 'creditedInvoiceId', d.credited_invoice_id,
-    'seller', d.seller_snapshot, 'billTo', d.bill_to_snapshot,
+    'customerId', d.customer_id, 'contactId', d.contact_id, 'opportunityId', d.opportunity_id, 'projectId', d.project_id,
+    'sourceQuoteId', d.source_quote_id, 'creditedInvoiceId', d.credited_invoice_id,
+    'seller', d.seller_snapshot, 'billTo', d.bill_to_snapshot, 'notes', d.notes,
     'lines', coalesce((
       SELECT jsonb_agg(jsonb_build_object(
-        'description', l.description, 'quantity', l.quantity::text, 'unitPrice', l.unit_price::text,
-        'discount', l.discount_amount::text, 'taxName', l.tax_name, 'taxRatePercent', l.tax_rate_percent::text,
+        'position', l.position, 'description', l.description, 'quantity', l.quantity::text, 'unitPrice', l.unit_price::text,
+        'discount', l.discount_amount::text, 'taxRateId', l.tax_rate_id, 'taxName', l.tax_name, 'taxRatePercent', l.tax_rate_percent::text,
         'net', l.line_net::text, 'tax', l.line_tax::text) ORDER BY l.position, l.id)
       FROM public.finance_document_lines l WHERE l.business_id = d.business_id AND l.document_id = d.id), '[]'::jsonb))
 $$;

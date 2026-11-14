@@ -493,6 +493,23 @@ describe('tenancy, permissions and isolation', () => {
     expect(await own.patch('invoices', ok.id, { version: 1, customerId: custA })).toMatchObject({ status: 400, body: { error: 'contact_customer_mismatch' } });
     const issued = (await own.issue('invoices', ok.id, { version: 1 })).body.document;
     expect(issued.billToSnapshot.contact).toMatchObject({ contactId: contact, name: 'Gil Bates' });
+    // A converted invoice stays with its quote's customer (F1-02), in the service and in the database.
+    const q = (await own.createQuote({ customerId: custA, lines: [line()] })).body.document;
+    await own.issue('quotes', q.id, { version: 1 });
+    const conv = (await own.convert(q.id)).body.document;
+    expect(await own.patch('invoices', conv.id, { version: 1, customerId: custA2 })).toMatchObject({ status: 400, body: { error: 'source_quote_customer' } });
+    expect((await own.patch('invoices', conv.id, { version: 1, customerId: custA, notes: 'same customer is fine' })).status).toBe(200);
+    const app = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await app.connect();
+    try {
+      await app.query('BEGIN');
+      await app.query("SELECT set_config('app.business_id', $1, true)", [A.businessId]);
+      const err = await app.query('UPDATE finance_documents SET customer_id = $2 WHERE id = $1', [conv.id, custA2]).then(() => 'ok', (e: { code?: string }) => e.code);
+      await app.query('ROLLBACK');
+      expect(err).toBe('23503');
+    } finally {
+      await app.end();
+    }
   });
 
   it('RBAC: the FD-P1 matrix through the real routes; finance access is never implied by other Zones', async () => {
@@ -688,6 +705,11 @@ describe('database backstops behind the API', () => {
     const inv = (await own.createInvoice({ customerId: cust, dueDate: '2030-01-01', lines: [line()] })).body.document;
     await own.issue('invoices', inv.id, { version: 1 });
     expect((await own.settings()).body.settings.hasRetainedRecords).toBe(true);
+    // Retention settings are a recorded policy only (F1-03): placing and lifting a legal hold, and raising
+    // and lowering retention to the 7-year floor, delete nothing and change nothing about protection.
+    const v1 = (await own.patchSettings({ version: 0, retentionYears: 12, legalHold: true })).body.settings.version;
+    await own.patchSettings({ version: v1, retentionYears: 7, legalHold: false });
+    expect((await own.get('invoices', inv.id)).body.document.status).toBe('ISSUED');
     // An administrative delete (as the future purge job or a manual erasure would run) fails whole.
     const failed = await admin.query('DELETE FROM businesses WHERE id = $1', [C.businessId]).then(() => null, (e: { code?: string; constraint?: string; table?: string }) => e);
     expect(failed?.code).toBe('23503');

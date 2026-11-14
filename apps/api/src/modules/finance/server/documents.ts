@@ -384,6 +384,12 @@ export async function updateDraft(db: AppTenantDb, actorUserId: string, kind: Ki
   if (before.version !== patch.version) throw new StateConflictError('stale');
   checkTaxMode(patch.taxMode);
   if (patch.customerId !== undefined && kind === 'CREDIT_NOTE') throw new RuleViolationError('invalid_input', 'A credit note is for its invoice\'s customer.');
+  // A converted invoice stays with its source quote's customer (and currency, which never changes); the
+  // composite FK on (source_quote_id, currency_code, customer_id) enforces the same in the database.
+  // To bill someone else, create a new invoice instead of re-pointing the conversion.
+  if (patch.customerId !== undefined && patch.customerId !== before.customerId && before.sourceQuoteId) {
+    throw new RuleViolationError('source_quote_customer', 'An invoice converted from a quote stays with the quote\'s customer. Create a new invoice to bill another customer.');
+  }
 
   const data: Record<string, unknown> = {};
   if (patch.notes !== undefined) data.notes = patch.notes;

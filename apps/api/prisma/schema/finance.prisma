@@ -139,7 +139,7 @@ model FinanceDocument {
   contactId           String?               @map("contact_id") @db.Uuid
   opportunityId       String?               @map("opportunity_id") @db.Uuid
   projectId           String?               @map("project_id") @db.Uuid
-  /// Invoice created from a quote (kind pinned to QUOTE by CHECK and FK).
+  /// Invoice created from a quote of the same customer and currency (kind pinned to QUOTE by CHECK; FK carries customer and currency).
   sourceQuoteId       String?               @map("source_quote_id") @db.Uuid
   sourceQuoteKind     FinanceDocumentKind   @default(QUOTE) @map("source_quote_kind")
   /// Credit note for an invoice of the same customer and currency (FK).
@@ -189,7 +189,7 @@ model FinanceDocument {
   contact           Contact?                   @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_contact_fkey")
   opportunity       Opportunity?               @relation(fields: [businessId, opportunityId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_opportunity_fkey")
   project           Project?                   @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_project_fkey")
-  sourceQuote       FinanceDocument?           @relation("QuoteConversions", fields: [businessId, sourceQuoteId, sourceQuoteKind], references: [businessId, id, kind], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_source_quote_fkey")
+  sourceQuote       FinanceDocument?           @relation("QuoteConversions", fields: [businessId, sourceQuoteId, sourceQuoteKind, currencyCode, customerId], references: [businessId, id, kind, currencyCode, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_source_quote_fkey")
   convertedInvoices FinanceDocument[]          @relation("QuoteConversions")
   creditedInvoice   FinanceDocument?           @relation("CreditNotes", fields: [businessId, creditedInvoiceId, creditedInvoiceKind, currencyCode, customerId], references: [businessId, id, kind, currencyCode, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_credited_invoice_fkey")
   creditNotes       FinanceDocument[]          @relation("CreditNotes")

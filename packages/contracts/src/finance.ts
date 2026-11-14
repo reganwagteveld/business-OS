@@ -265,7 +265,7 @@ export const FinanceSettings = z
     defaultTaxRateId: Uuid.nullable(),
     /** The business's currency, the default for new documents. */
     defaultCurrency: z.string(),
-    /** Retention policy (FD-L3): issued documents and their audit history are never deleted automatically. */
+    /** Retention policy (FD-L3): a recorded policy only. Nothing deletes finance records or their audit history, and changing these fields authorises no deletion. */
     retentionYears: z.number().int(),
     legalHold: z.boolean(),
     /** True once the business has any finance record: business deletion is then refused. */

@@ -302,6 +302,9 @@ describe('T: tenant isolation and composite FKs', () => {
     expect(await outcome(draftIn({ kind: 'CREDIT_NOTE', creditedInvoiceId: inv, currency: 'EUR' }))).toBe('23503');
     expect(await outcome(draftIn({ kind: 'INVOICE', sourceQuoteId: inv }))).toBe('23503');
     expect(await outcome(draftIn({ kind: 'INVOICE', sourceQuoteId: quote }))).toBe('ok');
+    // A converted invoice has its source quote's customer and currency (F1-02): the FK carries both.
+    expect(await outcome(draftIn({ kind: 'INVOICE', sourceQuoteId: quote, customerId: cust2 }))).toBe('23503');
+    expect(await outcome(draftIn({ kind: 'INVOICE', sourceQuoteId: quote, currency: 'EUR' }))).toBe('23503');
     expect(await outcome(draftIn({ kind: 'QUOTE', sourceQuoteId: quote }))).toBe('23514');
   });
 });
@@ -513,6 +516,60 @@ describe('L: lifecycle, numbering and immutability', () => {
       expect(await set(inv, data), JSON.stringify(data)).toBe('FN010');
     }
     expect(await set(inv, { version: { increment: 1 } })).toBe('FN001'); // void is final
+  });
+
+  it('L10: the content hash covers every financially or legally material field of an issued document and its lines, and no lifecycle field', async () => {
+    const id = await as(A, alice, async (db) => {
+      const id = await createDraft(db, A, { contactId: contact1, opportunityId: opp1, projectId: proj1, lines: [{ qty: '2', price: '10', taxPct: '10' }, { qty: '1', price: '5' }] });
+      await db.financeDocument.updateMany({ where: { id }, data: { notes: 'Payable to account 123' } });
+      await issue(db, id);
+      return id;
+    });
+    const stored = (await doc(id)).content_sha256 as string;
+    // Isolated administrative mechanism 1: hash a modified copy of the row (jsonb_populate_record), which
+    // writes nothing, so the production guards stay exactly as they are.
+    const hashWith = async (patch: Record<string, unknown>) =>
+      (await admin.query(`SELECT finance_content_hash(jsonb_populate_record(d, $2::jsonb)) AS h FROM finance_documents d WHERE id = $1`, [id, JSON.stringify(patch)])).rows[0].h as string;
+    expect(await hashWith({})).toBe(stored);
+    const material: Record<string, unknown>[] = [
+      { business_id: B }, { id: uuid() }, { kind: 'QUOTE' }, { number: 'INV-X' }, { number_value: 999999 }, { issue_date: '2031-01-02' },
+      { due_date: '2031-03-01' }, { valid_until: '2031-03-01' }, { currency_code: 'EUR' }, { currency_scale: 3 }, { subtotal: '99' }, { tax_total: '9' },
+      { total: '108' }, { customer_id: cust2 }, { contact_id: null }, { opportunity_id: null }, { project_id: null }, { source_quote_id: uuid() },
+      { credited_invoice_id: uuid() }, { seller_snapshot: { legalName: 'Other' } }, { bill_to_snapshot: { name: 'Other' } }, { notes: 'Payable to account 999' },
+      { notes: null },
+    ];
+    for (const patch of material) expect(await hashWith(patch), JSON.stringify(patch)).not.toBe(stored);
+    const lifecycle: Record<string, unknown>[] = [
+      { status: 'VOID' }, { allocated_total: '5' }, { version: 99 }, { void_reason: 'x' }, { voided_at: '2031-02-01T00:00:00Z' }, { voided_by_id: alice },
+      { status_changed_at: '2031-02-01T00:00:00Z' }, { status_changed_by_id: alice }, { updated_at: '2031-02-01T00:00:00Z' }, { updated_by_id: alice },
+      { issued_at: '2031-02-01T00:00:00Z' }, { issued_by_id: alice }, { created_at: '2031-02-01T00:00:00Z' }, { created_by_id: alice },
+      { idempotency_key: 'k', request_hash: 'h' },
+    ];
+    for (const patch of lifecycle) expect(await hashWith(patch), JSON.stringify(patch)).toBe(stored);
+    // Isolated administrative mechanism 2, for lines (the hash reads them from the table): an
+    // administrative transaction with triggers disabled for that transaction only, rolled back.
+    const lineChange = async (sql: string) => {
+      await admin.query('BEGIN');
+      try {
+        await admin.query(`SET LOCAL session_replication_role = replica`);
+        await admin.query(sql, [id]);
+        return (await admin.query(`SELECT finance_content_hash(d) AS h FROM finance_documents d WHERE id = $1`, [id])).rows[0].h as string;
+      } finally {
+        await admin.query('ROLLBACK');
+      }
+    };
+    const first = `(SELECT id FROM finance_document_lines WHERE document_id = $1 ORDER BY position LIMIT 1)`;
+    for (const set of [`position = 1500`, `description = 'Other'`, `quantity = 3`, `unit_price = 11`, `discount_amount = 1`, `tax_rate_id = '${RATES[A]!['5']}'`,
+      `tax_name = 'Other tax'`, `tax_rate_percent = 11`, `line_net = 21`, `line_tax = 3`]) {
+      expect(await lineChange(`UPDATE finance_document_lines SET ${set} WHERE id = ${first}`), set).not.toBe(stored);
+    }
+    expect(await lineChange(`DELETE FROM finance_document_lines WHERE id = ${first}`)).not.toBe(stored);
+    expect(await lineChange(`INSERT INTO finance_document_lines (id, business_id, document_id, position, description, quantity, unit_price, line_net, line_tax)
+      VALUES (gen_random_uuid(), '${A}', $1, 9000, 'added', 1, 0, 0, 0)`)).not.toBe(stored);
+    // Nothing above changed the document, and the production guard still refuses the same edits as bos_app.
+    expect((await doc(id)).content_sha256).toBe(stored);
+    expect(await outcome(as(A, alice, (db) => db.financeDocument.updateMany({ where: { id }, data: { notes: 'edited' } })))).toBe('FN001');
+    expect((await admin.query(`SELECT finance_content_hash(d) = content_sha256 AS ok FROM finance_documents d WHERE id = $1`, [id])).rows[0].ok).toBe(true);
   });
 
   it('L7: a tax rate\'s percentage is fixed; lines keep the name and rate they were issued with', async () => {
