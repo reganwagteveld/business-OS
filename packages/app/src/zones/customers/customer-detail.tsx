@@ -1,4 +1,4 @@
-import type { Activity, Contact, Customer } from '@business-os/contracts';
+import type { Activity, Customer } from '@business-os/contracts';
 import { useRef, useState, type ReactNode } from 'react';
 import type { CustomersClient } from '../../api/customers';
 import { actionClass, secondaryClass } from '../../shell/frame';
@@ -7,6 +7,9 @@ import { useLoad } from '../use-load';
 import { KindBadge, StatusBadge } from './directory';
 import { activityTitle, addressLines, formatWhen, isSystemActivity } from './format';
 import { CallIcon, EmailIcon, MeetingIcon, NoteIcon } from './icons';
+import { Breakable, linkClass, safeHref, telHref } from './links';
+import { ManageContacts } from './manage-contacts';
+import { ActivityComposer } from './activity-composer';
 
 function Panel({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -29,34 +32,22 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** A tel: link only for something that is plainly a phone number. */
-const telHref = (phone: string) => {
-  const digits = phone.replace(/[^\d+]/g, '');
-  return /^\+?\d{3,}$/.test(digits) ? `tel:${digits}` : null;
-};
-
-/** Lets a long email break after the @ (a clean place) before it would ever break mid-word. */
-function Breakable({ text }: { text: string }) {
-  const at = text.indexOf('@');
-  return at < 0 ? <>{text}</> : <>{text.slice(0, at + 1)}<wbr />{text.slice(at + 1)}</>;
-}
-
-const linkClass = 'underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring';
-
-const safeHref = (site: string) => {
-  const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(site) ? site : `https://${site}`;
-  return /^https?:\/\//i.test(url) ? url : null;
-};
 
 /**
  * One customer's workspace. Everything shown is a real record from the API; contacts and activity
- * are read-only here (managing them is the next piece of work). Archive asks first and restore is one click.
+ * are managed through the existing tenant-scoped API. Archive asks first and restore is one click.
  */
-export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, onBack, onEdit, onSessionEnded }: {
-  client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean;
-  onBack: () => void; onEdit: (c: Customer) => void; onSessionEnded: () => void;
+export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
+  client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
+  onBack: () => void; onEdit: (c: Customer) => void;
+  /** Open contact or activity drafts report here, so the Zone asks before anything would discard them. */
+  onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const customer = useLoad(`customer|${slug}|${id}`, (signal) => client.get(slug, id, signal));
+  // While a refresh is in flight, keep showing the record already on screen (same business, same id).
+  const shown = customer.state.status === 'done'
+    ? (customer.state.outcome.kind === 'ok' ? customer.state.outcome.data : null)
+    : (customer.previous?.kind === 'ok' ? customer.previous.data : null);
   const members = useLoad(`members|${slug}`, (signal) => client.members(slug, signal));
   // null while the team list is loading, so a name never flashes from "a team member" to the real one.
   const names = members.state.status === 'loading' ? null : new Map(members.state.outcome.kind === 'ok' ? members.state.outcome.data.map((m) => [m.userId, m.name ?? 'Team member']) : []);
@@ -66,24 +57,27 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, o
       <button type="button" onClick={onBack} className="mb-4 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
         <span aria-hidden="true">←</span> All customers
       </button>
-      {customer.state.status === 'loading' ? <Skeleton rows={4} label="Loading customer…" /> : null}
+      {shown === null && customer.state.status === 'loading' ? <Skeleton rows={4} label="Loading customer…" /> : null}
       {customer.state.status === 'done' && customer.state.outcome.kind !== 'ok' ? (
         <Problem outcome={customer.state.outcome} what="This customer" onRetry={customer.reload} onSessionEnded={onSessionEnded} />
       ) : null}
-      {customer.state.status === 'done' && customer.state.outcome.kind === 'ok' ? (
+      {shown ? (
+        // Keyed by id only: a refresh (after archiving, a primary-contact change, …) updates the page in
+        // place instead of remounting it, so open drafts below are never thrown away.
         <Loaded
-          key={`${customer.state.outcome.data.id}:${customer.state.outcome.data.updatedAt}`}
-          customer={customer.state.outcome.data} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite}
-          names={names} onEdit={onEdit} onChanged={customer.reload} onSessionEnded={onSessionEnded}
+          key={shown.id}
+          customer={shown} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity}
+          names={names} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
         />
       ) : null}
     </div>
   );
 }
 
-function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onEdit, onChanged, onSessionEnded }: {
-  customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean;
-  names: Map<string, string> | null; onEdit: (c: Customer) => void; onChanged: () => void; onSessionEnded: () => void;
+function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, names, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
+  customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
+  names: Map<string, string> | null; onEdit: (c: Customer) => void; onChanged: () => void;
+  onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const archived = customer.archivedAt !== null;
   const [confirming, setConfirming] = useState(false);
@@ -128,7 +122,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
         </div>
         {canWrite ? (
           <div className="flex flex-wrap gap-2">
-            {archived ? null : <button type="button" className={secondaryClass} onClick={() => onEdit(customer)}>Edit</button>}
+            {archived ? null : <button type="button" className={secondaryClass} onClick={() => confirmDiscard(() => onEdit(customer))}>Edit</button>}
             {archived
               ? <button type="button" className={actionClass} disabled={busy} onClick={() => void change('restore')}>{busy ? 'Restoring…' : 'Restore customer'}</button>
               : <button type="button" className={secondaryClass} disabled={busy} onClick={() => setConfirming(true)}>Archive</button>}
@@ -142,7 +136,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
           <h2 id="archive-title" className="text-base font-semibold">Archive {customer.displayName}?</h2>
           <p id="archive-body" className="mt-1 text-sm text-muted-foreground">They will be hidden from the active list. Nothing is deleted, and you can restore them at any time.</p>
           <div className="mt-4 flex gap-3">
-            <button type="button" className={actionClass} disabled={busy} onClick={() => void change('archive')}>{busy ? 'Archiving…' : 'Archive customer'}</button>
+            <button type="button" className={actionClass} disabled={busy} onClick={() => confirmDiscard(() => void change('archive'))}>{busy ? 'Archiving…' : 'Archive customer'}</button>
             <button type="button" className={secondaryClass} disabled={busy} onClick={() => setConfirming(false)} autoFocus>Keep active</button>
           </div>
         </div>
@@ -164,7 +158,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
           </Panel>
         </div>
         <div className="self-start lg:col-start-3 lg:row-span-2 lg:row-start-1">
-          <ContactsPanel customer={customer} client={client} slug={slug} onSessionEnded={onSessionEnded} />
+          <ManageContacts customer={customer} client={client} slug={slug} canWrite={canWrite} onCustomerChanged={onChanged} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
         </div>
         <div className="lg:col-span-2 lg:row-start-2">
           <Panel title="Notes">
@@ -172,7 +166,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
           </Panel>
         </div>
         <div className="lg:col-span-2 lg:row-start-3">
-          <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} onSessionEnded={onSessionEnded} />
+          <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} canWrite={canLogActivity && !archived} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
         </div>
         <section aria-label="Sales and Finance" className="self-start rounded-2xl border border-dashed border-border px-5 py-4 lg:col-start-3 lg:row-start-3">
           <div className="flex items-center justify-between gap-3">
@@ -186,49 +180,16 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
   );
 }
 
-function ContactsPanel({ customer, client, slug, onSessionEnded }: { customer: Customer; client: CustomersClient; slug: string; onSessionEnded: () => void }) {
-  const { state, reload } = useLoad(`contacts|${slug}|${customer.id}`, (signal) => client.contacts(slug, customer.id, signal));
-  return (
-    <Panel title="Contacts">
-      {state.status === 'loading' ? <Skeleton rows={2} label="Loading contacts…" /> : null}
-      {state.status === 'done' && state.outcome.kind !== 'ok' ? <Problem outcome={state.outcome} what="Contacts" onRetry={reload} onSessionEnded={onSessionEnded} /> : null}
-      {state.status === 'done' && state.outcome.kind === 'ok' ? <ContactList contacts={state.outcome.data} primaryId={customer.primaryContactId} /> : null}
-    </Panel>
-  );
-}
-
-function ContactList({ contacts, primaryId }: { contacts: Contact[]; primaryId: string | null }) {
-  if (contacts.length === 0) return <p className="text-sm text-muted-foreground">No contacts are linked to this customer yet. Adding and managing contacts is coming next.</p>;
-  // The primary contact always leads; the rest keep the server's name order.
-  const ordered = [...contacts].sort((a, b) => Number(b.id === primaryId) - Number(a.id === primaryId));
-  return (
-    <ul className="divide-y divide-border">
-      {ordered.map((c) => {
-        const phone = c.phone ?? c.mobile;
-        return (
-          <li key={c.id} className="py-3 first:pt-0 last:pb-0">
-            <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
-              {c.displayName}
-              {c.id === primaryId ? <span aria-label="Primary contact" className="rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">Primary</span> : null}
-            </p>
-            {c.jobTitle ? <p className="text-xs text-muted-foreground">{c.jobTitle}</p> : null}
-            {c.email ? <p className="text-xs [overflow-wrap:anywhere]"><a className={`text-muted-foreground ${linkClass}`} href={`mailto:${c.email}`}><Breakable text={c.email} /></a></p> : null}
-            {phone ? <p className="text-xs">{telHref(phone) ? <a className={`text-muted-foreground ${linkClass}`} href={telHref(phone)!}>{phone}</a> : <span className="text-muted-foreground">{phone}</span>}</p> : null}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function ActivityPanel({ customerId, client, slug, locale, timeZone, names, onSessionEnded }: {
-  customerId: string; client: CustomersClient; slug: string; locale?: string; timeZone: string; names: Map<string, string> | null; onSessionEnded: () => void;
+function ActivityPanel({ customerId, client, slug, locale, timeZone, names, canWrite, onDraftChange, confirmDiscard, onSessionEnded }: {
+  customerId: string; client: CustomersClient; slug: string; locale?: string; timeZone: string; names: Map<string, string> | null; canWrite: boolean;
+  onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const [stack, setStack] = useState<string[]>([]);
   const cursor = stack[stack.length - 1];
   const { state, reload } = useLoad(`activity|${slug}|${customerId}|${cursor ?? ''}`, (signal) => client.activities(slug, customerId, cursor, signal));
   return (
     <Panel title="Activity">
+      {canWrite ? <ActivityComposer client={client} slug={slug} customerId={customerId} onSaved={() => { setStack([]); reload(); }} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} /> : null}
       {state.status === 'loading' ? <Skeleton rows={3} label="Loading activity…" /> : null}
       {state.status === 'done' && state.outcome.kind !== 'ok' ? <Problem outcome={state.outcome} what="Activity" onRetry={reload} onSessionEnded={onSessionEnded} /> : null}
       {state.status === 'done' && state.outcome.kind === 'ok' ? (

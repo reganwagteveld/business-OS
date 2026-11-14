@@ -17,7 +17,9 @@ export type Outcome<T> =
   | { kind: 'invalid_input'; message: string; fields?: Record<string, string> }
   | { kind: 'unreachable' }
   | { kind: 'failed'; status: number }
-  | { kind: 'invalid' };
+  | { kind: 'invalid' }
+  /** The list is longer than this screen loads in one go. Shown as an error, never as a partial list. */
+  | { kind: 'incomplete'; message: string };
 
 export interface BusinessSummary {
   slug: string;

@@ -20,10 +20,15 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
 }) {
   const { slug, name, timeZone, locale } = context.business;
   const canWrite = context.membership.permissions.includes('customers:write');
+  const canLogActivity = context.membership.permissions.includes('activity:write');
   const [view, setView] = useState<View>({ name: 'list' });
   const [query, setQuery] = useState<DirectoryQuery>({ q: '', status: 'active' });
   const [notice, setNotice] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
+  // Each open editor reports here by name (the customer form, a contact form, the activity composer).
+  const [drafts, setDrafts] = useState<Record<string, boolean>>({});
+  const dirty = Object.values(drafts).some(Boolean);
+  const markDraft = useCallback((key: string, value: boolean) => setDrafts((d) => (Boolean(d[key]) === value ? d : { ...d, [key]: value })), []);
+  const markForm = useCallback((value: boolean) => markDraft('form', value), [markDraft]);
   const [pending, setPending] = useState<(() => void) | null>(null);
   const content = useRef<HTMLDivElement>(null);
 
@@ -37,7 +42,7 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
 
   const leave = useCallback((action: () => void) => (dirty ? setPending(() => action) : action()), [dirty]);
   const go = (next: View, message: string | null = null) => {
-    setDirty(false);
+    setDrafts({});
     setNotice(message);
     setView(next);
   };
@@ -64,15 +69,16 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
         ) : null}
         {view.name === 'detail' ? (
           <CustomerDetail
-            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite}
-            onBack={() => go({ name: 'list' })} onEdit={(customer) => go({ name: 'edit', customer })} onSessionEnded={onSessionEnded}
+            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity}
+            onBack={() => leave(() => go({ name: 'list' }))} onEdit={(customer) => go({ name: 'edit', customer })}
+            onDraftChange={markDraft} confirmDiscard={leave} onSessionEnded={onSessionEnded}
           />
         ) : null}
         {view.name === 'new' || view.name === 'edit' ? (
           <CustomerForm
             key={view.name === 'edit' ? view.customer.id : 'new'}
             client={client} slug={slug} locale={locale} customer={view.name === 'edit' ? view.customer : undefined}
-            onDirtyChange={setDirty} onSessionEnded={onSessionEnded}
+            onDirtyChange={markForm} onSessionEnded={onSessionEnded}
             onCancel={() => leave(() => go(view.name === 'edit' ? { name: 'detail', id: view.customer.id } : { name: 'list' }))}
             onSaved={(saved) => go({ name: 'detail', id: saved.id }, view.name === 'edit' ? 'Changes saved.' : `${saved.displayName} was added.`)}
           />
@@ -85,7 +91,7 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
             <p id="discard-body" className="mt-2 text-sm text-muted-foreground">You have changes that have not been saved. If you leave now, they will be lost.</p>
             <div className="mt-6 flex gap-3">
               <button type="button" autoFocus className={actionClass} onClick={() => setPending(null)}>Keep editing</button>
-              <button type="button" className={secondaryClass} onClick={() => { const run = pending; setPending(null); setDirty(false); run(); }}>Discard changes</button>
+              <button type="button" className={secondaryClass} onClick={() => { const run = pending; setPending(null); run(); }}>Discard changes</button>
             </div>
           </div>
         </div>

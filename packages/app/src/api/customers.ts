@@ -1,11 +1,15 @@
 import {
-  CreateCustomerRequest, CustomerResponse, endpointPath, endpoints, ListActivitiesResponse, ListContactsResponse, ListCustomersResponse,
+  ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, endpointPath, endpoints,
+  ListActivitiesResponse, ListContactsResponse, ListCustomersResponse, UpdateContactRequest,
   MembersResponse, UpdateCustomerRequest, type Activity, type Contact, type Customer, Member as MemberSchema,
 } from '@business-os/contracts';
 import type { z } from 'zod';
 import type { AuthTransport } from './auth';
 import { createRequester, type RawResult } from './http';
 import { classify, type Outcome } from './tenancy';
+
+/** Contacts per customer the panel loads (100 per page). Beyond this it reports an error rather than a partial list. */
+export const MAX_CONTACT_PAGES = 50;
 
 export type RecordStatus = 'active' | 'archived' | 'all';
 export interface CustomerPage { customers: Customer[]; nextCursor: string | null }
@@ -22,7 +26,14 @@ export interface CustomersClient {
   update(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<Customer>>;
   archive(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Customer>>;
   restore(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Customer>>;
-  contacts(slug: string, customerId: string, signal?: AbortSignal): Promise<Outcome<Contact[]>>;
+  /** Every contact of one customer in the given state, following the server's cursors (so the primary is never cut off). */
+  contacts(slug: string, customerId: string, status?: 'active' | 'archived', signal?: AbortSignal): Promise<Outcome<Contact[]>>;
+  createContact(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Contact>>;
+  updateContact(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Contact>>;
+  archiveContact(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Contact>>;
+  restoreContact(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Contact>>;
+  /** Logs a note, call, meeting or email. The server attributes it to the signed-in person. */
+  createActivity(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Activity>>;
   activities(slug: string, customerId: string, cursor?: string, signal?: AbortSignal): Promise<Outcome<ActivityPage>>;
   /** Active members, for the optional customer owner. */
   members(slug: string, signal?: AbortSignal): Promise<Outcome<Member[]>>;
@@ -91,9 +102,41 @@ export function createCustomersClient(baseUrl: string, transport: AuthTransport,
     async restore(slug, id, signal) {
       return settle(await http.request('POST', path(endpoints.restoreCustomer.path, { slug, customerId: id }), undefined, signal), CustomerResponse, (d) => d.customer);
     },
-    async contacts(slug, customerId, signal) {
-      const raw = await http.request('GET', path(endpoints.listContacts.path, { slug }) + qs({ customerId, status: 'active', limit: 100 }), undefined, signal);
-      return settle(raw, ListContactsResponse, (d) => d.contacts);
+    async contacts(slug, customerId, status = 'active', signal) {
+      const all: Contact[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < MAX_CONTACT_PAGES; page++) {
+        const raw = await http.request('GET', path(endpoints.listContacts.path, { slug }) + qs({ customerId, status, limit: 100, cursor }), undefined, signal);
+        const outcome = settle(raw, ListContactsResponse, (d) => d);
+        if (outcome.kind !== 'ok') return outcome;
+        all.push(...outcome.data.contacts);
+        if (!outcome.data.nextCursor) return { kind: 'ok', data: all };
+        cursor = outcome.data.nextCursor;
+      }
+      // Still more after the last page we allow: say so, never return a silently truncated list
+      // (the primary contact, or the one someone is looking for, could be in the missing part).
+      return { kind: 'incomplete', message: `This customer has more than ${MAX_CONTACT_PAGES * 100} contacts, more than this panel can show.` };
+    },
+    async createContact(slug, input, signal) {
+      const checked = CreateContactRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('POST', path(endpoints.createContact.path, { slug }), checked.data, signal), ContactResponse, (d) => d.contact);
+    },
+    async updateContact(slug, id, input, signal) {
+      const checked = UpdateContactRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('PATCH', path(endpoints.updateContact.path, { slug, contactId: id }), checked.data, signal), ContactResponse, (d) => d.contact);
+    },
+    async archiveContact(slug, id, signal) {
+      return settle(await http.request('POST', path(endpoints.archiveContact.path, { slug, contactId: id }), undefined, signal), ContactResponse, (d) => d.contact);
+    },
+    async restoreContact(slug, id, signal) {
+      return settle(await http.request('POST', path(endpoints.restoreContact.path, { slug, contactId: id }), undefined, signal), ContactResponse, (d) => d.contact);
+    },
+    async createActivity(slug, input, signal) {
+      const checked = CreateActivityRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('POST', path(endpoints.createActivity.path, { slug }), checked.data, signal), ActivityResponse, (d) => d.activity);
     },
     async activities(slug, customerId, cursor, signal) {
       const raw = await http.request('GET', path(endpoints.listActivities.path, { slug }) + qs({ customerId, cursor, limit: 25 }), undefined, signal);

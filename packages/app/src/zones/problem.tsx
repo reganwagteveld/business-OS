@@ -27,6 +27,7 @@ export function Problem({ outcome, what, onRetry, onSessionEnded }: { outcome: O
       case 'not_found': return { title: 'Not found', body: `${what} could not be found in this business. It may have been removed.` };
       case 'rate_limited': return { title: 'Too many requests', body: 'Please wait a moment and try again.' };
       case 'invalid_input': return { title: 'That request was not accepted', body: outcome.message };
+      case 'incomplete': return { title: 'Too many to show here', body: outcome.message };
       default: return { title: 'Something went wrong', body: `${what} could not be loaded. Nothing was changed.` };
     }
   })();
