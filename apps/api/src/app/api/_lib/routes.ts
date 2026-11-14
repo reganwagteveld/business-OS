@@ -39,6 +39,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   FN013: [409, 'invoice_not_open'],
   // F2 (migration 20261116000000_finance_payments).
   FN014: [409, 'has_credit_applications'], FN015: [409, 'invalid_state'],
+  // F3 (migration 20261117000000_finance_expenses).
+  FN016: [409, 'has_payments'], FN017: [409, 'archived_reference'], FN018: [409, 'expense_not_open'],
 };
 
 /**
@@ -52,6 +54,10 @@ const FINANCE_CONSTRAINTS: [RegExp, string][] = [
   [/finance_payment_allocations_active_key/, 'already_allocated'],
   [/finance_credit_applications_active_key/, 'already_applied'],
   [/finance_payments_idempotency_key/, 'idempotency_conflict'],
+  // F3.
+  [/finance_expenses_paid/, 'over_payment'],
+  [/finance_expense_allocations_active_key/, 'already_allocated'],
+  [/finance_expense_categories_active_name_key/, 'duplicate_name'],
 ];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

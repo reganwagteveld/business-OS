@@ -107,15 +107,17 @@ describe('Zone registry', () => {
       if (zone.availability === 'built') expect(zone.requires.length).toBeGreaterThan(0);
       for (const key of zone.requires) expect(key).toMatch(/^[a-z]+:[a-z_]+$/);
     }
-    expect(ZONES.find((z) => z.id === 'finance')!.availability).toBe('planned'); // Finance F1 is not merged
+    // F3: Finance is built (expenses and categories) and needs finance:read.
+    expect(ZONES.find((z) => z.id === 'finance')).toMatchObject({ availability: 'built', requires: ['finance:read'] });
   });
 
   it('filters by the server\'s permissions: unauthorised Zones are omitted, planned ones never openable, nothing listed while loading or failed', () => {
     const nav = resolveNavigation({ state: 'ready', permissions: ['customers:read', 'projects:read'] });
     expect(nav.available.map((z) => z.id)).toEqual(['customers', 'projects']);
-    expect(nav.planned.map((z) => z.id)).toEqual(['finance', 'people', 'operations', 'insights', 'settings']);
+    expect(nav.planned.map((z) => z.id)).toEqual(['people', 'operations', 'insights', 'settings']);
     expect(canOpen({ zone: 'sales' }, nav)).toBe(false);
-    expect(canOpen({ zone: 'finance' }, nav)).toBe(false);
+    expect(canOpen({ zone: 'finance' }, nav)).toBe(false); // built, but finance:read is not held
+    expect(canOpen({ zone: 'finance' }, resolveNavigation({ state: 'ready', permissions: ['finance:read'] }))).toBe(true);
     expect(canOpen({ zone: 'customers' }, nav)).toBe(true);
     expect(resolveNavigation({ state: 'loading' })).toEqual({ state: 'loading', available: [], planned: [] });
     expect(resolveNavigation({ state: 'failed' })).toEqual({ state: 'failed', available: [], planned: [] });

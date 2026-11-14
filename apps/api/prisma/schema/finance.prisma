@@ -49,6 +49,22 @@ enum FinanceExpenseStatus {
   VOID
 }
 
+/// F3: which way a manual payment record moved money. RECEIVED payments come from a customer and settle
+/// invoices (F2); PAID payments go to a supplier and settle recorded expenses (F3). One ledger, two link tables.
+enum FinancePaymentDirection {
+  RECEIVED
+  PAID
+}
+
+/// F3: how an expense's tax relates to the amount entered (docs/finance-data-model.md §19.3).
+/// NO_TAX: no tax. TAX_EXCLUSIVE: the subtotal is entered, tax = round(subtotal × rate / 100).
+/// TAX_INCLUSIVE: the total is entered, tax = round(total × rate / (100 + rate)). Rounding half away from zero.
+enum FinanceExpenseTaxTreatment {
+  NO_TAX
+  TAX_EXCLUSIVE
+  TAX_INCLUSIVE
+}
+
 /// One row per business: the seller details snapshotted onto issued documents, document defaults and
 /// the retention policy. Created on first use.
 model FinanceSettings {
@@ -122,6 +138,7 @@ model FinanceTaxRate {
   business   Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_tax_rates_business_fkey")
   lines      FinanceDocumentLine[]
   defaultFor FinanceSettings[]
+  expenses   FinanceExpense[]
 
   @@unique([businessId, id])
   @@index([businessId, archivedAt, name])
@@ -247,34 +264,41 @@ model FinanceDocumentLine {
 
 /// Manual payment records (F2 services; the table and its guards are part of F1's schema).
 model FinancePayment {
-  id             String               @id @db.Uuid
-  businessId     String               @map("business_id") @db.Uuid
-  customerId     String               @map("customer_id") @db.Uuid
-  currencyCode   String               @map("currency_code") @db.Char(3)
-  currencyScale  Int                  @map("currency_scale") @db.SmallInt
-  amount         Decimal              @db.Decimal(18, 4)
-  receivedOn     DateTime             @map("received_on") @db.Date
+  id             String                  @id @db.Uuid
+  businessId     String                  @map("business_id") @db.Uuid
+  /// F3: RECEIVED (from a customer, F2) or PAID (to a supplier, settles expenses). Fixed at insert.
+  direction      FinancePaymentDirection @default(RECEIVED)
+  /// Required for RECEIVED payments, NULL for PAID ones (CHECK).
+  customerId     String?                 @map("customer_id") @db.Uuid
+  /// F3: who was paid (free text, PAID payments only; suppliers as entities are FD-P5).
+  payeeName      String?                 @map("payee_name")
+  currencyCode   String                  @map("currency_code") @db.Char(3)
+  currencyScale  Int                     @map("currency_scale") @db.SmallInt
+  amount         Decimal                 @db.Decimal(18, 4)
+  receivedOn     DateTime                @map("received_on") @db.Date
   method         FinancePaymentMethod
   reference      String?
-  status         FinancePaymentStatus @default(RECORDED)
+  status         FinancePaymentStatus    @default(RECORDED)
   /// Database-owned: maintained by the allocation triggers only.
-  allocatedTotal Decimal              @default(0) @map("allocated_total") @db.Decimal(18, 4)
-  reversedAt     DateTime?            @map("reversed_at") @db.Timestamptz
-  reversalReason String?              @map("reversal_reason")
-  idempotencyKey String?              @map("idempotency_key")
-  requestHash    String?              @map("request_hash")
-  version        Int                  @default(1)
-  recordedById   String?              @map("recorded_by_id") @db.Uuid
-  reversedById   String?              @map("reversed_by_id") @db.Uuid
-  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  allocatedTotal Decimal                 @default(0) @map("allocated_total") @db.Decimal(18, 4)
+  reversedAt     DateTime?               @map("reversed_at") @db.Timestamptz
+  reversalReason String?                 @map("reversal_reason")
+  idempotencyKey String?                 @map("idempotency_key")
+  requestHash    String?                 @map("request_hash")
+  version        Int                     @default(1)
+  recordedById   String?                 @map("recorded_by_id") @db.Uuid
+  reversedById   String?                 @map("reversed_by_id") @db.Uuid
+  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  business    Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_payments_business_fkey")
-  customer    Customer                   @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_payments_customer_fkey")
-  allocations FinancePaymentAllocation[]
+  business           Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_payments_business_fkey")
+  customer           Customer?                  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_payments_customer_fkey")
+  allocations        FinancePaymentAllocation[]
+  expenseAllocations FinanceExpenseAllocation[]
 
   @@unique([businessId, id])
   @@unique([businessId, id, customerId, currencyCode], map: "finance_payments_link_key")
+  @@unique([businessId, id, direction, currencyCode], map: "finance_payments_direction_link_key")
   @@index([businessId, receivedOn, id])
   @@index([businessId, customerId])
   @@map("finance_payments")
@@ -336,10 +360,18 @@ model FinanceCreditApplication {
   @@map("finance_credit_applications")
 }
 
+/// Tenant-scoped expense categories (F3). Defaults are seeded idempotently per business (system_key);
+/// every category, default or custom, can be renamed, reordered and archived. No DELETE: a category is
+/// archived, never removed, so recorded expenses keep their reference (and their snapshotted name).
 model FinanceExpenseCategory {
   id          String    @id @db.Uuid
   businessId  String    @map("business_id") @db.Uuid
   name        String
+  /// Display order (ascending, then name).
+  position    Int       @default(0)
+  /// Set only on seeded defaults ("travel", "software", …); identifies them so seeding is idempotent.
+  systemKey   String?   @map("system_key")
+  version     Int       @default(1)
   createdById String?   @map("created_by_id") @db.Uuid
   updatedById String?   @map("updated_by_id") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -350,41 +382,99 @@ model FinanceExpenseCategory {
   expenses FinanceExpense[]
 
   @@unique([businessId, id])
+  @@unique([businessId, systemKey])
+  @@index([businessId, archivedAt, position])
   @@map("finance_expense_categories")
 }
 
-/// Expenses (F3 services; the table and its guards are part of F1's schema).
+/// Expenses (F3 services; the table and its first guards are F1's). DRAFT → RECORDED → VOID, DRAFT → VOID.
+/// Payment state (unpaid, partly paid, paid, overdue) is derived from paid_total, never stored.
 model FinanceExpense {
-  id               String               @id @db.Uuid
-  businessId       String               @map("business_id") @db.Uuid
-  status           FinanceExpenseStatus @default(DRAFT)
-  categoryId       String               @map("category_id") @db.Uuid
+  id               String                     @id @db.Uuid
+  businessId       String                     @map("business_id") @db.Uuid
+  status           FinanceExpenseStatus       @default(DRAFT)
+  categoryId       String                     @map("category_id") @db.Uuid
   /// Database-owned: the category name when the expense was recorded.
-  categoryName     String?              @map("category_name")
-  projectId        String?              @map("project_id") @db.Uuid
+  categoryName     String?                    @map("category_name")
+  projectId        String?                    @map("project_id") @db.Uuid
+  /// F3: optional customer the cost relates to (same business; no implicit billing).
+  customerId       String?                    @map("customer_id") @db.Uuid
   description      String
-  supplierName     String?              @map("supplier_name")
-  incurredOn       DateTime             @map("incurred_on") @db.Date
-  currencyCode     String               @map("currency_code") @db.Char(3)
-  currencyScale    Int                  @map("currency_scale") @db.SmallInt
-  amount           Decimal              @db.Decimal(18, 4)
-  taxAmount        Decimal              @default(0) @map("tax_amount") @db.Decimal(18, 4)
-  receiptReference String?              @map("receipt_reference")
-  recordedAt       DateTime?            @map("recorded_at") @db.Timestamptz
-  voidedAt         DateTime?            @map("voided_at") @db.Timestamptz
-  voidReason       String?              @map("void_reason")
-  version          Int                  @default(1)
-  createdById      String?              @map("created_by_id") @db.Uuid
-  updatedById      String?              @map("updated_by_id") @db.Uuid
-  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  supplierName     String?                    @map("supplier_name")
+  /// F3: the supplier's invoice or receipt number.
+  referenceNumber  String?                    @map("reference_number")
+  notes            String?
+  incurredOn       DateTime                   @map("incurred_on") @db.Date
+  /// F3: when an unpaid expense (a bill) is due; on or after incurred_on.
+  dueDate          DateTime?                  @map("due_date") @db.Date
+  currencyCode     String                     @map("currency_code") @db.Char(3)
+  currencyScale    Int                        @map("currency_scale") @db.SmallInt
+  /// F3: net of tax. subtotal + tax_amount = amount (CHECK).
+  subtotal         Decimal                    @default(0) @db.Decimal(18, 4)
+  /// Gross total.
+  amount           Decimal                    @db.Decimal(18, 4)
+  taxAmount        Decimal                    @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  taxTreatment     FinanceExpenseTaxTreatment @default(NO_TAX) @map("tax_treatment")
+  taxRateId        String?                    @map("tax_rate_id") @db.Uuid
+  /// Database-owned snapshot of the rate (copied on every draft write; frozen once recorded).
+  taxName          String?                    @map("tax_name")
+  taxRatePercent   Decimal                    @default(0) @map("tax_rate_percent") @db.Decimal(7, 4)
+  /// Database-owned (F3): maintained only by the expense-allocation triggers.
+  paidTotal        Decimal                    @default(0) @map("paid_total") @db.Decimal(18, 4)
+  /// F1 column, not used or exposed by F3 (could hold a public link). Receipts are deferred (FD-P6).
+  receiptReference String?                    @map("receipt_reference")
+  recordedAt       DateTime?                  @map("recorded_at") @db.Timestamptz
+  voidedAt         DateTime?                  @map("voided_at") @db.Timestamptz
+  voidReason       String?                    @map("void_reason")
+  version          Int                        @default(1)
+  createdById      String?                    @map("created_by_id") @db.Uuid
+  updatedById      String?                    @map("updated_by_id") @db.Uuid
+  recordedById     String?                    @map("recorded_by_id") @db.Uuid
+  voidedById       String?                    @map("voided_by_id") @db.Uuid
+  createdAt        DateTime                   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  business Business               @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_expenses_business_fkey")
-  category FinanceExpenseCategory @relation(fields: [businessId, categoryId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_category_fkey")
-  project  Project?               @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_project_fkey")
+  business    Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_expenses_business_fkey")
+  category    FinanceExpenseCategory     @relation(fields: [businessId, categoryId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_category_fkey")
+  project     Project?                   @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_project_fkey")
+  customer    Customer?                  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_customer_fkey")
+  taxRate     FinanceTaxRate?            @relation(fields: [businessId, taxRateId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_tax_rate_fkey")
+  allocations FinanceExpenseAllocation[]
 
   @@unique([businessId, id])
+  @@unique([businessId, id, currencyCode], map: "finance_expenses_link_key")
   @@index([businessId, incurredOn, id])
   @@index([businessId, projectId])
+  @@index([businessId, customerId])
+  @@index([businessId, categoryId])
+  @@index([businessId, status, dueDate])
   @@map("finance_expenses")
 }
+
+/// F3: a PAID payment settling a RECORDED expense. Same business and currency on both sides through the
+/// composite FKs; the payment's direction is pinned to PAID by CHECK. Never edited or deleted: a
+/// correction is a reversal (reversed_at, one way) plus a new allocation. Built like F2's allocations.
+model FinanceExpenseAllocation {
+  id               String                  @id @db.Uuid
+  businessId       String                  @map("business_id") @db.Uuid
+  paymentId        String                  @map("payment_id") @db.Uuid
+  paymentDirection FinancePaymentDirection @default(PAID) @map("payment_direction")
+  expenseId        String                  @map("expense_id") @db.Uuid
+  currencyCode     String                  @map("currency_code") @db.Char(3)
+  amount           Decimal                 @db.Decimal(18, 4)
+  createdById      String?                 @map("created_by_id") @db.Uuid
+  reversedById     String?                 @map("reversed_by_id") @db.Uuid
+  /// Database-owned: stamped at insert and at reversal.
+  createdAt        DateTime                @default(now()) @map("created_at") @db.Timestamptz
+  reversedAt       DateTime?               @map("reversed_at") @db.Timestamptz
+
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_expense_allocations_business_fkey")
+  payment  FinancePayment @relation(fields: [businessId, paymentId, paymentDirection, currencyCode], references: [businessId, id, direction, currencyCode], onDelete: NoAction, onUpdate: NoAction, map: "finance_expense_allocations_payment_fkey")
+  expense  FinanceExpense @relation(fields: [businessId, expenseId, currencyCode], references: [businessId, id, currencyCode], onDelete: NoAction, onUpdate: NoAction, map: "finance_expense_allocations_expense_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, paymentId])
+  @@index([businessId, expenseId])
+  @@map("finance_expense_allocations")
+}
+

@@ -587,11 +587,13 @@ export const ReconciliationCheckName = z.enum([
   'payment_allocated_total', 'invoice_allocated_total', 'credit_applied_total', 'invoice_settlement', 'payment_settlement',
   'credit_note_settlement', 'live_link_state', 'duplicate_live_allocation', 'duplicate_live_credit_application', 'credit_note_cap',
   'numbering_series', 'content_hash',
+  // F3 (additive): payments made against expenses.
+  'expense_paid_total', 'expense_settlement', 'duplicate_live_expense_allocation',
 ]);
 export const ReconciliationDiscrepancy = z
   .object({
     check: ReconciliationCheckName,
-    recordType: z.enum(['payment', 'document', 'allocation', 'credit_application', 'number_series']),
+    recordType: z.enum(['payment', 'document', 'allocation', 'credit_application', 'number_series', 'expense', 'expense_allocation']),
     recordId: z.string(),
     /** What the records imply, and what is stored (decimal strings, numbers or hashes). */
     expected: z.string().nullable(),

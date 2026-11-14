@@ -160,13 +160,14 @@ jobs:
           pg_isready -h 127.0.0.1 -p 6433
       - name: RLS spike and isolation tests (S1-S13, behind the pooler)
         run: pnpm test:isolation
-      # Finance F2 (docs/finance-data-model.md §18.7): the settlement, idempotency and lock-order suites
-      # again, with bos_app through PgBouncer in transaction mode (the production pooling model).
-      - name: Finance integrity and payments suites behind the pooler
-        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/finance-integrity.test.ts tests/integration/finance-payments.test.ts
+      # Finance F2/F3 (docs/finance-data-model.md §18.7, §19.10): the settlement, idempotency and lock-order
+      # suites again, with bos_app through PgBouncer in transaction mode (the production pooling model).
+      - name: Finance integrity, payments and expenses suites behind the pooler
+        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/finance-integrity.test.ts tests/integration/finance-payments.test.ts tests/integration/finance-expenses.test.ts
         env:
           DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
           FINANCE_TEST_IP_BLOCK: '82'
+          FINANCE_TEST_IP_BLOCK_F3: '84'
       - name: Migrations match schema
         run: pnpm db:check-migrations
 

@@ -19,9 +19,11 @@ export const RECONCILIATION_CHECKS = [
   'payment_allocated_total', 'invoice_allocated_total', 'credit_applied_total', 'invoice_settlement', 'payment_settlement',
   'credit_note_settlement', 'live_link_state', 'duplicate_live_allocation', 'duplicate_live_credit_application', 'credit_note_cap',
   'numbering_series', 'content_hash',
+  // F3: payments made against expenses (direction PAID) and their allocations.
+  'expense_paid_total', 'expense_settlement', 'duplicate_live_expense_allocation',
 ] as const;
 type Check = (typeof RECONCILIATION_CHECKS)[number];
-type RecordType = 'payment' | 'document' | 'allocation' | 'credit_application' | 'number_series';
+type RecordType = 'payment' | 'document' | 'allocation' | 'credit_application' | 'number_series' | 'expense' | 'expense_allocation';
 
 const LIMIT = 500;
 
@@ -35,7 +37,14 @@ export async function runReconciliation(db: AppTenantDb) {
     alloc AS (SELECT a.* FROM finance_payment_allocations a, b WHERE a.business_id = b.id),
     appl AS (SELECT c.* FROM finance_credit_applications c, b WHERE c.business_id = b.id),
     series AS (SELECT s.* FROM finance_number_series s, b WHERE s.business_id = b.id),
-    live_alloc_by_pay AS (SELECT payment_id, sum(amount) AS s FROM alloc WHERE reversed_at IS NULL GROUP BY payment_id),
+    xalloc AS (SELECT x.* FROM finance_expense_allocations x, b WHERE x.business_id = b.id),
+    exp AS (SELECT e.* FROM finance_expenses e, b WHERE e.business_id = b.id),
+    -- A payment's counter covers its invoice allocations (RECEIVED) and its expense allocations (PAID).
+    live_alloc_by_pay AS (
+      SELECT payment_id, sum(amount) AS s FROM (
+        SELECT payment_id, amount FROM alloc WHERE reversed_at IS NULL
+        UNION ALL SELECT payment_id, amount FROM xalloc WHERE reversed_at IS NULL) x GROUP BY payment_id),
+    live_xalloc_by_exp AS (SELECT expense_id, sum(amount) AS s FROM xalloc WHERE reversed_at IS NULL GROUP BY expense_id),
     live_alloc_by_inv AS (SELECT invoice_id, sum(amount) AS s FROM alloc WHERE reversed_at IS NULL GROUP BY invoice_id),
     live_appl_by_doc AS (
       SELECT id, sum(s) AS s FROM (
@@ -45,6 +54,24 @@ export async function runReconciliation(db: AppTenantDb) {
       SELECT 'payment_allocated_total' AS chk, 'payment' AS rt, p.id::text AS rid, coalesce(l.s, 0)::text AS expected, p.allocated_total::text AS actual,
              'payment allocated_total differs from the sum of its live allocations' AS detail
         FROM pay p LEFT JOIN live_alloc_by_pay l ON l.payment_id = p.id WHERE p.allocated_total <> coalesce(l.s, 0)
+      UNION ALL
+      SELECT 'expense_paid_total', 'expense', e.id::text, coalesce(l.s, 0)::text, e.paid_total::text,
+             'expense paid_total differs from the sum of its live allocations'
+        FROM exp e LEFT JOIN live_xalloc_by_exp l ON l.expense_id = e.id WHERE e.paid_total <> coalesce(l.s, 0)
+      UNION ALL
+      SELECT 'expense_settlement', 'expense', e.id::text, CASE WHEN e.status = 'RECORDED' THEN e.amount::text ELSE '0' END, e.paid_total::text,
+             CASE WHEN e.status <> 'RECORDED' THEN 'an expense that is not recorded holds payments' ELSE 'payments exceed the expense total' END
+        FROM exp e WHERE e.paid_total > e.amount OR (e.status <> 'RECORDED' AND e.paid_total <> 0)
+      UNION ALL
+      SELECT 'live_link_state', 'expense_allocation', x.id::text, 'recorded paid payment, recorded expense',
+             coalesce(p.status::text || ' ' || p.direction::text, 'missing') || ', ' || coalesce(e.status::text, 'missing'),
+             'a live expense allocation links a payment or expense that is no longer open'
+        FROM xalloc x LEFT JOIN pay p ON p.id = x.payment_id LEFT JOIN exp e ON e.id = x.expense_id
+       WHERE x.reversed_at IS NULL AND (p.status IS DISTINCT FROM 'RECORDED' OR p.direction IS DISTINCT FROM 'PAID' OR e.status IS DISTINCT FROM 'RECORDED')
+      UNION ALL
+      SELECT 'duplicate_live_expense_allocation', 'expense_allocation', min(x.id::text), '1', count(*)::text,
+             'more than one live allocation for one payment and expense'
+        FROM xalloc x WHERE x.reversed_at IS NULL GROUP BY x.payment_id, x.expense_id HAVING count(*) > 1
       UNION ALL
       SELECT 'invoice_allocated_total', 'document', d.id::text, coalesce(l.s, 0)::text, d.allocated_total::text,
              'document allocated_total differs from the sum of its live allocations'
@@ -117,11 +144,15 @@ export async function runReconciliation(db: AppTenantDb) {
       UNION ALL SELECT 'payment_settlement', (SELECT count(*) FROM pay)
       UNION ALL SELECT 'credit_note_settlement', (SELECT count(*) FROM doc WHERE kind <> 'INVOICE')
       UNION ALL SELECT 'live_link_state', (SELECT count(*) FROM alloc WHERE reversed_at IS NULL) + (SELECT count(*) FROM appl WHERE reversed_at IS NULL)
+                                          + (SELECT count(*) FROM xalloc WHERE reversed_at IS NULL)
       UNION ALL SELECT 'duplicate_live_allocation', (SELECT count(*) FROM alloc WHERE reversed_at IS NULL)
       UNION ALL SELECT 'duplicate_live_credit_application', (SELECT count(*) FROM appl WHERE reversed_at IS NULL)
       UNION ALL SELECT 'credit_note_cap', (SELECT count(*) FROM doc WHERE kind = 'INVOICE' AND status = 'ISSUED')
       UNION ALL SELECT 'numbering_series', (SELECT count(*) FROM series)
       UNION ALL SELECT 'content_hash', (SELECT count(*) FROM doc WHERE content_sha256 IS NOT NULL)
+      UNION ALL SELECT 'expense_paid_total', (SELECT count(*) FROM exp)
+      UNION ALL SELECT 'expense_settlement', (SELECT count(*) FROM exp)
+      UNION ALL SELECT 'duplicate_live_expense_allocation', (SELECT count(*) FROM xalloc WHERE reversed_at IS NULL)
     ),
     counted AS (SELECT chk, count(*)::int AS n FROM issues GROUP BY chk)
     SELECT 'checked' AS kind, c.chk AS "check", NULL AS record_type, NULL AS record_id, NULL AS expected, NULL AS actual, NULL AS detail,

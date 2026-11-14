@@ -13,6 +13,7 @@ export * from './customers.ts';
 export * from './sales.ts';
 export * from './projects.ts';
 export * from './finance.ts';
+export * from './finance-expenses.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
@@ -26,6 +27,12 @@ import {
   ListCustomerBalancesResponse, ListPaymentsQuery, ListPaymentsResponse, ReconciliationResponse, RecordPaymentRequest, ReverseAllocationRequest,
   ReverseCreditApplicationRequest, ReversePaymentRequest, UpdatePaymentRequest,
 } from './finance.ts';
+import {
+  AllocateExpensePaymentRequest, CreateExpenseCategoryRequest, CreateExpenseRequest, ExpenseCategoryResponse, ExpensePayablesResponse, ExpensePaymentResponse,
+  FinanceExpenseResponse, ListExpenseCategoriesQuery, ListExpenseCategoriesResponse, ListExpensePaymentsQuery, ListExpensePaymentsResponse, ListExpensesQuery,
+  ListExpensesResponse, RecordExpensePaymentRequest, RecordExpenseRequest,
+  ReverseExpenseAllocationRequest, ReverseExpensePaymentRequest, UpdateExpenseCategoryRequest, UpdateExpenseRequest, VoidExpenseRequest,
+} from './finance-expenses.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
   ListOutcomesResponse, ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, UpdateOpportunityRequest,
@@ -162,6 +169,34 @@ export const endpoints = {
   listCustomerBalances: { method: 'GET', path: '/api/v1/b/:slug/finance/customer-balances', query: ListCustomerBalancesQuery, response: ListCustomerBalancesResponse },
   /** Internal integrity reconciliation (read-only); not bank-statement reconciliation. */
   getReconciliation: { method: 'GET', path: '/api/v1/b/:slug/finance/reconciliation', response: ReconciliationResponse },
+  // Finance F3: expense categories, expenses, payments made against expenses. No DELETE:
+  // categories are archived, drafts discarded, recorded expenses voided, payments reversed.
+  listExpenseCategories: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-categories', query: ListExpenseCategoriesQuery, response: ListExpenseCategoriesResponse },
+  createExpenseCategory: { method: 'POST', path: '/api/v1/b/:slug/finance/expense-categories', request: CreateExpenseCategoryRequest, response: ExpenseCategoryResponse },
+  updateExpenseCategory: {
+    method: 'PATCH', path: '/api/v1/b/:slug/finance/expense-categories/:categoryId', request: UpdateExpenseCategoryRequest, response: ExpenseCategoryResponse,
+  },
+  listExpenses: { method: 'GET', path: '/api/v1/b/:slug/finance/expenses', query: ListExpensesQuery, response: ListExpensesResponse },
+  createExpense: { method: 'POST', path: '/api/v1/b/:slug/finance/expenses', request: CreateExpenseRequest, response: FinanceExpenseResponse },
+  getExpense: { method: 'GET', path: '/api/v1/b/:slug/finance/expenses/:expenseId', response: FinanceExpenseResponse },
+  updateExpense: { method: 'PATCH', path: '/api/v1/b/:slug/finance/expenses/:expenseId', request: UpdateExpenseRequest, response: FinanceExpenseResponse },
+  recordExpense: { method: 'POST', path: '/api/v1/b/:slug/finance/expenses/:expenseId/record', request: RecordExpenseRequest, response: FinanceExpenseResponse },
+  voidExpense: { method: 'POST', path: '/api/v1/b/:slug/finance/expenses/:expenseId/void', request: VoidExpenseRequest, response: FinanceExpenseResponse },
+  getExpensePayables: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-payables', response: ExpensePayablesResponse },
+  listExpensePayments: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-payments', query: ListExpensePaymentsQuery, response: ListExpensePaymentsResponse },
+  /** Idempotency-Key required. */
+  recordExpensePayment: { method: 'POST', path: '/api/v1/b/:slug/finance/expense-payments', request: RecordExpensePaymentRequest, response: ExpensePaymentResponse },
+  getExpensePayment: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-payments/:paymentId', response: ExpensePaymentResponse },
+  allocateExpensePayment: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/expense-payments/:paymentId/allocations', request: AllocateExpensePaymentRequest, response: ExpensePaymentResponse,
+  },
+  reverseExpenseAllocation: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/expense-payments/:paymentId/allocations/:allocationId/reverse', request: ReverseExpenseAllocationRequest,
+    response: ExpensePaymentResponse,
+  },
+  reverseExpensePayment: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/expense-payments/:paymentId/reverse', request: ReverseExpensePaymentRequest, response: ExpensePaymentResponse,
+  },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */

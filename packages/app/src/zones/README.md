@@ -9,6 +9,7 @@ Zones get their data only from the cloud API through the typed clients in `src/a
 - **Customers** (`customers/`): directory, create/edit form, customer workspace.
 - **Sales** (`sales/`): opportunities list and board, opportunity workspace.
 - **Projects** (`projects/`): project list, project workspace with tasks and board.
+- **Finance** (`finance/`, F3): expenses (list with server-side search, filters and paging; draft form; detail with record, pay-in-full and void; no receipt attachments, FD-P6) and expense categories. The first Zone laid out with `ZonePage` and the `@business-os/ui` components. Quotes, invoices and payments screens come later.
 
 ## Conventions for a new Zone
 

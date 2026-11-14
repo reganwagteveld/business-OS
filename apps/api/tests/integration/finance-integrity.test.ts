@@ -198,7 +198,7 @@ async function allocateIn(db: Db, businessId: string, paymentId: string, items: 
   const pay = await db.financePayment.findFirstOrThrow({ where: { id: paymentId }, select: { customerId: true, currencyCode: true } });
   for (const i of items) {
     await db.financePaymentAllocation.create({
-      data: { id: uuid(), businessId, paymentId, invoiceId: i.invoiceId, customerId: pay.customerId, currencyCode: pay.currencyCode, amount: i.amount },
+      data: { id: uuid(), businessId, paymentId, invoiceId: i.invoiceId, customerId: pay.customerId!, currencyCode: pay.currencyCode, amount: i.amount },
     });
   }
 }
@@ -234,6 +234,8 @@ afterAll(async () => {
 const FINANCE_TABLES = [
   'finance_settings', 'finance_number_series', 'finance_tax_rates', 'finance_documents', 'finance_document_lines', 'finance_payments',
   'finance_payment_allocations', 'finance_expense_categories', 'finance_expenses', 'finance_credit_applications',
+  // F3
+  'finance_expense_allocations',
 ];
 
 describe('T: tenant isolation and composite FKs', () => {
@@ -275,8 +277,8 @@ describe('T: tenant isolation and composite FKs', () => {
     expect(await outcome(draftIn({ opportunityId: oppB }))).toBe('23503');
     expect(await outcome(draftIn({ projectId: projB }))).toBe('23503');
     expect(await outcome(draftIn({ lines: [{ qty: '1', price: '10', taxPct: '19', taxRateId: taxB }] }))).toBe('23503');
-    expect(await outcome(as(A, alice, (db) => db.financeExpense.create({ data: { id: uuid(), businessId: A, categoryId: catB, description: 'x', incurredOn: new Date(), currencyCode: 'USD', currencyScale: 2, amount: '1' } })))).toBe('23503');
-    expect(await outcome(as(A, alice, (db) => db.financeExpense.create({ data: { id: uuid(), businessId: A, categoryId: catTravel, projectId: projB, description: 'x', incurredOn: new Date(), currencyCode: 'USD', currencyScale: 2, amount: '1' } })))).toBe('23503');
+    expect(await outcome(as(A, alice, (db) => db.financeExpense.create({ data: { id: uuid(), businessId: A, categoryId: catB, description: 'x', incurredOn: new Date(), currencyCode: 'USD', currencyScale: 2, amount: '1', subtotal: '1' } })))).toBe('23503');
+    expect(await outcome(as(A, alice, (db) => db.financeExpense.create({ data: { id: uuid(), businessId: A, categoryId: catTravel, projectId: projB, description: 'x', incurredOn: new Date(), currencyCode: 'USD', currencyScale: 2, amount: '1', subtotal: '1' } })))).toBe('23503');
     const p = await payment('10');
     expect(await outcome(as(A, alice, (db) => db.financePaymentAllocation.create({ data: { id: uuid(), businessId: A, paymentId: p, invoiceId: bInvoice, customerId: cust1, currencyCode: 'USD', amount: '1' } })))).toBe('23503');
     expect(await outcome(draftIn({ kind: 'CREDIT_NOTE', creditedInvoiceId: bInvoice }))).toBe('23503');
@@ -613,6 +615,9 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       'finance_credit_applications.finance_stamp_credit_application→finance_stamp_allocation',
       'finance_document_lines.finance_guard_line→finance_guard_line',
       'finance_documents.finance_guard_document→finance_guard_document',
+      'finance_expense_allocations.finance_apply_expense_allocation_insert→finance_apply_expense_allocation',
+      'finance_expense_allocations.finance_apply_expense_allocation_reversal→finance_apply_expense_allocation',
+      'finance_expense_allocations.finance_stamp_allocation→finance_stamp_allocation',
       'finance_expense_categories.finance_stamp_times→finance_stamp_times',
       'finance_expenses.finance_guard_expense→finance_guard_expense',
       'finance_number_series.finance_guard_number_series→finance_guard_number_series',
@@ -630,8 +635,8 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
         has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname LIKE 'finance%' ORDER BY 1`);
     expect(rows.map((r) => r.name)).toEqual([
-      'finance_apply_allocation', 'finance_apply_credit_application', 'finance_content_hash', 'finance_document_content', 'finance_guard_document', 'finance_guard_expense',
-      'finance_guard_line', 'finance_guard_number_series', 'finance_guard_payment', 'finance_stamp_allocation', 'finance_stamp_times',
+      'finance_apply_allocation', 'finance_apply_credit_application', 'finance_apply_expense_allocation', 'finance_content_hash', 'finance_document_content',
+      'finance_guard_document', 'finance_guard_expense', 'finance_guard_line', 'finance_guard_number_series', 'finance_guard_payment', 'finance_stamp_allocation', 'finance_stamp_times',
     ]);
     for (const r of rows) {
       expect(r.definer, r.name).toBe(false);
@@ -955,8 +960,8 @@ describe('K: concurrency', () => {
 describe('E: expenses', () => {
   it('E1: recording snapshots the category; a recorded expense is immutable and can only be voided; project links are optional', async () => {
     const id = uuid();
-    await as(A, alice, (db) => db.financeExpense.create({ data: { id, businessId: A, categoryId: catTravel, projectId: proj1, description: 'Flights', supplierName: 'Air Co', incurredOn: new Date(Date.UTC(2031, 0, 3)), currencyCode: 'USD', currencyScale: 2, amount: '110', taxAmount: '10', receiptReference: 'receipt:2031-01-03-air' } }));
-    expect(await outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data: { amount: '120' } })))).toBe('ok'); // drafts are editable
+    await as(A, alice, (db) => db.financeExpense.create({ data: { id, businessId: A, categoryId: catTravel, projectId: proj1, description: 'Flights', supplierName: 'Air Co', incurredOn: new Date(Date.UTC(2031, 0, 3)), currencyCode: 'USD', currencyScale: 2, amount: '110', subtotal: '100', taxAmount: '10', taxTreatment: 'TAX_INCLUSIVE', taxRateId: tax10, receiptReference: 'receipt:2031-01-03-air' } }));
+    expect(await outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data: { amount: '121', subtotal: '110', taxAmount: '11' } })))).toBe('ok'); // drafts are editable
     expect(await outcome(as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data: { categoryName: 'Forged' } })))).toBe('FN010');
     await as(A, alice, (db) => db.financeExpense.updateMany({ where: { id }, data: { status: 'RECORDED' } }));
     await as(A, alice, (db) => db.financeExpenseCategory.updateMany({ where: { id: catTravel }, data: { name: 'Travel & lodging' } }));
@@ -973,7 +978,7 @@ describe('E: expenses', () => {
   });
 
   it('E2: expense void metadata is stamped by the database and exists only through the void transition', async () => {
-    const base = { businessId: A, categoryId: catTravel, description: 'Taxi', incurredOn: new Date(Date.UTC(2031, 0, 4)), currencyCode: 'USD', currencyScale: 2, amount: '20' };
+    const base = { businessId: A, categoryId: catTravel, description: 'Taxi', incurredOn: new Date(Date.UTC(2031, 0, 4)), currencyCode: 'USD', currencyScale: 2, amount: '20', subtotal: '20' };
     for (const extra of [{ voidReason: 'x' }, { voidedAt: BACKDATE }, { recordedAt: BACKDATE }, { categoryName: 'Forged' }]) {
       expect(await outcome(as(A, alice, (db) => db.financeExpense.create({ data: { id: uuid(), ...base, ...extra } }))), JSON.stringify(extra)).toBe('FN010');
     }
@@ -1023,7 +1028,9 @@ describe('R: reporting semantics (docs/finance-data-model.md §9), per currency,
     await allocate(pEur, [{ invoiceId: inv4, amount: '100' }], C);
     for (const [currency, amount, tax] of [['USD', '33', '3'], ['EUR', '50', '0']] as const) {
       const id = uuid();
-      await inC((db) => db.financeExpense.create({ data: { id, businessId: C, categoryId: catC, projectId: projC, description: 'Materials', incurredOn: jan, currencyCode: currency, currencyScale: 2, amount, taxAmount: tax } }));
+      // F3: the tax split follows a tax treatment over a rate (USD: 10% included; EUR: no tax).
+      const taxed = tax === '0' ? {} : { taxTreatment: 'TAX_INCLUSIVE' as const, taxRateId: RATES[C]!['10']! };
+      await inC((db) => db.financeExpense.create({ data: { id, businessId: C, categoryId: catC, projectId: projC, description: 'Materials', incurredOn: jan, currencyCode: currency, currencyScale: 2, amount, taxAmount: tax, subtotal: String(Number(amount) - Number(tax)), ...taxed } }));
       await inC((db) => db.financeExpense.updateMany({ where: { id }, data: { status: 'RECORDED' } }));
     }
 
@@ -1033,8 +1040,8 @@ describe('R: reporting semantics (docs/finance-data-model.md §9), per currency,
       WITH cur AS (SELECT DISTINCT currency_code AS c FROM finance_documents UNION SELECT DISTINCT currency_code FROM finance_expenses),
       revenue AS (SELECT currency_code AS c, sum(CASE kind WHEN 'INVOICE' THEN subtotal ELSE -subtotal END) AS v FROM finance_documents
                   WHERE kind IN ('INVOICE', 'CREDIT_NOTE') AND status = 'ISSUED' AND issue_date >= ${from}::date AND issue_date < ${to}::date GROUP BY 1),
-      cash AS (SELECT currency_code AS c, sum(amount) AS v FROM finance_payments
-               WHERE status = 'RECORDED' AND received_on >= ${from}::date AND received_on < ${to}::date GROUP BY 1),
+      cash AS (SELECT currency_code AS c, sum(amount) AS v FROM finance_payments -- F3: money received only (direction RECEIVED)
+               WHERE status = 'RECORDED' AND direction = 'RECEIVED' AND received_on >= ${from}::date AND received_on < ${to}::date GROUP BY 1),
       open AS (SELECT currency_code AS c, sum(total - allocated_total) AS v, sum(total - allocated_total) FILTER (WHERE due_date < ${asOf}::date) AS o
                FROM finance_documents WHERE kind = 'INVOICE' AND status = 'ISSUED' AND issue_date <= ${asOf}::date GROUP BY 1),
       spent AS (SELECT currency_code AS c, sum(amount - tax_amount) AS v FROM finance_expenses
@@ -1292,10 +1299,16 @@ describe('Z: reconciliation', () => {
     const docs = await admin.query(`SELECT count(*)::int AS n FROM finance_documents d
       WHERE d.allocated_total <> coalesce((SELECT sum(a.amount) FROM finance_payment_allocations a
         WHERE a.business_id = d.business_id AND a.invoice_id = d.id AND a.reversed_at IS NULL), 0)`);
+    // F3: a payment's counter covers its invoice allocations (RECEIVED) and its expense allocations (PAID).
     const pays = await admin.query(`SELECT count(*)::int AS n FROM finance_payments p
       WHERE p.allocated_total <> coalesce((SELECT sum(a.amount) FROM finance_payment_allocations a
-        WHERE a.business_id = p.business_id AND a.payment_id = p.id AND a.reversed_at IS NULL), 0)`);
-    expect([docs.rows[0].n, pays.rows[0].n]).toEqual([0, 0]);
+        WHERE a.business_id = p.business_id AND a.payment_id = p.id AND a.reversed_at IS NULL), 0)
+        + coalesce((SELECT sum(x.amount) FROM finance_expense_allocations x
+        WHERE x.business_id = p.business_id AND x.payment_id = p.id AND x.reversed_at IS NULL), 0)`);
+    const expenses = await admin.query(`SELECT count(*)::int AS n FROM finance_expenses e
+      WHERE e.paid_total <> coalesce((SELECT sum(x.amount) FROM finance_expense_allocations x
+        WHERE x.business_id = e.business_id AND x.expense_id = e.id AND x.reversed_at IS NULL), 0)`);
+    expect([docs.rows[0].n, pays.rows[0].n, expenses.rows[0].n]).toEqual([0, 0, 0]);
     const credits = await admin.query(`SELECT count(*)::int AS n FROM finance_documents d
       WHERE d.credit_applied_total <> coalesce((SELECT sum(c.amount) FROM finance_credit_applications c
         WHERE c.business_id = d.business_id AND (c.invoice_id = d.id OR c.credit_note_id = d.id) AND c.reversed_at IS NULL), 0)`);
