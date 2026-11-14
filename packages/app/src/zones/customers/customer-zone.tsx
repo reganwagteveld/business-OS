@@ -5,7 +5,7 @@ import type { BusinessContext } from '../../api/tenancy';
 import { actionClass, secondaryClass } from '../../shell/frame';
 import { useDialog } from '../dialog';
 import { ZoneFrame } from '../zone-frame';
-import { CustomerDetail } from './customer-detail';
+import { CustomerDetail, type ProjectsLink } from './customer-detail';
 import { CustomerForm } from './customer-form';
 import { Directory, type DirectoryQuery } from './directory';
 
@@ -16,13 +16,17 @@ type View = { name: 'list' } | { name: 'detail'; id: string } | { name: 'new' } 
  * so switching business discards every bit of this state; nothing here is persisted or cached
  * outside the component, and every request names the business only through the URL.
  */
-export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function CustomerZone({ client, context, userLabel, projects, initialCustomerId, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: CustomersClient; context: BusinessContext; userLabel: string; onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
+  /** Linked projects on each customer's page (passed only to people who may read projects). */
+  projects?: ProjectsLink;
+  /** Opens straight into one customer (for example from a project's page). */
+  initialCustomerId?: string;
 }) {
   const { slug, name, timeZone, locale } = context.business;
   const canWrite = context.membership.permissions.includes('customers:write');
   const canLogActivity = context.membership.permissions.includes('activity:write');
-  const [view, setView] = useState<View>({ name: 'list' });
+  const [view, setView] = useState<View>(initialCustomerId ? { name: 'detail', id: initialCustomerId } : { name: 'list' });
   const [query, setQuery] = useState<DirectoryQuery>({ q: '', status: 'active' });
   const [notice, setNotice] = useState<string | null>(null);
   // Each open editor reports here by name (the customer form, a contact form, the activity composer).
@@ -71,7 +75,7 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
         ) : null}
         {view.name === 'detail' ? (
           <CustomerDetail
-            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity}
+            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} projects={projects}
             onBack={() => leave(() => go({ name: 'list' }))} onEdit={(customer) => go({ name: 'edit', customer })}
             onDraftChange={markDraft} confirmDiscard={leave} onSessionEnded={onSessionEnded}
           />

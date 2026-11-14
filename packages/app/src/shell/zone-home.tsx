@@ -4,7 +4,7 @@ import type { CurrentUser } from '@business-os/contracts';
 const zones = [
   { name: 'Customers', icon: '◉', description: 'Every relationship in one place', ready: true },
   { name: 'Sales', icon: '↗', description: 'From first contact to closed deal', ready: true },
-  { name: 'Projects', icon: '▦', description: 'Work, organised and connected', ready: false },
+  { name: 'Projects', icon: '▦', description: 'Work, organised and connected', ready: true },
   { name: 'Finance', icon: '◈', description: 'Understand your business finances', ready: false },
   { name: 'People', icon: '♧', description: 'Your team and their work', ready: false },
   { name: 'Operations', icon: '⌘', description: 'Keep everything moving', ready: false },
@@ -30,12 +30,14 @@ function Metrics({ id, metrics }: { id: string; metrics: CustomerMetrics }) {
   );
 }
 
-export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCustomers, onOpenSales, customerMetrics }: {
+export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCustomers, onOpenSales, onOpenProjects, customerMetrics }: {
   business: string; user: CurrentUser; role: string; onSwitch: () => void; onSignOut: () => void;
   /** Opens the Customer Zone. Zones that are not built yet stay honest, non-clickable cards. */
   onOpenCustomers?: () => void;
   /** Opens the Sales Zone (only passed to people who can read sales). */
   onOpenSales?: () => void;
+  /** Opens the Projects Zone (only passed to people who can read projects). */
+  onOpenProjects?: () => void;
   /** Omitted when the person cannot read customers: the card then shows no numbers. */
   customerMetrics?: CustomerMetrics;
 }) {
@@ -67,11 +69,11 @@ export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCust
         </div>
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-semibold tracking-tight">Your Zones</h2>
-          <p className="text-xs text-muted-foreground">Customers and Sales are open. The other Zones are coming next.</p>
+          <p className="text-xs text-muted-foreground">Customers, Sales and Projects are open. The other Zones are coming next.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {zones.map((zone, index) => {
-            const open = zone.name === 'Customers' ? onOpenCustomers : zone.name === 'Sales' ? onOpenSales : undefined;
+            const open = zone.name === 'Customers' ? onOpenCustomers : zone.name === 'Sales' ? onOpenSales : zone.name === 'Projects' ? onOpenProjects : undefined;
             return zone.ready && open ? (
             <button key={zone.name} type="button" onClick={open} aria-label={`Open the ${zone.name} Zone`} aria-describedby={zone.name === 'Customers' && customerMetrics ? 'customer-metrics' : undefined} className="group relative min-h-52 rounded-2xl border border-border bg-card p-6 text-left shadow-sm transition-colors hover:border-ring focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
               <div className="mb-7 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-2xl text-primary-foreground" aria-hidden="true">{zone.icon}</div>
