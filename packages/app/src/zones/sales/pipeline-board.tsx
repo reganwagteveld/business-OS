@@ -2,11 +2,10 @@ import type { Opportunity } from '@business-os/contracts';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { SalesClient } from '../../api/sales';
 import type { Outcome } from '../../api/tenancy';
-import { actionClass, secondaryClass } from '../../shell/frame';
 import { Problem, Skeleton } from '../problem';
 import { useLayout } from '../use-layout';
 import { useLoad } from '../use-load';
-import { formatDate, formatMoney, STATUS_LABEL } from './format';
+import { formatDate, formatMoney } from './format';
 import { OutcomeBadge, ownerName } from './opportunity-list';
 import type { Names, SalesRef } from './types';
 
@@ -18,21 +17,58 @@ interface BoardProps {
   names: Names;
   canWrite: boolean;
   onOpen: (id: string) => void;
-  onAdd: () => void;
   onSessionEnded: () => void;
 }
 
 const ALL_LIMIT = 200;
 
-export function PipelineBoard({ sales, slug, locale, refData, names, canWrite, onOpen, onAdd, onSessionEnded }: BoardProps) {
+interface CurrencyTotal { currency: string; total: number }
+
+function groupByCurrency(opps: Opportunity[]): CurrencyTotal[] {
+  const map = new Map<string, number>();
+  for (const o of opps) {
+    if (o.amount !== null) {
+      const cur = o.currencyCode;
+      map.set(cur, (map.get(cur) ?? 0) + parseFloat(o.amount));
+    }
+  }
+  return [...map.entries()].map(([currency, total]) => ({ currency, total }));
+}
+
+function TotalLine({ totals, locale, partial }: { totals: CurrencyTotal[]; locale?: string; partial: boolean }) {
+  if (totals.length === 0) return null;
+  return (
+    <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+      {totals.map((t, i) => (
+        <span key={t.currency}>{i > 0 ? ' + ' : ''}{formatMoney(t.total.toFixed(2), t.currency, locale)}</span>
+      ))}
+      {partial ? <span title="Not all opportunities are loaded"> +</span> : null}
+    </p>
+  );
+}
+
+export function PipelineBoard({ sales, slug, locale, refData, names, canWrite, onOpen, onSessionEnded }: BoardProps) {
   const uid = useId();
+  const layout = useLayout();
+  const boardRef = useRef<HTMLDivElement>(null);
+  const inFlight = useRef(new Set<string>());
+  const [movingIds, setMovingIds] = useState<Set<string>>(new Set());
+
   const pipeline = refData.pipelines[0];
-  if (!pipeline) return null;
+  const pipelineId = pipeline?.pipeline.id ?? '';
 
-  const { state, reload } = useLoad(`board|${slug}|${pipeline.pipeline.id}`, (signal) =>
-    sales.list(slug, { status: 'all', archived: 'active', pipelineId: pipeline.pipeline.id, limit: ALL_LIMIT }, signal));
+  type PageData = { opportunities: Opportunity[]; nextCursor: string | null };
+  const [lastGood, setLastGood] = useState<PageData | null>(null);
+  const { state, reload } = useLoad(`board|${slug}|${pipelineId}`, async (signal) => {
+    if (!pipelineId) return { kind: 'ok' as const, data: { opportunities: [] as Opportunity[], nextCursor: null } };
+    const result = await sales.list(slug, { status: 'all', archived: 'active', pipelineId, limit: ALL_LIMIT }, signal);
+    if (result.kind === 'ok') setLastGood(result.data);
+    return result;
+  });
 
-  const serverRows = state.status === 'done' && state.outcome.kind === 'ok' ? state.outcome.data.opportunities : null;
+  const freshData = state.status === 'done' && state.outcome.kind === 'ok' ? state.outcome.data : null;
+  const serverRows = (freshData ?? lastGood)?.opportunities ?? null;
+  const partial = (freshData ?? lastGood)?.nextCursor !== null && (freshData ?? lastGood) !== null;
   const [optimistic, setOptimistic] = useState<Map<string, { stageId: string; version: number }>>(new Map());
   const rows = serverRows?.map((o) => {
     const patch = optimistic.get(o.id);
@@ -41,87 +77,115 @@ export function PipelineBoard({ sales, slug, locale, refData, names, canWrite, o
 
   const { want } = names;
   useEffect(() => {
-    if (rows) want({ customers: rows.map((r) => r.customerId), contacts: rows.map((r) => r.contactId) });
+    if (serverRows) want({ customers: serverRows.map((r) => r.customerId), contacts: serverRows.map((r) => r.contactId) });
   }, [serverRows, want]);
 
-  const stages = pipeline.stages;
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const [moving, setMoving] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   const moveOpp = useCallback(async (opp: Opportunity, toStageId: string) => {
-    if (opp.stageId === toStageId || opp.status !== 'OPEN' || moving.has(opp.id)) return;
-    setMoving((s) => new Set(s).add(opp.id));
+    if (opp.stageId === toStageId || opp.status !== 'OPEN') return;
+    if (inFlight.current.has(opp.id)) return;
+    inFlight.current.add(opp.id);
+    setMovingIds((s) => new Set(s).add(opp.id));
     setOptimistic((m) => new Map(m).set(opp.id, { stageId: toStageId, version: opp.version + 1 }));
     setError(null);
-    const result = await sales.update(slug, opp.id, { version: opp.version, stageId: toStageId });
-    setMoving((s) => { const next = new Set(s); next.delete(opp.id); return next; });
-    if (result.kind === 'ok') {
+    try {
+      const result = await sales.update(slug, opp.id, { version: opp.version, stageId: toStageId });
+      if (result.kind === 'ok') {
+        setOptimistic((m) => {
+          const next = new Map(m);
+          next.set(opp.id, { stageId: result.data.stageId, version: result.data.version });
+          return next;
+        });
+        reload();
+        return;
+      }
       setOptimistic((m) => { const next = new Map(m); next.delete(opp.id); return next; });
+      if (result.kind === 'unauthenticated') { onSessionEnded(); return; }
+      if (result.kind === 'conflict' && result.code === 'stale') {
+        setError(`"${opp.title}" was changed by someone else. The board has been refreshed.`);
+        reload();
+        return;
+      }
+      setError(`Could not move "${opp.title}": ${explainMove(result)}`);
       reload();
-      return;
+    } finally {
+      inFlight.current.delete(opp.id);
+      setMovingIds((s) => { const next = new Set(s); next.delete(opp.id); return next; });
     }
-    setOptimistic((m) => { const next = new Map(m); next.delete(opp.id); return next; });
-    if (result.kind === 'unauthenticated') { onSessionEnded(); return; }
-    if (result.kind === 'conflict' && result.code === 'stale') {
-      setError(`"${opp.title}" was changed by someone else. The board has been refreshed.`);
-      reload();
-      return;
-    }
-    setError(`Could not move "${opp.title}": ${explainMove(result)}`);
-    reload();
-  }, [sales, slug, moving, reload, onSessionEnded]);
+  }, [sales, slug, reload, onSessionEnded]);
 
-  const onDragStart = (e: React.DragEvent, id: string) => {
+  // When server data arrives, clear optimistic entries that the server has caught up with.
+  useEffect(() => {
+    if (!serverRows) return;
+    setOptimistic((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const [id, patch] of prev) {
+        const server = serverRows.find((o) => o.id === id);
+        if (server && server.stageId === patch.stageId && server.version >= patch.version && !inFlight.current.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [serverRows]);
+
+  const onDragStart = useCallback((e: React.DragEvent, id: string) => {
     setDragId(id);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', id);
-  };
-  const onDragEnd = () => { setDragId(null); setDropTarget(null); };
-  const onDragOver = (e: React.DragEvent, stageId: string) => {
+  }, []);
+  const onDragEnd = useCallback(() => { setDragId(null); setDropTarget(null); }, []);
+  const onDragOver = useCallback((e: React.DragEvent, stageId: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setDropTarget(stageId);
-  };
-  const onDragLeave = (e: React.DragEvent, stageId: string) => {
-    if (dropTarget === stageId) setDropTarget(null);
-  };
-  const onDrop = (e: React.DragEvent, stageId: string) => {
+  }, []);
+  const onDragLeave = useCallback((_e: React.DragEvent, stageId: string) => {
+    setDropTarget((prev) => (prev === stageId ? null : prev));
+  }, []);
+  const onDrop = useCallback((e: React.DragEvent, stageId: string) => {
     e.preventDefault();
     setDropTarget(null);
     const id = e.dataTransfer.getData('text/plain');
-    const opp = rows?.find((o) => o.id === id);
+    if (!rows) return;
+    const opp = rows.find((o) => o.id === id);
     if (opp) void moveOpp(opp, stageId);
-  };
+  }, [rows, moveOpp]);
 
-  const layout = useLayout();
-  const boardRef = useRef<HTMLDivElement>(null);
-
+  if (!pipeline) return null;
   if (!serverRows && state.status === 'loading') return <Skeleton label="Loading pipeline board…" />;
   if (!serverRows && state.status === 'done' && state.outcome.kind !== 'ok') return <Problem outcome={state.outcome} what="Pipeline board" onRetry={reload} onSessionEnded={onSessionEnded} />;
   if (!rows) return null;
 
+  const stages = pipeline.stages;
   const openOpps = rows.filter((o) => o.status === 'OPEN');
   const wonOpps = rows.filter((o) => o.status === 'WON');
   const lostOpps = rows.filter((o) => o.status === 'LOST');
   const columnWidth = layout === 'narrow' ? 'min-w-[280px]' : 'min-w-[300px]';
 
   return (
-    <section aria-labelledby={`${uid}-board`}>
+    <div>
+      <h2 id={`${uid}-board`} className="sr-only">Pipeline board</h2>
       {error ? (
         <div role="alert" className="mb-4 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {error}
           <button type="button" className="ml-3 underline" onClick={() => setError(null)}>Dismiss</button>
         </div>
       ) : null}
-      {state.status === 'done' && state.outcome.kind === 'ok' && state.outcome.data.nextCursor ? (
-        <p className="mb-3 text-xs text-muted-foreground">Showing the first {ALL_LIMIT} opportunities. Use the list view for older records.</p>
+      {partial ? (
+        <p role="note" className="mb-3 text-xs text-muted-foreground">
+          Showing the first {ALL_LIMIT} opportunities. Counts and totals may be incomplete. Use the list view for the full set.
+        </p>
       ) : null}
       <div ref={boardRef} className="flex gap-4 overflow-x-auto pb-4" role="region" aria-label="Pipeline board" tabIndex={0}>
         {stages.map((stage) => {
           const cards = openOpps.filter((o) => o.stageId === stage.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-          const total = cards.reduce((sum, o) => sum + (o.amount ? parseFloat(o.amount) : 0), 0);
+          const totals = groupByCurrency(cards);
           const isTarget = dropTarget === stage.id;
           return (
             <div
@@ -131,18 +195,14 @@ export function PipelineBoard({ sales, slug, locale, refData, names, canWrite, o
               onDragLeave={(e) => onDragLeave(e, stage.id)}
               onDrop={(e) => onDrop(e, stage.id)}
               role="group"
-              aria-label={`${stage.name}: ${cards.length} ${cards.length === 1 ? 'opportunity' : 'opportunities'}`}
+              aria-label={`${stage.name}: ${cards.length}${partial ? '+' : ''} ${cards.length === 1 ? 'opportunity' : 'opportunities'}`}
             >
               <div className="border-b border-border px-4 py-3">
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold">{stage.name}</h3>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{cards.length}</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{cards.length}{partial ? '+' : ''}</span>
                 </div>
-                {total > 0 ? (
-                  <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-                    {formatMoney(total.toFixed(2), cards[0]?.currencyCode ?? 'AUD', locale)}
-                  </p>
-                ) : null}
+                <TotalLine totals={totals} locale={locale} partial={partial} />
               </div>
               <div className="space-y-2 p-3" style={{ minHeight: '4rem' }}>
                 {cards.length === 0 ? (
@@ -157,7 +217,7 @@ export function PipelineBoard({ sales, slug, locale, refData, names, canWrite, o
                       refData={refData}
                       stages={stages}
                       dragging={dragId === opp.id}
-                      isMoving={moving.has(opp.id)}
+                      isMoving={movingIds.has(opp.id)}
                       canWrite={canWrite}
                       onOpen={onOpen}
                       onMove={(stageId) => void moveOpp(opp, stageId)}
@@ -170,10 +230,10 @@ export function PipelineBoard({ sales, slug, locale, refData, names, canWrite, o
             </div>
           );
         })}
-        <OutcomeColumn label="Won" status="WON" opps={wonOpps} names={names} locale={locale} refData={refData} columnWidth={columnWidth} onOpen={onOpen} />
-        <OutcomeColumn label="Lost" status="LOST" opps={lostOpps} names={names} locale={locale} refData={refData} columnWidth={columnWidth} onOpen={onOpen} />
+        <OutcomeColumn label="Won" status="WON" opps={wonOpps} names={names} locale={locale} columnWidth={columnWidth} onOpen={onOpen} partial={partial} />
+        <OutcomeColumn label="Lost" status="LOST" opps={lostOpps} names={names} locale={locale} columnWidth={columnWidth} onOpen={onOpen} partial={partial} />
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -189,7 +249,7 @@ function OpportunityCard({ opp, names, locale, refData, stages, dragging, isMovi
   return (
     <div
       className={`rounded-xl border bg-background p-3 transition-shadow ${dragging ? 'border-primary opacity-50' : 'border-border'} ${isMoving ? 'opacity-60' : ''} ${canWrite ? 'cursor-grab active:cursor-grabbing' : ''}`}
-      draggable={canWrite}
+      draggable={canWrite && !isMoving}
       onDragStart={canWrite ? onDragStart : undefined}
       onDragEnd={canWrite ? onDragEnd : undefined}
       aria-label={opp.title}
@@ -226,24 +286,20 @@ function OpportunityCard({ opp, names, locale, refData, stages, dragging, isMovi
   );
 }
 
-function OutcomeColumn({ label, status, opps, names, locale, refData, columnWidth, onOpen }: {
-  label: string; status: 'WON' | 'LOST'; opps: Opportunity[]; names: Names; locale?: string; refData: SalesRef; columnWidth: string; onOpen: (id: string) => void;
+function OutcomeColumn({ label, status, opps, names, locale, columnWidth, onOpen, partial }: {
+  label: string; status: 'WON' | 'LOST'; opps: Opportunity[]; names: Names; locale?: string; columnWidth: string; onOpen: (id: string) => void; partial: boolean;
 }) {
   const sorted = [...opps].sort((a, b) => (b.closedAt ?? b.createdAt).localeCompare(a.closedAt ?? a.createdAt));
-  const total = sorted.reduce((sum, o) => sum + (o.amount ? parseFloat(o.amount) : 0), 0);
+  const totals = groupByCurrency(sorted);
   const tone = status === 'WON' ? 'border-primary/40 bg-primary/5' : 'border-muted-foreground/30 bg-muted/30';
   return (
-    <div className={`${columnWidth} flex-shrink-0 rounded-2xl border ${tone}`} role="group" aria-label={`${label}: ${sorted.length} ${sorted.length === 1 ? 'opportunity' : 'opportunities'}`}>
+    <div className={`${columnWidth} flex-shrink-0 rounded-2xl border ${tone}`} role="group" aria-label={`${label}: ${sorted.length}${partial ? '+' : ''} ${sorted.length === 1 ? 'opportunity' : 'opportunities'}`}>
       <div className="border-b border-border/50 px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold">{label}</h3>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{sorted.length}</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{sorted.length}{partial ? '+' : ''}</span>
         </div>
-        {total > 0 ? (
-          <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-            {formatMoney(total.toFixed(2), sorted[0]?.currencyCode ?? 'AUD', locale)}
-          </p>
-        ) : null}
+        <TotalLine totals={totals} locale={locale} partial={partial} />
       </div>
       <div className="space-y-2 p-3" style={{ minHeight: '4rem' }}>
         {sorted.length === 0 ? (

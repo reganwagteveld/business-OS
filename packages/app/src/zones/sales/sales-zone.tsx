@@ -158,7 +158,6 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
               <PipelineBoard
                 sales={sales} slug={slug} locale={locale} refData={refData} names={names} canWrite={canWrite}
                 onOpen={(id) => go({ name: 'detail', id })}
-                onAdd={() => go({ name: 'new' })}
                 onSessionEnded={onSessionEnded}
               />
             </>

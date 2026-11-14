@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCustomersClient, createSalesClient, type BusinessContext } from '../src';
 import { SalesZone } from '../src/zones/sales/sales-zone';
-import { contact, createFakeApi, customer, emptyBusiness, uuid, type FakeBusiness } from './support/fake-api';
+import { createFakeApi, customer, emptyBusiness, uuid, type FakeBusiness } from './support/fake-api';
 import { emptySales, opportunity, pipelineWithStages, withSales, type FakeSales } from './support/fake-sales';
 
 afterEach(() => {
@@ -195,5 +195,124 @@ describe('concurrent move safety', () => {
     const select = screen.getByRole('combobox', { name: /Move "Stale board" to stage/ });
     await user.selectOptions(select, 'Proposal');
     await waitFor(() => expect(screen.getByText(/was changed by someone else/)).toBeTruthy());
+  });
+});
+
+// ── Regression tests (PR #17 audit) ──────────────────────────────────────────
+
+describe('mixed-currency totals', () => {
+  it('groups totals by currency instead of summing across currencies', async () => {
+    const p = pipelineWithStages();
+    const opps = [
+      opportunity(p, { title: 'AUD deal', stageId: p.stages[0]!.id, amount: '1000.00', currencyCode: 'AUD' }),
+      opportunity(p, { title: 'USD deal', stageId: p.stages[0]!.id, amount: '2000.00', currencyCode: 'USD' }),
+      opportunity(p, { title: 'AUD deal 2', stageId: p.stages[0]!.id, amount: '500.00', currencyCode: 'AUD' }),
+    ];
+    const { user } = setup({ sales: { pipelines: [p], opportunities: opps } });
+    await switchToBoard(user);
+    const board = await screen.findByRole('region', { name: 'Pipeline board' });
+    const col = within(board).getByRole('group', { name: /New: 3 opportunities/ });
+    // The stage header should show separate totals per currency, not one combined total
+    const headerText = within(col).getByText((_content, el) =>
+      el?.tagName === 'P' && /1,500/.test(el.textContent ?? '') && /2,000/.test(el.textContent ?? '') || false,
+    );
+    expect(headerText).toBeTruthy();
+    // Must NOT show a single combined total of $3,500
+    expect(within(col).queryByText(/3,500/)).toBeNull();
+  });
+
+  it('won/lost columns group totals by currency', async () => {
+    const p = pipelineWithStages();
+    const opps = [
+      opportunity(p, { title: 'Won AUD', status: 'WON', closedAt: '2026-11-10T00:00:00.000Z', stageId: p.stages[0]!.id, amount: '800.00', currencyCode: 'AUD' }),
+      opportunity(p, { title: 'Won EUR', status: 'WON', closedAt: '2026-11-11T00:00:00.000Z', stageId: p.stages[0]!.id, amount: '1200.00', currencyCode: 'EUR' }),
+    ];
+    const { user } = setup({ sales: { pipelines: [p], opportunities: opps } });
+    await switchToBoard(user);
+    const board = await screen.findByRole('region', { name: 'Pipeline board' });
+    const wonCol = within(board).getByRole('group', { name: /Won/ });
+    // The Won column header should show separate totals for AUD and EUR
+    const headerText = within(wonCol).getByText((_content, el) =>
+      el?.tagName === 'P' && /800/.test(el.textContent ?? '') && /1,200/.test(el.textContent ?? '') || false,
+    );
+    expect(headerText).toBeTruthy();
+  });
+});
+
+describe('optimistic-update reconciliation', () => {
+  it('keeps optimistic state when the refresh after a successful PATCH fails', async () => {
+    const p = pipelineWithStages();
+    const o = opportunity(p, { title: 'Patched ok', stageId: p.stages[0]!.id });
+    const { api, user } = setup({ sales: { pipelines: [p], opportunities: [o] } });
+    await switchToBoard(user);
+    await screen.findByRole('region', { name: 'Pipeline board' });
+
+    // Let the PATCH succeed, then fail the subsequent reload (GET)
+    api.salesNext((_path, method) => {
+      if (method === 'PATCH') return undefined;
+      return undefined;
+    });
+    // After the PATCH, the reload GET will happen — fail it
+    api.salesNext(() => new Response(JSON.stringify({ error: 'server_error' }), { status: 500 }));
+
+    const select = screen.getByRole('combobox', { name: /Move "Patched ok" to stage/ });
+    await user.selectOptions(select, 'Qualified');
+
+    // The card should appear in the Qualified column via optimistic state, not snap back
+    await waitFor(() => {
+      const qualCol = screen.getByRole('group', { name: /Qualified/ });
+      expect(within(qualCol).queryByText('Patched ok')).toBeTruthy();
+    });
+  });
+
+  it('clears optimistic state once server data catches up', async () => {
+    const p = pipelineWithStages();
+    const o = opportunity(p, { title: 'Reconcile me', stageId: p.stages[0]!.id });
+    const { user } = setup({ sales: { pipelines: [p], opportunities: [o] } });
+    await switchToBoard(user);
+    await screen.findByRole('region', { name: 'Pipeline board' });
+
+    const select = screen.getByRole('combobox', { name: /Move "Reconcile me" to stage/ });
+    await user.selectOptions(select, 'Qualified');
+
+    // After the successful PATCH and reload, the card should be in Qualified from server data
+    await waitFor(() => {
+      const qualCol = screen.getByRole('group', { name: /Qualified/ });
+      expect(within(qualCol).queryByText('Reconcile me')).toBeTruthy();
+    });
+  });
+});
+
+describe('duplicate rapid moves', () => {
+  it('blocks a second move while the first is in flight', async () => {
+    const p = pipelineWithStages();
+    const o = opportunity(p, { title: 'Rapid mover', stageId: p.stages[0]!.id });
+    const { api, user } = setup({ sales: { pipelines: [p], opportunities: [o] } });
+    await switchToBoard(user);
+    await screen.findByRole('region', { name: 'Pipeline board' });
+
+    // Hold the first PATCH in flight by never resolving it
+    let resolveFirst: ((r: Response) => void) | undefined;
+    api.salesNext(() => new Promise<Response>((resolve) => { resolveFirst = resolve; }) as unknown as Response);
+
+    const select = screen.getByRole('combobox', { name: /Move "Rapid mover" to stage/ });
+    await user.selectOptions(select, 'Qualified');
+
+    // Try a second move via drag while the first is pending
+    const board = screen.getByRole('region', { name: 'Pipeline board' });
+    const card = within(board).getByText('Rapid mover').closest('[draggable]');
+    const proposalCol = within(board).getByRole('group', { name: /Proposal/ });
+
+    if (card) {
+      fireEvent.dragStart(card, { dataTransfer: { effectAllowed: 'move', setData: vi.fn(), getData: () => o.id } });
+      fireEvent.drop(proposalCol, { dataTransfer: { getData: () => o.id }, preventDefault: vi.fn() });
+    }
+
+    // Only one PATCH should have been sent
+    const patches = api.callsTo(/^PATCH/).filter((c) => c.path.includes('/sales/opportunities/'));
+    expect(patches).toHaveLength(1);
+
+    // Resolve the pending PATCH to clean up
+    if (resolveFirst) resolveFirst(new Response(JSON.stringify({ opportunity: { ...o, stageId: p.stages[1]!.id, version: 2 } }), { status: 200 }));
   });
 });
