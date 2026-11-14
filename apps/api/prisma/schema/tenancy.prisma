@@ -40,6 +40,8 @@ model Business {
   opportunityOutcomes OpportunityOutcome[]
   contacts            Contact[]
   activities          Activity[]
+  projects            Project[]
+  projectTasks        ProjectTask[]
 
   @@map("businesses")
 }
@@ -58,6 +60,8 @@ model Membership {
 
   ownedCustomers     Customer[]
   ownedOpportunities Opportunity[]
+  ownedProjects      Project[]
+  assignedTasks      ProjectTask[]
 
   @@unique([businessId, userId])
   @@unique([businessId, id])

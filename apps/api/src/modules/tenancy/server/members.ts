@@ -71,6 +71,9 @@ export async function removeMember(db: AppTenantDb, actor: Actor, membershipId: 
   // memberships would otherwise block the removal.
   await db.customer.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null } as never });
   await db.opportunity.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null } as never });
+  // Project owners and task assignees too (version bumped, so an edit prepared before is refused as stale).
+  await db.project.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null, version: { increment: 1 } } as never });
+  await db.projectTask.updateMany({ where: { assigneeUserId: target.userId }, data: { assigneeUserId: null, version: { increment: 1 } } as never });
   await db.membership.delete({ where: { id: membershipId } });
   await audit(db, actor, 'membership.removed', 'membership', membershipId, { role: target.role });
 }

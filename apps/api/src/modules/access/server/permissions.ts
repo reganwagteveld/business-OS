@@ -14,6 +14,9 @@ export const ZONE_PERMISSIONS = {
   // sales:write covers opportunities (create, edit, move stage, win/lose/reopen, archive/restore);
   // sales:manage covers pipeline configuration, a business setting (docs/sales-data-model.md §5).
   sales: ['sales:read', 'sales:write', 'sales:manage'],
+  // Projects and their tasks (docs/projects-data-model.md §5). Owners and assignees of projects and
+  // tasks are work assignments, not security principals: being one never grants any of these.
+  projects: ['projects:read', 'projects:create', 'projects:update', 'projects:archive', 'projects:manage_tasks'],
 } as const;
 
 export type Zone = keyof typeof ZONE_PERMISSIONS;
@@ -26,7 +29,10 @@ export type Role = (typeof ROLES)[number];
 /** Higher rank = more authority. Used only by the role-assignment rules below, never for access. */
 const RANK: Record<Role, number> = { OWNER: 4, ADMIN: 3, MANAGER: 2, MEMBER: 1 };
 
-const DATA: Permission[] = ['customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write', 'sales:read', 'sales:write'];
+const PROJECTS_WORK: Permission[] = ['projects:read', 'projects:create', 'projects:update', 'projects:manage_tasks'];
+const DATA: Permission[] = [
+  'customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK, 'projects:archive',
+];
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   // Created the business; manages everything, including other owners; only owners may delete
@@ -36,8 +42,11 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   ADMIN: new Set<Permission>(['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read', 'sales:manage', ...DATA]),
   // Runs day-to-day work; can invite and manage MEMBERs only; no settings or audit log.
   MANAGER: new Set<Permission>(['business:read', 'members:read', 'members:invite', 'members:manage', ...DATA]),
-  // Reads and writes business data; no member or settings management.
-  MEMBER: new Set<Permission>(['business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write', 'sales:read', 'sales:write']),
+  // Reads and writes business data; no member or settings management. Works on projects and their
+  // tasks but cannot archive or restore a project (a decision for whoever runs the work).
+  MEMBER: new Set<Permission>([
+    'business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK,
+  ]),
 };
 
 export function permissionsFor(role: Role): Permission[] {
