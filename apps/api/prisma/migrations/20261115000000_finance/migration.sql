@@ -722,10 +722,11 @@ BEGIN
     NEW.tax_rate_percent := 0;
   ELSE
     SELECT r.name, r.rate_percent INTO rate FROM public.finance_tax_rates r WHERE r.business_id = NEW.business_id AND r.id = NEW.tax_rate_id;
-    IF FOUND THEN
-      NEW.tax_name := rate.name;
-      NEW.tax_rate_percent := rate.rate_percent;
-    END IF; -- otherwise the composite FK refuses the row
+    IF NOT FOUND THEN -- another business's rate (invisible under RLS) or none: the same answer as the FK
+      RAISE EXCEPTION 'tax rate not found' USING ERRCODE = '23503';
+    END IF;
+    NEW.tax_name := rate.name;
+    NEW.tax_rate_percent := rate.rate_percent;
   END IF;
   RETURN NEW;
 END $$;
