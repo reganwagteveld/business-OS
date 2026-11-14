@@ -568,7 +568,8 @@ BEGIN
        OR NEW.voided_at IS NOT NULL OR NEW.voided_by_id IS NOT NULL OR NEW.void_reason IS NOT NULL THEN
       RAISE EXCEPTION 'documents are created as unnumbered drafts' USING ERRCODE = 'FN010';
     END IF;
-    NEW.created_at := now();
+    -- Millisecond precision, so the (created_at, id) list cursor round-trips exactly through JavaScript.
+    NEW.created_at := date_trunc('milliseconds', now());
     NEW.updated_at := now();
     RETURN NEW;
   END IF;

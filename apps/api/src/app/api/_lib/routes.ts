@@ -11,7 +11,7 @@ import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser 
 import { NotFoundError, type Actor } from '@/modules/tenancy';
 import { myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb } from '@/core/db';
 import { apiHeaders } from '@/core/http';
-import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
+import { isUniqueViolation, RecordNotFoundError, RuleViolationError, sqlState, StateConflictError } from '@/core/http/errors';
 
 type Params = Promise<Record<string, string | string[] | undefined>>;
 type RouteContext = { params: Params };
@@ -27,6 +27,18 @@ export interface Result<T> {
 const json = (request: Request, status: number, body: unknown) => NextResponse.json(body, { status, headers: apiHeaders(request) });
 const fail = (request: Request, status: number, error: string) => json(request, status, { error });
 
+/**
+ * Finance guards raise their own SQLSTATEs (class FN, migration 20261115000000_finance), so an
+ * integrity refusal maps to one stable error and is never confused with an RLS refusal. The services
+ * check first and give the same codes; these are the database backstops. No detail is forwarded.
+ */
+const FINANCE_SQLSTATES: Record<string, [number, string]> = {
+  FN001: [409, 'immutable'], FN002: [409, 'invalid_state'], FN003: [409, 'totals_mismatch'], FN004: [400, 'no_lines'],
+  FN005: [409, 'invoice_not_open'], FN006: [409, 'invoice_credited'], FN007: [409, 'invoice_has_payments'], FN008: [409, 'series_in_use'],
+  FN009: [409, 'invalid_state'], FN010: [409, 'immutable'], FN011: [400, 'unsupported_tax_mode'], FN012: [409, 'credit_exceeds_invoice'],
+  FN013: [409, 'invoice_not_open'],
+};
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID.test(value);
 
@@ -40,6 +52,14 @@ function errorResponse(request: Request, error: unknown): Response {
     const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400 }[error.reason];
     return fail(request, status, error.reason);
   }
+  const state = sqlState(error);
+  const finance = state ? FINANCE_SQLSTATES[state] : undefined;
+  if (finance) return fail(request, finance[0], finance[1]);
+  // Deadlock, serialization failure or lock timeout: the unit of work rolled back whole and may be
+  // retried by the client. The API never retries a mutation itself.
+  if (state === '40P01' || state === '40001' || state === '55P03') return fail(request, 503, 'retryable');
+  if (isUniqueViolation(error, 'finance_documents_business_id_kind_number')) return fail(request, 409, 'number_conflict');
+  if (state === '22003') return fail(request, 400, 'invalid_amount');
   const message = error instanceof Error ? error.message : '';
   const code = (error as { code?: string } | null)?.code;
   if (/at least one owner/.test(message)) return fail(request, 409, 'last_owner');
