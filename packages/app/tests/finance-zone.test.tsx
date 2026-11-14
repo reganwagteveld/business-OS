@@ -231,7 +231,7 @@ describe('expense form and lifecycle', () => {
     await user.click(await screen.findByRole('button', { name: 'All expenses' }));
     await user.click(await screen.findByRole('button', { name: 'Paid Co' }));
     await user.click(await screen.findByRole('button', { name: 'Void' }));
-    expect(within(screen.getByRole('dialog')).getByText(/Reverse its payments first/)).toBeTruthy();
+    expect(within(screen.getByRole('dialog')).getByText(/Reverse those payment links first/)).toBeTruthy();
     expect(within(screen.getByRole('dialog')).queryByRole('button', { name: 'Void expense' })).toBeNull();
   });
 

@@ -19,7 +19,7 @@ export function conflictMessage(code: string | undefined): string {
   switch (code) {
     case 'stale': return 'Someone else changed this expense. Reload it and try again.';
     case 'archived_reference': return 'The category, tax rate, project or customer you chose has been archived. Choose an active one.';
-    case 'has_payments': return 'This expense has payments. Reverse its payments first, then void it.';
+    case 'has_payments': return 'Payments are linked to this expense. Reverse those payment links first (the payments stay recorded), then void it.';
     case 'invalid_state': return 'This expense can no longer be changed in that way.';
     case 'duplicate_name': return 'An active category already has that name.';
     case 'over_payment': return 'That is more than the expense has left to pay.';

@@ -61,8 +61,8 @@ export function ExpenseList({ client, slug, locale, categories, filters, onFilte
         </section>
       ) : null}
 
-      <div role="search" aria-label="Filter expenses" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-        <Field label="Search" className="lg:col-span-2">{(c) => <Input {...c} type="search" value={text} placeholder="Supplier, description or reference" onChange={(e) => setText(e.target.value)} />}</Field>
+      <div role="search" aria-label="Filter expenses" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <Field label="Search" className="sm:col-span-2 lg:col-span-4 xl:col-span-2">{(c) => <Input {...c} type="search" value={text} placeholder="Supplier, description or reference" onChange={(e) => setText(e.target.value)} />}</Field>
         <Field label="Status">{(c) => (
           <Select {...c} value={filters.status} onChange={(e) => set({ status: e.target.value as ListFilters['status'] })}>
             <option value="all">All</option><option value="draft">Draft</option><option value="recorded">Recorded</option><option value="void">Void</option>
@@ -80,7 +80,7 @@ export function ExpenseList({ client, slug, locale, categories, filters, onFilte
             {(categories ?? []).map((cat) => <option key={cat.id} value={cat.id}>{cat.name}{cat.archivedAt ? ' (archived)' : ''}</option>)}
           </Select>
         )}</Field>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:col-span-2 lg:col-span-1 xl:col-span-2">
           <Field label="From">{(c) => <Input {...c} type="date" value={filters.from} onChange={(e) => set({ from: e.target.value })} />}</Field>
           <Field label="Before">{(c) => <Input {...c} type="date" value={filters.to} onChange={(e) => set({ to: e.target.value })} />}</Field>
         </div>
@@ -105,19 +105,20 @@ export function ExpenseList({ client, slug, locale, categories, filters, onFilte
             <TableCaption>{filtered ? 'Filtered expenses, most recent first.' : 'Expenses, most recent first.'}</TableCaption>
             <TableHeader>
               <TableRow>
-                <TableHead>Date</TableHead><TableHead>Expense</TableHead><TableHead className="hidden md:table-cell">Category</TableHead>
+                <TableHead className="hidden sm:table-cell">Date</TableHead><TableHead>Expense</TableHead><TableHead className="hidden md:table-cell">Category</TableHead>
                 <TableHead>Status</TableHead><TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {page.expenses.map((e) => (
                 <TableRow key={e.id}>
-                  <TableCell className="whitespace-nowrap">{formatDate(e.incurredOn, locale)}</TableCell>
+                  <TableCell className="hidden whitespace-nowrap sm:table-cell">{formatDate(e.incurredOn, locale)}</TableCell>
                   <TableCell className={WRAP}>
                     <button type="button" className="text-left font-medium hover:underline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => onOpen(e.id)}>
                       {e.supplierName ?? e.description}
                     </button>
                     {e.supplierName ? <p className="text-xs text-muted-foreground">{e.description}</p> : null}
+                    <p className="text-xs text-muted-foreground sm:hidden">{formatDate(e.incurredOn, locale)}</p>
                   </TableCell>
                   <TableCell className={`hidden md:table-cell ${WRAP}`}>{e.categoryName ?? categoryName(e.categoryId)}</TableCell>
                   <TableCell>
