@@ -14,7 +14,15 @@ export function Breakable({ text }: { text: string }) {
 
 export const linkClass = 'underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring';
 
+/** Only http(s) websites become links. Anything with another scheme (javascript:, data:, file:) is shown as text. */
 export const safeHref = (site: string) => {
-  const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(site) ? site : `https://${site}`;
-  return /^https?:\/\//i.test(url) ? url : null;
+  const value = site.trim();
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !/^https?:\/\//i.test(value)) return null;
+  const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
 };

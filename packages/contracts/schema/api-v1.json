@@ -1325,6 +1325,64 @@
         "additionalProperties": false
       }
     },
+    "customerSummary": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/customers/summary",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "object",
+            "properties": {
+              "customers": {
+                "type": "object",
+                "properties": {
+                  "active": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "archived": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "active",
+                  "archived"
+                ],
+                "additionalProperties": false
+              },
+              "contacts": {
+                "type": "object",
+                "properties": {
+                  "active": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "active"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "customers",
+              "contacts"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
     "getCustomer": {
       "method": "GET",
       "path": "/api/v1/b/:slug/customers/:customerId",

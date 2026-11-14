@@ -8,7 +8,10 @@ import { ChooseWorkspace } from './shell/choose';
 import { Startup } from './shell/frame';
 import { BusinessSetup } from './shell/onboarding';
 import { Failed, SessionExpiredNotice, Unreachable, Unverified } from './shell/states';
-import { ZoneHome } from './shell/zone-home';
+import { ZoneHome, type CustomerMetrics } from './shell/zone-home';
+import { useLoad } from './zones/use-load';
+import type { BusinessContext } from './api/tenancy';
+import type { CurrentUser } from '@business-os/contracts';
 import { CustomerZone } from './zones/customers/customer-zone';
 import { browserStorage, type WorkspaceStorage } from './workspace/storage';
 import { useWorkspace } from './workspace/use-workspace';
@@ -155,5 +158,39 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       />
     );
   }
-  return <ZoneHome business={phase.context.business.name} user={phase.user} role={phase.context.membership.role} onSwitch={switchBusiness} onSignOut={signOut} onOpenCustomers={() => setZone('customers')} />;
+  return (
+    <HomeWithMetrics
+      key={phase.context.business.slug}
+      customers={customers} context={phase.context} user={phase.user}
+      onSwitch={switchBusiness} onSignOut={signOut} onOpenCustomers={() => setZone('customers')} onSessionEnded={workspace.retry}
+    />
+  );
+}
+
+/**
+ * The Zone home with live Customers counts. Mounted per business (key) and each time the person comes
+ * back from a Zone, so counts reflect any changes just made, with exactly one request per visit.
+ */
+function HomeWithMetrics({ customers, context, user, onSwitch, onSignOut, onOpenCustomers, onSessionEnded }: {
+  customers: CustomersClient; context: BusinessContext; user: CurrentUser;
+  onSwitch: () => void; onSignOut: () => void; onOpenCustomers: () => void; onSessionEnded: () => void;
+}) {
+  const slug = context.business.slug;
+  const canRead = context.membership.permissions.includes('customers:read');
+  const summary = useLoad(`home-summary|${slug}|${canRead}`, (signal) =>
+    canRead ? customers.summary(slug, signal) : Promise.resolve({ kind: 'forbidden' as const }));
+  const ended = summary.state.status === 'done' && summary.state.outcome.kind === 'unauthenticated';
+  useEffect(() => {
+    if (ended) onSessionEnded();
+  }, [ended, onSessionEnded]);
+  let metrics: CustomerMetrics | undefined;
+  if (canRead) {
+    metrics = summary.state.status === 'loading' ? { state: 'loading' }
+      : summary.state.outcome.kind === 'ok' ? { state: 'ready', customers: summary.state.outcome.data.customers.active, contacts: summary.state.outcome.data.contacts.active }
+      : { state: 'unavailable' };
+  }
+  return (
+    <ZoneHome business={context.business.name} user={user} role={context.membership.role} onSwitch={onSwitch} onSignOut={onSignOut}
+      onOpenCustomers={onOpenCustomers} customerMetrics={metrics} />
+  );
 }

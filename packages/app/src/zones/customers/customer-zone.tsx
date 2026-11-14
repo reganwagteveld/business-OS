@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CustomersClient } from '../../api/customers';
 import type { BusinessContext } from '../../api/tenancy';
 import { actionClass, secondaryClass } from '../../shell/frame';
+import { useDialog } from '../dialog';
 import { ZoneFrame } from '../zone-frame';
 import { CustomerDetail } from './customer-detail';
 import { CustomerForm } from './customer-form';
@@ -31,6 +32,7 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
   const markForm = useCallback((value: boolean) => markDraft('form', value), [markDraft]);
   const [pending, setPending] = useState<(() => void) | null>(null);
   const content = useRef<HTMLDivElement>(null);
+  const { ref: discardRef, onKeyDown: onDiscardKey } = useDialog(pending !== null, () => setPending(null), { trap: true });
 
   // Unsaved changes are never dropped silently: in-app moves ask first, and so does closing the window.
   useEffect(() => {
@@ -86,7 +88,7 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
       </div>
       {pending ? (
         <div className="fixed inset-0 z-20 flex items-center justify-center bg-background/80 px-5 backdrop-blur-sm">
-          <div role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-body" className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-lg">
+          <div ref={discardRef} onKeyDown={onDiscardKey} role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-body" className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-lg">
             <h2 id="discard-title" className="text-lg font-semibold tracking-tight">Discard unsaved changes?</h2>
             <p id="discard-body" className="mt-2 text-sm text-muted-foreground">You have changes that have not been saved. If you leave now, they will be lost.</p>
             <div className="mt-6 flex gap-3">

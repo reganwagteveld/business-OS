@@ -82,6 +82,14 @@ export const ListCustomersQuery = z.object({ q: Search, status: RecordStatus.def
 export const ListCustomersResponse = z.object({ customers: z.array(Customer), nextCursor: z.string().nullable() }).strict();
 export const CustomerResponse = z.object({ customer: Customer }).strict();
 
+/** Counts for the Zone home. Computed by the server inside the tenant unit of work (RLS applies). */
+const Count = z.number().int().min(0);
+export const CustomerSummary = z
+  .object({ customers: z.object({ active: Count, archived: Count }).strict(), contacts: z.object({ active: Count }).strict() })
+  .strict();
+export type CustomerSummary = z.infer<typeof CustomerSummary>;
+export const CustomerSummaryResponse = z.object({ summary: CustomerSummary }).strict();
+
 const contactFields = {
   firstName: optionalText(100),
   lastName: optionalText(100),

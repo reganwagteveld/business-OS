@@ -45,6 +45,15 @@ export async function listCustomers(db: AppTenantDb, query: { q?: string; status
   return { customers: items.map(toDto), nextCursor };
 }
 
+/** Counts for the Zone home. The scoped client and RLS limit every count to the current business. */
+export async function customerSummary(db: AppTenantDb) {
+  // One after another: they share the unit of work's single connection.
+  const active = await db.customer.count({ where: { archivedAt: null } });
+  const archived = await db.customer.count({ where: { archivedAt: { not: null } } });
+  const contacts = await db.contact.count({ where: { archivedAt: null } });
+  return { customers: { active, archived }, contacts: { active: contacts } };
+}
+
 export async function getCustomer(db: AppTenantDb, id: string) {
   return toDto(await load(db, id));
 }
