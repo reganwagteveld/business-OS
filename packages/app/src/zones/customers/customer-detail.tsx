@@ -1,4 +1,4 @@
-import type { Activity, Contact, Customer } from '@business-os/contracts';
+import type { Activity, Customer } from '@business-os/contracts';
 import { useRef, useState, type ReactNode } from 'react';
 import type { CustomersClient } from '../../api/customers';
 import { actionClass, secondaryClass } from '../../shell/frame';
@@ -7,6 +7,8 @@ import { useLoad } from '../use-load';
 import { KindBadge, StatusBadge } from './directory';
 import { activityTitle, addressLines, formatWhen, isSystemActivity } from './format';
 import { CallIcon, EmailIcon, MeetingIcon, NoteIcon } from './icons';
+import { ManageContacts } from './manage-contacts';
+import { ActivityComposer } from './activity-composer';
 
 function Panel({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -50,7 +52,7 @@ const safeHref = (site: string) => {
 
 /**
  * One customer's workspace. Everything shown is a real record from the API; contacts and activity
- * are read-only here (managing them is the next piece of work). Archive asks first and restore is one click.
+ * are managed through the existing tenant-scoped API. Archive asks first and restore is one click.
  */
 export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, onBack, onEdit, onSessionEnded }: {
   client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean;
@@ -164,7 +166,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
           </Panel>
         </div>
         <div className="self-start lg:col-start-3 lg:row-span-2 lg:row-start-1">
-          <ContactsPanel customer={customer} client={client} slug={slug} onSessionEnded={onSessionEnded} />
+          <ManageContacts customer={customer} client={client} slug={slug} canWrite={canWrite && !archived} onCustomerChanged={onChanged} onSessionEnded={onSessionEnded} />
         </div>
         <div className="lg:col-span-2 lg:row-start-2">
           <Panel title="Notes">
@@ -172,7 +174,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
           </Panel>
         </div>
         <div className="lg:col-span-2 lg:row-start-3">
-          <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} onSessionEnded={onSessionEnded} />
+          <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} canWrite={canWrite && !archived} onSessionEnded={onSessionEnded} />
         </div>
         <section aria-label="Sales and Finance" className="self-start rounded-2xl border border-dashed border-border px-5 py-4 lg:col-start-3 lg:row-start-3">
           <div className="flex items-center justify-between gap-3">
@@ -186,49 +188,15 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
   );
 }
 
-function ContactsPanel({ customer, client, slug, onSessionEnded }: { customer: Customer; client: CustomersClient; slug: string; onSessionEnded: () => void }) {
-  const { state, reload } = useLoad(`contacts|${slug}|${customer.id}`, (signal) => client.contacts(slug, customer.id, signal));
-  return (
-    <Panel title="Contacts">
-      {state.status === 'loading' ? <Skeleton rows={2} label="Loading contacts…" /> : null}
-      {state.status === 'done' && state.outcome.kind !== 'ok' ? <Problem outcome={state.outcome} what="Contacts" onRetry={reload} onSessionEnded={onSessionEnded} /> : null}
-      {state.status === 'done' && state.outcome.kind === 'ok' ? <ContactList contacts={state.outcome.data} primaryId={customer.primaryContactId} /> : null}
-    </Panel>
-  );
-}
-
-function ContactList({ contacts, primaryId }: { contacts: Contact[]; primaryId: string | null }) {
-  if (contacts.length === 0) return <p className="text-sm text-muted-foreground">No contacts are linked to this customer yet. Adding and managing contacts is coming next.</p>;
-  // The primary contact always leads; the rest keep the server's name order.
-  const ordered = [...contacts].sort((a, b) => Number(b.id === primaryId) - Number(a.id === primaryId));
-  return (
-    <ul className="divide-y divide-border">
-      {ordered.map((c) => {
-        const phone = c.phone ?? c.mobile;
-        return (
-          <li key={c.id} className="py-3 first:pt-0 last:pb-0">
-            <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
-              {c.displayName}
-              {c.id === primaryId ? <span aria-label="Primary contact" className="rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">Primary</span> : null}
-            </p>
-            {c.jobTitle ? <p className="text-xs text-muted-foreground">{c.jobTitle}</p> : null}
-            {c.email ? <p className="text-xs [overflow-wrap:anywhere]"><a className={`text-muted-foreground ${linkClass}`} href={`mailto:${c.email}`}><Breakable text={c.email} /></a></p> : null}
-            {phone ? <p className="text-xs">{telHref(phone) ? <a className={`text-muted-foreground ${linkClass}`} href={telHref(phone)!}>{phone}</a> : <span className="text-muted-foreground">{phone}</span>}</p> : null}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function ActivityPanel({ customerId, client, slug, locale, timeZone, names, onSessionEnded }: {
-  customerId: string; client: CustomersClient; slug: string; locale?: string; timeZone: string; names: Map<string, string> | null; onSessionEnded: () => void;
+function ActivityPanel({ customerId, client, slug, locale, timeZone, names, canWrite, onSessionEnded }: {
+  customerId: string; client: CustomersClient; slug: string; locale?: string; timeZone: string; names: Map<string, string> | null; canWrite: boolean; onSessionEnded: () => void;
 }) {
   const [stack, setStack] = useState<string[]>([]);
   const cursor = stack[stack.length - 1];
   const { state, reload } = useLoad(`activity|${slug}|${customerId}|${cursor ?? ''}`, (signal) => client.activities(slug, customerId, cursor, signal));
   return (
     <Panel title="Activity">
+      {canWrite ? <ActivityComposer client={client} slug={slug} customerId={customerId} onSaved={() => { setStack([]); reload(); }} onSessionEnded={onSessionEnded} /> : null}
       {state.status === 'loading' ? <Skeleton rows={3} label="Loading activity…" /> : null}
       {state.status === 'done' && state.outcome.kind !== 'ok' ? <Problem outcome={state.outcome} what="Activity" onRetry={reload} onSessionEnded={onSessionEnded} /> : null}
       {state.status === 'done' && state.outcome.kind === 'ok' ? (
