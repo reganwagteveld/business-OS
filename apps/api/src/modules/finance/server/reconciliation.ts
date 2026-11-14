@@ -1,5 +1,7 @@
 import 'server-only';
-// On-demand reconciliation (docs/finance-data-model.md §10 item 6, §18.5). Read-only by construction:
+// On-demand INTERNAL INTEGRITY reconciliation (docs/finance-data-model.md §10 item 6, §18.5). It compares
+// Business OS's own finance records with each other; it is not bank-statement reconciliation (no bank
+// data is read or matched). Read-only by construction:
 // one SELECT statement, so every check reads the same snapshot (no false positives from concurrent
 // writes between checks, even under READ COMMITTED), and nothing is written, not even an audit row.
 //

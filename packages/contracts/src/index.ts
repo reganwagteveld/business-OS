@@ -160,6 +160,7 @@ export const endpoints = {
     response: CreditNoteCreditResponse,
   },
   listCustomerBalances: { method: 'GET', path: '/api/v1/b/:slug/finance/customer-balances', query: ListCustomerBalancesQuery, response: ListCustomerBalancesResponse },
+  /** Internal integrity reconciliation (read-only); not bank-statement reconciliation. */
   getReconciliation: { method: 'GET', path: '/api/v1/b/:slug/finance/reconciliation', response: ReconciliationResponse },
 } as const;
 

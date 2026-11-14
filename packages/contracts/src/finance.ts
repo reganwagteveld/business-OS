@@ -559,7 +559,29 @@ export const ListCustomerBalancesResponse = z
   .object({ balances: z.array(CustomerBalance), asOf: z.string(), nextCursor: z.string().nullable() })
   .strict();
 
-// ---- reconciliation (F2) --------------------------------------------------------------------------
+// ---- error codes of the F2 endpoints (documentation and client use) ---------------------------------
+
+/**
+ * Every `error` value the F2 endpoints (payments, allocations, credit applications, settlement,
+ * balances, reconciliation) can answer, besides the generic `not_found` (404), `forbidden` (403),
+ * `invalid_input` / `invalid_query` (400, the schema refused the body or query) and `retryable` (503:
+ * deadlock or lock timeout, rolled back whole, safe to retry). 400 bodies also carry a human `message`;
+ * 409 bodies carry the code only. docs/finance-data-model.md §18.10 lists which endpoint answers which.
+ */
+export const FinanceSettlementErrorCode = z.enum([
+  // 400: the request breaks a rule
+  'idempotency_key_required', 'invalid_idempotency_key', 'invalid_customer', 'invalid_currency', 'invalid_amount', 'invalid_dates',
+  'invalid_invoice', 'customer_mismatch', 'currency_mismatch', 'invalid_cursor',
+  // 409: the records are not in a state that allows it
+  'idempotency_conflict', 'archived_reference', 'stale', 'invalid_state', 'invoice_not_open', 'payment_not_open', 'credit_note_not_open',
+  'over_settlement', 'over_allocation', 'over_application', 'already_allocated', 'already_applied', 'already_reversed', 'has_credit_applications',
+]);
+export type FinanceSettlementErrorCode = z.infer<typeof FinanceSettlementErrorCode>;
+
+// ---- integrity reconciliation (F2) --------------------------------------------------------------------
+// Internal integrity reconciliation only: it checks Business OS's own finance records against each
+// other (counters, links, numbering, content hashes). It is NOT bank reconciliation: it never reads bank
+// statements or external balances, and matching recorded payments to a bank account is not implemented.
 
 export const ReconciliationCheckName = z.enum([
   'payment_allocated_total', 'invoice_allocated_total', 'credit_applied_total', 'invoice_settlement', 'payment_settlement',
@@ -579,8 +601,9 @@ export const ReconciliationDiscrepancy = z
   })
   .strict();
 /**
- * Read-only integrity check of this business's finance records, run in one statement (one snapshot).
- * It never modifies anything. `ok` is true when no discrepancy was found.
+ * Read-only internal integrity check of this business's finance records, run in one statement (one
+ * snapshot). It never modifies anything. `ok` is true when no discrepancy was found. Not a bank
+ * reconciliation: no bank statement or external balance is involved.
  */
 export const ReconciliationReport = z
   .object({

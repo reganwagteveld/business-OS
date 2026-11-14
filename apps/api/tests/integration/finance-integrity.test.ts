@@ -1245,6 +1245,46 @@ describe('C: credit applications (F2)', () => {
     expect(unexpected, results.join(',')).toEqual([]);
     expect(count(results, 'ok')).toBeGreaterThan(40);
   });
+
+  it('K12: void racing a credit application, per invoice: exactly one wins, and a void invoice never holds credit', { timeout: 120_000 }, async () => {
+    const base = await invoice('1000');
+    const cn = await creditNote(base, '500');
+    const invoices = await Promise.all(Array.from({ length: 20 }, () => invoice('10')));
+    const results = await Promise.all(invoices.map((inv) => Promise.all([
+      outcome(applyCredit(cn, [{ invoiceId: inv, amount: '5' }])),
+      outcome(as(A, alice, async (db) => {
+        await lockDocuments(db, [inv]);
+        const r = await db.financeDocument.updateMany({ where: { id: inv, status: 'ISSUED' }, data: { status: 'VOID', voidReason: 'race' } });
+        if (r.count !== 1) throw Object.assign(new Error('not issued'), { code: 'not_issued' });
+      })),
+    ])));
+    for (const [i, [applied, voided]] of results.entries()) {
+      expect([applied, voided].filter((o) => o === 'ok'), `invoice ${i}: ${applied}/${voided}`).toHaveLength(1);
+      expect(applied === 'ok' ? voided : applied).toBe(applied === 'ok' ? 'FN014' : 'FN015');
+    }
+    const held = await admin.query(`SELECT count(*)::int AS n FROM finance_documents WHERE id = ANY($1::uuid[]) AND status = 'VOID' AND credit_applied_total <> 0`, [invoices]);
+    expect(held.rows[0].n).toBe(0);
+  });
+
+  it('K13: simultaneous reversals of one allocation or one credit application: exactly one takes effect, counters stay exact', { timeout: 120_000 }, async () => {
+    const inv = await invoice('100');
+    const p = await payment('40');
+    await allocate(p, [{ invoiceId: inv, amount: '40' }]);
+    const cn = await creditNote(inv, '30');
+    await applyCredit(cn, [{ invoiceId: inv, amount: '30' }]);
+    const results = await Promise.all([
+      ...Array.from({ length: 10 }, () => outcome(unallocate(p, inv))),
+      ...Array.from({ length: 10 }, () => outcome(unapply(cn, inv))),
+    ]);
+    expect(count(results.slice(0, 10), 'ok')).toBe(1);
+    expect(count(results.slice(10), 'ok')).toBe(1);
+    expect(results.filter((r) => r !== 'ok').every((r) => r === 'not_found')).toBe(true);
+    expect(await settled(inv)).toEqual(['0.0000', '0.0000']);
+    expect([(await pay(p)).allocated_total, (await doc(cn)).credit_applied_total]).toEqual(['0.0000', '0.0000']);
+    // A writer that skips the WHERE reversed_at IS NULL condition is refused by the trigger, never double-counted.
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.updateMany({ where: { creditNoteId: cn }, data: { reversedAt: new Date() } })))).toBe('FN001');
+    expect(await settled(inv)).toEqual(['0.0000', '0.0000']);
+  });
 });
 
 describe('Z: reconciliation', () => {

@@ -465,6 +465,26 @@ describe('races', () => {
     }
     expect((await own.reconcile()).body.report.ok).toBe(true);
   });
+
+  it('simultaneous reversals: one payment reversed five times at once, and mixed payment and credit settlement reversed concurrently', { timeout: 60_000 }, async () => {
+    const own = api(A.people.OWNER!, A.slug);
+    const inv = await issuedInvoice('100');
+    const cn = await issuedCreditNote(inv, '30');
+    const p = (await own.record(pay('50', { allocations: [{ invoiceId: inv, amount: '50' }] }))).body.payment;
+    const applied = (await own.applyCredit(cn, [{ invoiceId: inv, amount: '30' }])).body.credit.applications[0];
+    expect((await own.settlement(inv)).body.settlement).toMatchObject({ allocatedTotal: '50.00', creditAppliedTotal: '30.00', outstanding: '20.00' });
+    const results = await Promise.all([
+      ...Array.from({ length: 5 }, () => own.reversePayment(p.id, { version: 1, reason: 'Duplicate entry' })),
+      own.unapplyCredit(cn, applied.id), own.unapplyCredit(cn, applied.id),
+    ]);
+    const reversals = results.slice(0, 5);
+    expect(reversals.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(reversals.filter((r) => r.status === 409).every((r) => ['invalid_state', 'stale'].includes(r.body.error))).toBe(true);
+    expect(results.slice(5).map((r) => r.status).sort()).toEqual([200, 409]);
+    expect((await own.settlement(inv)).body.settlement).toMatchObject({ allocatedTotal: '0.00', creditAppliedTotal: '0.00', outstanding: '100.00', settlementState: 'UNPAID' });
+    expect((await audits(p.id)).filter((e) => e.action === 'finance.payment.reversed')).toHaveLength(1);
+    expect((await own.reconcile()).body.report.ok).toBe(true);
+  });
 });
 
 describe('credit applications', () => {
