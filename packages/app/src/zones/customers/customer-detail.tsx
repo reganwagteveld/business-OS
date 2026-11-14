@@ -6,6 +6,7 @@ import { Problem, Skeleton } from '../problem';
 import { useLoad } from '../use-load';
 import { KindBadge, StatusBadge } from './directory';
 import { activityTitle, addressLines, formatWhen, isSystemActivity } from './format';
+import { CallIcon, EmailIcon, MeetingIcon, NoteIcon } from './icons';
 
 function Panel({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -21,12 +22,26 @@ function Panel({ title, children, aside }: { title: string; children: ReactNode;
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-3 gap-3 py-2 text-sm">
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 py-2.5 text-sm sm:grid-cols-[7rem_minmax(0,1fr)]">
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="col-span-2 break-words">{children}</dd>
+      <dd className="[overflow-wrap:anywhere]">{children}</dd>
     </div>
   );
 }
+
+/** A tel: link only for something that is plainly a phone number. */
+const telHref = (phone: string) => {
+  const digits = phone.replace(/[^\d+]/g, '');
+  return /^\+?\d{3,}$/.test(digits) ? `tel:${digits}` : null;
+};
+
+/** Lets a long email break after the @ (a clean place) before it would ever break mid-word. */
+function Breakable({ text }: { text: string }) {
+  const at = text.indexOf('@');
+  return at < 0 ? <>{text}</> : <>{text.slice(0, at + 1)}<wbr />{text.slice(at + 1)}</>;
+}
+
+const linkClass = 'underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring';
 
 const safeHref = (site: string) => {
   const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(site) ? site : `https://${site}`;
@@ -134,29 +149,38 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, names, onE
       ) : null}
       {problem ? <p role="alert" className="mb-6 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">{problem}</p> : null}
 
+      {/* One column on small windows (details, contacts, notes, activity, then the placeholder); two on wide ones. */}
       <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
+        <div className="lg:col-span-2 lg:row-start-1">
           <Panel title="Details">
             <dl className="divide-y divide-border">
-              <Row label="Email">{customer.email ? <a className="underline-offset-2 hover:underline" href={`mailto:${customer.email}`}>{customer.email}</a> : <span className="text-muted-foreground">Not set</span>}</Row>
-              <Row label="Phone">{customer.phone ?? <span className="text-muted-foreground">Not set</span>}</Row>
-              <Row label="Website">{href && customer.website ? <a className="underline-offset-2 hover:underline" href={href} target="_blank" rel="noopener noreferrer">{customer.website}</a> : <span className="text-muted-foreground">Not set</span>}</Row>
+              <Row label="Email">{customer.email ? <a className={linkClass} href={`mailto:${customer.email}`}><Breakable text={customer.email} /></a> : <span className="text-muted-foreground">Not set</span>}</Row>
+              <Row label="Phone">{customer.phone ? (telHref(customer.phone) ? <a className={linkClass} href={telHref(customer.phone)!}>{customer.phone}</a> : customer.phone) : <span className="text-muted-foreground">Not set</span>}</Row>
+              <Row label="Website">{href && customer.website ? <a className={linkClass} href={href} target="_blank" rel="noopener noreferrer">{customer.website}</a> : <span className="text-muted-foreground">Not set</span>}</Row>
               <Row label="Address">{address.length ? address.map((line, i) => <span key={i} className="block">{line}</span>) : <span className="text-muted-foreground">Not set</span>}</Row>
               <Row label="Owner">{customer.ownerUserId ? names?.get(customer.ownerUserId) ?? 'Assigned' : <span className="text-muted-foreground">No owner</span>}</Row>
               <Row label="Added">{formatWhen(customer.createdAt, timeZone, locale)}</Row>
             </dl>
           </Panel>
+        </div>
+        <div className="self-start lg:col-start-3 lg:row-span-2 lg:row-start-1">
+          <ContactsPanel customer={customer} client={client} slug={slug} onSessionEnded={onSessionEnded} />
+        </div>
+        <div className="lg:col-span-2 lg:row-start-2">
           <Panel title="Notes">
-            {customer.notes ? <p className="whitespace-pre-wrap text-sm leading-relaxed">{customer.notes}</p> : <p className="text-sm text-muted-foreground">No notes yet.{canWrite && !archived ? ' Use Edit to add some.' : ''}</p>}
+            {customer.notes ? <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">{customer.notes}</p> : <p className="text-sm text-muted-foreground">No notes yet.{canWrite && !archived ? ' Use Edit to add some.' : ''}</p>}
           </Panel>
+        </div>
+        <div className="lg:col-span-2 lg:row-start-3">
           <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} onSessionEnded={onSessionEnded} />
         </div>
-        <div className="space-y-5">
-          <ContactsPanel customer={customer} client={client} slug={slug} onSessionEnded={onSessionEnded} />
-          <Panel title="Sales and Finance" aside={<span className="rounded-md bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground">Coming soon</span>}>
-            <p className="text-sm text-muted-foreground">Quotes, invoices and payments for this customer will appear here when those Zones arrive.</p>
-          </Panel>
-        </div>
+        <section aria-label="Sales and Finance" className="self-start rounded-2xl border border-dashed border-border px-5 py-4 lg:col-start-3 lg:row-start-3">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xs font-medium text-muted-foreground">Sales and Finance</h2>
+            <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Coming soon</span>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">Quotes, invoices and payments for this customer will appear here when those Zones arrive.</p>
+        </section>
       </div>
     </>
   );
@@ -175,19 +199,24 @@ function ContactsPanel({ customer, client, slug, onSessionEnded }: { customer: C
 
 function ContactList({ contacts, primaryId }: { contacts: Contact[]; primaryId: string | null }) {
   if (contacts.length === 0) return <p className="text-sm text-muted-foreground">No contacts are linked to this customer yet. Adding and managing contacts is coming next.</p>;
+  // The primary contact always leads; the rest keep the server's name order.
+  const ordered = [...contacts].sort((a, b) => Number(b.id === primaryId) - Number(a.id === primaryId));
   return (
     <ul className="divide-y divide-border">
-      {contacts.map((c) => (
-        <li key={c.id} className="py-3 first:pt-0 last:pb-0">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            {c.displayName}
-            {c.id === primaryId ? <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium">Primary</span> : null}
-          </p>
-          {c.jobTitle ? <p className="text-xs text-muted-foreground">{c.jobTitle}</p> : null}
-          {c.email ? <p className="text-xs text-muted-foreground">{c.email}</p> : null}
-          {c.phone || c.mobile ? <p className="text-xs text-muted-foreground">{c.phone ?? c.mobile}</p> : null}
-        </li>
-      ))}
+      {ordered.map((c) => {
+        const phone = c.phone ?? c.mobile;
+        return (
+          <li key={c.id} className="py-3 first:pt-0 last:pb-0">
+            <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+              {c.displayName}
+              {c.id === primaryId ? <span aria-label="Primary contact" className="rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">Primary</span> : null}
+            </p>
+            {c.jobTitle ? <p className="text-xs text-muted-foreground">{c.jobTitle}</p> : null}
+            {c.email ? <p className="text-xs [overflow-wrap:anywhere]"><a className={`text-muted-foreground ${linkClass}`} href={`mailto:${c.email}`}><Breakable text={c.email} /></a></p> : null}
+            {phone ? <p className="text-xs">{telHref(phone) ? <a className={`text-muted-foreground ${linkClass}`} href={telHref(phone)!}>{phone}</a> : <span className="text-muted-foreground">{phone}</span>}</p> : null}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -205,7 +234,7 @@ function ActivityPanel({ customerId, client, slug, locale, timeZone, names, onSe
       {state.status === 'done' && state.outcome.kind === 'ok' ? (
         <>
           {state.outcome.data.activities.length === 0 ? <p className="text-sm text-muted-foreground">No activity yet.</p> : (
-            <ol className="space-y-4">
+            <ol className="space-y-3.5">
               {state.outcome.data.activities.map((a) => <ActivityItem key={a.id} a={a} locale={locale} timeZone={timeZone} who={a.actorUserId ? (names ? names.get(a.actorUserId) ?? 'A team member' : null) : 'System'} />)}
             </ol>
           )}
@@ -221,14 +250,40 @@ function ActivityPanel({ customerId, client, slug, locale, timeZone, names, onSe
   );
 }
 
+const USER_KIND: Record<string, { label: string; Icon: () => React.JSX.Element }> = {
+  note: { label: 'Note', Icon: NoteIcon },
+  call: { label: 'Call', Icon: CallIcon },
+  meeting: { label: 'Meeting', Icon: MeetingIcon },
+  email: { label: 'Email', Icon: EmailIcon },
+};
+
+/**
+ * Things people logged (notes, calls, meetings, emails) get an icon and normal weight. Automated
+ * changes are smaller and quieter, with no icon, so the human history reads first. Both keep who and when.
+ */
 function ActivityItem({ a, who, locale, timeZone }: { a: Activity; who: string | null; locale?: string; timeZone: string }) {
+  const meta = (
+    <p className="mt-0.5 text-xs text-muted-foreground">{who ? `${who} · ` : ''}<time dateTime={a.occurredAt}>{formatWhen(a.occurredAt, timeZone, locale)}</time></p>
+  );
+  if (isSystemActivity(a)) {
+    return (
+      <li data-kind="system" className="flex gap-3 pl-1.5">
+        <span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-border" />
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">{activityTitle(a)}</p>
+          {meta}
+        </div>
+      </li>
+    );
+  }
+  const kind = USER_KIND[a.type] ?? USER_KIND.note!;
   return (
-    <li className="flex gap-3">
-      <span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${isSystemActivity(a) ? 'bg-border' : 'bg-foreground'}`} />
+    <li data-kind="user" className="flex gap-3">
+      <span role="img" aria-label={kind.label} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-foreground"><kind.Icon /></span>
       <div className="min-w-0">
-        <p className="text-sm font-medium">{activityTitle(a)}</p>
-        {a.body ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{a.body}</p> : null}
-        <p className="mt-1 text-xs text-muted-foreground">{who ? `${who} · ` : ''}<time dateTime={a.occurredAt}>{formatWhen(a.occurredAt, timeZone, locale)}</time></p>
+        <p className="text-sm font-medium [overflow-wrap:anywhere]">{activityTitle(a)}</p>
+        {a.body ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground [overflow-wrap:anywhere]">{a.body}</p> : null}
+        {meta}
       </div>
     </li>
   );

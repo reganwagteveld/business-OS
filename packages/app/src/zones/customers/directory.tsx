@@ -4,6 +4,7 @@ import type { CustomersClient, RecordStatus } from '../../api/customers';
 import { actionClass, inputClass, secondaryClass } from '../../shell/frame';
 import { Problem, Skeleton } from '../problem';
 import { useLoad } from '../use-load';
+import { useLayout } from '../use-layout';
 import { locationOf } from './format';
 
 export interface DirectoryQuery { q: string; status: RecordStatus }
@@ -64,7 +65,7 @@ export function Directory({ client, slug, locale, query, onQuery, canWrite, onOp
 
   return (
     <section aria-labelledby="customers-title">
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
         <div>
           <h1 id="customers-title" className="text-3xl font-semibold tracking-tight">Customers</h1>
           <p className="mt-1 text-sm text-muted-foreground">Companies and people you do business with.</p>
@@ -73,7 +74,7 @@ export function Directory({ client, slug, locale, query, onQuery, canWrite, onOp
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="relative min-w-64 flex-1">
+        <div className="relative min-w-0 flex-1 basis-60">
           <label htmlFor={searchId} className="sr-only">Search customers by name, email or phone</label>
           <input id={searchId} type="search" value={text} onChange={(e) => setText(e.target.value)} maxLength={100} placeholder="Search by name, email or phone" className={inputClass} />
         </div>
@@ -105,41 +106,14 @@ function Results({ customers, nextCursor, locale, onOpen, page, onPrev, onNext, 
   customers: Customer[]; nextCursor: string | null; locale?: string; onOpen: (id: string) => void; page: number;
   onPrev: () => void; onNext: (cursor: string) => void; empty: React.ReactNode;
 }) {
+  const layout = useLayout();
   if (customers.length === 0 && page === 1) return <>{empty}</>;
   return (
     <>
-      <div className="overflow-x-auto rounded-2xl border border-border bg-card">
-        <table className="w-full min-w-[56rem] text-left text-sm">
-          <caption className="sr-only">Customers, sorted by name A to Z</caption>
-          <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-            <tr>
-              <th scope="col" className="px-5 py-3 font-medium">Name <span aria-hidden="true" title="Sorted by name, A to Z">↑</span></th>
-              <th scope="col" className="px-5 py-3 font-medium">Type</th>
-              <th scope="col" className="px-5 py-3 font-medium">Email</th>
-              <th scope="col" className="px-5 py-3 font-medium">Phone</th>
-              <th scope="col" className="px-5 py-3 font-medium">Location</th>
-              <th scope="col" className="px-5 py-3 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {customers.map((c) => (
-              <tr key={c.id} className="hover:bg-muted/50">
-                <th scope="row" className="min-w-40 px-5 py-3 font-medium">
-                  <button type="button" onClick={() => onOpen(c.id)} className="rounded-md text-left hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-                    {c.displayName}
-                  </button>
-                </th>
-                <td className="px-5 py-3"><KindBadge kind={c.kind} /></td>
-                <td className="px-5 py-3 text-muted-foreground">{c.email ?? '—'}</td>
-                <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">{c.phone ?? '—'}</td>
-                <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">{locationOf(c, locale) || '—'}</td>
-                <td className="px-5 py-3"><StatusBadge archived={c.archivedAt !== null} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <nav aria-label="Pagination" className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
+      {layout === 'narrow'
+        ? <CompactList customers={customers} locale={locale} onOpen={onOpen} />
+        : <CustomerTable customers={customers} locale={locale} onOpen={onOpen} layout={layout} />}
+      <nav aria-label="Pagination" className="mt-4 flex items-center justify-between gap-3 text-sm text-muted-foreground">
         <span aria-live="polite">Page {page} · sorted by name</span>
         <span className="flex gap-2">
           <button type="button" className={secondaryClass} onClick={onPrev} disabled={page === 1}>Previous</button>
@@ -147,6 +121,79 @@ function Results({ customers, nextCursor, locale, onOpen, page, onPrev, onNext, 
         </span>
       </nav>
     </>
+  );
+}
+
+const WRAP = '[overflow-wrap:anywhere]';
+
+/**
+ * Wide: every column. Medium: the name leads, and type and location move under it so the table fits
+ * without sideways scrolling. Either way the same facts are on screen.
+ */
+function CustomerTable({ customers, locale, onOpen, layout }: { customers: Customer[]; locale?: string; onOpen: (id: string) => void; layout: 'wide' | 'medium' }) {
+  const wide = layout === 'wide';
+  return (
+    <div className="rounded-2xl border border-border bg-card">
+      <table className="w-full table-fixed text-left text-sm">
+        <caption className="sr-only">Customers, sorted by name A to Z</caption>
+        <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th scope="col" className={`px-5 py-3 font-medium ${wide ? 'w-[22%]' : 'w-[36%]'}`}>{wide ? 'Name' : 'Customer'} <span aria-hidden="true" title="Sorted by name, A to Z">↑</span></th>
+            {wide ? <th scope="col" className="w-[11%] px-5 py-3 font-medium">Type</th> : null}
+            <th scope="col" className="px-5 py-3 font-medium">Email</th>
+            <th scope="col" className={`px-5 py-3 font-medium ${wide ? 'w-[15%]' : 'w-[22%]'}`}>Phone</th>
+            {wide ? <th scope="col" className="w-[16%] px-5 py-3 font-medium">Location</th> : null}
+            <th scope="col" className="w-24 px-5 py-3 font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {customers.map((c) => (
+            <tr key={c.id} className="hover:bg-muted/50">
+              <th scope="row" className={`px-5 py-3 align-top font-medium ${WRAP}`}>
+                <button type="button" onClick={() => onOpen(c.id)} className="rounded-md text-left hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                  {c.displayName}
+                </button>
+                {wide ? null : (
+                  <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-normal text-muted-foreground">
+                    <KindBadge kind={c.kind} />
+                    {locationOf(c, locale) ? <span>{locationOf(c, locale)}</span> : null}
+                  </span>
+                )}
+              </th>
+              {wide ? <td className="px-5 py-3 align-top"><KindBadge kind={c.kind} /></td> : null}
+              <td className={`px-5 py-3 align-top text-muted-foreground ${WRAP}`}>{c.email ?? '—'}</td>
+              <td className={`px-5 py-3 align-top text-muted-foreground ${WRAP}`}>{c.phone ?? '—'}</td>
+              {wide ? <td className={`px-5 py-3 align-top text-muted-foreground ${WRAP}`}>{locationOf(c, locale) || '—'}</td> : null}
+              <td className="px-5 py-3 align-top"><StatusBadge archived={c.archivedAt !== null} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Genuinely narrow windows: one compact record per customer, name first, everything else beneath it. */
+function CompactList({ customers, locale, onOpen }: { customers: Customer[]; locale?: string; onOpen: (id: string) => void }) {
+  return (
+    <ul aria-label="Customers, sorted by name A to Z" className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
+      {customers.map((c) => {
+        const place = locationOf(c, locale);
+        return (
+          <li key={c.id}>
+            <button type="button" onClick={() => onOpen(c.id)} className={`block w-full px-4 py-3 text-left hover:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${WRAP}`}>
+              <span className="flex items-start justify-between gap-3">
+                <span className="text-sm font-semibold">{c.displayName}</span>
+                {c.archivedAt !== null ? <StatusBadge archived /> : null}
+              </span>
+              <span className="mt-1 block text-xs text-muted-foreground">{c.kind === 'COMPANY' ? 'Company' : 'Individual'}{place ? ` · ${place}` : ''}</span>
+              {c.email ? <span className="mt-1 block text-xs text-muted-foreground">{c.email}</span> : null}
+              {c.phone ? <span className="block text-xs text-muted-foreground">{c.phone}</span> : null}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
