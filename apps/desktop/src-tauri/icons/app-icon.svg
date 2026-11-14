@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Source for `tauri icon`. Same mark as docs/brand/business-os-logo.svg, scaled to 832px with the PNG's ~9% transparent padding. -->
+  <g transform="translate(96 96) scale(13)">
+    <rect width="64" height="64" rx="8.1" fill="#080812"/>
+    <rect x="11.35" y="11.35" width="19" height="19" rx="3.7" fill="#8674FB"/>
+    <rect x="33.65" y="11.35" width="19" height="19" rx="3.7" fill="#FDD237"/>
+    <rect x="11.35" y="33.65" width="19" height="19" rx="3.7" fill="#EEEFF4"/>
+    <rect x="33.65" y="33.65" width="19" height="19" rx="3.7" fill="#3F4051"/>
+  </g>
+</svg>
