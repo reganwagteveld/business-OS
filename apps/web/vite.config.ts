@@ -10,5 +10,15 @@ export default defineConfig(({ command, mode }) => {
   }
   return {
     plugins: [react(), tailwindcss()],
+    // Development only (`vite dev`): serve /api from the local API on the same origin as the app, so the
+    // HTTP-only session cookie is first-party exactly as in production (D9b). Builds never include it.
+    server: {
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
+      },
+    },
   };
 });

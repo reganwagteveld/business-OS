@@ -72,6 +72,17 @@ export async function getSessionToken(request: Request): Promise<string | null> 
   return null;
 }
 
+/**
+ * The signed-in user plus the id of the session making this request (to bind one-time forms to it).
+ * The session id is not a credential: it is never sent to the client.
+ */
+export async function getCurrentSession(request: Request): Promise<{ user: CurrentUser; sessionId: string } | null> {
+  const result = await getAuth().api.getSession({ headers: await authHeaders(request) });
+  if (!result) return null;
+  const { user, session } = result;
+  return { user: { id: user.id, email: user.email, name: user.name ?? null, emailVerified: user.emailVerified }, sessionId: session.id };
+}
+
 /** The signed-in user, from our users table, or null. Never trusts any user id sent by the client. */
 export async function getCurrentUser(request: Request): Promise<CurrentUser | null> {
   const result = await getAuth().api.getSession({ headers: await authHeaders(request) });

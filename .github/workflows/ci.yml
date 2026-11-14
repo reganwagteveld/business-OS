@@ -145,4 +145,4 @@ jobs:
         run: pnpm --filter @business-os/desktop tauri:build ${{ matrix.bundle }}
       # Native sign-in code (D9a): URL allow-list, callback parsing, baked-in API origin.
       - name: Rust unit tests (desktop shell)
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
