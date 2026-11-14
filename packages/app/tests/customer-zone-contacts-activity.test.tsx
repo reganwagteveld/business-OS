@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Contact } from '@business-os/contracts';
-import { createCustomersClient } from '../src/api/customers';
+import { createCustomersClient, MAX_CONTACT_PAGES } from '../src/api/customers';
 import { toInstant } from '../src/zones/customers/activity-composer';
 import { CustomerZone } from '../src/zones/customers/customer-zone';
 import { activity, contact, createFakeApi, customer, emptyBusiness, uuid, type FakeBusiness } from './support/fake-api';
@@ -112,6 +112,76 @@ describe('contacts', () => {
     await waitFor(() => expect(within(contactsPanel()).getAllByRole('listitem').length).toBe(140));
     expect(within(contactsPanel()).getAllByRole('listitem')[0]!.textContent).toMatch(/^Person 139/);
     expect(api.callsTo(/GET .*contacts$/).filter((c) => c.query.status === 'active').length).toBe(2);
+  });
+
+  it('a list longer than the panel loads is reported as an error, never shown partially', async () => {
+    // A server that always has another page: the client stops at its limit and says so.
+    let calls = 0;
+    const endless = (async (input: RequestInfo | URL) => {
+      calls++;
+      const url = new URL(String(input));
+      return new Response(JSON.stringify({ contacts: [contact(url.searchParams.get('customerId'), { displayName: `Page ${calls}` })], nextCursor: `more${calls}` }), { status: 200 });
+    }) as typeof fetch;
+    const client = createCustomersClient('https://api.test', { kind: 'cookie' }, endless);
+    const outcome = await client.contacts('alpha', uuid());
+    expect(outcome.kind).toBe('incomplete');
+    expect(calls).toBe(MAX_CONTACT_PAGES);
+
+    // In the panel: an explanation and no rows.
+    const { api, user, acme } = mount();
+    api.businesses.alpha!.contacts.push(contact(acme.id, { displayName: 'Visible?' }));
+    const real = api.fetch;
+    api.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/contacts') && (init?.method ?? 'GET') === 'GET') {
+        return new Response(JSON.stringify({ contacts: [contact(acme.id, { displayName: 'Partial row' })], nextCursor: 'again' }), { status: 200 });
+      }
+      return real(input, init);
+    }) as typeof fetch;
+    cleanup();
+    const client2 = createCustomersClient('https://api.test', { kind: 'cookie' }, api.fetch);
+    render(<CustomerZone client={client2} userLabel="Ada" onHome={vi.fn()} onSwitch={vi.fn()} onSignOut={vi.fn()} onSessionEnded={vi.fn()} context={{
+      business: { slug: 'alpha', name: 'Alpha', countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' },
+      membership: { id: uuid(), role: 'MANAGER', permissions: ALL },
+    }} />);
+    await openAcme(user);
+    expect(await within(contactsPanel()).findByText('Too many to show here')).toBeTruthy();
+    expect(within(contactsPanel()).queryByText('Partial row')).toBeNull();
+    expect(within(contactsPanel()).queryByRole('listitem')).toBeNull();
+  });
+
+  it('after a failed refresh the old rows disappear and only the error shows, so nobody acts on stale contacts', async () => {
+    const { api, user, acme } = mount();
+    api.businesses.alpha!.contacts.push(contact(acme.id, { displayName: 'Zed' }), contact(acme.id, { displayName: 'Amy' }));
+    await openAcme(user);
+    await within(contactsPanel()).findByText('Zed');
+    // Archiving succeeds, then the contacts refresh fails.
+    api.failNext(/^GET .*\/contacts$/, () => new Response('{"error":"internal_error"}', { status: 500 }));
+    await user.click(screen.getByRole('button', { name: 'Archive: Amy' }));
+    await user.click(screen.getByRole('button', { name: 'Archive contact' }));
+    expect(await within(contactsPanel()).findByText('Something went wrong')).toBeTruthy();
+    expect(within(contactsPanel()).queryByText('Zed')).toBeNull();
+    expect(within(contactsPanel()).queryByRole('button', { name: /Make primary|Edit:|Archive:/ })).toBeNull();
+    // Retrying shows the current list again.
+    await user.click(within(contactsPanel()).getByRole('button', { name: 'Try again' }));
+    expect(await within(contactsPanel()).findByText('Zed')).toBeTruthy();
+    expect(within(contactsPanel()).queryByText('Amy')).toBeNull();
+  });
+
+  it('while a refresh is in flight the last good list stays visible, then updates', async () => {
+    const { api, user, acme } = mount();
+    api.businesses.alpha!.contacts.push(contact(acme.id, { displayName: 'Zed' }), contact(acme.id, { displayName: 'Amy' }));
+    await openAcme(user);
+    await within(contactsPanel()).findByText('Amy');
+    const release = api.holdNext(/^GET .*\/contacts$/);
+    await user.click(screen.getByRole('button', { name: 'Archive: Amy' }));
+    await user.click(screen.getByRole('button', { name: 'Archive contact' }));
+    await screen.findByText('Amy archived.');
+    expect(within(contactsPanel()).getByText('Zed')).toBeTruthy(); // still the last good list, no skeleton flash
+    expect(within(contactsPanel()).queryByRole('alert')).toBeNull();
+    release();
+    await waitFor(() => expect(within(contactsPanel()).queryByText('Amy')).toBeNull());
+    expect(within(contactsPanel()).getByText('Zed')).toBeTruthy();
   });
 
   it('archives after a labelled confirmation (clearing a primary), and archived contacts can be restored', async () => {

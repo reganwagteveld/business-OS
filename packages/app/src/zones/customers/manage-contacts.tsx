@@ -132,8 +132,11 @@ export function ManageContacts({ customer, client, slug, canWrite, onCustomerCha
 
   const cancel = () => (dirty ? confirmDiscard(close) : close());
 
-  const contacts = active.state.status === 'done' && active.state.outcome.kind === 'ok' ? active.state.outcome.data
-    : active.previous?.kind === 'ok' ? active.previous.data : null;
+  // The last good list is reused only while a refresh of the same list is in flight. Once a refresh
+  // fails, no rows are shown (only the error), so nobody acts on a list that may be out of date.
+  const contacts = active.state.status === 'done'
+    ? (active.state.outcome.kind === 'ok' ? active.state.outcome.data : null)
+    : (active.previous?.kind === 'ok' ? active.previous.data : null);
   const ordered = contacts ? [...contacts].sort((a, b) => Number(b.id === customer.primaryContactId) - Number(a.id === customer.primaryContactId)) : null;
 
   return (

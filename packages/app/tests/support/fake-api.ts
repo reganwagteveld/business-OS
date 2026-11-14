@@ -42,12 +42,24 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
   const calls: Call[] = [];
   const once: Interceptor[] = [];
   const gates: Promise<void>[] = [];
+  const rules: { pattern: RegExp; respond: () => Response | 'network' }[] = [];
+  const holds: { pattern: RegExp; gate: Promise<void> }[] = [];
   const api = {
     businesses,
     calls,
     /** Answer the next request yourself (a 500, a hung request, a network failure). */
     next(handler: Interceptor) {
       once.push(handler);
+    },
+    /** Answers the next request whose "METHOD /path" matches, however many other requests come first. */
+    failNext(pattern: RegExp, respond: () => Response | 'network') {
+      rules.push({ pattern, respond });
+    },
+    /** Delays the next request whose "METHOD /path" matches until the returned function is called. */
+    holdNext(pattern: RegExp): () => void {
+      let release!: () => void;
+      holds.push({ pattern, gate: new Promise<void>((resolve) => (release = resolve)) });
+      return release;
     },
     /** Delays the next request until the returned function is called, then lets it through normally. */
     hold(): () => void {
@@ -69,6 +81,14 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
       calls.push(call);
       const gate = gates.shift();
       if (gate) await gate;
+      const held = holds.findIndex((h) => h.pattern.test(`${call.method} ${call.path}`));
+      if (held >= 0) await holds.splice(held, 1)[0]!.gate;
+      const rule = rules.findIndex((r) => r.pattern.test(`${call.method} ${call.path}`));
+      if (rule >= 0) {
+        const answer = rules.splice(rule, 1)[0]!.respond();
+        if (answer === 'network') throw new TypeError('Failed to fetch');
+        return answer;
+      }
       const handler = once.shift();
       if (handler) {
         const answered = handler(call);

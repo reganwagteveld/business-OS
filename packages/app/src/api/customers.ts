@@ -8,6 +8,9 @@ import type { AuthTransport } from './auth';
 import { createRequester, type RawResult } from './http';
 import { classify, type Outcome } from './tenancy';
 
+/** Contacts per customer the panel loads (100 per page). Beyond this it reports an error rather than a partial list. */
+export const MAX_CONTACT_PAGES = 50;
+
 export type RecordStatus = 'active' | 'archived' | 'all';
 export interface CustomerPage { customers: Customer[]; nextCursor: string | null }
 export interface ActivityPage { activities: Activity[]; nextCursor: string | null }
@@ -102,16 +105,17 @@ export function createCustomersClient(baseUrl: string, transport: AuthTransport,
     async contacts(slug, customerId, status = 'active', signal) {
       const all: Contact[] = [];
       let cursor: string | undefined;
-      // 100 per page; a customer with more than 5,000 contacts is beyond what this panel is for.
-      for (let page = 0; page < 50; page++) {
+      for (let page = 0; page < MAX_CONTACT_PAGES; page++) {
         const raw = await http.request('GET', path(endpoints.listContacts.path, { slug }) + qs({ customerId, status, limit: 100, cursor }), undefined, signal);
         const outcome = settle(raw, ListContactsResponse, (d) => d);
         if (outcome.kind !== 'ok') return outcome;
         all.push(...outcome.data.contacts);
-        if (!outcome.data.nextCursor) break;
+        if (!outcome.data.nextCursor) return { kind: 'ok', data: all };
         cursor = outcome.data.nextCursor;
       }
-      return { kind: 'ok', data: all };
+      // Still more after the last page we allow: say so, never return a silently truncated list
+      // (the primary contact, or the one someone is looking for, could be in the missing part).
+      return { kind: 'incomplete', message: `This customer has more than ${MAX_CONTACT_PAGES * 100} contacts, more than this panel can show.` };
     },
     async createContact(slug, input, signal) {
       const checked = CreateContactRequest.safeParse(input);
