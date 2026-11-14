@@ -467,7 +467,9 @@ describe('PR 16 review: failures never lose work or mislead', () => {
 
   it('a set-up timeout never claims nothing happened: it checks, and reports what is really there', async () => {
     const second = setup();
-    const button = await screen.findByRole('button', { name: 'Set up Sales' }); // initial reads done
+    const button = await screen.findByRole('button', { name: 'Set up Sales' });
+    // salesNext is consumed by the next Sales request of any kind, so wait for the list read too.
+    await waitFor(() => expect(salesCalls(second.api, /^GET .*\/opportunities$/)).toHaveLength(1));
     second.api.salesNext((path, method) => {
       if (method !== 'POST') return undefined;
       second.api.sales.alpha!.pipelines.push(pipelineWithStages()); // the server did it…
@@ -482,7 +484,9 @@ describe('PR 16 review: failures never lose work or mislead', () => {
 
   it('a set-up that really did not happen says it may not have, and repeating is safe', async () => {
     const { api, user } = setup();
-    const button = await screen.findByRole('button', { name: 'Set up Sales' }); // initial reads done
+    const button = await screen.findByRole('button', { name: 'Set up Sales' });
+    // salesNext is consumed by the next Sales request of any kind, so wait for the list read too.
+    await waitFor(() => expect(salesCalls(api, /^GET .*\/opportunities$/)).toHaveLength(1));
     api.salesNext((_, method) => (method === 'POST' ? 'network' : undefined));
     await user.click(button);
     expect(await screen.findByText(/may or may not have happened/)).toBeTruthy();

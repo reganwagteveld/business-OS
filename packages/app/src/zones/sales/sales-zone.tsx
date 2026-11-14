@@ -10,11 +10,13 @@ import { ZoneFrame } from '../zone-frame';
 import { OpportunityDetail } from './opportunity-detail';
 import { OpportunityForm } from './opportunity-form';
 import { OpportunityList, type ListQuery } from './opportunity-list';
+import { PipelineBoard } from './pipeline-board';
 import type { Names, SalesRef } from './types';
 
 export type { Names, SalesRef } from './types';
 
-type View = { name: 'list' } | { name: 'detail'; id: string } | { name: 'new' } | { name: 'edit'; opportunity: Opportunity };
+type ListMode = 'list' | 'board';
+type View = { name: 'list' } | { name: 'board' } | { name: 'detail'; id: string } | { name: 'new' } | { name: 'edit'; opportunity: Opportunity };
 
 /**
  * The Sales Zone: opportunities list, create/edit form and opportunity workspace. Mount it with
@@ -27,6 +29,7 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
 }) {
   const { slug, name, timeZone, locale, currency } = context.business;
   const canWrite = context.membership.permissions.includes('sales:write');
+  const [listMode, setListMode] = useState<ListMode>('list');
   const [view, setView] = useState<View>({ name: 'list' });
   const [query, setQuery] = useState<ListQuery>({ q: '', status: 'open', archived: 'active', pipelineId: '', stageId: '' });
   const [notice, setNotice] = useState<string | null>(null);
@@ -108,6 +111,7 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
     setSettingUp(result.kind === 'forbidden' ? 'Your role cannot set up Sales in this business.' : 'Sales could not be set up. Nothing was changed.');
   };
 
+  const mainView: View = listMode === 'board' ? { name: 'board' } : { name: 'list' };
   const viewKey = view.name === 'detail' ? `detail:${view.id}` : view.name === 'edit' ? `edit:${view.opportunity.id}` : view.name;
   useEffect(() => {
     const heading = content.current?.querySelector('h1');
@@ -138,18 +142,39 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
         {!refData && ref.state.status === 'done' && ref.state.outcome.kind !== 'ok' ? (
           <><h1 className="mb-6 text-3xl font-semibold tracking-tight">Sales</h1><Problem outcome={ref.state.outcome} what="Sales" onRetry={ref.reload} onSessionEnded={onSessionEnded} /></>
         ) : null}
-        {refData && view.name === 'list' ? (
-          <OpportunityList
-            sales={sales} slug={slug} locale={locale} refData={refData} names={names} query={query} onQuery={setQuery} canWrite={canWrite}
-            onOpen={(id) => go({ name: 'detail', id })}
-            onAdd={() => (refData.pipelines.length ? go({ name: 'new' }) : void setUp(true))}
-            onSetUp={() => void setUp()} onSessionEnded={onSessionEnded}
-          />
+        {refData && (view.name === 'list' || view.name === 'board') ? (
+          listMode === 'board' && refData.pipelines.length > 0 ? (
+            <>
+              <div className="mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+                <div>
+                  <h1 className="text-3xl font-semibold tracking-tight">Sales</h1>
+                  <p className="mt-1 text-sm text-muted-foreground">Opportunities with your customers, from first contact to won or lost.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <ViewToggle mode={listMode} onMode={(m) => { setListMode(m); setView(m === 'board' ? { name: 'board' } : { name: 'list' }); }} />
+                  {canWrite ? <button type="button" className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" onClick={() => go({ name: 'new' })}>Add opportunity</button> : null}
+                </div>
+              </div>
+              <PipelineBoard
+                sales={sales} slug={slug} locale={locale} refData={refData} names={names} canWrite={canWrite}
+                onOpen={(id) => go({ name: 'detail', id })}
+                onSessionEnded={onSessionEnded}
+              />
+            </>
+          ) : (
+            <OpportunityList
+              sales={sales} slug={slug} locale={locale} refData={refData} names={names} query={query} onQuery={setQuery} canWrite={canWrite}
+              onOpen={(id) => go({ name: 'detail', id })}
+              onAdd={() => (refData.pipelines.length ? go({ name: 'new' }) : void setUp(true))}
+              onSetUp={() => void setUp()} onSessionEnded={onSessionEnded}
+              viewToggle={refData.pipelines.length > 0 ? <ViewToggle mode={listMode} onMode={(m) => { setListMode(m); setView(m === 'board' ? { name: 'board' } : { name: 'list' }); }} /> : undefined}
+            />
+          )
         ) : null}
         {refData && view.name === 'detail' ? (
           <OpportunityDetail
             sales={sales} slug={slug} id={view.id} locale={locale} timeZone={timeZone} refData={refData} names={names} canWrite={canWrite}
-            onBack={() => guard.leave(() => go({ name: 'list' }))} onEdit={(opportunity) => guard.leave(() => go({ name: 'edit', opportunity }))}
+            onBack={() => guard.leave(() => go(mainView))} onEdit={(opportunity) => guard.leave(() => go({ name: 'edit', opportunity }))}
             confirmLeave={guard.leave} onDraftChange={guard.markDraft} onSessionEnded={onSessionEnded}
           />
         ) : null}
@@ -159,7 +184,7 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
             sales={sales} customers={customers} slug={slug} locale={locale} businessCurrency={currency} refData={refData} names={names}
             opportunity={view.name === 'edit' ? view.opportunity : undefined}
             onDirtyChange={markForm} onSessionEnded={onSessionEnded}
-            onCancel={() => guard.leave(() => go(view.name === 'edit' ? { name: 'detail', id: view.opportunity.id } : { name: 'list' }))}
+            onCancel={() => guard.leave(() => go(view.name === 'edit' ? { name: 'detail', id: view.opportunity.id } : mainView))}
             onSaved={(saved, customerName, contactName) => {
               remember(saved, customerName, contactName);
               go({ name: 'detail', id: saved.id }, view.name === 'edit' ? 'Changes saved.' : `${saved.title} was added.`);
@@ -169,5 +194,20 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
       </div>
       {guard.dialog}
     </ZoneFrame>
+  );
+}
+
+function ViewToggle({ mode, onMode }: { mode: ListMode; onMode: (m: ListMode) => void }) {
+  return (
+    <div role="group" aria-label="View mode" className="inline-flex rounded-xl border border-border p-1">
+      <button type="button" aria-pressed={mode === 'list'} onClick={() => onMode('list')}
+        className={`rounded-lg px-3 py-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring ${mode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}>
+        List
+      </button>
+      <button type="button" aria-pressed={mode === 'board'} onClick={() => onMode('board')}
+        className={`rounded-lg px-3 py-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring ${mode === 'board' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}>
+        Board
+      </button>
+    </div>
   );
 }
