@@ -30,6 +30,7 @@ export interface CustomersClient {
   restore(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Customer>>;
   /** Every contact of one customer in the given state, following the server's cursors (so the primary is never cut off). */
   contacts(slug: string, customerId: string, status?: 'active' | 'archived', signal?: AbortSignal): Promise<Outcome<Contact[]>>;
+  getContact(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Contact>>;
   createContact(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Contact>>;
   updateContact(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Contact>>;
   archiveContact(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Contact>>;
@@ -121,6 +122,9 @@ export function createCustomersClient(baseUrl: string, transport: AuthTransport,
       // Still more after the last page we allow: say so, never return a silently truncated list
       // (the primary contact, or the one someone is looking for, could be in the missing part).
       return { kind: 'incomplete', message: `This customer has more than ${MAX_CONTACT_PAGES * 100} contacts, more than this panel can show.` };
+    },
+    async getContact(slug, id, signal) {
+      return settle(await http.request('GET', path(endpoints.getContact.path, { slug, contactId: id }), undefined, signal), ContactResponse, (d) => d.contact);
     },
     async createContact(slug, input, signal) {
       const checked = CreateContactRequest.safeParse(input);

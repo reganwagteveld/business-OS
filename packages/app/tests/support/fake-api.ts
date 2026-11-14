@@ -109,7 +109,7 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
         } });
       }
 
-      if (resource === 'contacts' && method === 'GET') {
+      if (resource === 'contacts' && method === 'GET' && !id) {
         const q = call.query;
         const rows = biz.contacts
           .filter((c) => (!q.customerId || c.customerId === q.customerId) && (q.status === 'all' ? true : q.status === 'archived' ? c.archivedAt : !c.archivedAt))
@@ -149,6 +149,7 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
         }
         const found = biz.contacts.find((c) => c.id === id);
         if (!found) return json(404, { error: 'not_found' });
+        if (method === 'GET' && !action) return json(200, { contact: found });
         if (method === 'PATCH') {
           const parsed = UpdateContactRequest.safeParse(call.body);
           if (!parsed.success) return json(400, { error: 'invalid_input' });

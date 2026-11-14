@@ -12,7 +12,8 @@ export type Outcome<T> =
   | { kind: 'unverified' }
   | { kind: 'forbidden' }
   | { kind: 'not_found' }
-  | { kind: 'conflict' }
+  /** `code` is the server's reason when it gives one (archived, stale, not_open, …). */
+  | { kind: 'conflict'; code?: string }
   | { kind: 'rate_limited' }
   | { kind: 'invalid_input'; message: string; fields?: Record<string, string> }
   | { kind: 'unreachable' }
@@ -47,7 +48,10 @@ export function classify(status: number, json: unknown): Outcome<never> | null {
   if (status === 401) return { kind: 'unauthenticated' };
   if (status === 403) return (json as { error?: string } | undefined)?.error === 'email_not_verified' ? { kind: 'unverified' } : { kind: 'forbidden' };
   if (status === 404) return { kind: 'not_found' };
-  if (status === 409) return { kind: 'conflict' };
+  if (status === 409) {
+    const code = (json as { error?: unknown } | undefined)?.error;
+    return typeof code === 'string' ? { kind: 'conflict', code } : { kind: 'conflict' };
+  }
   if (status === 429) return { kind: 'rate_limited' };
   if (status >= 400) return { kind: 'failed', status };
   return null;
