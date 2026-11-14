@@ -1,0 +1,97 @@
+// projects module (docs/projects-data-model.md). Tenant tables: forced RLS, composite (business_id, …)
+// foreign keys, and integrity CHECKs that live in the migration because Prisma cannot express them.
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+/// Shared by projects and their tasks, so one scale means the same thing everywhere.
+enum WorkPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ProjectTaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  DONE
+}
+
+/// A piece of work a business organises and tracks. Industry independent: no sprint, site or campaign
+/// fields. The customer is the Customer Zone's own record (no copy of its name or details), optional so
+/// internal projects need none. The owner is a work assignment, never a security principal.
+model Project {
+  id          String        @id @db.Uuid
+  businessId  String        @map("business_id") @db.Uuid
+  name        String
+  description String?
+  status      ProjectStatus @default(PLANNED)
+  priority    WorkPriority  @default(MEDIUM)
+  customerId  String?       @map("customer_id") @db.Uuid
+  ownerUserId String?       @map("owner_user_id") @db.Uuid
+  startDate   DateTime?     @map("start_date") @db.Date
+  dueDate     DateTime?     @map("due_date") @db.Date
+  /// Set exactly while the status is COMPLETED (CHECK).
+  completedAt DateTime?     @map("completed_at") @db.Timestamptz
+  /// Optimistic concurrency: +1 on every change; an edit must name the version it was based on.
+  version     Int           @default(1)
+  createdById String?       @map("created_by_id") @db.Uuid
+  updatedById String?       @map("updated_by_id") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime?     @map("archived_at") @db.Timestamptz
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "projects_business_fkey")
+  customer Customer?     @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "projects_customer_fkey")
+  owner    Membership?   @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "projects_owner_fkey")
+  tasks    ProjectTask[]
+
+  @@unique([businessId, id])
+  @@index([businessId, createdAt(sort: Desc), id])
+  @@index([businessId, status])
+  @@index([businessId, customerId])
+  @@index([businessId, ownerUserId])
+  @@index([businessId, archivedAt])
+  @@index([businessId, dueDate, id])
+  @@map("projects")
+}
+
+/// One piece of work inside exactly one project. Tasks are archived, never deleted, and are kept when
+/// their project is archived. Positions are spaced (1000, 2000, …) with the id as tie-breaker.
+model ProjectTask {
+  id             String            @id @db.Uuid
+  businessId     String            @map("business_id") @db.Uuid
+  projectId      String            @map("project_id") @db.Uuid
+  title          String
+  description    String?
+  status         ProjectTaskStatus @default(TODO)
+  priority       WorkPriority      @default(MEDIUM)
+  assigneeUserId String?           @map("assignee_user_id") @db.Uuid
+  dueDate        DateTime?         @map("due_date") @db.Date
+  position       Int
+  /// Set exactly while the status is DONE (CHECK).
+  completedAt    DateTime?         @map("completed_at") @db.Timestamptz
+  version        Int               @default(1)
+  createdById    String?           @map("created_by_id") @db.Uuid
+  updatedById    String?           @map("updated_by_id") @db.Uuid
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt     DateTime?         @map("archived_at") @db.Timestamptz
+
+  business Business    @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "project_tasks_business_fkey")
+  project  Project     @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "project_tasks_project_fkey")
+  assignee Membership? @relation(fields: [businessId, assigneeUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "project_tasks_assignee_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, projectId, position, id])
+  @@index([businessId, projectId, status])
+  @@index([businessId, assigneeUserId])
+  @@map("project_tasks")
+}

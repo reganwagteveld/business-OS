@@ -9,3 +9,4 @@ export { createBusinessFlow, resolveWorkspace, type CreateFlowResult, type Phase
 export { browserStorage, memoryStorage, type WorkspaceStorage } from './workspace/storage';
 export { createCustomersClient, type CustomersClient } from './api/customers';
 export { createSalesClient, type SalesClient } from './api/sales';
+export { createProjectsClient, type ProjectsClient } from './api/projects';

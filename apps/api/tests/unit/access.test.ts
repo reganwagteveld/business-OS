@@ -79,3 +79,25 @@ describe('Sales Zone permissions (docs/sales-data-model.md §5)', () => {
     expect(ZONE_PERMISSIONS.sales).toEqual(['sales:read', 'sales:write', 'sales:manage']);
   });
 });
+
+describe('Projects Zone permissions (docs/projects-data-model.md §5)', () => {
+  it('every role reads, creates, edits and manages tasks; only OWNER, ADMIN and MANAGER archive', () => {
+    const keys = ZONE_PERMISSIONS.projects;
+    expect(keys).toEqual(['projects:read', 'projects:create', 'projects:update', 'projects:archive', 'projects:manage_tasks']);
+    const matrix = Object.fromEntries(ROLES.map((role) => [role, keys.filter((p) => ROLE_PERMISSIONS[role].has(p))]));
+    expect(matrix).toEqual({
+      OWNER: [...keys],
+      ADMIN: [...keys],
+      MANAGER: [...keys],
+      MEMBER: ['projects:read', 'projects:create', 'projects:update', 'projects:manage_tasks'],
+    });
+  });
+
+  it('checks are by permission key only: a principal without the key is refused whatever its role', () => {
+    const readOnly: Principal = { role: 'OWNER', permissions: new Set(['projects:read']) };
+    expect(can(readOnly, 'projects:read')).toBe(true);
+    for (const p of ['projects:create', 'projects:update', 'projects:archive', 'projects:manage_tasks'] as const) {
+      expect(() => authorize(readOnly, p)).toThrow(ForbiddenError);
+    }
+  });
+});

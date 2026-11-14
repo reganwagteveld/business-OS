@@ -1,6 +1,7 @@
 import type { Activity, Customer } from '@business-os/contracts';
 import { useRef, useState, type ReactNode } from 'react';
 import type { CustomersClient } from '../../api/customers';
+import type { ProjectsClient } from '../../api/projects';
 import { actionClass, secondaryClass } from '../../shell/frame';
 import { Problem, Skeleton } from '../problem';
 import { useDialog } from '../dialog';
@@ -11,6 +12,7 @@ import { CallIcon, EmailIcon, MeetingIcon, NoteIcon } from './icons';
 import { Breakable, linkClass, safeHref, telHref } from './links';
 import { ManageContacts } from './manage-contacts';
 import { ActivityComposer } from './activity-composer';
+import { CustomerProjects } from '../projects/customer-projects';
 
 function Panel({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -38,8 +40,10 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  * One customer's workspace. Everything shown is a real record from the API; contacts and activity
  * are managed through the existing tenant-scoped API. Archive asks first and restore is one click.
  */
-export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
+export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, projects, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
   client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
+  /** The customer's projects, shown only to people who may read projects (the server checks again). */
+  projects?: ProjectsLink;
   onBack: () => void; onEdit: (c: Customer) => void;
   /** Open contact or activity drafts report here, so the Zone asks before anything would discard them. */
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
@@ -68,16 +72,18 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, c
         <Loaded
           key={shown.id}
           customer={shown} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity}
-          names={names} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
+          names={names} projects={projects} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
         />
       ) : null}
     </div>
   );
 }
 
-function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, names, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
+export interface ProjectsLink { client: ProjectsClient; onOpen: (projectId: string) => void }
+
+function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, names, projects, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
   customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
-  names: Map<string, string> | null; onEdit: (c: Customer) => void; onChanged: () => void;
+  names: Map<string, string> | null; projects?: ProjectsLink; onEdit: (c: Customer) => void; onChanged: () => void;
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const archived = customer.archivedAt !== null;
@@ -170,13 +176,18 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActi
         <div className="lg:col-span-2 lg:row-start-3">
           <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} canWrite={canLogActivity && !archived} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
         </div>
-        <section aria-label="Sales and Finance" className="self-start rounded-2xl border border-dashed border-border px-5 py-4 lg:col-start-3 lg:row-start-3">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xs font-medium text-muted-foreground">Sales and Finance</h2>
-            <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Coming soon</span>
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">Quotes, invoices and payments for this customer will appear here when those Zones arrive.</p>
-        </section>
+        <div className="space-y-5 self-start lg:col-start-3 lg:row-start-3">
+          {projects ? (
+            <CustomerProjects client={projects.client} slug={slug} customerId={customer.id} onOpen={(id) => confirmDiscard(() => projects.onOpen(id))} onSessionEnded={onSessionEnded} />
+          ) : null}
+          <section aria-label="Sales and Finance" className="rounded-2xl border border-dashed border-border px-5 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-xs font-medium text-muted-foreground">Sales and Finance</h2>
+              <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Coming soon</span>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">Quotes, invoices and payments for this customer will appear here when those Zones arrive.</p>
+          </section>
+        </div>
       </div>
     </>
   );

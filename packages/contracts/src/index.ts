@@ -11,6 +11,11 @@ export * from './auth.ts';
 export * from './tenancy.ts';
 export * from './customers.ts';
 export * from './sales.ts';
+export * from './projects.ts';
+import {
+  CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
+  TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
+} from './projects.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
   ListOutcomesResponse, ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, UpdateOpportunityRequest,
@@ -72,6 +77,21 @@ export const endpoints = {
   listOpportunityOutcomes: { method: 'GET', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/outcomes', response: ListOutcomesResponse },
   archiveOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/archive', response: OpportunityResponse },
   restoreOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/restore', response: OpportunityResponse },
+  // Projects Zone (docs/projects-data-model.md)
+  listProjects: { method: 'GET', path: '/api/v1/b/:slug/projects', query: ListProjectsQuery, response: ListProjectsResponse },
+  createProject: { method: 'POST', path: '/api/v1/b/:slug/projects', request: CreateProjectRequest, response: ProjectResponse },
+  projectSummary: { method: 'GET', path: '/api/v1/b/:slug/projects/summary', response: ProjectSummaryResponse },
+  getProject: { method: 'GET', path: '/api/v1/b/:slug/projects/:projectId', response: ProjectResponse },
+  updateProject: { method: 'PATCH', path: '/api/v1/b/:slug/projects/:projectId', request: UpdateProjectRequest, response: ProjectResponse },
+  archiveProject: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/archive', response: ProjectResponse },
+  restoreProject: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/restore', response: ProjectResponse },
+  /** One customer's projects (needs customers:read as well as projects:read); same list as listProjects. */
+  listCustomerProjects: { method: 'GET', path: '/api/v1/b/:slug/customers/:customerId/projects', query: ListProjectsQuery, response: ListProjectsResponse },
+  listTasks: { method: 'GET', path: '/api/v1/b/:slug/projects/:projectId/tasks', query: ListTasksQuery, response: ListTasksResponse },
+  createTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks', request: CreateTaskRequest, response: TaskResponse },
+  updateTask: { method: 'PATCH', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId', request: UpdateTaskRequest, response: TaskResponse },
+  archiveTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/archive', response: TaskResponse },
+  restoreTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/restore', response: TaskResponse },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */

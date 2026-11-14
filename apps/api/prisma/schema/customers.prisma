@@ -47,6 +47,7 @@ model Customer {
   contacts       Contact[]
   activities     Activity[]
   opportunities  Opportunity[]
+  projects       Project[]
 
   @@unique([businessId, id])
   @@index([businessId, ownerUserId])

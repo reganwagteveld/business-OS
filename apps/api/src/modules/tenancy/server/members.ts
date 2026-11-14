@@ -67,10 +67,18 @@ export async function changeRole(db: AppTenantDb, actor: Actor, membershipId: st
 export async function removeMember(db: AppTenantDb, actor: Actor, membershipId: string) {
   const target = await findMember(db, membershipId);
   if (!canManageMember(actor, target.role, target.userId === actor.userId)) throw new ForbiddenError();
+  // Lock the membership first: an assignment to this person that is already in flight (its foreign-key
+  // check holds a KEY SHARE lock on this row) commits before the clean-up below runs, so the clean-up
+  // sees it; one that starts later waits for this removal and then fails its foreign key. Either way no
+  // owner or assignee is left pointing at a removed member.
+  await db.$queryRaw`SELECT 1 FROM memberships WHERE id = ${membershipId}::uuid AND business_id = nullif(current_setting('app.business_id', true), '')::uuid FOR UPDATE`;
   // Customers they own keep existing but lose the owner: the (business_id, owner_user_id) FK to
   // memberships would otherwise block the removal.
   await db.customer.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null } as never });
   await db.opportunity.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null } as never });
+  // Project owners and task assignees too (version bumped, so an edit prepared before is refused as stale).
+  await db.project.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null, version: { increment: 1 } } as never });
+  await db.projectTask.updateMany({ where: { assigneeUserId: target.userId }, data: { assigneeUserId: null, version: { increment: 1 } } as never });
   await db.membership.delete({ where: { id: membershipId } });
   await audit(db, actor, 'membership.removed', 'membership', membershipId, { role: target.role });
 }
