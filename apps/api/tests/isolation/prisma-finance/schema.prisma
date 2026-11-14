@@ -1,0 +1,218 @@
+// Finance F0 spike client (docs/finance-data-model.md, ADR 0007). Generated for the isolation tests
+// only; it mirrors the finance tables of tests/isolation/fixtures/finance-spike-schema.sql (schema
+// finance_spike) and is never used by the running API. Relations are left out on purpose: the tests
+// exercise the scoped client, Decimal round-trips and the database guards, not Prisma's relation API.
+// F1 writes the real schema in prisma/schema and generates its migration from it.
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma-finance"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["finance_spike"]
+}
+
+enum FinanceDocumentKind {
+  QUOTE
+  INVOICE
+  CREDIT_NOTE
+
+  @@schema("finance_spike")
+}
+
+enum FinanceDocumentStatus {
+  DRAFT
+  ISSUED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  VOID
+
+  @@schema("finance_spike")
+}
+
+enum FinancePaymentStatus {
+  RECORDED
+  REVERSED
+
+  @@schema("finance_spike")
+}
+
+enum FinancePaymentMethod {
+  BANK_TRANSFER
+  CASH
+  CARD
+  CHEQUE
+  OTHER
+
+  @@schema("finance_spike")
+}
+
+enum FinanceExpenseStatus {
+  DRAFT
+  RECORDED
+  VOID
+
+  @@schema("finance_spike")
+}
+
+model FinanceNumberSeries {
+  id         String              @id @db.Uuid
+  businessId String              @map("business_id") @db.Uuid
+  kind       FinanceDocumentKind
+  prefix     String              @default("")
+  minDigits  Int                 @default(4) @map("min_digits") @db.SmallInt
+  /// Moved only by the issue trigger (guard_number_series).
+  nextValue  BigInt              @default(1) @map("next_value")
+
+  @@unique([businessId, kind], map: "finance_number_series_business_id_kind_key")
+  @@map("finance_number_series")
+  @@schema("finance_spike")
+}
+
+model FinanceTaxRate {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  ratePercent Decimal   @map("rate_percent") @db.Decimal(7, 4)
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  @@map("finance_tax_rates")
+  @@schema("finance_spike")
+}
+
+model FinanceDocument {
+  id                  String                @id @db.Uuid
+  businessId          String                @map("business_id") @db.Uuid
+  kind                FinanceDocumentKind
+  status              FinanceDocumentStatus @default(DRAFT)
+  customerId          String                @map("customer_id") @db.Uuid
+  contactId           String?               @map("contact_id") @db.Uuid
+  opportunityId       String?               @map("opportunity_id") @db.Uuid
+  projectId           String?               @map("project_id") @db.Uuid
+  sourceQuoteId       String?               @map("source_quote_id") @db.Uuid
+  sourceQuoteKind     FinanceDocumentKind   @default(QUOTE) @map("source_quote_kind")
+  creditedInvoiceId   String?               @map("credited_invoice_id") @db.Uuid
+  creditedInvoiceKind FinanceDocumentKind   @default(INVOICE) @map("credited_invoice_kind")
+  currencyCode        String                @map("currency_code") @db.Char(3)
+  currencyScale       Int                   @map("currency_scale") @db.SmallInt
+  issueDate           DateTime?             @map("issue_date") @db.Date
+  dueDate             DateTime?             @map("due_date") @db.Date
+  validUntil          DateTime?             @map("valid_until") @db.Date
+  /// Assigned by the issue trigger.
+  numberValue         BigInt?               @map("number_value")
+  number              String?
+  sellerSnapshot      Json?                 @map("seller_snapshot")
+  billToSnapshot      Json?                 @map("bill_to_snapshot")
+  subtotal            Decimal               @default(0) @db.Decimal(18, 4)
+  taxTotal            Decimal               @default(0) @map("tax_total") @db.Decimal(18, 4)
+  total               Decimal               @default(0) @db.Decimal(18, 4)
+  /// Maintained by the allocation triggers only.
+  allocatedTotal      Decimal               @default(0) @map("allocated_total") @db.Decimal(18, 4)
+  /// Computed by the issue trigger.
+  contentSha256       String?               @map("content_sha256")
+  notes               String?
+  issuedAt            DateTime?             @map("issued_at") @db.Timestamptz
+  statusChangedAt     DateTime?             @map("status_changed_at") @db.Timestamptz
+  voidedAt            DateTime?             @map("voided_at") @db.Timestamptz
+  voidReason          String?               @map("void_reason")
+  version             Int                   @default(1)
+
+  @@unique([businessId, id], map: "finance_documents_business_id_id_key")
+  @@map("finance_documents")
+  @@schema("finance_spike")
+}
+
+model FinanceDocumentLine {
+  id             String  @id @db.Uuid
+  businessId     String  @map("business_id") @db.Uuid
+  documentId     String  @map("document_id") @db.Uuid
+  position       Int
+  description    String
+  quantity       Decimal @db.Decimal(18, 6)
+  unitPrice      Decimal @map("unit_price") @db.Decimal(18, 6)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  taxRateId      String? @map("tax_rate_id") @db.Uuid
+  taxName        String? @map("tax_name")
+  taxRatePercent Decimal @default(0) @map("tax_rate_percent") @db.Decimal(7, 4)
+  lineNet        Decimal @map("line_net") @db.Decimal(18, 4)
+  lineTax        Decimal @map("line_tax") @db.Decimal(18, 4)
+
+  @@map("finance_document_lines")
+  @@schema("finance_spike")
+}
+
+model FinancePayment {
+  id             String               @id @db.Uuid
+  businessId     String               @map("business_id") @db.Uuid
+  customerId     String               @map("customer_id") @db.Uuid
+  currencyCode   String               @map("currency_code") @db.Char(3)
+  currencyScale  Int                  @map("currency_scale") @db.SmallInt
+  amount         Decimal              @db.Decimal(18, 4)
+  receivedOn     DateTime             @map("received_on") @db.Date
+  method         FinancePaymentMethod
+  reference      String?
+  status         FinancePaymentStatus @default(RECORDED)
+  /// Maintained by the allocation triggers only.
+  allocatedTotal Decimal              @default(0) @map("allocated_total") @db.Decimal(18, 4)
+  reversedAt     DateTime?            @map("reversed_at") @db.Timestamptz
+  reversalReason String?              @map("reversal_reason")
+  idempotencyKey String?              @map("idempotency_key")
+  requestHash    String?              @map("request_hash")
+  version        Int                  @default(1)
+
+  @@map("finance_payments")
+  @@schema("finance_spike")
+}
+
+model FinancePaymentAllocation {
+  id           String              @id @db.Uuid
+  businessId   String              @map("business_id") @db.Uuid
+  paymentId    String              @map("payment_id") @db.Uuid
+  invoiceId    String              @map("invoice_id") @db.Uuid
+  invoiceKind  FinanceDocumentKind @default(INVOICE) @map("invoice_kind")
+  customerId   String              @map("customer_id") @db.Uuid
+  currencyCode String              @map("currency_code") @db.Char(3)
+  amount       Decimal             @db.Decimal(18, 4)
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  reversedAt   DateTime?           @map("reversed_at") @db.Timestamptz
+
+  @@map("finance_payment_allocations")
+  @@schema("finance_spike")
+}
+
+model FinanceExpenseCategory {
+  id         String    @id @db.Uuid
+  businessId String    @map("business_id") @db.Uuid
+  name       String
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz
+
+  @@map("finance_expense_categories")
+  @@schema("finance_spike")
+}
+
+model FinanceExpense {
+  id               String               @id @db.Uuid
+  businessId       String               @map("business_id") @db.Uuid
+  status           FinanceExpenseStatus @default(DRAFT)
+  categoryId       String               @map("category_id") @db.Uuid
+  /// Snapshotted by the database when the expense is recorded.
+  categoryName     String?              @map("category_name")
+  projectId        String?              @map("project_id") @db.Uuid
+  description      String
+  supplierName     String?              @map("supplier_name")
+  incurredOn       DateTime             @map("incurred_on") @db.Date
+  currencyCode     String               @map("currency_code") @db.Char(3)
+  currencyScale    Int                  @map("currency_scale") @db.SmallInt
+  amount           Decimal              @db.Decimal(18, 4)
+  taxAmount        Decimal              @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  receiptReference String?              @map("receipt_reference")
+  recordedAt       DateTime?            @map("recorded_at") @db.Timestamptz
+  voidedAt         DateTime?            @map("voided_at") @db.Timestamptz
+  voidReason       String?              @map("void_reason")
+  version          Int                  @default(1)
+
+  @@map("finance_expenses")
+  @@schema("finance_spike")
+}
