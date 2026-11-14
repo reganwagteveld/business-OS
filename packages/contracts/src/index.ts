@@ -14,7 +14,7 @@ export * from './sales.ts';
 export * from './projects.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
-  TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
+  MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
 } from './projects.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
@@ -92,6 +92,8 @@ export const endpoints = {
   updateTask: { method: 'PATCH', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId', request: UpdateTaskRequest, response: TaskResponse },
   archiveTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/archive', response: TaskResponse },
   restoreTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/restore', response: TaskResponse },
+  /** Board move: status and order in one server-authoritative change (docs/projects-data-model.md §4). */
+  moveTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/move', request: MoveTaskRequest, response: TaskResponse },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */

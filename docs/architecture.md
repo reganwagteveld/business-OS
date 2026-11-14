@@ -117,7 +117,8 @@ business-os/
 ├── scripts/check-boundaries.mjs  # source rules that import graphs cannot express
 ├── tooling/                      # shared lint config for client packages
 ├── docker/, docker-compose.yml   # local PostgreSQL 16 with the least-privilege roles
-└── .github/workflows/ci.yml      # workspace checks + desktop builds (Windows, macOS, Linux compile)
+└── .github/workflows/ci.yml      # parallel workspace checks, desktop builds (Windows, macOS, Linux
+                                  # compile) and the CI gate; see docs/ci.md
 ```
 
 **Allowed dependencies between workspace packages** (enforced by dependency-cruiser, §5.3):
@@ -415,7 +416,7 @@ AI provider evaluation criteria (for the decision, not a recommendation yet): qu
 |---|---|---|
 | Hosting (API) | Vercel, functions in `iad1` (us-east-1) | ADR 0002; app kept portable (Next.js standalone output, platform services behind adapters) |
 | Browser app | Static Vite build on Vercel, same site as the API | No tenant data in static assets; domain layout is D9b |
-| Desktop app | Tauri 2, Windows (WebView2) and macOS (WKWebView) | Built in CI on both; signing, notarisation and updates before external release (D9c, D9d) |
+| Desktop app | Tauri 2, Windows (WebView2) and macOS (WKWebView) | Built in CI on both (every push to main, releases, and pull requests that touch the desktop shell; docs/ci.md); signing, notarisation and updates before external release (D9c, D9d) |
 | Database | Managed PostgreSQL 16+ with PITR backups, AWS us-east-1 | Neon proposed; colocated with compute (ADR 0002) |
 | Pooling | Provider pooler in transaction mode | Compatible with transaction-local `set_config` |
 | Scheduled jobs | Platform cron → authenticated internal route, `bos_jobs` role, idempotent + advisory-locked, introduced in Phase 1e for purge/retention/cleanup only ([data-model.md §7.1](./data-model.md#71-scheduled-jobs-in-phase-1)) | A queue (e.g. pg-boss on Postgres) only when user-facing async work appears |

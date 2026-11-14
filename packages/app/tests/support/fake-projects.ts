@@ -5,7 +5,7 @@
  * for callers who may read customers. The app's real Projects client and contracts sit in front of it.
  */
 import {
-  CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, UpdateProjectRequest, UpdateTaskRequest,
+  CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, MoveTaskRequest, UpdateProjectRequest, UpdateTaskRequest,
   type Project, type ProjectTask,
 } from '@business-os/contracts';
 import { randomUUID } from 'node:crypto';
@@ -47,7 +47,7 @@ export function withProjects(api: ReturnType<typeof createFakeApi>, data: Record
   });
   api.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
-    const m = /^\/api\/v1\/b\/([^/]+)\/(?:projects(?:\/([^/]+))?(?:\/(archive|restore|tasks))?(?:\/([^/]+))?(?:\/(archive|restore))?|customers\/([^/]+)\/projects)$/.exec(url.pathname);
+    const m = /^\/api\/v1\/b\/([^/]+)\/(?:projects(?:\/([^/]+))?(?:\/(archive|restore|tasks))?(?:\/([^/]+))?(?:\/(archive|restore|move))?|customers\/([^/]+)\/projects)$/.exec(url.pathname);
     if (!m) return base(input, init);
     const method = init?.method ?? 'GET';
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -169,6 +169,25 @@ export function withProjects(api: ReturnType<typeof createFakeApi>, data: Record
     const t = s.tasks.find((x) => x.id === tid && x.projectId === p.id);
     if (!t) return json(404, { error: 'not_found' });
     if (p.archivedAt) return json(409, { error: 'project_archived' });
+    if (taskAction === 'move') {
+      // The server's rule: one order over the whole project; place directly after the anchor (or first).
+      const parsed = MoveTaskRequest.safeParse(body);
+      if (!parsed.success) return json(400, { error: 'invalid_input' });
+      if (t.archivedAt) return json(409, { error: 'archived' });
+      if (parsed.data.version !== t.version) return json(409, { error: 'stale' });
+      const others = s.tasks.filter((x) => x.projectId === p.id && x.id !== t.id).sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+      let at = 0;
+      if (parsed.data.afterTaskId) {
+        at = others.findIndex((x) => x.id === parsed.data.afterTaskId && !x.archivedAt) + 1;
+        if (at === 0) return json(409, { error: 'order_changed' });
+      }
+      // Renumber every time: simple, and the resulting order is what the real server produces.
+      const order = [...others.slice(0, at), t, ...others.slice(at)];
+      order.forEach((x, i) => { x.position = (i + 1) * 1000; });
+      if (parsed.data.status !== t.status) t.completedAt = parsed.data.status === 'DONE' ? tick() : null;
+      Object.assign(t, { status: parsed.data.status, version: t.version + 1, updatedAt: tick() });
+      return json(200, { task: t });
+    }
     if (taskAction) {
       if (taskAction === 'archive' && t.archivedAt) return json(409, { error: 'archived' });
       if (taskAction === 'restore' && !t.archivedAt) return json(409, { error: 'not_archived' });

@@ -152,6 +152,21 @@ export const UpdateTaskRequest = z
   .strict()
   .refine((v) => Object.keys(v).some((k) => k !== 'version'), 'Nothing to update');
 
+/**
+ * Moves a task on the board: sets its `status` and places it directly after `afterTaskId` in the
+ * project's task order, or first when `afterTaskId` is null. The order is one sequence over the
+ * whole project; a board column shows the tasks of its statuses in that order, so this places the
+ * task correctly whichever statuses a column holds. The server decides the stored position.
+ * `version` is the moved task's version: a stale one gets 409 stale. An anchor that is not an active
+ * task of this project in the committed state the move reads gets 409 order_changed, so the client
+ * reloads and the person retries. An archive or restore of the anchor running at the same moment is
+ * not waited for; the outcome is the same as if it had run just after the move.
+ */
+export const MoveTaskRequest = z
+  .object({ version: z.number().int().min(1), status: TaskStatus, afterTaskId: Uuid.nullable() })
+  .strict();
+export type MoveTaskRequest = z.infer<typeof MoveTaskRequest>;
+
 export const ListTasksQuery = z
   .object({
     status: z.union([TaskStatus, z.literal('all')]).default('all'),

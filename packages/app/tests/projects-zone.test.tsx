@@ -40,6 +40,8 @@ function setup(opts: { business?: Partial<FakeBusiness>; projects?: Partial<Fake
   return { api, biz, handlers, user: userEvent.setup() };
 }
 const heading = (name: string | RegExp) => screen.findByRole('heading', { name, level: 1 });
+/** The project page opens on the board (PR 19); these PR 18 tests exercise the list view. */
+const listView = async () => userEvent.setup().click(within(await screen.findByRole('group', { name: 'Task view' })).getByRole('button', { name: 'List' }));
 
 describe('project overview', () => {
   it('loading, then an honest empty state with New project', async () => {
@@ -178,6 +180,7 @@ describe('tasks', () => {
     const p = project({ name: 'Renovation' });
     const { api, user } = setup({ projects: { projects: [p] } });
     await user.click(await screen.findByRole('button', { name: 'Renovation' }));
+    await listView();
     const tasks = await screen.findByRole('region', { name: 'Tasks' });
     expect(await within(tasks).findByText('No tasks yet. Add the first one above.')).toBeTruthy();
     await user.click(within(tasks).getByRole('button', { name: 'Add task' }));
@@ -212,6 +215,7 @@ describe('tasks', () => {
     const t = task(p.id, { title: 'Draft copy' });
     const { api, user } = setup({ projects: { projects: [p], tasks: [t] } });
     await user.click(await screen.findByRole('button', { name: 'Website refresh' }));
+    await listView();
     const tasks = await screen.findByRole('region', { name: 'Tasks' });
     await within(tasks).findByText('Draft copy', { selector: 'p' });
     await user.selectOptions(within(tasks).getByLabelText('Status of Draft copy'), 'Blocked');
@@ -235,6 +239,7 @@ describe('tasks', () => {
     const p = project({ name: 'Cleanup' });
     const { api, user } = setup({ projects: { projects: [p], tasks: [task(p.id, { title: 'Mistake' })] } });
     await user.click(await screen.findByRole('button', { name: 'Cleanup' }));
+    await listView();
     const tasks = await screen.findByRole('region', { name: 'Tasks' });
     await within(tasks).findByText('Mistake', { selector: 'p' });
     await user.click(await within(tasks).findByRole('button', { name: 'Remove Mistake' }));
@@ -258,6 +263,7 @@ describe('archive and permissions', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Archive project' }));
     expect(await screen.findByText('Project archived. Its tasks are kept.')).toBeTruthy();
     expect(await screen.findByText(/read-only until it is restored/)).toBeTruthy();
+    await listView();
     const tasks = screen.getByRole('region', { name: 'Tasks' });
     expect(await within(tasks).findByText('Hand back keys', { selector: 'p' })).toBeTruthy();
     expect(within(tasks).queryByRole('checkbox')).toBeNull();
@@ -273,6 +279,7 @@ describe('archive and permissions', () => {
     setup({ permissions: READ_ONLY, projects: { projects: [p], tasks: [task(p.id, { title: 'Viewed task', status: 'IN_PROGRESS' })] } });
     await user().click(await screen.findByRole('button', { name: 'Look only' }));
     expect(screen.queryByRole('button', { name: 'New project' })).toBeNull();
+    await listView();
     const tasks = await screen.findByRole('region', { name: 'Tasks' });
     expect(await within(tasks).findByText('Viewed task', { selector: 'p' })).toBeTruthy();
     expect(within(tasks).getByText('In progress', { selector: 'span' })).toBeTruthy(); // status as text, not a control
@@ -286,6 +293,7 @@ describe('archive and permissions', () => {
     await user().click(await screen.findByRole('button', { name: 'Member view' }));
     expect(await screen.findByRole('button', { name: 'Edit' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
+    await listView();
     expect(screen.getByLabelText('New task title')).toBeTruthy();
   });
 

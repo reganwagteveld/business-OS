@@ -1,0 +1,29 @@
+name: Set up workspace
+description: >-
+  pnpm (version from package.json), Node (version from .nvmrc) with the pnpm store cached by
+  lockfile hash, then a frozen-lockfile install. Shared by every CI job so setup cannot drift.
+inputs:
+  filter:
+    description: Optional pnpm --filter selector to install only part of the workspace.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: .nvmrc
+        # Store cache key: OS + arch + hash of pnpm-lock.yaml (actions/setup-node). A lockfile change
+        # is the only invalidation; node_modules itself is never cached.
+        cache: pnpm
+    - name: Install (workspace lockfile must be up to date)
+      shell: bash
+      env:
+        INSTALL_FILTER: ${{ inputs.filter }}
+      run: |
+        if [ -n "$INSTALL_FILTER" ]; then
+          pnpm install --frozen-lockfile --filter "$INSTALL_FILTER"
+        else
+          pnpm install --frozen-lockfile
+        fi

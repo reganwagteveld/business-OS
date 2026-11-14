@@ -78,6 +78,9 @@ export async function removeMember(db: AppTenantDb, actor: Actor, membershipId: 
   await db.opportunity.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null } as never });
   // Project owners and task assignees too (version bumped, so an edit prepared before is refused as stale).
   await db.project.updateMany({ where: { ownerUserId: target.userId }, data: { ownerUserId: null, version: { increment: 1 } } as never });
+  // Task rows are locked in id order first, the same order as a board renumber
+  // (projects/server/tasks.ts), so this multi-row update can never deadlock with one.
+  await db.$queryRaw`SELECT id FROM project_tasks WHERE assignee_user_id = ${target.userId}::uuid AND business_id = nullif(current_setting('app.business_id', true), '')::uuid ORDER BY id FOR UPDATE`;
   await db.projectTask.updateMany({ where: { assigneeUserId: target.userId }, data: { assigneeUserId: null, version: { increment: 1 } } as never });
   await db.membership.delete({ where: { id: membershipId } });
   await audit(db, actor, 'membership.removed', 'membership', membershipId, { role: target.role });
