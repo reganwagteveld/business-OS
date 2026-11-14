@@ -44,5 +44,6 @@
       "esbuild",
       "prisma"
     ]
-  }
+  },
+  "description": "CI scenario: shared root manifest change"
 }
