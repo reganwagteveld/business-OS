@@ -37,6 +37,7 @@ import * as tasksRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/tasks/ro
 import * as taskRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/tasks/[taskId]/route';
 import * as archiveTaskRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/tasks/[taskId]/archive/route';
 import * as restoreTaskRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/tasks/[taskId]/restore/route';
+import * as moveTaskRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/tasks/[taskId]/move/route';
 import { devOutbox } from '@/core/email';
 
 const BASE = process.env.APP_BASE_URL!;
@@ -128,6 +129,7 @@ const api = (who: User, slug: string) => {
     patchTask: (id: string, taskId: string, body: unknown) => taskRoute.PATCH(req('PATCH', `${base}/${id}/tasks/${taskId}`, { cookie: who.cookie, body }), t(id, taskId)).then(json),
     archiveTask: (id: string, taskId: string) => archiveTaskRoute.POST(req('POST', `${base}/${id}/tasks/${taskId}/archive`, { cookie: who.cookie }), t(id, taskId)).then(json),
     restoreTask: (id: string, taskId: string) => restoreTaskRoute.POST(req('POST', `${base}/${id}/tasks/${taskId}/restore`, { cookie: who.cookie }), t(id, taskId)).then(json),
+    moveTask: (id: string, taskId: string, body: unknown) => moveTaskRoute.POST(req('POST', `${base}/${id}/tasks/${taskId}/move`, { cookie: who.cookie, body }), t(id, taskId)).then(json),
     customerProjects: (customerId: string, qs = '') =>
       customerProjectsRoute.GET(req('GET', `/api/v1/b/${slug}/customers/${customerId}/projects${qs}`, { cookie: who.cookie }), ctx({ slug, customerId })).then(json),
     createCustomer: (body: unknown) => customersRoute.POST(req('POST', `/api/v1/b/${slug}/customers`, { cookie: who.cookie, body }), ctx({ slug })).then(json),
@@ -657,5 +659,249 @@ describe('PR 18 audit: archive and task changes at the same time', () => {
     }
     expect((await admin.query('SELECT assignee_user_id FROM project_tasks WHERE id = $1', [t.id])).rows[0].assignee_user_id).toBeNull();
     expect((await admin.query('SELECT count(*)::int AS n FROM memberships WHERE id = $1', [membership.id])).rows[0].n).toBe(0);
+  });
+});
+
+describe('PR 19 board: moving tasks between and within columns', () => {
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const settled = async (p: Promise<unknown>) => Promise.race([p.then(() => true), pause(50).then(() => false)]);
+  type T = { id: string; title: string; status: string; version: number; position: number; completedAt: string | null };
+  /** Column contents, titles in the board's order, straight from the API. */
+  async function columns(who: User, slug: string, projectId: string) {
+    const all = (await api(who, slug).tasks(projectId)).body.tasks as T[];
+    const col = (s: string) => all.filter((t) => t.status === s).map((t) => t.title);
+    return { TODO: col('TODO'), IN_PROGRESS: col('IN_PROGRESS'), BLOCKED: col('BLOCKED'), DONE: col('DONE'), all };
+  }
+  async function board(label: string, titles: string[]) {
+    const a = api(A.people.OWNER!, A.slug);
+    const p = (await a.create({ name: `Board: ${label}` })).body.project;
+    const tasks: Record<string, T> = {};
+    for (const title of titles) tasks[title] = (await a.createTask(p.id, { title })).body.task;
+    return { a, p, tasks, current: async (title: string) => (await columns(A.people.OWNER!, A.slug, p.id)).all.find((t) => t.title === title)! };
+  }
+
+  it('moves across columns and within a column; the order is stored and survives a reload; Done stamps and clears completion', async () => {
+    const { a, p, tasks, current } = await board('moves', ['one', 'two', 'three', 'four']);
+    // Into an empty column.
+    let r = await a.moveTask(p.id, tasks.two!.id, { version: 1, status: 'IN_PROGRESS', afterTaskId: null });
+    expect(r.status).toBe(200);
+    expect(r.body.task).toMatchObject({ status: 'IN_PROGRESS', version: 2, completedAt: null });
+    // After a specific card in the target column.
+    r = await a.moveTask(p.id, tasks.four!.id, { version: 1, status: 'IN_PROGRESS', afterTaskId: tasks.two!.id });
+    expect(r.status).toBe(200);
+    // To the top of a non-empty column.
+    r = await a.moveTask(p.id, tasks.three!.id, { version: 1, status: 'IN_PROGRESS', afterTaskId: null });
+    expect(r.status).toBe(200);
+    expect(await columns(A.people.MEMBER!, A.slug, p.id)).toMatchObject({ TODO: ['one'], IN_PROGRESS: ['three', 'two', 'four'], DONE: [] });
+    // Within a column: 'three' after 'four' (to the end).
+    r = await a.moveTask(p.id, tasks.three!.id, { version: 2, status: 'IN_PROGRESS', afterTaskId: tasks.four!.id });
+    expect(r.status).toBe(200);
+    expect((await columns(A.people.MEMBER!, A.slug, p.id)).IN_PROGRESS).toEqual(['two', 'four', 'three']);
+    // Into Done and back.
+    const done = (await a.moveTask(p.id, tasks.one!.id, { version: 1, status: 'DONE', afterTaskId: null })).body.task;
+    expect(done.completedAt).not.toBeNull();
+    expect((await a.get(p.id)).body.project.taskCounts).toEqual({ total: 4, done: 1 });
+    const back = (await a.moveTask(p.id, tasks.one!.id, { version: 2, status: 'TODO', afterTaskId: null })).body.task;
+    expect(back).toMatchObject({ status: 'TODO', completedAt: null });
+    // Audit: ids and statuses only.
+    const log = await audits(tasks.one!.id);
+    expect(log.map((e) => e.action)).toEqual(expect.arrayContaining(['projects.task.moved', 'projects.task.status_changed']));
+    expect(log.find((e) => e.action === 'projects.task.moved')!.metadata).toMatchObject({ projectId: p.id, from: 'TODO', to: 'DONE' });
+    expect(JSON.stringify(log)).not.toMatch(/"one"/);
+    expect((await current('one')).version).toBe(3);
+  });
+
+  it('positions are one order over the project, so a column may show several statuses (In Progress with Blocked) and still order exactly', async () => {
+    const { a, p, tasks } = await board('mixed', ['i1', 'b1', 'i2', 'todo']);
+    // A board column holding IN_PROGRESS and BLOCKED: [i1, b1, i2].
+    await a.moveTask(p.id, tasks.i1!.id, { version: 1, status: 'IN_PROGRESS', afterTaskId: null });
+    await a.moveTask(p.id, tasks.b1!.id, { version: 1, status: 'BLOCKED', afterTaskId: tasks.i1!.id });
+    await a.moveTask(p.id, tasks.i2!.id, { version: 1, status: 'IN_PROGRESS', afterTaskId: tasks.b1!.id }); // anchor has another status
+    const mixed = async () => (await columns(A.people.OWNER!, A.slug, p.id)).all.filter((t) => t.status === 'IN_PROGRESS' || t.status === 'BLOCKED').map((t) => t.title);
+    expect(await mixed()).toEqual(['i1', 'b1', 'i2']);
+    // Reorder the blocked task within that column, keeping its status: to the end, then to the top.
+    expect((await a.moveTask(p.id, tasks.b1!.id, { version: 2, status: 'BLOCKED', afterTaskId: tasks.i2!.id })).status).toBe(200);
+    expect(await mixed()).toEqual(['i1', 'i2', 'b1']);
+    expect((await a.moveTask(p.id, tasks.b1!.id, { version: 3, status: 'BLOCKED', afterTaskId: null })).status).toBe(200);
+    expect(await mixed()).toEqual(['b1', 'i1', 'i2']);
+    expect((await columns(A.people.OWNER!, A.slug, p.id)).TODO).toEqual(['todo']); // other columns untouched
+  });
+
+  it('a move to where the task already is changes nothing (no version bump, no audit)', async () => {
+    const { a, p, tasks } = await board('noop', ['first', 'second']);
+    const r = await a.moveTask(p.id, tasks.second!.id, { version: 1, status: 'TODO', afterTaskId: tasks.first!.id });
+    expect(r).toMatchObject({ status: 200, body: { task: { version: 1, position: tasks.second!.position } } });
+    expect((await audits(tasks.second!.id)).map((e) => e.action)).toEqual(['projects.task.created']);
+  });
+
+  it('validates the body and identifiers', async () => {
+    const { a, p, tasks } = await board('validation', ['x', 'y']);
+    for (const body of [
+      {}, { version: 1, status: 'TODO' }, { status: 'TODO', afterTaskId: null }, { version: 1, status: 'DOING', afterTaskId: null },
+      { version: 0, status: 'TODO', afterTaskId: null }, { version: 1, status: 'TODO', afterTaskId: 'nope' },
+      { version: 1, status: 'TODO', afterTaskId: null, position: 5 }, { version: 1, status: 'TODO', afterTaskId: null, businessId: B.businessId },
+    ]) {
+      expect((await a.moveTask(p.id, tasks.x!.id, body)).status, JSON.stringify(body)).toBe(400);
+    }
+    expect(await a.moveTask(p.id, tasks.x!.id, { version: 1, status: 'TODO', afterTaskId: tasks.x!.id })).toMatchObject({ status: 400, body: { error: 'invalid_anchor' } });
+    expect((await a.moveTask('not-a-uuid', tasks.x!.id, { version: 1, status: 'TODO', afterTaskId: null })).status).toBe(404);
+    expect((await a.moveTask(p.id, 'not-a-uuid', { version: 1, status: 'TODO', afterTaskId: null })).status).toBe(404);
+    expect((await a.moveTask(p.id, randomUUID(), { version: 1, status: 'TODO', afterTaskId: null })).status).toBe(404);
+    expect((await a.moveTask(randomUUID(), tasks.x!.id, { version: 1, status: 'TODO', afterTaskId: null })).status).toBe(404);
+    // Nothing was changed by any refused request.
+    expect((await columns(A.people.OWNER!, A.slug, p.id)).all.map((t) => [t.title, t.version])).toEqual([['x', 1], ['y', 1]]);
+  });
+
+  it('a stale version, an anchor that left the column, an anchor in another project, and an archived task are refused (409) and change nothing', async () => {
+    const { a, p, tasks } = await board('conflicts', ['a', 'b', 'c']);
+    const other = (await a.create({ name: 'Board: elsewhere' })).body.project;
+    const foreign = (await a.createTask(other.id, { title: 'foreign' })).body.task;
+    await a.moveTask(p.id, tasks.a!.id, { version: 1, status: 'DONE', afterTaskId: null });
+    expect(await a.moveTask(p.id, tasks.a!.id, { version: 1, status: 'TODO', afterTaskId: null })).toMatchObject({ status: 409, body: { error: 'stale' } });
+    expect(await a.moveTask(p.id, tasks.c!.id, { version: 1, status: 'TODO', afterTaskId: foreign.id })).toMatchObject({ status: 409, body: { error: 'order_changed' } });
+    expect(await a.moveTask(p.id, tasks.c!.id, { version: 1, status: 'TODO', afterTaskId: randomUUID() })).toMatchObject({ status: 409, body: { error: 'order_changed' } });
+    await a.archiveTask(p.id, tasks.b!.id);
+    expect(await a.moveTask(p.id, tasks.c!.id, { version: 1, status: 'TODO', afterTaskId: tasks.b!.id })).toMatchObject({ status: 409, body: { error: 'order_changed' } });
+    expect(await a.moveTask(p.id, tasks.b!.id, { version: 2, status: 'DONE', afterTaskId: null })).toMatchObject({ status: 409, body: { error: 'archived' } });
+    const after = (await admin.query('SELECT status, version, archived_at IS NOT NULL AS gone FROM project_tasks WHERE id = ANY($1) ORDER BY title', [[tasks.b!.id, tasks.c!.id]])).rows;
+    expect(after).toEqual([{ status: 'TODO', version: 2, gone: true }, { status: 'TODO', version: 1, gone: false }]);
+  });
+
+  it('when no gap is left the project is renumbered in its current order, without bumping anyone else\'s version', async () => {
+    const { a, p, tasks } = await board('renumber', ['p', 'q', 'r', 's']);
+    // Squeeze positions so there is no integer between p and q (and archive one so it is renumbered too).
+    await admin.query('UPDATE project_tasks SET position = CASE title WHEN \'p\' THEN 7 WHEN \'q\' THEN 8 WHEN \'r\' THEN 9 ELSE 10 END WHERE project_id = $1', [p.id]);
+    await a.archiveTask(p.id, tasks.r!.id);
+    const r = await a.moveTask(p.id, tasks.s!.id, { version: 1, status: 'TODO', afterTaskId: tasks.p!.id });
+    expect(r.status).toBe(200);
+    expect((await columns(A.people.OWNER!, A.slug, p.id)).TODO).toEqual(['p', 's', 'q']);
+    const rows = (await admin.query('SELECT title, position, version FROM project_tasks WHERE project_id = $1 ORDER BY position, id', [p.id])).rows;
+    expect(rows.map((x) => x.title)).toEqual(['p', 's', 'q', 'r']);
+    expect(new Set(rows.map((x) => x.position)).size).toBe(4);
+    expect(rows.find((x) => x.title === 'p')!.version).toBe(1);
+    expect(rows.find((x) => x.title === 'q')!.version).toBe(1);
+    expect(rows.find((x) => x.title === 'r')!.version).toBe(2); // only its own archive bumped it
+    expect((await audits(tasks.s!.id)).find((e) => e.action === 'projects.task.moved')!.metadata).toMatchObject({ order: 'renumbered' });
+    // Restoring the archived task puts it back where it was, after q.
+    await a.restoreTask(p.id, tasks.r!.id);
+    expect((await columns(A.people.OWNER!, A.slug, p.id)).TODO).toEqual(['p', 's', 'q', 'r']);
+  });
+
+  it('repeatedly moving to the top keeps working past the point where spaced positions run out', async () => {
+    const { a, p } = await board('top', ['t0', 't1', 't2']);
+    for (let i = 0; i < 15; i++) {
+      const cols = await columns(A.people.OWNER!, A.slug, p.id);
+      const last = cols.all.filter((t) => t.status === 'TODO').at(-1)!;
+      expect((await a.moveTask(p.id, last.id, { version: last.version, status: 'TODO', afterTaskId: null })).status).toBe(200);
+    }
+    expect((await columns(A.people.OWNER!, A.slug, p.id)).TODO).toEqual(['t0', 't1', 't2']); // 15 rotations of 3
+  });
+
+  it('simultaneous moves of different tasks into the same slot all succeed, one at a time, with a consistent total order', async () => {
+    const titles = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'];
+    const { a, p, tasks } = await board('concurrent', ['anchor', ...titles]);
+    await a.moveTask(p.id, tasks.anchor!.id, { version: 1, status: 'DONE', afterTaskId: null });
+    const results = await Promise.all(titles.map((t) => a.moveTask(p.id, tasks[t]!.id, { version: 1, status: 'DONE', afterTaskId: tasks.anchor!.id })));
+    expect(results.map((r) => r.status)).toEqual(titles.map(() => 200));
+    const done = (await columns(A.people.OWNER!, A.slug, p.id)).DONE;
+    expect(done[0]).toBe('anchor');
+    expect([...done].sort()).toEqual(['anchor', ...titles].sort());
+    const rows = (await admin.query('SELECT position FROM project_tasks WHERE project_id = $1', [p.id])).rows;
+    expect(new Set(rows.map((x) => x.position)).size).toBe(rows.length); // no two tasks share a position
+  });
+
+  it('simultaneous moves of the same task from the same version: exactly one wins, the rest are stale', async () => {
+    const { a, p, tasks } = await board('same-task', ['solo', 'x']);
+    const targets = ['IN_PROGRESS', 'DONE', 'BLOCKED', 'IN_PROGRESS', 'DONE'];
+    const results = await Promise.all(targets.map((status) => a.moveTask(p.id, tasks.solo!.id, { version: 1, status, afterTaskId: null })));
+    expect(results.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(results.filter((r) => r.status === 409 && r.body.error === 'stale')).toHaveLength(4);
+    const row = (await admin.query('SELECT version FROM project_tasks WHERE id = $1', [tasks.solo!.id])).rows[0];
+    expect(row.version).toBe(2);
+  });
+
+  it('a move and a create at the same time do not collide', async () => {
+    const { a, p, tasks } = await board('move-create', ['k1', 'k2']);
+    const [m, c1, c2] = await Promise.all([
+      a.moveTask(p.id, tasks.k1!.id, { version: 1, status: 'TODO', afterTaskId: tasks.k2!.id }),
+      a.createTask(p.id, { title: 'k3' }),
+      a.createTask(p.id, { title: 'k4' }),
+    ]);
+    expect([m.status, c1.status, c2.status]).toEqual([200, 201, 201]);
+    const rows = (await admin.query('SELECT position FROM project_tasks WHERE project_id = $1', [p.id])).rows;
+    expect(new Set(rows.map((x) => x.position)).size).toBe(4);
+  });
+
+  it('archived projects are read-only for moves; an archive in flight makes a move wait and then refuses it', async () => {
+    const { a, p, tasks } = await board('archive', ['w']);
+    const h = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await h.connect();
+    try {
+      await h.query('BEGIN');
+      await h.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [A.businessId, A.people.OWNER!.id]);
+      await h.query('UPDATE projects SET archived_at = now(), version = version + 1 WHERE id = $1', [p.id]);
+      const pending = a.moveTask(p.id, tasks.w!.id, { version: 1, status: 'DONE', afterTaskId: null });
+      await pause(300);
+      expect(await settled(pending)).toBe(false);
+      await h.query('COMMIT');
+      expect(await pending).toMatchObject({ status: 409, body: { error: 'project_archived' } });
+    } finally {
+      await h.end();
+    }
+    expect(await a.moveTask(p.id, tasks.w!.id, { version: 1, status: 'DONE', afterTaskId: null })).toMatchObject({ status: 409, body: { error: 'project_archived' } });
+    expect((await admin.query('SELECT status, version FROM project_tasks WHERE id = $1', [tasks.w!.id])).rows[0]).toEqual({ status: 'TODO', version: 1 });
+  });
+
+  it('a move in flight holds the project: an archive waits for it to commit', async () => {
+    const { a, p, tasks } = await board('archive-after', ['v']);
+    const h = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await h.connect();
+    const order: string[] = [];
+    try {
+      await h.query('BEGIN');
+      await h.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [A.businessId, A.people.OWNER!.id]);
+      await h.query('SELECT 1 FROM project_tasks WHERE id = $1 FOR UPDATE', [tasks.v!.id]); // the move's write waits here
+      const move = a.moveTask(p.id, tasks.v!.id, { version: 1, status: 'DONE', afterTaskId: null }).then((r) => (order.push('move'), r));
+      await pause(300);
+      const archive = a.archive(p.id).then((r) => (order.push('archive'), r));
+      await pause(300);
+      expect(await settled(archive)).toBe(false);
+      await h.query('COMMIT');
+      const [mv, ar] = await Promise.all([move, archive]);
+      expect([mv.status, ar.status]).toEqual([200, 200]);
+      expect(order).toEqual(['move', 'archive']);
+    } finally {
+      await h.end();
+    }
+  });
+
+  it('permissions: moving needs projects:manage_tasks; read-only and no-Projects roles are refused', async () => {
+    const { p, tasks } = await board('rbac', ['r1']);
+    for (const role of ['ADMIN', 'MANAGER', 'MEMBER']) {
+      const t = (await api(A.people.OWNER!, A.slug).tasks(p.id)).body.tasks[0];
+      expect((await api(A.people[role]!, A.slug).moveTask(p.id, tasks.r1!.id, { version: t.version, status: t.status === 'DONE' ? 'TODO' : 'DONE', afterTaskId: null })).status, role).toBe(200);
+    }
+    const t = (await api(A.people.OWNER!, A.slug).tasks(p.id)).body.tasks[0];
+    custom.MEMBER = ['business:read', 'members:read', 'projects:read', 'projects:update'];
+    expect((await api(A.people.MEMBER!, A.slug).moveTask(p.id, t.id, { version: t.version, status: 'IN_PROGRESS', afterTaskId: null })).status).toBe(403);
+    custom.MEMBER = ['business:read', 'members:read'];
+    expect((await api(A.people.MEMBER!, A.slug).moveTask(p.id, t.id, { version: t.version, status: 'IN_PROGRESS', afterTaskId: null })).status).toBe(403);
+    expect((await admin.query('SELECT version FROM project_tasks WHERE id = $1', [t.id])).rows[0].version).toBe(t.version);
+  });
+
+  it('tenant isolation: another business cannot move A\'s tasks or use them as anchors; answers match a missing id', async () => {
+    const { p, tasks } = await board('tenant', ['secret']);
+    const b = api(B.people.OWNER!, B.slug);
+    const missing = await b.moveTask(randomUUID(), randomUUID(), { version: 1, status: 'DONE', afterTaskId: null });
+    const cross = await b.moveTask(p.id, tasks.secret!.id, { version: 1, status: 'DONE', afterTaskId: null });
+    expect(cross).toEqual(missing);
+    expect(cross.status).toBe(404);
+    // A's task as an anchor in B's own project looks exactly like an unknown anchor.
+    const bp = (await b.create({ name: 'B board' })).body.project;
+    const bt = (await b.createTask(bp.id, { title: 'mine' })).body.task;
+    expect(await b.moveTask(bp.id, bt.id, { version: 1, status: 'TODO', afterTaskId: tasks.secret!.id })).toMatchObject({ status: 409, body: { error: 'order_changed' } });
+    // A's slug with B's session is refused before any lookup.
+    expect((await api(B.people.OWNER!, A.slug).moveTask(p.id, tasks.secret!.id, { version: 1, status: 'DONE', afterTaskId: null })).status).toBe(404);
+    expect((await admin.query('SELECT status, version FROM project_tasks WHERE id = $1', [tasks.secret!.id])).rows[0]).toEqual({ status: 'TODO', version: 1 });
   });
 });

@@ -8,7 +8,7 @@ import type { ProjectTask as TaskDto } from '@business-os/contracts';
 import { recordAudit } from '@/core/audit';
 import type { AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
-import { RecordNotFoundError, StateConflictError } from '@/core/http/errors';
+import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
 import { BUMP, changedFields, checkMember, dateOf, dayOf, UUID } from './shared';
 
 type Status = 'TODO' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE';
@@ -57,6 +57,19 @@ async function writableProject(db: AppTenantDb, projectId: string) {
   if (!row) throw new RecordNotFoundError();
   if (row.archived) throw new StateConflictError('project_archived');
 }
+/**
+ * Serialises changes to one project's task order (board moves and creates) for the rest of this
+ * transaction. A transaction-level advisory lock keyed on the project id: moves in different
+ * projects never wait for each other, and it is released at commit or rollback. It is taken after
+ * writableProject's FOR SHARE, always in that order, so the archive guarantee is unchanged and two
+ * moves cannot deadlock on the pair. Other tenants can only ever share a key by hash collision,
+ * which costs a short wait, never data.
+ */
+async function lockOrder(db: AppTenantDb, projectId: string) {
+  await db.$queryRaw<{ locked: number }[]>`
+    SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended('project_tasks.order:' || ${projectId}::text, 0))) AS l`;
+}
+
 async function load(db: AppTenantDb, projectId: string, id: string): Promise<Row> {
   const row = (await db.projectTask.findFirst({ where: { id, projectId }, select })) as Row | null;
   if (!row) throw new RecordNotFoundError();
@@ -70,6 +83,7 @@ export type TaskInput = {
 export async function createTask(db: AppTenantDb, actorUserId: string, projectId: string, input: TaskInput & { title: string }) {
   await writableProject(db, projectId);
   if (input.assigneeUserId) await checkMember(db, input.assigneeUserId, 'invalid_assignee');
+  await lockOrder(db, projectId);
   const last = await db.projectTask.aggregate({ where: { projectId }, _max: { position: true } } as never) as unknown as { _max: { position: number | null } };
   const status = input.status ?? 'TODO';
   const id = randomUUID();
@@ -123,6 +137,104 @@ export async function updateTask(db: AppTenantDb, actorUserId: string, projectId
     await recordAudit(db, actorUserId, 'projects.task.assigned', { type: 'project_task', id }, { projectId, from: before.assigneeUserId, to: (data.assigneeUserId as string | null) ?? null });
   }
   return toDto(await load(db, projectId, id));
+}
+
+/** Highest position the board writes before renumbering (int4 is 2,147,483,647). */
+const MAX_POSITION = 2_000_000_000;
+
+/**
+ * Board move (docs/projects-data-model.md §4, "Ordering"). In one tenant transaction:
+ * 1. the task is loaded and its version checked (stale → 409 stale);
+ * 2. the project is read FOR SHARE (archived → 409 project_archived; an archive in flight waits);
+ * 3. the project's order lock is taken, so concurrent moves in this project run one at a time and
+ *    each one sees the order the previous one committed;
+ * 4. the anchor must be an active task of this project (else 409 order_changed: the client's view
+ *    is out of date). It may have any status: positions are ONE order over the whole project and a
+ *    board column is just the tasks of its statuses in that order. So "directly after the anchor in
+ *    the project's order" is "directly after it" in every column that shows both, whichever
+ *    statuses a board puts in a column, and "no anchor" (first in the project) is first in any column;
+ * 5. the task gets a position strictly between the anchor and the task after it. If there is no
+ *    integer gap left, the project's tasks are renumbered (1000, 2000, …) in their current order first. Renumbering changes no task's version: position is not part of an edit,
+ *    so it never makes someone else's pending edit stale.
+ * The write is conditional on the version and on the task being active, like every other edit.
+ */
+export async function moveTask(db: AppTenantDb, actorUserId: string, projectId: string, id: string, move: { version: number; status: Status; afterTaskId: string | null }) {
+  if (move.afterTaskId === id) throw new RuleViolationError('invalid_anchor', 'A task cannot be placed after itself.');
+  const before = await load(db, projectId, id);
+  await writableProject(db, projectId);
+  if (before.archivedAt) throw new StateConflictError('archived');
+  if (before.version !== move.version) throw new StateConflictError('stale');
+  await lockOrder(db, projectId);
+
+  const place = async () => {
+    // Every other task of the project in the stored order, archived ones included, so positions stay
+    // distinct and a restored task comes back where it was.
+    const all = (await db.projectTask.findMany({
+      where: { projectId, id: { not: id } },
+      select: { id: true, position: true, archivedAt: true },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    })) as { id: string; position: number; archivedAt: Date | null }[];
+    const active = all.filter((t) => t.archivedAt === null);
+    let at = 0;
+    if (move.afterTaskId) {
+      at = all.findIndex((t) => t.id === move.afterTaskId && t.archivedAt === null) + 1;
+      if (at === 0) throw new StateConflictError('order_changed');
+    }
+    // Already exactly there (same status, and directly after the anchor among active tasks): no change.
+    const mine = { id: before.id, position: before.position };
+    const after = (a: { id: string; position: number }, b: { id: string; position: number }) => a.position > b.position || (a.position === b.position && a.id > b.id);
+    const prevActive = move.afterTaskId ? active.find((t) => t.id === move.afterTaskId) : undefined;
+    const nextActive = move.afterTaskId ? active[active.findIndex((t) => t.id === move.afterTaskId) + 1] : active[0];
+    if (before.status === move.status && (!prevActive || after(mine, prevActive)) && (!nextActive || after(nextActive, mine))) return { position: before.position, noop: true };
+    const prev = all[at - 1];
+    const next = all[at];
+    if (!prev && !next) return { position: before.position, noop: false };
+    if (!prev) return next!.position >= 1 ? { position: next!.position - STEP >= 0 ? next!.position - STEP : Math.floor(next!.position / 2), noop: false } : null;
+    if (!next) return prev.position + STEP <= MAX_POSITION ? { position: prev.position + STEP, noop: false } : null;
+    return next.position - prev.position >= 2 ? { position: prev.position + Math.floor((next.position - prev.position) / 2), noop: false } : null;
+  };
+
+  let target = await place();
+  let renumbered = false;
+  if (target === null) {
+    await renumber(db, projectId);
+    renumbered = true;
+    target = await place();
+    if (target === null) throw new Error('No position available after renumbering');
+  }
+  if (target.noop) return toDto(before);
+
+  const data: Record<string, unknown> = { position: target.position };
+  if (move.status !== before.status) {
+    data.status = move.status;
+    data.completedAt = move.status === 'DONE' ? new Date() : null;
+  }
+  const result = await db.projectTask.updateMany({ where: { id, projectId, archivedAt: null, version: move.version }, data: { ...data, ...BUMP, updatedById: actorUserId } as never });
+  if (result.count === 0) {
+    const now = await load(db, projectId, id);
+    throw new StateConflictError(now.archivedAt ? 'archived' : 'stale');
+  }
+  await recordAudit(db, actorUserId, 'projects.task.moved', { type: 'project_task', id }, { projectId, from: before.status, to: move.status, ...(renumbered ? { order: 'renumbered' } : {}) });
+  if (move.status !== before.status) {
+    await recordAudit(db, actorUserId, 'projects.task.status_changed', { type: 'project_task', id }, { projectId, from: before.status, to: move.status });
+  }
+  return toDto(await load(db, projectId, id));
+}
+
+/**
+ * Spreads the project's positions out again (1000, 2000, …) in their current order, archived tasks
+ * included so a restored task comes back where it was. Runs only under the order lock. Tagged
+ * $queryRaw on the tenant client: bos_app, forced RLS, plus the explicit business_id predicate.
+ */
+async function renumber(db: AppTenantDb, projectId: string) {
+  await db.$queryRaw<{ id: string }[]>`
+    UPDATE project_tasks AS t SET position = (r.n * ${STEP})::int
+    FROM (
+      SELECT id, row_number() OVER (ORDER BY position, id) AS n FROM project_tasks
+      WHERE project_id = ${projectId}::uuid AND business_id = nullif(current_setting('app.business_id', true), '')::uuid
+    ) AS r
+    WHERE t.id = r.id AND t.business_id = nullif(current_setting('app.business_id', true), '')::uuid
+    RETURNING t.id`;
 }
 
 /** "Removing" a task archives it: it leaves the list and the progress count, and can be restored. */
