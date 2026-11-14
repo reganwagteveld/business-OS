@@ -3,6 +3,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import type { CustomersClient } from '../../api/customers';
 import { actionClass, secondaryClass } from '../../shell/frame';
 import { Problem, Skeleton } from '../problem';
+import { useDialog } from '../dialog';
 import { useLoad } from '../use-load';
 import { KindBadge, StatusBadge } from './directory';
 import { activityTitle, addressLines, formatWhen, isSystemActivity } from './format';
@@ -81,6 +82,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActi
 }) {
   const archived = customer.archivedAt !== null;
   const [confirming, setConfirming] = useState(false);
+  const { ref: archiveRef, onKeyDown: onArchiveKey } = useDialog(confirming, () => setConfirming(false));
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -132,7 +134,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActi
 
       {archived ? <p role="status" className="mb-6 rounded-xl border border-border bg-muted px-4 py-3 text-sm">This customer is archived. It is hidden from the active list and cannot be edited until it is restored.</p> : null}
       {confirming ? (
-        <div role="alertdialog" aria-labelledby="archive-title" aria-describedby="archive-body" className="mb-6 rounded-2xl border border-border bg-card p-5">
+        <div ref={archiveRef} onKeyDown={onArchiveKey} role="alertdialog" aria-labelledby="archive-title" aria-describedby="archive-body" className="mb-6 rounded-2xl border border-border bg-card p-5">
           <h2 id="archive-title" className="text-base font-semibold">Archive {customer.displayName}?</h2>
           <p id="archive-body" className="mt-1 text-sm text-muted-foreground">They will be hidden from the active list. Nothing is deleted, and you can restore them at any time.</p>
           <div className="mt-4 flex gap-3">

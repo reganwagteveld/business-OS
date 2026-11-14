@@ -1,7 +1,7 @@
 import {
-  ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, endpointPath, endpoints,
+  ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse, endpointPath, endpoints,
   ListActivitiesResponse, ListContactsResponse, ListCustomersResponse, UpdateContactRequest,
-  MembersResponse, UpdateCustomerRequest, type Activity, type Contact, type Customer, Member as MemberSchema,
+  MembersResponse, UpdateCustomerRequest, type Activity, type Contact, type Customer, type CustomerSummary, Member as MemberSchema,
 } from '@business-os/contracts';
 import type { z } from 'zod';
 import type { AuthTransport } from './auth';
@@ -21,6 +21,8 @@ export type CustomerPatch = z.input<typeof UpdateCustomerRequest>;
 /** Customer Zone calls. The business is only ever the `:slug` in the path; no call carries a business id. */
 export interface CustomersClient {
   list(slug: string, query: { q?: string; status: RecordStatus; cursor?: string; limit?: number }, signal?: AbortSignal): Promise<Outcome<CustomerPage>>;
+  /** Active and archived customer counts and active contacts, for the Zone home. */
+  summary(slug: string, signal?: AbortSignal): Promise<Outcome<CustomerSummary>>;
   get(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Customer>>;
   create(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Customer>>;
   update(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<Customer>>;
@@ -82,6 +84,9 @@ export function createCustomersClient(baseUrl: string, transport: AuthTransport,
     async list(slug, query, signal) {
       const raw = await http.request('GET', path(endpoints.listCustomers.path, { slug }) + qs({ q: query.q?.trim(), status: query.status, cursor: query.cursor, limit: query.limit }), undefined, signal);
       return settle(raw, ListCustomersResponse, (d) => d);
+    },
+    async summary(slug, signal) {
+      return settle(await http.request('GET', path(endpoints.customerSummary.path, { slug }), undefined, signal), CustomerSummaryResponse, (d) => d.summary);
     },
     async get(slug, id, signal) {
       return settle(await http.request('GET', path(endpoints.getCustomer.path, { slug, customerId: id }), undefined, signal), CustomerResponse, (d) => d.customer);

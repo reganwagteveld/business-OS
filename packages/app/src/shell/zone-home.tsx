@@ -12,10 +12,30 @@ const zones = [
   { name: 'Settings', icon: '⚙', description: 'Workspace preferences', ready: false },
 ] as const;
 
-export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCustomers }: {
+/** Real counts for the Customers card, from the tenant-scoped summary endpoint. */
+export type CustomerMetrics = { state: 'loading' } | { state: 'ready'; customers: number; contacts: number } | { state: 'unavailable' };
+
+const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
+function Metrics({ id, metrics }: { id: string; metrics: CustomerMetrics }) {
+  if (metrics.state === 'loading') {
+    return <p id={id} className="mt-4 text-xs text-muted-foreground" aria-busy="true"><span className="inline-block h-3 w-28 animate-pulse rounded bg-muted align-middle motion-reduce:animate-none" aria-hidden="true" /><span className="sr-only">Loading customer counts</span></p>;
+  }
+  if (metrics.state === 'unavailable') return <p id={id} className="mt-4 text-xs text-muted-foreground">Counts unavailable right now</p>;
+  if (metrics.customers === 0 && metrics.contacts === 0) return <p id={id} className="mt-4 text-xs text-muted-foreground">No customers yet</p>;
+  return (
+    <p id={id} className="mt-4 text-xs font-medium">
+      {plural(metrics.customers, 'active customer', 'active customers')} <span aria-hidden="true" className="text-muted-foreground">·</span> {plural(metrics.contacts, 'contact', 'contacts')}
+    </p>
+  );
+}
+
+export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCustomers, customerMetrics }: {
   business: string; user: CurrentUser; role: string; onSwitch: () => void; onSignOut: () => void;
   /** Opens the Customer Zone. Zones that are not built yet stay honest, non-clickable cards. */
   onOpenCustomers?: () => void;
+  /** Omitted when the person cannot read customers: the card then shows no numbers. */
+  customerMetrics?: CustomerMetrics;
 }) {
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -49,13 +69,14 @@ export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCust
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {zones.map((zone, index) => zone.ready && onOpenCustomers ? (
-            <button key={zone.name} type="button" onClick={onOpenCustomers} aria-label={`Open the ${zone.name} Zone`} className="group relative min-h-52 rounded-2xl border border-border bg-card p-6 text-left shadow-sm transition-colors hover:border-ring focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+            <button key={zone.name} type="button" onClick={onOpenCustomers} aria-label={`Open the ${zone.name} Zone`} aria-describedby={customerMetrics ? 'customer-metrics' : undefined} className="group relative min-h-52 rounded-2xl border border-border bg-card p-6 text-left shadow-sm transition-colors hover:border-ring focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
               <div className="mb-7 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-2xl text-primary-foreground" aria-hidden="true">{zone.icon}</div>
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-semibold">{zone.name}</h3>
                 <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-medium">Open</span>
               </div>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{zone.description}</p>
+              {customerMetrics ? <Metrics id="customer-metrics" metrics={customerMetrics} /> : null}
               <span aria-hidden="true" className="absolute right-5 top-5 text-xs text-muted-foreground/60">{String(index + 1).padStart(2, '0')}</span>
             </button>
           ) : (

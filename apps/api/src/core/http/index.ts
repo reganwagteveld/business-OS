@@ -4,7 +4,8 @@ import { corsHeaders } from './cors';
 
 /** Response headers every API route sends: no caching of tenant data (ADR 0002) plus CORS (ADR 0005). */
 export function apiHeaders(request: Request): Record<string, string> {
-  return { 'Cache-Control': 'private, no-store', ...corsHeaders(request.headers.get('origin'), getEnv().CORS_ALLOWED_ORIGINS) };
+  // nosniff: a JSON body holding user-entered text is never sniffed and rendered as HTML (architecture §7.4).
+  return { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', ...corsHeaders(request.headers.get('origin'), getEnv().CORS_ALLOWED_ORIGINS) };
 }
 
 /** Answers a CORS preflight. Disallowed origins get 204 without CORS headers, so the browser blocks the call. */

@@ -102,6 +102,12 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
       const now = new Date().toISOString();
 
       if (resource === 'members') return json(200, { members: biz.members });
+      if (resource === 'customers' && id === 'summary' && method === 'GET') {
+        return json(200, { summary: {
+          customers: { active: biz.customers.filter((c) => !c.archivedAt).length, archived: biz.customers.filter((c) => c.archivedAt).length },
+          contacts: { active: biz.contacts.filter((c) => !c.archivedAt).length },
+        } });
+      }
 
       if (resource === 'contacts' && method === 'GET') {
         const q = call.query;

@@ -11,7 +11,7 @@ export * from './auth.ts';
 export * from './tenancy.ts';
 export * from './customers.ts';
 import {
-  ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse,
+  ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse,
   ListActivitiesQuery, ListActivitiesResponse, ListContactsQuery, ListContactsResponse, ListCustomersQuery, ListCustomersResponse,
   UpdateContactRequest, UpdateCustomerRequest,
 } from './customers.ts';
@@ -38,6 +38,7 @@ export const endpoints = {
   revokeInvitation: { method: 'DELETE', path: '/api/v1/b/:slug/invitations/:invitationId', response: OkResponse },
   listCustomers: { method: 'GET', path: '/api/v1/b/:slug/customers', query: ListCustomersQuery, response: ListCustomersResponse },
   createCustomer: { method: 'POST', path: '/api/v1/b/:slug/customers', request: CreateCustomerRequest, response: CustomerResponse },
+  customerSummary: { method: 'GET', path: '/api/v1/b/:slug/customers/summary', response: CustomerSummaryResponse },
   getCustomer: { method: 'GET', path: '/api/v1/b/:slug/customers/:customerId', response: CustomerResponse },
   updateCustomer: { method: 'PATCH', path: '/api/v1/b/:slug/customers/:customerId', request: UpdateCustomerRequest, response: CustomerResponse },
   archiveCustomer: { method: 'POST', path: '/api/v1/b/:slug/customers/:customerId/archive', response: CustomerResponse },

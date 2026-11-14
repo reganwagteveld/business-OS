@@ -4,6 +4,7 @@ import type { CustomersClient } from '../../api/customers';
 import type { Outcome } from '../../api/tenancy';
 import { actionClass, inputClass, secondaryClass } from '../../shell/frame';
 import { Problem, Skeleton } from '../problem';
+import { useDialog } from '../dialog';
 import { useLoad } from '../use-load';
 import { Breakable, linkClass, telHref } from './links';
 
@@ -51,6 +52,7 @@ export function ManageContacts({ customer, client, slug, canWrite, onCustomerCha
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Contact | null>(null);
+  const { ref: archiveRef, onKeyDown: onArchiveKey } = useDialog(confirm !== null, () => setConfirm(null));
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
@@ -204,7 +206,7 @@ export function ManageContacts({ customer, client, slug, canWrite, onCustomerCha
       ) : null}
 
       {confirm ? (
-        <div role="alertdialog" aria-labelledby={`${uid}-archive-title`} aria-describedby={`${uid}-archive-body`} className="mt-4 rounded-xl border border-border p-4">
+        <div ref={archiveRef} onKeyDown={onArchiveKey} role="alertdialog" aria-labelledby={`${uid}-archive-title`} aria-describedby={`${uid}-archive-body`} className="mt-4 rounded-xl border border-border p-4">
           <h3 id={`${uid}-archive-title`} className="text-sm font-semibold">Archive {confirm.displayName}?</h3>
           <p id={`${uid}-archive-body`} className="mt-1 text-sm text-muted-foreground">
             {confirm.id === customer.primaryContactId ? 'They are the primary contact, so this customer will have no primary contact. ' : ''}Nothing is deleted, and you can restore them from archived contacts.

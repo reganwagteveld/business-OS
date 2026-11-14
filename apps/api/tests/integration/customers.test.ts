@@ -21,6 +21,7 @@ import * as contactRoute from '@/app/api/v1/b/[slug]/contacts/[contactId]/route'
 import * as archiveContactRoute from '@/app/api/v1/b/[slug]/contacts/[contactId]/archive/route';
 import * as restoreContactRoute from '@/app/api/v1/b/[slug]/contacts/[contactId]/restore/route';
 import * as activitiesRoute from '@/app/api/v1/b/[slug]/activities/route';
+import * as summaryRoute from '@/app/api/v1/b/[slug]/customers/summary/route';
 import { devOutbox } from '@/core/email';
 
 const BASE = process.env.APP_BASE_URL!;
@@ -99,6 +100,7 @@ const api = (who: User, slug: string) => ({
   archiveContact: (contactId: string) => archiveContactRoute.POST(req('POST', `/api/v1/b/${slug}/contacts/${contactId}/archive`, { cookie: who.cookie }), ctx({ slug, contactId })).then(json),
   restoreContact: (contactId: string) => restoreContactRoute.POST(req('POST', `/api/v1/b/${slug}/contacts/${contactId}/restore`, { cookie: who.cookie }), ctx({ slug, contactId })).then(json),
   createActivity: (body: unknown) => activitiesRoute.POST(req('POST', `/api/v1/b/${slug}/activities`, { cookie: who.cookie, body }), ctx({ slug })).then(json),
+  summary: () => summaryRoute.GET(req('GET', `/api/v1/b/${slug}/customers/summary`, { cookie: who.cookie }), ctx({ slug })).then(json),
   listActivities: (qs = '') => activitiesRoute.GET(req('GET', `/api/v1/b/${slug}/activities${qs}`, { cookie: who.cookie }), ctx({ slug })).then(json),
 });
 
@@ -513,5 +515,101 @@ describe('tenant isolation between two businesses', () => {
   it('every Customer Zone table forces row-level security', async () => {
     const { rows } = await admin.query("SELECT relname FROM pg_class WHERE relname IN ('customers','contacts','activities') AND relrowsecurity AND relforcerowsecurity");
     expect(rows).toHaveLength(3);
+  });
+});
+
+describe('PR 14: Zone home counts, role matrix and hardening', () => {
+  it('summary counts only this business: active and archived customers, active contacts', async () => {
+    const temp = await team('cs');
+    const other = await team('ct');
+    const owner = api(temp.people.OWNER!, temp.slug);
+    expect((await owner.summary()).body).toEqual({ summary: { customers: { active: 0, archived: 0 }, contacts: { active: 0 } } });
+    const c1 = (await owner.createCustomer({ displayName: 'One' })).body.customer;
+    const c2 = (await owner.createCustomer({ displayName: 'Two' })).body.customer;
+    await owner.archiveCustomer(c2.id);
+    await owner.createContact({ firstName: 'Linked', customerId: c1.id });
+    const loose = (await owner.createContact({ firstName: 'Loose' })).body.contact;
+    await owner.createContact({ firstName: 'Gone' }).then(({ body }) => owner.archiveContact(body.contact.id));
+    // The other business has its own records, which must not be counted here.
+    await api(other.people.OWNER!, other.slug).createCustomer({ displayName: 'Elsewhere' });
+    expect((await owner.summary()).body).toEqual({ summary: { customers: { active: 1, archived: 1 }, contacts: { active: 2 } } });
+    expect((await api(other.people.OWNER!, other.slug).summary()).body.summary.customers.active).toBe(1);
+    expect(loose.customerId).toBeNull();
+    for (const role of ['ADMIN', 'MANAGER', 'MEMBER']) expect((await api(temp.people[role]!, temp.slug).summary()).status, role).toBe(200);
+  });
+
+  it('summary: no session is 401, a non-member is 404 (the slug reveals nothing)', async () => {
+    const anon = await summaryRoute.GET(req('GET', `/api/v1/b/${A.slug}/customers/summary`), ctx({ slug: A.slug }));
+    expect(anon.status).toBe(401);
+    expect((await api(B.people.OWNER!, A.slug).summary()).status).toBe(404);
+  });
+
+  it('role matrix: every role can do every customer, contact and activity operation (customers:delete is not exposed)', async () => {
+    for (const role of ['OWNER', 'ADMIN', 'MANAGER', 'MEMBER']) {
+      const who = api(A.people[role]!, A.slug);
+      const c = await who.createCustomer({ displayName: `${role} matrix` });
+      expect(c.status, `${role} create customer`).toBe(201);
+      const id = c.body.customer.id;
+      expect((await who.getCustomer(id)).status, `${role} get`).toBe(200);
+      expect((await who.updateCustomer(id, { notes: 'x' })).status, `${role} update`).toBe(200);
+      const k = await who.createContact({ firstName: role, customerId: id });
+      expect(k.status, `${role} create contact`).toBe(201);
+      expect((await who.getContact(k.body.contact.id)).status).toBe(200);
+      expect((await who.updateContact(k.body.contact.id, { jobTitle: 'x' })).status, `${role} update contact`).toBe(200);
+      expect((await who.updateCustomer(id, { primaryContactId: k.body.contact.id })).status, `${role} primary`).toBe(200);
+      expect((await who.archiveContact(k.body.contact.id)).status, `${role} archive contact`).toBe(200);
+      expect((await who.restoreContact(k.body.contact.id)).status, `${role} restore contact`).toBe(200);
+      expect((await who.createActivity({ type: 'call', customerId: id, subject: 's' })).status, `${role} activity`).toBe(201);
+      expect((await who.listActivities(`?customerId=${id}`)).status).toBe(200);
+      expect((await who.listContacts(`?customerId=${id}`)).status).toBe(200);
+      expect((await who.archiveCustomer(id)).status, `${role} archive`).toBe(200);
+      expect((await who.restoreCustomer(id)).status, `${role} restore`).toBe(200);
+    }
+  });
+
+  it('a signed-in person who is not a member gets 404 on every Customer Zone endpoint of that business', async () => {
+    const outsider = api(B.people.MEMBER!, A.slug);
+    const c = (await api(A.people.OWNER!, A.slug).createCustomer({ displayName: 'Private' })).body.customer;
+    const k = (await api(A.people.OWNER!, A.slug).createContact({ firstName: 'Private', customerId: c.id })).body.contact;
+    const results = [
+      await outsider.listCustomers(), await outsider.createCustomer({ displayName: 'x' }), await outsider.getCustomer(c.id),
+      await outsider.updateCustomer(c.id, { notes: 'x' }), await outsider.archiveCustomer(c.id), await outsider.restoreCustomer(c.id),
+      await outsider.listContacts(), await outsider.createContact({ firstName: 'x' }), await outsider.getContact(k.id),
+      await outsider.updateContact(k.id, { jobTitle: 'x' }), await outsider.archiveContact(k.id), await outsider.restoreContact(k.id),
+      await outsider.listActivities(`?customerId=${c.id}`), await outsider.createActivity({ type: 'note', customerId: c.id, body: 'x' }), await outsider.summary(),
+    ];
+    expect(results.map((r) => r.status)).toEqual(Array(results.length).fill(404));
+  });
+
+  it("another business's contact ids cannot be archived, restored or read through this business", async () => {
+    const bContact = (await api(B.people.OWNER!, B.slug).createContact({ firstName: 'B only' })).body.contact;
+    const a = api(A.people.OWNER!, A.slug);
+    expect((await a.archiveContact(bContact.id)).status).toBe(404);
+    expect((await a.restoreContact(bContact.id)).status).toBe(404);
+    expect((await a.listActivities(`?contactId=${bContact.id}`)).body.activities).toEqual([]);
+    const { rows } = await admin.query('SELECT archived_at FROM contacts WHERE id = $1', [bContact.id]);
+    expect(rows[0].archived_at).toBeNull();
+  });
+
+  it('archived contacts are read-only and state changes are idempotent-safe (409, not silent)', async () => {
+    const a = api(A.people.MEMBER!, A.slug);
+    const k = (await a.createContact({ firstName: 'State' })).body.contact;
+    expect((await a.restoreContact(k.id)).status).toBe(409);
+    expect((await a.archiveContact(k.id)).status).toBe(200);
+    expect((await a.archiveContact(k.id)).status).toBe(409);
+    expect((await a.updateContact(k.id, { jobTitle: 'x' })).status).toBe(409);
+  });
+
+  it('user-entered text is stored and returned as data, never interpreted', async () => {
+    const a = api(A.people.OWNER!, A.slug);
+    const evil = '<img src=x onerror=alert(1)>"\'</script>';
+    const c = await a.createCustomer({ displayName: evil, notes: evil, website: 'javascript:alert(1)' });
+    expect(c.status).toBe(201);
+    const got = await customerRoute.GET(req('GET', `/api/v1/b/${A.slug}/customers/${c.body.customer.id}`, { cookie: A.people.OWNER!.cookie }), ctx({ slug: A.slug, customerId: c.body.customer.id }));
+    expect(got.headers.get('content-type')).toMatch(/^application\/json/);
+    expect(got.headers.get('x-content-type-options')).toBe('nosniff');
+    const body = await got.json();
+    expect(body.customer.displayName).toBe(evil);
+    expect(body.customer.notes).toBe(evil);
   });
 });
