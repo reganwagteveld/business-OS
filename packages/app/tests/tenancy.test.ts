@@ -86,7 +86,7 @@ describe('creating a business', () => {
 
   it('maps slug conflict, rate limiting, server validation and offline apart', async () => {
     const c = (res: () => Promise<Response>) => createTenancyClient('https://x.test', cookie, vi.fn(res));
-    expect(await c(async () => json({ error: 'slug_unavailable' }, 409)).createBusiness(valid)).toEqual({ kind: 'conflict' });
+    expect(await c(async () => json({ error: 'slug_unavailable' }, 409)).createBusiness(valid)).toEqual({ kind: 'conflict', code: 'slug_unavailable' });
     expect(await c(async () => json({ error: 'rate_limited' }, 429)).createBusiness(valid)).toEqual({ kind: 'rate_limited' });
     expect(await c(async () => json({ error: 'invalid' }, 400)).createBusiness(valid)).toMatchObject({ kind: 'invalid_input' });
     expect(await c(async () => json({}, 401)).createBusiness(valid)).toEqual({ kind: 'unauthenticated' });

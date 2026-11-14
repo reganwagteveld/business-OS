@@ -3,7 +3,7 @@ import type { CurrentUser } from '@business-os/contracts';
 
 const zones = [
   { name: 'Customers', icon: '◉', description: 'Every relationship in one place', ready: true },
-  { name: 'Sales', icon: '↗', description: 'From first contact to closed deal', ready: false },
+  { name: 'Sales', icon: '↗', description: 'From first contact to closed deal', ready: true },
   { name: 'Projects', icon: '▦', description: 'Work, organised and connected', ready: false },
   { name: 'Finance', icon: '◈', description: 'Understand your business finances', ready: false },
   { name: 'People', icon: '♧', description: 'Your team and their work', ready: false },
@@ -30,10 +30,12 @@ function Metrics({ id, metrics }: { id: string; metrics: CustomerMetrics }) {
   );
 }
 
-export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCustomers, customerMetrics }: {
+export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCustomers, onOpenSales, customerMetrics }: {
   business: string; user: CurrentUser; role: string; onSwitch: () => void; onSignOut: () => void;
   /** Opens the Customer Zone. Zones that are not built yet stay honest, non-clickable cards. */
   onOpenCustomers?: () => void;
+  /** Opens the Sales Zone (only passed to people who can read sales). */
+  onOpenSales?: () => void;
   /** Omitted when the person cannot read customers: the card then shows no numbers. */
   customerMetrics?: CustomerMetrics;
 }) {
@@ -65,18 +67,20 @@ export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCust
         </div>
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-semibold tracking-tight">Your Zones</h2>
-          <p className="text-xs text-muted-foreground">Customers is open. The other Zones are coming next.</p>
+          <p className="text-xs text-muted-foreground">Customers and Sales are open. The other Zones are coming next.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {zones.map((zone, index) => zone.ready && onOpenCustomers ? (
-            <button key={zone.name} type="button" onClick={onOpenCustomers} aria-label={`Open the ${zone.name} Zone`} aria-describedby={customerMetrics ? 'customer-metrics' : undefined} className="group relative min-h-52 rounded-2xl border border-border bg-card p-6 text-left shadow-sm transition-colors hover:border-ring focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+          {zones.map((zone, index) => {
+            const open = zone.name === 'Customers' ? onOpenCustomers : zone.name === 'Sales' ? onOpenSales : undefined;
+            return zone.ready && open ? (
+            <button key={zone.name} type="button" onClick={open} aria-label={`Open the ${zone.name} Zone`} aria-describedby={zone.name === 'Customers' && customerMetrics ? 'customer-metrics' : undefined} className="group relative min-h-52 rounded-2xl border border-border bg-card p-6 text-left shadow-sm transition-colors hover:border-ring focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
               <div className="mb-7 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-2xl text-primary-foreground" aria-hidden="true">{zone.icon}</div>
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-semibold">{zone.name}</h3>
                 <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-medium">Open</span>
               </div>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{zone.description}</p>
-              {customerMetrics ? <Metrics id="customer-metrics" metrics={customerMetrics} /> : null}
+              {zone.name === 'Customers' && customerMetrics ? <Metrics id="customer-metrics" metrics={customerMetrics} /> : null}
               <span aria-hidden="true" className="absolute right-5 top-5 text-xs text-muted-foreground/60">{String(index + 1).padStart(2, '0')}</span>
             </button>
           ) : (
@@ -89,7 +93,8 @@ export function ZoneHome({ business, user, role, onSwitch, onSignOut, onOpenCust
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{zone.description}</p>
               <span className="absolute right-5 top-5 text-xs text-muted-foreground/60">{String(index + 1).padStart(2, '0')}</span>
             </section>
-          ))}
+          );
+          })}
         </div>
         <footer className="mt-14 border-t border-border pt-6 text-xs text-muted-foreground">Business OS <span aria-hidden="true">·</span> Powered by Pixakova</footer>
       </div>
