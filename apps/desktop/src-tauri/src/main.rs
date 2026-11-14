@@ -21,3 +21,4 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running Business OS");
 }
+// CI scenario: Rust change
