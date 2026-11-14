@@ -15,3 +15,11 @@ export function seriesKindOf(params: Record<string, string>): FinanceKind {
   if (!kind) throw new RecordNotFoundError();
   return kind;
 }
+
+const idOf = (name: string) => (params: Record<string, string>): string => {
+  if (!isUuid(params[name])) throw new RecordNotFoundError();
+  return params[name];
+};
+export const paymentIdOf = idOf('paymentId');
+export const allocationIdOf = idOf('allocationId');
+export const applicationIdOf = idOf('applicationId');

@@ -28,7 +28,7 @@ type Row = {
   id: string; kind: Kind; status: Status; number: string | null; customerId: string; contactId: string | null; opportunityId: string | null;
   projectId: string | null; sourceQuoteId: string | null; creditedInvoiceId: string | null; currencyCode: string; currencyScale: number;
   taxMode: string; issueDate: Date | null; dueDate: Date | null; validUntil: Date | null; subtotal: Decimal; taxTotal: Decimal; total: Decimal;
-  allocatedTotal: Decimal; notes: string | null; sellerSnapshot: unknown; billToSnapshot: unknown; contentSha256: string | null;
+  allocatedTotal: Decimal; creditAppliedTotal: Decimal; notes: string | null; sellerSnapshot: unknown; billToSnapshot: unknown; contentSha256: string | null;
   idempotencyKey: string | null; requestHash: string | null;
   issuedAt: Date | null; statusChangedAt: Date | null; voidedAt: Date | null; voidReason: string | null; version: number;
   createdById: string | null; updatedById: string | null; issuedById: string | null; statusChangedById: string | null; voidedById: string | null;
@@ -37,7 +37,7 @@ type Row = {
 const select = {
   id: true, kind: true, status: true, number: true, customerId: true, contactId: true, opportunityId: true, projectId: true, sourceQuoteId: true,
   creditedInvoiceId: true, currencyCode: true, currencyScale: true, taxMode: true, issueDate: true, dueDate: true, validUntil: true, subtotal: true,
-  taxTotal: true, total: true, allocatedTotal: true, notes: true, sellerSnapshot: true, billToSnapshot: true, contentSha256: true,
+  taxTotal: true, total: true, allocatedTotal: true, creditAppliedTotal: true, notes: true, sellerSnapshot: true, billToSnapshot: true, contentSha256: true,
   idempotencyKey: true, requestHash: true, issuedAt: true, statusChangedAt: true, voidedAt: true, voidReason: true, version: true,
   createdById: true, updatedById: true, issuedById: true, statusChangedById: true, voidedById: true, createdAt: true, updatedAt: true,
 } as const;
@@ -53,6 +53,17 @@ const lineSelect = {
 
 const iso = (d: Date | null) => d?.toISOString() ?? null;
 
+/**
+ * Derived settlement of an ISSUED invoice (docs/finance-data-model.md §4.2, F2): payments and applied
+ * credit together against the total. Never stored. Null for every other document.
+ */
+export function settlementStateOf(r: { kind: Kind; status: Status; total: Decimal; allocatedTotal: Decimal; creditAppliedTotal: Decimal }) {
+  if (r.kind !== 'INVOICE' || r.status !== 'ISSUED') return null;
+  const settled = r.allocatedTotal.add(r.creditAppliedTotal);
+  if (settled.isZero()) return 'UNPAID' as const;
+  return settled.gte(r.total) ? ('PAID' as const) : ('PARTIALLY_PAID' as const);
+}
+
 function headerDto(r: Row): ListItemDto {
   const s = r.currencyScale;
   return {
@@ -60,7 +71,8 @@ function headerDto(r: Row): ListItemDto {
     projectId: r.projectId, sourceQuoteId: r.sourceQuoteId, creditedInvoiceId: r.creditedInvoiceId, currencyCode: r.currencyCode,
     currencyScale: s, taxMode: r.taxMode, issueDate: dayOf(r.issueDate), dueDate: dayOf(r.dueDate), validUntil: dayOf(r.validUntil),
     subtotal: formatAmount(r.subtotal, s), taxTotal: formatAmount(r.taxTotal, s), total: formatAmount(r.total, s),
-    allocatedTotal: formatAmount(r.allocatedTotal, s), notes: r.notes,
+    allocatedTotal: formatAmount(r.allocatedTotal, s), creditAppliedTotal: formatAmount(r.creditAppliedTotal, s), settlementState: settlementStateOf(r),
+    notes: r.notes,
     sellerSnapshot: (r.sellerSnapshot ?? null) as ListItemDto['sellerSnapshot'], billToSnapshot: (r.billToSnapshot ?? null) as ListItemDto['billToSnapshot'],
     contentSha256: r.contentSha256, issuedAt: iso(r.issuedAt), statusChangedAt: iso(r.statusChangedAt), voidedAt: iso(r.voidedAt),
     voidReason: r.voidReason, version: r.version, createdById: r.createdById, updatedById: r.updatedById, issuedById: r.issuedById,
@@ -109,7 +121,7 @@ function checkTaxMode(mode: string | undefined) {
   }
 }
 
-async function checkCustomer(db: AppTenantDb, customerId: string) {
+export async function checkCustomer(db: AppTenantDb, customerId: string) {
   const customer = await db.customer.findFirst({ where: { id: customerId }, select: { archivedAt: true } });
   if (!customer) throw new RuleViolationError('invalid_customer', 'Choose a customer of this business.');
   if (customer.archivedAt) throw new StateConflictError('archived_reference');
@@ -334,6 +346,7 @@ export async function createCreditNote(
 export type ListQuery = {
   status: 'draft' | 'issued' | 'accepted' | 'declined' | 'expired' | 'void' | 'all'; customerId?: string; projectId?: string;
   from?: string; to?: string; cursor?: string; limit: number; overdue?: 'true' | 'false'; invoiceId?: string;
+  settlement?: 'unpaid' | 'partially_paid' | 'paid' | 'open';
 };
 
 /** Newest first, keyset-paginated on (created_at, id). */
@@ -345,10 +358,21 @@ export async function listDocuments(db: AppTenantDb, kind: Kind, query: ListQuer
   if (query.invoiceId) where.push({ creditedInvoiceId: query.invoiceId });
   if (query.from) where.push({ issueDate: { gte: dateOf(query.from) } });
   if (query.to) where.push({ issueDate: { lt: dateOf(query.to) } });
-  if (query.overdue === 'true') {
-    // Derived, never stored (§4.2): issued, not fully paid, due before today in the business's zone.
-    const today = todayIn((await businessProfile(db)).timeZone);
-    where.push({ status: 'ISSUED', dueDate: { lt: dateOf(today) }, allocatedTotal: { lt: db.financeDocument.fields.total } });
+  if (kind === 'INVOICE' && (query.overdue === 'true' || query.settlement)) {
+    // Derived, never stored (§4.2, F2): settlement compares payments plus applied credit with the total,
+    // which Prisma cannot express, so the matching ids come from one SQL predicate (issued invoices only).
+    const today = query.overdue === 'true' ? todayIn((await businessProfile(db)).timeZone) : null;
+    const settlement = query.overdue === 'true' && !query.settlement ? 'open' : query.settlement!;
+    const ids = await db.$queryRaw<{ id: string }[]>`
+      SELECT id::text FROM finance_documents
+      WHERE business_id = nullif(current_setting('app.business_id', true), '')::uuid AND kind = 'INVOICE' AND status = 'ISSUED'
+        AND CASE ${settlement}::text
+              WHEN 'unpaid' THEN allocated_total + credit_applied_total = 0
+              WHEN 'partially_paid' THEN allocated_total + credit_applied_total > 0 AND allocated_total + credit_applied_total < total
+              WHEN 'paid' THEN allocated_total + credit_applied_total = total
+              ELSE allocated_total + credit_applied_total < total END
+        AND (${today}::date IS NULL OR due_date < ${today}::date)`;
+    where.push({ id: { in: ids.map((r) => r.id) } });
   }
   const list = `finance:${kind}`;
   const after = decodeCursor(query.cursor, list, ['t', 'i'] as const);
@@ -543,6 +567,8 @@ export async function voidDocument(db: AppTenantDb, actorUserId: string, kind: K
   const voidable = before.status === 'ISSUED' || (kind === 'QUOTE' && before.status === 'ACCEPTED');
   if (!voidable) throw new StateConflictError('invalid_state');
   if (before.version !== input.version) throw new StateConflictError('stale');
+  // F2: applied credit (on an invoice, or applied from a credit note) must be reversed first.
+  if (!before.creditAppliedTotal.isZero()) throw new StateConflictError('has_credit_applications');
   if (kind === 'INVOICE') {
     if (!before.allocatedTotal.isZero()) throw new StateConflictError('invoice_has_payments');
     const live = await db.financeDocument.count({ where: { kind: 'CREDIT_NOTE', creditedInvoiceId: id, status: { not: 'VOID' } } });

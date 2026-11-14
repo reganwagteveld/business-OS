@@ -15,7 +15,10 @@ export type StateConflictCode =
   | 'archived' | 'not_archived' | 'archived_reference' | 'not_open' | 'not_closed' | 'stale' | 'project_archived' | 'order_changed'
   // Finance (docs/finance-data-model.md §5): a document or setting is not in a state that allows the change.
   | 'invalid_state' | 'immutable' | 'invoice_not_open' | 'invoice_credited' | 'invoice_has_payments' | 'credit_exceeds_invoice'
-  | 'series_in_use' | 'number_conflict' | 'idempotency_conflict' | 'quote_not_convertible' | 'totals_mismatch';
+  | 'series_in_use' | 'number_conflict' | 'idempotency_conflict' | 'quote_not_convertible' | 'totals_mismatch'
+  // Finance F2: payments, allocations and credit applications.
+  | 'payment_not_open' | 'credit_note_not_open' | 'over_allocation' | 'over_settlement' | 'over_application' | 'already_allocated'
+  | 'already_applied' | 'already_reversed' | 'has_credit_applications';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

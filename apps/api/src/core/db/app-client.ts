@@ -21,6 +21,7 @@ const TENANT_MODELS = {
   project: 'businessId', projectTask: 'businessId',
   financeSettings: 'businessId', financeNumberSeries: 'businessId', financeTaxRate: 'businessId', financeDocument: 'businessId',
   financeDocumentLine: 'businessId', financePayment: 'businessId', financePaymentAllocation: 'businessId',
+  financeCreditApplication: 'businessId',
   financeExpenseCategory: 'businessId', financeExpense: 'businessId',
 } as const;
 type AppTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;

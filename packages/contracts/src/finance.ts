@@ -119,8 +119,18 @@ const documentFields = {
   subtotal: z.string(),
   taxTotal: z.string(),
   total: z.string(),
-  /** Payments allocated to an invoice (F2). Always "0" in F1; a credit note does not settle an invoice. */
+  /** Payments allocated to an invoice (maintained by the database). Always "0" on quotes and credit notes. */
   allocatedTotal: z.string(),
+  /**
+   * Credit applied (F2, maintained by the database): on an invoice, credit-note credit applied to it; on a
+   * credit note, the part of it applied to invoices. Issuing a credit note applies nothing by itself.
+   */
+  creditAppliedTotal: z.string(),
+  /**
+   * Derived, never stored: for an ISSUED invoice, UNPAID (nothing settled), PARTIALLY_PAID or PAID by
+   * payments and applied credit together; null for every other document.
+   */
+  settlementState: z.enum(['UNPAID', 'PARTIALLY_PAID', 'PAID']).nullable(),
   notes: z.string().nullable(),
   sellerSnapshot: SellerSnapshot.nullable(),
   billToSnapshot: BillToSnapshot.nullable(),
@@ -241,8 +251,10 @@ export const ListQuotesQuery = z.object(listFilters).strict();
 export const ListInvoicesQuery = z
   .object({
     ...listFilters,
-    /** Issued, not fully paid, due before today in the business's time zone. */
+    /** Issued, not fully settled (payments plus applied credit), due before today in the business's time zone. */
     overdue: z.enum(['true', 'false']).optional(),
+    /** Derived settlement of issued invoices (F2). Implies status=issued. */
+    settlement: z.enum(['unpaid', 'partially_paid', 'paid', 'open']).optional(),
   })
   .strict();
 export const ListCreditNotesQuery = z.object({ ...listFilters, invoiceId: Uuid.optional() }).strict();
@@ -348,3 +360,237 @@ export const UpdateTaxRateRequest = z
   .object({ name: z.string().trim().min(1).max(100).optional(), archived: z.boolean().optional() })
   .strict()
   .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
+
+// ---- payments, allocations and credit applications (F2) -------------------------------------------
+// Manual records of money received outside Business OS (no gateway, no bank feed), settled against
+// issued invoices. Counters are maintained by the database; nothing is ever deleted: corrections are
+// reversals (one way, database-stamped) plus new records.
+
+export const FinancePaymentMethod = z.enum(['BANK_TRANSFER', 'CASH', 'CARD', 'CHEQUE', 'OTHER']);
+export const FinancePaymentStatus = z.enum(['RECORDED', 'REVERSED']);
+
+const SettlementItem = z.object({ invoiceId: Uuid, amount: Money }).strict();
+const SettlementItems = z
+  .array(SettlementItem)
+  .min(1)
+  .max(50, 'At most 50 invoices at once')
+  .refine((items) => new Set(items.map((i) => i.invoiceId)).size === items.length, 'Each invoice at most once');
+
+export const PaymentAllocation = z
+  .object({
+    id: Uuid,
+    paymentId: Uuid,
+    invoiceId: Uuid,
+    /** The invoice's number (issued invoices always have one). */
+    invoiceNumber: z.string().nullable(),
+    currencyCode: z.string(),
+    amount: z.string(),
+    createdAt: z.string().datetime(),
+    createdById: Uuid.nullable(),
+    /** Null while live. Reversal is one way; the row is kept. */
+    reversedAt: z.string().datetime().nullable(),
+    reversedById: Uuid.nullable(),
+  })
+  .strict();
+export type PaymentAllocation = z.infer<typeof PaymentAllocation>;
+
+const paymentFields = {
+  id: Uuid,
+  customerId: Uuid,
+  currencyCode: z.string(),
+  currencyScale: z.number().int(),
+  amount: z.string(),
+  /** Sum of live allocations (maintained by the database). */
+  allocatedTotal: z.string(),
+  /** amount − allocatedTotal while RECORDED: customer credit not yet allocated. "0" once reversed. */
+  unallocatedAmount: z.string(),
+  receivedOn: z.string(),
+  method: FinancePaymentMethod,
+  reference: z.string().nullable(),
+  status: FinancePaymentStatus,
+  reversedAt: z.string().datetime().nullable(),
+  reversalReason: z.string().nullable(),
+  version: z.number().int().min(1),
+  recordedById: Uuid.nullable(),
+  reversedById: Uuid.nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+};
+export const FinancePaymentListItem = z.object(paymentFields).strict();
+export const FinancePayment = z.object({ ...paymentFields, allocations: z.array(PaymentAllocation) }).strict();
+export type FinancePayment = z.infer<typeof FinancePayment>;
+
+/**
+ * Records a payment received outside Business OS. Requires an Idempotency-Key header: a repeat with the
+ * same request returns the original payment (200); the same key with a different request is 409
+ * idempotency_conflict. Optional `allocations` settle issued invoices of the same customer and currency
+ * in the same unit of work (all or nothing).
+ */
+export const RecordPaymentRequest = z
+  .object({
+    customerId: Uuid,
+    /** Defaults to the business's currency. */
+    currencyCode: CurrencyCode.optional(),
+    amount: Money,
+    /** The date the money was received, in the business's calendar; not in the future. */
+    receivedOn: CalendarDate,
+    method: FinancePaymentMethod,
+    reference: optionalText(200),
+    allocations: SettlementItems.optional(),
+  })
+  .strict();
+/** The reference is the only field of a recorded payment that can change. */
+export const UpdatePaymentRequest = z.object({ ...Version, reference: optionalText(200) }).strict();
+/** Allocates a recorded payment to one or more issued invoices, all or nothing. */
+export const AllocatePaymentRequest = z.object({ allocations: SettlementItems }).strict();
+export const ReverseAllocationRequest = z.object({}).strict();
+/** Reverses the payment's live allocations and then the payment, in one unit of work. A reason is required. */
+export const ReversePaymentRequest = z.object({ ...Version, reason: z.string().trim().min(1, 'Give a reason').max(500) }).strict();
+
+export const ListPaymentsQuery = z
+  .object({
+    status: z.enum(['recorded', 'reversed', 'all']).default('all'),
+    customerId: Uuid.optional(),
+    currencyCode: CurrencyCode.optional(),
+    /** Received date range, half-open [from, to). */
+    from: CalendarDate.optional(),
+    to: CalendarDate.optional(),
+    /** Only recorded payments with (true) or without (false) an unallocated remainder. */
+    unallocated: z.enum(['true', 'false']).optional(),
+    /** Only payments with a live allocation to this invoice. */
+    invoiceId: Uuid.optional(),
+    cursor: Cursor,
+    limit: Limit,
+  })
+  .strict();
+export const FinancePaymentResponse = z.object({ payment: FinancePayment }).strict();
+export const ListPaymentsResponse = z.object({ payments: z.array(FinancePaymentListItem), nextCursor: z.string().nullable() }).strict();
+
+export const CreditApplication = z
+  .object({
+    id: Uuid,
+    creditNoteId: Uuid,
+    creditNoteNumber: z.string().nullable(),
+    invoiceId: Uuid,
+    invoiceNumber: z.string().nullable(),
+    currencyCode: z.string(),
+    amount: z.string(),
+    createdAt: z.string().datetime(),
+    createdById: Uuid.nullable(),
+    reversedAt: z.string().datetime().nullable(),
+    reversedById: Uuid.nullable(),
+  })
+  .strict();
+export type CreditApplication = z.infer<typeof CreditApplication>;
+
+/** An issued credit note's credit: how much is applied, how much is still available, and where it went. */
+export const CreditNoteCredit = z
+  .object({
+    creditNoteId: Uuid,
+    number: z.string().nullable(),
+    status: FinanceDocumentStatus,
+    customerId: Uuid,
+    currencyCode: z.string(),
+    total: z.string(),
+    appliedTotal: z.string(),
+    /** total − appliedTotal while ISSUED; "0" otherwise. */
+    available: z.string(),
+    applications: z.array(CreditApplication),
+  })
+  .strict();
+export type CreditNoteCredit = z.infer<typeof CreditNoteCredit>;
+export const CreditNoteCreditResponse = z.object({ credit: CreditNoteCredit }).strict();
+/**
+ * Applies an issued credit note to issued invoices of the same customer and currency (any of them, not
+ * only the invoice it credits), all or nothing. Nothing is applied automatically.
+ */
+export const ApplyCreditRequest = z.object({ applications: SettlementItems }).strict();
+export const ReverseCreditApplicationRequest = z.object({}).strict();
+
+/** Read-only settlement of one invoice (derived, never stored). */
+export const InvoiceSettlement = z
+  .object({
+    invoiceId: Uuid,
+    number: z.string().nullable(),
+    status: FinanceDocumentStatus,
+    customerId: Uuid,
+    currencyCode: z.string(),
+    total: z.string(),
+    allocatedTotal: z.string(),
+    creditAppliedTotal: z.string(),
+    /** total − allocatedTotal − creditAppliedTotal for an ISSUED invoice; "0" otherwise. */
+    outstanding: z.string(),
+    settlementState: z.enum(['UNPAID', 'PARTIALLY_PAID', 'PAID']).nullable(),
+    dueDate: z.string().nullable(),
+    /** Issued, not fully settled, due before today in the business's time zone. */
+    overdue: z.boolean(),
+    /** The business's date the overdue flag was computed for. */
+    asOf: z.string(),
+    allocations: z.array(PaymentAllocation),
+    creditApplications: z.array(CreditApplication),
+  })
+  .strict();
+export type InvoiceSettlement = z.infer<typeof InvoiceSettlement>;
+export const InvoiceSettlementResponse = z.object({ settlement: InvoiceSettlement }).strict();
+
+/** Per customer and currency (no conversion): what is owed and what credit the customer has. */
+export const CustomerBalance = z
+  .object({
+    customerId: Uuid,
+    currencyCode: z.string(),
+    currencyScale: z.number().int(),
+    /** Outstanding on ISSUED invoices. */
+    receivable: z.string(),
+    /** The part of `receivable` past its due date. */
+    overdue: z.string(),
+    /** Unallocated remainder of RECORDED payments. */
+    unallocatedPayments: z.string(),
+    /** Unapplied remainder of ISSUED credit notes. */
+    unappliedCredit: z.string(),
+    /** unallocatedPayments + unappliedCredit. Refunds are not supported (FD-A2). */
+    creditAvailable: z.string(),
+  })
+  .strict();
+export type CustomerBalance = z.infer<typeof CustomerBalance>;
+export const ListCustomerBalancesQuery = z
+  .object({ customerId: Uuid.optional(), currencyCode: CurrencyCode.optional(), cursor: Cursor, limit: Limit })
+  .strict();
+export const ListCustomerBalancesResponse = z
+  .object({ balances: z.array(CustomerBalance), asOf: z.string(), nextCursor: z.string().nullable() })
+  .strict();
+
+// ---- reconciliation (F2) --------------------------------------------------------------------------
+
+export const ReconciliationCheckName = z.enum([
+  'payment_allocated_total', 'invoice_allocated_total', 'credit_applied_total', 'invoice_settlement', 'payment_settlement',
+  'credit_note_settlement', 'live_link_state', 'duplicate_live_allocation', 'duplicate_live_credit_application', 'credit_note_cap',
+  'numbering_series', 'content_hash',
+]);
+export const ReconciliationDiscrepancy = z
+  .object({
+    check: ReconciliationCheckName,
+    recordType: z.enum(['payment', 'document', 'allocation', 'credit_application', 'number_series']),
+    recordId: z.string(),
+    /** What the records imply, and what is stored (decimal strings, numbers or hashes). */
+    expected: z.string().nullable(),
+    actual: z.string().nullable(),
+    /** A short, fixed description of the rule broken. No personal data. */
+    detail: z.string(),
+  })
+  .strict();
+/**
+ * Read-only integrity check of this business's finance records, run in one statement (one snapshot).
+ * It never modifies anything. `ok` is true when no discrepancy was found.
+ */
+export const ReconciliationReport = z
+  .object({
+    ok: z.boolean(),
+    checkedAt: z.string().datetime(),
+    checks: z.array(z.object({ check: ReconciliationCheckName, checked: z.number().int(), discrepancies: z.number().int() }).strict()),
+    discrepancies: z.array(ReconciliationDiscrepancy),
+    /** True when there were more discrepancies than returned (at most 500 are listed). */
+    truncated: z.boolean(),
+  })
+  .strict();
+export type ReconciliationReport = z.infer<typeof ReconciliationReport>;
+export const ReconciliationResponse = z.object({ report: ReconciliationReport }).strict();

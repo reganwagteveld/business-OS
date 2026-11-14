@@ -22,6 +22,9 @@ import {
   FinanceSettingsResponse, IssueDocumentRequest, ListCreditNotesQuery, ListFinanceDocumentsResponse, ListInvoicesQuery, ListNumberSeriesResponse,
   ListQuotesQuery, ListTaxRatesQuery, ListTaxRatesResponse, NumberSeriesResponse, QuoteTransitionRequest, TaxRateResponse, UpdateCreditNoteRequest,
   UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
+  AllocatePaymentRequest, ApplyCreditRequest, CreditNoteCreditResponse, FinancePaymentResponse, InvoiceSettlementResponse, ListCustomerBalancesQuery,
+  ListCustomerBalancesResponse, ListPaymentsQuery, ListPaymentsResponse, ReconciliationResponse, RecordPaymentRequest, ReverseAllocationRequest,
+  ReverseCreditApplicationRequest, ReversePaymentRequest, UpdatePaymentRequest,
 } from './finance.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
@@ -138,6 +141,26 @@ export const endpoints = {
   listTaxRates: { method: 'GET', path: '/api/v1/b/:slug/finance/tax-rates', query: ListTaxRatesQuery, response: ListTaxRatesResponse },
   createTaxRate: { method: 'POST', path: '/api/v1/b/:slug/finance/tax-rates', request: CreateTaxRateRequest, response: TaxRateResponse },
   updateTaxRate: { method: 'PATCH', path: '/api/v1/b/:slug/finance/tax-rates/:taxRateId', request: UpdateTaxRateRequest, response: TaxRateResponse },
+  // Finance F2: payments, allocations, credit applications, settlement and reconciliation. Still no DELETE:
+  // corrections are reversals. Recording a payment requires an Idempotency-Key header.
+  listPayments: { method: 'GET', path: '/api/v1/b/:slug/finance/payments', query: ListPaymentsQuery, response: ListPaymentsResponse },
+  recordPayment: { method: 'POST', path: '/api/v1/b/:slug/finance/payments', request: RecordPaymentRequest, response: FinancePaymentResponse },
+  getPayment: { method: 'GET', path: '/api/v1/b/:slug/finance/payments/:paymentId', response: FinancePaymentResponse },
+  updatePayment: { method: 'PATCH', path: '/api/v1/b/:slug/finance/payments/:paymentId', request: UpdatePaymentRequest, response: FinancePaymentResponse },
+  allocatePayment: { method: 'POST', path: '/api/v1/b/:slug/finance/payments/:paymentId/allocations', request: AllocatePaymentRequest, response: FinancePaymentResponse },
+  reverseAllocation: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/payments/:paymentId/allocations/:allocationId/reverse', request: ReverseAllocationRequest, response: FinancePaymentResponse,
+  },
+  reversePayment: { method: 'POST', path: '/api/v1/b/:slug/finance/payments/:paymentId/reverse', request: ReversePaymentRequest, response: FinancePaymentResponse },
+  getInvoiceSettlement: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/settlement', response: InvoiceSettlementResponse },
+  getCreditNoteCredit: { method: 'GET', path: '/api/v1/b/:slug/finance/credit-notes/:documentId/applications', response: CreditNoteCreditResponse },
+  applyCreditNote: { method: 'POST', path: '/api/v1/b/:slug/finance/credit-notes/:documentId/applications', request: ApplyCreditRequest, response: CreditNoteCreditResponse },
+  reverseCreditApplication: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/credit-notes/:documentId/applications/:applicationId/reverse', request: ReverseCreditApplicationRequest,
+    response: CreditNoteCreditResponse,
+  },
+  listCustomerBalances: { method: 'GET', path: '/api/v1/b/:slug/finance/customer-balances', query: ListCustomerBalancesQuery, response: ListCustomerBalancesResponse },
+  getReconciliation: { method: 'GET', path: '/api/v1/b/:slug/finance/reconciliation', response: ReconciliationResponse },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */
