@@ -65,3 +65,7 @@ Jurisdiction-specific rules (numbering regimes, mandatory content, tax modes, re
 6. **Error codes.** The spike uses generic SQLSTATEs (`42501` doubles as an RLS refusal). F1 assigns each guard a dedicated SQLSTATE and maps it to a stable API error.
 7. **Retention conflicts with existing lifecycle jobs.** `ON DELETE RESTRICT` from finance tables to `businesses` blocks the current purge job for businesses with finance records until FD-L3 decides retention.
 8. **Revisit if:** a jurisdiction requires per-period or pre-allocated numbering, signed or chained invoices, or real-time government reporting; volumes make the series row a bottleneck; or accounting (double-entry) becomes in scope (FD-A5), in which case allocations become journal lines and these counters become derived balances.
+
+## F2 addendum (2026-11-16)
+
+Credit applications (docs/finance-data-model.md §18.2) follow the same pattern as allocations: counters on the two documents, maintained by triggers and bounded by CHECKs, and one-way reversal. Their place in the lock order: an application or its reversal locks **both documents by id**, in the document class, after any payment. It touches no payment, so with the payments → documents (by id) order it forms no cycle with allocations, payment reversals, credit-note issues (credit note, then its invoice) or voids (tests K9–K11). Reconciliation is one read-only statement and takes no locks.

@@ -1,6 +1,6 @@
 // Public API of the finance module (docs/finance-data-model.md, ADR 0007). Routes import only from here.
-// F1: quotes, invoices, credit notes and their settings. Payments and allocations (F2) and expenses
-// (F3) have tables and database guards but no services yet.
+// F1: quotes, invoices, credit notes and their settings. F2: payments, allocations, reversals, credit
+// applications, settlement projections and reconciliation. Expenses (F3) have tables and guards only.
 export {
   convertQuote, createCreditNote, createInvoice, createQuote, discardDraft, getDocument, issueDocument, listDocuments, transitionQuote, updateDraft,
   voidDocument,
@@ -9,3 +9,7 @@ export type { DraftPatch, InvoiceInput, IssueInput, LineInput, ListQuery, QuoteI
 export { createTaxRate, getSettings, hasRetainedRecords, listSeries, listTaxRates, updateSeries, updateSettings, updateTaxRate } from './server/settings';
 export { idempotencyKeyOf } from './server/shared';
 export type { Kind as FinanceKind } from './server/shared';
+export { allocatePayment, getPayment, listPayments, recordPayment, reverseAllocation, reversePayment, updatePayment } from './server/payments';
+export type { ListPaymentsQuery, RecordPaymentInput, SettlementItem } from './server/payments';
+export { applyCreditNote, getCreditNoteCredit, getInvoiceSettlement, listCustomerBalances, reverseCreditApplication } from './server/settlement';
+export { runReconciliation } from './server/reconciliation';

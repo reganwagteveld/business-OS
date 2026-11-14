@@ -32,7 +32,7 @@ const app = new PrismaClient({ adapter: new PrismaPg({ connectionString: appUrl,
 const MODELS = {
   financeSettings: 'businessId', financeNumberSeries: 'businessId', financeTaxRate: 'businessId', financeDocument: 'businessId',
   financeDocumentLine: 'businessId', financePayment: 'businessId', financePaymentAllocation: 'businessId', financeExpenseCategory: 'businessId',
-  financeExpense: 'businessId',
+  financeExpense: 'businessId', financeCreditApplication: 'businessId',
 } as const;
 const runner = createWithTenant({ clients: { app }, models: MODELS });
 type Db = Parameters<Parameters<typeof runner>[1]>[0];
@@ -233,7 +233,7 @@ afterAll(async () => {
 
 const FINANCE_TABLES = [
   'finance_settings', 'finance_number_series', 'finance_tax_rates', 'finance_documents', 'finance_document_lines', 'finance_payments',
-  'finance_payment_allocations', 'finance_expense_categories', 'finance_expenses',
+  'finance_payment_allocations', 'finance_expense_categories', 'finance_expenses', 'finance_credit_applications',
 ];
 
 describe('T: tenant isolation and composite FKs', () => {
@@ -608,6 +608,9 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_proc p ON p.oid = tg.tgfoid
       WHERE NOT tg.tgisinternal AND n.nspname = 'public' AND (c.relname LIKE 'finance%' OR p.proname LIKE 'finance%') ORDER BY 1, 2`);
     expect(rows.map((r) => `${r.t}.${r.name}→${r.fn}`)).toEqual([
+      'finance_credit_applications.finance_apply_credit_application_insert→finance_apply_credit_application',
+      'finance_credit_applications.finance_apply_credit_application_reversal→finance_apply_credit_application',
+      'finance_credit_applications.finance_stamp_credit_application→finance_stamp_allocation',
       'finance_document_lines.finance_guard_line→finance_guard_line',
       'finance_documents.finance_guard_document→finance_guard_document',
       'finance_expense_categories.finance_stamp_times→finance_stamp_times',
@@ -627,7 +630,7 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
         has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname LIKE 'finance%' ORDER BY 1`);
     expect(rows.map((r) => r.name)).toEqual([
-      'finance_apply_allocation', 'finance_content_hash', 'finance_document_content', 'finance_guard_document', 'finance_guard_expense',
+      'finance_apply_allocation', 'finance_apply_credit_application', 'finance_content_hash', 'finance_document_content', 'finance_guard_document', 'finance_guard_expense',
       'finance_guard_line', 'finance_guard_number_series', 'finance_guard_payment', 'finance_stamp_allocation', 'finance_stamp_times',
     ]);
     for (const r of rows) {
@@ -1015,7 +1018,7 @@ describe('R: reporting semantics (docs/finance-data-model.md §9), per currency,
     const pUsd = await inC((db) => recordPayment(db, C, { amount: '60', customerId: custC, receivedOn: jan }));
     await allocate(pUsd, [{ invoiceId: inv1, amount: '60' }], C);
     const bounced = await inC((db) => recordPayment(db, C, { amount: '30', customerId: custC, receivedOn: jan }));
-    await inC((db) => db.financePayment.updateMany({ where: { id: bounced }, data: { status: 'REVERSED', reversedAt: new Date() } }));
+    await inC((db) => db.financePayment.updateMany({ where: { id: bounced }, data: { status: 'REVERSED', reversedAt: new Date(), reversalReason: 'Bounced' } }));
     const pEur = await inC((db) => recordPayment(db, C, { amount: '100', customerId: custC, currency: 'EUR', receivedOn: jan }));
     await allocate(pEur, [{ invoiceId: inv4, amount: '100' }], C);
     for (const [currency, amount, tax] of [['USD', '33', '3'], ['EUR', '50', '0']] as const) {
@@ -1048,9 +1051,239 @@ describe('R: reporting semantics (docs/finance-data-model.md §9), per currency,
     expect(rows.map(num)).toEqual([
       { currency: 'EUR', revenue: 300, cash: 100, receivable: 200, overdue: 0, expenses: 50, margin: 250 },
       // revenue 100 + 200 − 20 (credit note), the void invoice excluded; the bounced payment excluded;
-      // receivables 110 − 60 + 200 (credit applications are F2, see §9); overdue: only inv1.
+      // receivables 110 − 60 + 200 (the credit note is not applied, so it does not reduce them, §9); overdue: only inv1.
       { currency: 'USD', revenue: 280, cash: 60, receivable: 250, overdue: 50, expenses: 30, margin: 50 },
     ]);
+  });
+});
+
+// --- F2: credit applications (migration 20261116000000_finance_payments) -------------------------------
+/** A credit note for an invoice, issued; its total is `amount`. */
+const creditNote = (invoiceId: string, amount: string, o: { businessId?: string; customerId?: string; currency?: string } = {}) =>
+  as(o.businessId ?? A, alice, async (db) => {
+    const id = await createDraft(db, o.businessId ?? A, { kind: 'CREDIT_NOTE', creditedInvoiceId: invoiceId, customerId: o.customerId, currency: o.currency, lines: [{ qty: '1', price: amount }] });
+    await issue(db, id);
+    return id;
+  });
+/** Credit application: lock both documents in id order (ADR 0007 §3), then insert. */
+async function applyIn(db: Db, businessId: string, creditNoteId: string, items: { invoiceId: string; amount: string }[], opts: { sorted?: boolean } = {}) {
+  if (opts.sorted !== false) await lockDocuments(db, [creditNoteId, ...items.map((i) => i.invoiceId)].sort());
+  const cn = await db.financeDocument.findFirstOrThrow({ where: { id: creditNoteId }, select: { customerId: true, currencyCode: true } });
+  for (const i of items) {
+    await db.financeCreditApplication.create({
+      data: { id: uuid(), businessId, creditNoteId, invoiceId: i.invoiceId, customerId: cn.customerId, currencyCode: cn.currencyCode, amount: i.amount },
+    });
+  }
+}
+const applyCredit = (creditNoteId: string, items: { invoiceId: string; amount: string }[], businessId = A) =>
+  as(businessId, alice, (db) => applyIn(db, businessId, creditNoteId, items));
+const unapply = (creditNoteId: string, invoiceId: string, businessId = A) => as(businessId, alice, async (db) => {
+  await lockDocuments(db, [creditNoteId, invoiceId].sort());
+  const r = await db.financeCreditApplication.updateMany({ where: { creditNoteId, invoiceId, reversedAt: null }, data: { reversedAt: new Date() } });
+  if (r.count !== 1) throw Object.assign(new Error('no live application'), { code: 'not_found' });
+});
+const settled = async (id: string) => { const d = await doc(id); return [d.allocated_total, d.credit_applied_total]; };
+
+describe('C: credit applications (F2)', () => {
+  it('C1: partial applications to the credited invoice and to another invoice of the customer; payments and credit together never exceed an invoice', async () => {
+    const inv1 = await invoice('100');
+    const inv2 = await invoice('50');
+    const cn = await creditNote(inv1, '40');
+    // Issuing the credit note settles nothing (brief E).
+    expect(await settled(inv1)).toEqual(['0.0000', '0.0000']);
+    await applyCredit(cn, [{ invoiceId: inv1, amount: '25' }, { invoiceId: inv2, amount: '10' }]);
+    expect(await settled(inv1)).toEqual(['0.0000', '25.0000']);
+    expect(await settled(inv2)).toEqual(['0.0000', '10.0000']);
+    expect((await doc(cn)).credit_applied_total).toBe('35.0000');
+    // The credit note's remaining credit is 5: 5.01 is over-application.
+    const inv3 = await invoice('100');
+    expect(await outcome(applyCredit(cn, [{ invoiceId: inv3, amount: '5.01' }]))).toBe('23514');
+    // inv2: 10 credit + 40 payment = 50 (paid); one more cent from either side is over-settlement.
+    const p = await payment('100');
+    await allocate(p, [{ invoiceId: inv2, amount: '40' }]);
+    expect(await outcome(applyCredit(cn, [{ invoiceId: inv3, amount: '1' }, { invoiceId: inv2, amount: '0.01' }]))).toBe('23505'); // live pair cn→inv2 exists
+    const cn2 = await creditNote(inv3, '10');
+    expect(await outcome(applyCredit(cn2, [{ invoiceId: inv2, amount: '0.01' }]))).toBe('23514');
+    expect(await outcome(allocate(p, [{ invoiceId: inv1, amount: '75.01' }]))).toBe('23514'); // 25 credit + 75.01 > 100
+    expect(await outcome(allocate(p, [{ invoiceId: inv1, amount: '60' }]))).toBe('ok');
+    // cn2 credits inv3, but its credit may settle inv1 too (same customer and currency): 25 + 60 + 10 = 95.
+    expect(await outcome(applyCredit(cn2, [{ invoiceId: inv1, amount: '10' }]))).toBe('ok');
+    const p2 = await payment('10');
+    expect(await outcome(allocate(p2, [{ invoiceId: inv1, amount: '5.01' }]))).toBe('23514');
+    expect(await outcome(allocate(p2, [{ invoiceId: inv1, amount: '5' }]))).toBe('ok');
+    expect(await settled(inv1)).toEqual(['65.0000', '35.0000']);
+  });
+
+  it('C2: only issued credit notes to issued invoices of the same business, customer and currency; precision at the currency scale', async () => {
+    const inv = await invoice('100');
+    const draftCn = await as(A, alice, (db) => createDraft(db, A, { kind: 'CREDIT_NOTE', creditedInvoiceId: inv, lines: [{ qty: '1', price: '10' }] }));
+    expect(await outcome(applyCredit(draftCn, [{ invoiceId: inv, amount: '1' }]))).toBe('FN015');
+    const cn = await creditNote(inv, '10');
+    const draftInv = await as(A, alice, (db) => createDraft(db, A, {}));
+    expect(await outcome(applyCredit(cn, [{ invoiceId: draftInv, amount: '1' }]))).toBe('FN015');
+    const otherCustomer = await invoice('100', { customerId: cust2 });
+    const eur = await invoice('100', { currency: 'EUR' });
+    expect(await outcome(applyCredit(cn, [{ invoiceId: otherCustomer, amount: '1' }]))).toBe('23503');
+    expect(await outcome(applyCredit(cn, [{ invoiceId: eur, amount: '1' }]))).toBe('23503');
+    // A credit note is not an invoice, and an invoice is not a credit note (kind columns pinned).
+    const cn2 = await creditNote(inv, '10');
+    expect(await outcome(applyCredit(cn, [{ invoiceId: cn2, amount: '1' }]))).toBe('23503');
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.create({ data: { id: uuid(), businessId: A, creditNoteId: inv, creditNoteKind: 'INVOICE', invoiceId: inv, customerId: cust1, currencyCode: 'USD', amount: '1' } })))).toBe('23514');
+    expect(await outcome(applyCredit(cn, [{ invoiceId: inv, amount: '0.001' }]))).toBe('23514');
+    // The shared customer and currency columns cannot be spoofed: claiming the invoice's customer (or
+    // currency) for another customer's (or currency's) credit note is refused by the credit-note FK.
+    const globexCn = await creditNote(otherCustomer, '10', { customerId: cust2 });
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.create({ data: { id: uuid(), businessId: A, creditNoteId: globexCn, invoiceId: inv, customerId: cust1, currencyCode: 'USD', amount: '1' } })))).toBe('23503');
+    const eurCn = await creditNote(eur, '10', { currency: 'EUR' });
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.create({ data: { id: uuid(), businessId: A, creditNoteId: eurCn, invoiceId: inv, customerId: cust1, currencyCode: 'USD', amount: '1' } })))).toBe('23503');
+    // Another business: its credit note or invoice cannot be linked.
+    const bInv = await invoice('100', { businessId: B, user: dave, customerId: custB, currency: 'EUR' });
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.create({ data: { id: uuid(), businessId: A, creditNoteId: cn, invoiceId: bInv, customerId: cust1, currencyCode: 'USD', amount: '1' } })))).toBe('23503');
+    expect(await as(B, dave, (db) => db.financeCreditApplication.count())).toBe(0);
+  });
+
+  it('C3: counters cannot be written directly; applications are never edited or deleted; reversal is one way and database-stamped', async () => {
+    const inv = await invoice('100');
+    const cn = await creditNote(inv, '30');
+    await applyCredit(cn, [{ invoiceId: inv, amount: '30' }]);
+    expect(await outcome(as(A, alice, (db) => db.financeDocument.updateMany({ where: { id: inv }, data: { creditAppliedTotal: '0' } })))).toBe('FN010');
+    expect(await outcome(as(A, alice, (db) => db.financeDocument.updateMany({ where: { id: cn }, data: { creditAppliedTotal: '0' } })))).toBe('FN010');
+    expect(await outcome(as(A, alice, (db) => db.financeDocument.create({ data: { id: uuid(), businessId: A, kind: 'INVOICE', customerId: cust1, currencyCode: 'USD', currencyScale: 2, creditAppliedTotal: '1' } })))).toBe('FN010');
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.updateMany({ where: { creditNoteId: cn }, data: { amount: '1' } })))).toBe('42501');
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.deleteMany({ where: { creditNoteId: cn } })))).toBe('42501');
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.create({ data: { id: uuid(), businessId: A, creditNoteId: cn, invoiceId: inv, customerId: cust1, currencyCode: 'USD', amount: '1', reversedAt: new Date() } })))).toBe('FN010');
+    await as(A, alice, async (db) => {
+      await lockDocuments(db, [cn, inv].sort());
+      await db.financeCreditApplication.updateMany({ where: { creditNoteId: cn, reversedAt: null }, data: { reversedAt: BACKDATE } });
+    });
+    const row = (await admin.query(`SELECT created_at, reversed_at FROM finance_credit_applications WHERE credit_note_id = $1`, [cn])).rows[0];
+    expect([recent(row.created_at), recent(row.reversed_at)]).toEqual([true, true]);
+    expect(await settled(inv)).toEqual(['0.0000', '0.0000']);
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.updateMany({ where: { creditNoteId: cn }, data: { reversedAt: null } })))).toBe('FN001');
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.updateMany({ where: { creditNoteId: cn }, data: { reversedAt: new Date() } })))).toBe('FN001');
+    // A new application after the reversal is fine; the reversed one stays as history.
+    await applyCredit(cn, [{ invoiceId: inv, amount: '20' }]);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM finance_credit_applications WHERE credit_note_id = $1`, [cn])).rows[0].n).toBe(2);
+    // The issued documents stay immutable apart from their counters (F1 regression).
+    expect(await outcome(as(A, alice, (db) => db.financeDocument.updateMany({ where: { id: inv }, data: { notes: 'changed' } })))).toBe('FN001');
+  });
+
+  it('C4: an invoice holding credit, or a credit note whose credit is applied, cannot be voided until the applications are reversed', async () => {
+    const credited = await invoice('100');
+    const other = await invoice('100');
+    const cn = await creditNote(credited, '30');
+    await applyCredit(cn, [{ invoiceId: other, amount: '30' }]);
+    const voidIt = (id: string) => outcome(as(A, alice, (db) => db.financeDocument.updateMany({ where: { id }, data: { status: 'VOID', voidReason: 'x' } })));
+    expect(await voidIt(other)).toBe('FN014'); // credit from another invoice's credit note
+    expect(await voidIt(cn)).toBe('FN014');
+    await unapply(cn, other);
+    expect(await voidIt(other)).toBe('ok');
+    expect(await voidIt(cn)).toBe('ok');
+    expect(await outcome(applyCredit(cn, [{ invoiceId: credited, amount: '1' }]))).toBe('FN015'); // a void credit note applies nothing
+  });
+
+  it('C5: a payment reversal needs a reason (F2), still given only in the reversal', async () => {
+    const p = await payment('10');
+    expect(await outcome(as(A, alice, (db) => db.financePayment.updateMany({ where: { id: p }, data: { status: 'REVERSED' } })))).toBe('23514');
+    expect(await outcome(as(A, alice, (db) => db.financePayment.updateMany({ where: { id: p }, data: { status: 'REVERSED', reversalReason: '  ' } })))).toBe('23514');
+    expect(await outcome(as(A, alice, (db) => db.financePayment.updateMany({ where: { id: p }, data: { status: 'REVERSED', reversalReason: 'Recorded twice' } })))).toBe('ok');
+  });
+
+  it('K9: 20 concurrent 10.00 credit applications and 20 concurrent 10.00 allocations to one 100.00 invoice: exactly 10 commit; it is never over-settled', { timeout: 120_000 }, async () => {
+    const inv = await invoice('100');
+    const notes = await Promise.all(Array.from({ length: 20 }, async () => creditNote(await invoice('10'), '10')));
+    const pays = await Promise.all(Array.from({ length: 20 }, () => payment('10')));
+    const results = await Promise.all([
+      ...notes.map((cn) => outcome(applyCredit(cn, [{ invoiceId: inv, amount: '10' }]))),
+      ...pays.map((p) => outcome(allocate(p, [{ invoiceId: inv, amount: '10' }]))),
+    ]);
+    expect(count(results, 'ok'), results.join(',')).toBe(10);
+    expect(count(results, '23514')).toBe(30);
+    const [alloc, credit] = await settled(inv);
+    expect(new Dec(alloc).add(credit).toFixed(4)).toBe('100.0000');
+  });
+
+  it('K10: one 50.00 credit note applied concurrently to 20 invoices: exactly 5 of 10.00 commit', { timeout: 120_000 }, async () => {
+    const base = await invoice('100');
+    const cn = await creditNote(base, '50');
+    const invoices = await Promise.all(Array.from({ length: 20 }, () => invoice('10')));
+    const results = await Promise.all(invoices.map((i) => outcome(applyCredit(cn, [{ invoiceId: i, amount: '10' }]))));
+    expect(count(results, 'ok'), results.join(',')).toBe(5);
+    expect((await doc(cn)).credit_applied_total).toBe('50.0000');
+  });
+
+  it('K11: crossed credit applications, allocations and reversals on shared invoices with ordered locks: no deadlocks, every counter exact', { timeout: 180_000 }, async () => {
+    const invoices = await Promise.all(Array.from({ length: 4 }, () => invoice('40')));
+    const notes = await Promise.all(invoices.slice(0, 2).map((i) => creditNote(i, '40')));
+    const payments = await Promise.all(Array.from({ length: 3 }, () => payment('40')));
+    const pick = <T>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)]!;
+    const ops = Array.from({ length: 120 }, (_, n) => {
+      const [x, y] = [pick(invoices), pick(invoices)];
+      const items = x === y ? [{ invoiceId: x, amount: '1' }] : [{ invoiceId: y, amount: '1' }, { invoiceId: x, amount: '1' }];
+      if (n % 4 === 0) return outcome(applyCredit(pick(notes), items));
+      if (n % 4 === 1) return outcome(allocate(pick(payments), items));
+      if (n % 4 === 2) {
+        const cn = pick(notes);
+        return outcome(as(A, alice, async (db) => {
+          const live = await db.financeCreditApplication.findFirst({ where: { creditNoteId: cn, reversedAt: null } });
+          if (!live) return;
+          await lockDocuments(db, [cn, live.invoiceId].sort());
+          await db.financeCreditApplication.updateMany({ where: { id: live.id, reversedAt: null }, data: { reversedAt: new Date() } });
+        }));
+      }
+      const p = pick(payments);
+      return outcome(as(A, alice, async (db) => {
+        await lockPayments(db, [p]);
+        const live = await db.financePaymentAllocation.findFirst({ where: { paymentId: p, reversedAt: null } });
+        if (!live) return;
+        await lockDocuments(db, [live.invoiceId]);
+        await db.financePaymentAllocation.updateMany({ where: { id: live.id, reversedAt: null }, data: { reversedAt: new Date() } });
+      }));
+    });
+    const results = await Promise.all(ops);
+    const unexpected = results.filter((r) => !['ok', '23505', '23514'].includes(r) && !(r === '40P01' && !strict));
+    expect(unexpected, results.join(',')).toEqual([]);
+    expect(count(results, 'ok')).toBeGreaterThan(40);
+  });
+
+  it('K12: void racing a credit application, per invoice: exactly one wins, and a void invoice never holds credit', { timeout: 120_000 }, async () => {
+    const base = await invoice('1000');
+    const cn = await creditNote(base, '500');
+    const invoices = await Promise.all(Array.from({ length: 20 }, () => invoice('10')));
+    const results = await Promise.all(invoices.map((inv) => Promise.all([
+      outcome(applyCredit(cn, [{ invoiceId: inv, amount: '5' }])),
+      outcome(as(A, alice, async (db) => {
+        await lockDocuments(db, [inv]);
+        const r = await db.financeDocument.updateMany({ where: { id: inv, status: 'ISSUED' }, data: { status: 'VOID', voidReason: 'race' } });
+        if (r.count !== 1) throw Object.assign(new Error('not issued'), { code: 'not_issued' });
+      })),
+    ])));
+    for (const [i, [applied, voided]] of results.entries()) {
+      expect([applied, voided].filter((o) => o === 'ok'), `invoice ${i}: ${applied}/${voided}`).toHaveLength(1);
+      expect(applied === 'ok' ? voided : applied).toBe(applied === 'ok' ? 'FN014' : 'FN015');
+    }
+    const held = await admin.query(`SELECT count(*)::int AS n FROM finance_documents WHERE id = ANY($1::uuid[]) AND status = 'VOID' AND credit_applied_total <> 0`, [invoices]);
+    expect(held.rows[0].n).toBe(0);
+  });
+
+  it('K13: simultaneous reversals of one allocation or one credit application: exactly one takes effect, counters stay exact', { timeout: 120_000 }, async () => {
+    const inv = await invoice('100');
+    const p = await payment('40');
+    await allocate(p, [{ invoiceId: inv, amount: '40' }]);
+    const cn = await creditNote(inv, '30');
+    await applyCredit(cn, [{ invoiceId: inv, amount: '30' }]);
+    const results = await Promise.all([
+      ...Array.from({ length: 10 }, () => outcome(unallocate(p, inv))),
+      ...Array.from({ length: 10 }, () => outcome(unapply(cn, inv))),
+    ]);
+    expect(count(results.slice(0, 10), 'ok')).toBe(1);
+    expect(count(results.slice(10), 'ok')).toBe(1);
+    expect(results.filter((r) => r !== 'ok').every((r) => r === 'not_found')).toBe(true);
+    expect(await settled(inv)).toEqual(['0.0000', '0.0000']);
+    expect([(await pay(p)).allocated_total, (await doc(cn)).credit_applied_total]).toEqual(['0.0000', '0.0000']);
+    // A writer that skips the WHERE reversed_at IS NULL condition is refused by the trigger, never double-counted.
+    expect(await outcome(as(A, alice, (db) => db.financeCreditApplication.updateMany({ where: { creditNoteId: cn }, data: { reversedAt: new Date() } })))).toBe('FN001');
+    expect(await settled(inv)).toEqual(['0.0000', '0.0000']);
   });
 });
 
@@ -1063,6 +1296,10 @@ describe('Z: reconciliation', () => {
       WHERE p.allocated_total <> coalesce((SELECT sum(a.amount) FROM finance_payment_allocations a
         WHERE a.business_id = p.business_id AND a.payment_id = p.id AND a.reversed_at IS NULL), 0)`);
     expect([docs.rows[0].n, pays.rows[0].n]).toEqual([0, 0]);
+    const credits = await admin.query(`SELECT count(*)::int AS n FROM finance_documents d
+      WHERE d.credit_applied_total <> coalesce((SELECT sum(c.amount) FROM finance_credit_applications c
+        WHERE c.business_id = d.business_id AND (c.invoice_id = d.id OR c.credit_note_id = d.id) AND c.reversed_at IS NULL), 0)`);
+    expect(credits.rows[0].n).toBe(0);
     const gaps = await admin.query(`SELECT business_id, kind, count(*)::int AS n, max(number_value)::int AS hi, min(number_value)::int AS lo
       FROM finance_documents WHERE number_value IS NOT NULL GROUP BY 1, 2`);
     for (const g of gaps.rows) expect(g.hi - g.lo + 1, `${g.kind}`).toBe(g.n);

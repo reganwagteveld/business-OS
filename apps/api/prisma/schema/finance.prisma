@@ -162,6 +162,9 @@ model FinanceDocument {
   total               Decimal               @default(0) @db.Decimal(18, 4)
   /// Database-owned: maintained by the allocation triggers only.
   allocatedTotal      Decimal               @default(0) @map("allocated_total") @db.Decimal(18, 4)
+  /// Database-owned (F2): maintained by the credit-application triggers only. On an invoice, the credit
+  /// applied to it; on a credit note, the credit applied from it. Always 0 on quotes.
+  creditAppliedTotal  Decimal               @default(0) @map("credit_applied_total") @db.Decimal(18, 4)
   /// Database-owned: SHA-256 of the canonical content, computed at issue.
   contentSha256       String?               @map("content_sha256")
   notes               String?
@@ -195,6 +198,8 @@ model FinanceDocument {
   creditNotes       FinanceDocument[]          @relation("CreditNotes")
   lines             FinanceDocumentLine[]
   allocations       FinancePaymentAllocation[]
+  creditApplied     FinanceCreditApplication[] @relation("CreditApplicationCreditNote")
+  creditReceived    FinanceCreditApplication[] @relation("CreditApplicationInvoice")
 
   @@unique([businessId, id])
   @@unique([businessId, id, kind], map: "finance_documents_kind_key")
@@ -300,6 +305,35 @@ model FinancePaymentAllocation {
   @@index([businessId, invoiceId])
   @@index([businessId, paymentId])
   @@map("finance_payment_allocations")
+}
+
+/// Application of an issued credit note to an issued invoice (F2, FD-A2): same business, customer and
+/// currency on both sides, through two composite FKs that share those columns; kinds pinned by CHECKs.
+/// Never edited or deleted: a correction is a reversal (reversed_at, one way) plus a new application.
+model FinanceCreditApplication {
+  id             String              @id @db.Uuid
+  businessId     String              @map("business_id") @db.Uuid
+  creditNoteId   String              @map("credit_note_id") @db.Uuid
+  creditNoteKind FinanceDocumentKind @default(CREDIT_NOTE) @map("credit_note_kind")
+  invoiceId      String              @map("invoice_id") @db.Uuid
+  invoiceKind    FinanceDocumentKind @default(INVOICE) @map("invoice_kind")
+  customerId     String              @map("customer_id") @db.Uuid
+  currencyCode   String              @map("currency_code") @db.Char(3)
+  amount         Decimal             @db.Decimal(18, 4)
+  createdById    String?             @map("created_by_id") @db.Uuid
+  reversedById   String?             @map("reversed_by_id") @db.Uuid
+  /// Database-owned: stamped at insert and at reversal.
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  reversedAt     DateTime?           @map("reversed_at") @db.Timestamptz
+
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_credit_applications_business_fkey")
+  creditNote FinanceDocument @relation("CreditApplicationCreditNote", fields: [businessId, creditNoteId, creditNoteKind, currencyCode, customerId], references: [businessId, id, kind, currencyCode, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_credit_applications_credit_note_fkey")
+  invoice    FinanceDocument @relation("CreditApplicationInvoice", fields: [businessId, invoiceId, invoiceKind, currencyCode, customerId], references: [businessId, id, kind, currencyCode, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_credit_applications_invoice_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, invoiceId])
+  @@index([businessId, creditNoteId])
+  @@map("finance_credit_applications")
 }
 
 model FinanceExpenseCategory {

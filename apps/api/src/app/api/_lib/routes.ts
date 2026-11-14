@@ -37,7 +37,22 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   FN005: [409, 'invoice_not_open'], FN006: [409, 'invoice_credited'], FN007: [409, 'invoice_has_payments'], FN008: [409, 'series_in_use'],
   FN009: [409, 'invalid_state'], FN010: [409, 'immutable'], FN011: [400, 'unsupported_tax_mode'], FN012: [409, 'credit_exceeds_invoice'],
   FN013: [409, 'invoice_not_open'],
+  // F2 (migration 20261116000000_finance_payments).
+  FN014: [409, 'has_credit_applications'], FN015: [409, 'invalid_state'],
 };
+
+/**
+ * F2 settlement CHECKs and live-link unique indexes, by name: the database backstops behind the
+ * service checks (a race the service lost). Stable codes, no detail.
+ */
+const FINANCE_CONSTRAINTS: [RegExp, string][] = [
+  [/finance_documents_settled|finance_documents_allocated/, 'over_settlement'],
+  [/finance_payments_allocated/, 'over_allocation'],
+  [/finance_documents_credit_applied/, 'over_application'],
+  [/finance_payment_allocations_active_key/, 'already_allocated'],
+  [/finance_credit_applications_active_key/, 'already_applied'],
+  [/finance_payments_idempotency_key/, 'idempotency_conflict'],
+];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID.test(value);
@@ -59,6 +74,11 @@ function errorResponse(request: Request, error: unknown): Response {
   // retried by the client. The API never retries a mutation itself.
   if (state === '40P01' || state === '40001' || state === '55P03') return fail(request, 503, 'retryable');
   if (isUniqueViolation(error, 'finance_documents_business_id_kind_number')) return fail(request, 409, 'number_conflict');
+  if (state === '23514' || state === '23505') {
+    const text = `${error instanceof Error ? error.message : ''} ${JSON.stringify((error as { meta?: unknown } | null)?.meta ?? {})}`;
+    const hit = FINANCE_CONSTRAINTS.find(([pattern]) => pattern.test(text));
+    if (hit) return fail(request, 409, hit[1]);
+  }
   if (state === '22003') return fail(request, 400, 'invalid_amount');
   const message = error instanceof Error ? error.message : '';
   const code = (error as { code?: string } | null)?.code;

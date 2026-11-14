@@ -9,7 +9,7 @@ One workflow, `.github/workflows/ci.yml`. **The only check to require in branch 
 | Detect changes | always | Self-tests the change classifier and the gate verdict, then decides whether the desktop matrix is needed |
 | Static checks | always | Contract snapshot, typecheck, lint, boundaries (dependency-cruiser + source rules) |
 | Unit, contract and architecture tests | always | `pnpm test` (every package plus `tests/architecture`) |
-| Database tests | always | PostgreSQL roles, `prisma migrate deploy` as the owner role, privileged SQL, integration tests (API, RBAC, tenancy), RLS spike and isolation tests behind PgBouncer, migrations match schema |
+| Database tests | always | PostgreSQL roles, `prisma migrate deploy` as the owner role, privileged SQL, integration tests (API, RBAC, tenancy), RLS spike and isolation tests behind PgBouncer, the finance integrity and payments suites again with `bos_app` behind PgBouncer (F2), migrations match schema |
 | Build verification | always | `pnpm build` (API, web, desktop frontend), API boots without owner credentials, client bundles contain no server configuration |
 | Desktop shell (Linux, macOS, Windows) | see below | Unsigned Tauri build (Linux compile only, macOS `.app`, Windows NSIS) and the Rust unit tests |
 | CI gate | always, even after failures or cancellation | Passes only if every applicable job succeeded |

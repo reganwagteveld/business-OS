@@ -10018,6 +10018,24 @@
                 "allocatedTotal": {
                   "type": "string"
                 },
+                "creditAppliedTotal": {
+                  "type": "string"
+                },
+                "settlementState": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "UNPAID",
+                        "PARTIALLY_PAID",
+                        "PAID"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "notes": {
                   "type": [
                     "string",
@@ -10378,6 +10396,8 @@
                 "taxTotal",
                 "total",
                 "allocatedTotal",
+                "creditAppliedTotal",
+                "settlementState",
                 "notes",
                 "sellerSnapshot",
                 "billToSnapshot",
@@ -10683,6 +10703,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -11114,6 +11152,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -11287,6 +11327,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -11718,6 +11776,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -12017,6 +12077,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -12448,6 +12526,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -12648,6 +12728,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -13079,6 +13177,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -13267,6 +13367,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -13698,6 +13816,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -13886,6 +14006,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -14317,6 +14455,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -14505,6 +14645,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -14936,6 +15094,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -15130,6 +15290,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -15561,6 +15739,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -15760,6 +15940,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -16191,6 +16389,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -16393,6 +16593,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -16824,6 +17042,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -16905,6 +17125,15 @@
             "enum": [
               "true",
               "false"
+            ]
+          },
+          "settlement": {
+            "type": "string",
+            "enum": [
+              "unpaid",
+              "partially_paid",
+              "paid",
+              "open"
             ]
           }
         },
@@ -17054,6 +17283,24 @@
                 },
                 "allocatedTotal": {
                   "type": "string"
+                },
+                "creditAppliedTotal": {
+                  "type": "string"
+                },
+                "settlementState": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "UNPAID",
+                        "PARTIALLY_PAID",
+                        "PAID"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "notes": {
                   "type": [
@@ -17415,6 +17662,8 @@
                 "taxTotal",
                 "total",
                 "allocatedTotal",
+                "creditAppliedTotal",
+                "settlementState",
                 "notes",
                 "sellerSnapshot",
                 "billToSnapshot",
@@ -17720,6 +17969,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -18151,6 +18418,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -18324,6 +18593,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -18755,6 +19042,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -19054,6 +19343,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -19485,6 +19792,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -19685,6 +19994,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -20116,6 +20443,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -20310,6 +20639,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -20741,6 +21088,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -20940,6 +21289,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -21371,6 +21738,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -21609,6 +21978,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -22040,6 +22427,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -22268,6 +22657,24 @@
                 },
                 "allocatedTotal": {
                   "type": "string"
+                },
+                "creditAppliedTotal": {
+                  "type": "string"
+                },
+                "settlementState": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "UNPAID",
+                        "PARTIALLY_PAID",
+                        "PAID"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "notes": {
                   "type": [
@@ -22629,6 +23036,8 @@
                 "taxTotal",
                 "total",
                 "allocatedTotal",
+                "creditAppliedTotal",
+                "settlementState",
                 "notes",
                 "sellerSnapshot",
                 "billToSnapshot",
@@ -22808,6 +23217,24 @@
               },
               "allocatedTotal": {
                 "type": "string"
+              },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "notes": {
                 "type": [
@@ -23240,6 +23667,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -23483,6 +23912,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -23914,6 +24361,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -24114,6 +24563,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -24545,6 +25012,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -24739,6 +25208,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -25170,6 +25657,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -25369,6 +25858,24 @@
               "allocatedTotal": {
                 "type": "string"
               },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "notes": {
                 "type": [
                   "string",
@@ -25800,6 +26307,8 @@
               "taxTotal",
               "total",
               "allocatedTotal",
+              "creditAppliedTotal",
+              "settlementState",
               "notes",
               "sellerSnapshot",
               "billToSnapshot",
@@ -26699,6 +27208,2893 @@
         },
         "required": [
           "taxRate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "listPayments": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/payments",
+      "query": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "default": "all",
+            "type": "string",
+            "enum": [
+              "recorded",
+              "reversed",
+              "all"
+            ]
+          },
+          "customerId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "currencyCode": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "unallocated": {
+            "type": "string",
+            "enum": [
+              "true",
+              "false"
+            ]
+          },
+          "invoiceId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 500,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "limit": {
+            "default": 25,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "payments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "customerId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "currencyCode": {
+                  "type": "string"
+                },
+                "currencyScale": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "allocatedTotal": {
+                  "type": "string"
+                },
+                "unallocatedAmount": {
+                  "type": "string"
+                },
+                "receivedOn": {
+                  "type": "string"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "BANK_TRANSFER",
+                    "CASH",
+                    "CARD",
+                    "CHEQUE",
+                    "OTHER"
+                  ]
+                },
+                "reference": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "RECORDED",
+                    "REVERSED"
+                  ]
+                },
+                "reversedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reversalReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "recordedById": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reversedById": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                }
+              },
+              "required": [
+                "id",
+                "customerId",
+                "currencyCode",
+                "currencyScale",
+                "amount",
+                "allocatedTotal",
+                "unallocatedAmount",
+                "receivedOn",
+                "method",
+                "reference",
+                "status",
+                "reversedAt",
+                "reversalReason",
+                "version",
+                "recordedById",
+                "reversedById",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "payments",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "recordPayment": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/payments",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "currencyCode": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^\\d{1,14}(\\.\\d{1,4})?$"
+          },
+          "receivedOn": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "BANK_TRANSFER",
+              "CASH",
+              "CARD",
+              "CHEQUE",
+              "OTHER"
+            ]
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "allocations": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "invoiceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "amount": {
+                  "type": "string",
+                  "pattern": "^\\d{1,14}(\\.\\d{1,4})?$"
+                }
+              },
+              "required": [
+                "invoiceId",
+                "amount"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "customerId",
+          "amount",
+          "receivedOn",
+          "method"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "currencyScale": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "amount": {
+                "type": "string"
+              },
+              "allocatedTotal": {
+                "type": "string"
+              },
+              "unallocatedAmount": {
+                "type": "string"
+              },
+              "receivedOn": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "BANK_TRANSFER",
+                  "CASH",
+                  "CARD",
+                  "CHEQUE",
+                  "OTHER"
+                ]
+              },
+              "reference": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "RECORDED",
+                  "REVERSED"
+                ]
+              },
+              "reversedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversalReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "recordedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "allocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "paymentId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "paymentId",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "customerId",
+              "currencyCode",
+              "currencyScale",
+              "amount",
+              "allocatedTotal",
+              "unallocatedAmount",
+              "receivedOn",
+              "method",
+              "reference",
+              "status",
+              "reversedAt",
+              "reversalReason",
+              "version",
+              "recordedById",
+              "reversedById",
+              "createdAt",
+              "updatedAt",
+              "allocations"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "payment"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getPayment": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/payments/:paymentId",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "currencyScale": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "amount": {
+                "type": "string"
+              },
+              "allocatedTotal": {
+                "type": "string"
+              },
+              "unallocatedAmount": {
+                "type": "string"
+              },
+              "receivedOn": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "BANK_TRANSFER",
+                  "CASH",
+                  "CARD",
+                  "CHEQUE",
+                  "OTHER"
+                ]
+              },
+              "reference": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "RECORDED",
+                  "REVERSED"
+                ]
+              },
+              "reversedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversalReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "recordedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "allocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "paymentId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "paymentId",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "customerId",
+              "currencyCode",
+              "currencyScale",
+              "amount",
+              "allocatedTotal",
+              "unallocatedAmount",
+              "receivedOn",
+              "method",
+              "reference",
+              "status",
+              "reversedAt",
+              "reversalReason",
+              "version",
+              "recordedById",
+              "reversedById",
+              "createdAt",
+              "updatedAt",
+              "allocations"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "payment"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "updatePayment": {
+      "method": "PATCH",
+      "path": "/api/v1/b/:slug/finance/payments/:paymentId",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "currencyScale": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "amount": {
+                "type": "string"
+              },
+              "allocatedTotal": {
+                "type": "string"
+              },
+              "unallocatedAmount": {
+                "type": "string"
+              },
+              "receivedOn": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "BANK_TRANSFER",
+                  "CASH",
+                  "CARD",
+                  "CHEQUE",
+                  "OTHER"
+                ]
+              },
+              "reference": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "RECORDED",
+                  "REVERSED"
+                ]
+              },
+              "reversedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversalReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "recordedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "allocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "paymentId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "paymentId",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "customerId",
+              "currencyCode",
+              "currencyScale",
+              "amount",
+              "allocatedTotal",
+              "unallocatedAmount",
+              "receivedOn",
+              "method",
+              "reference",
+              "status",
+              "reversedAt",
+              "reversalReason",
+              "version",
+              "recordedById",
+              "reversedById",
+              "createdAt",
+              "updatedAt",
+              "allocations"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "payment"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "allocatePayment": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/payments/:paymentId/allocations",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "allocations": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "invoiceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "amount": {
+                  "type": "string",
+                  "pattern": "^\\d{1,14}(\\.\\d{1,4})?$"
+                }
+              },
+              "required": [
+                "invoiceId",
+                "amount"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "allocations"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "currencyScale": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "amount": {
+                "type": "string"
+              },
+              "allocatedTotal": {
+                "type": "string"
+              },
+              "unallocatedAmount": {
+                "type": "string"
+              },
+              "receivedOn": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "BANK_TRANSFER",
+                  "CASH",
+                  "CARD",
+                  "CHEQUE",
+                  "OTHER"
+                ]
+              },
+              "reference": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "RECORDED",
+                  "REVERSED"
+                ]
+              },
+              "reversedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversalReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "recordedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "allocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "paymentId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "paymentId",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "customerId",
+              "currencyCode",
+              "currencyScale",
+              "amount",
+              "allocatedTotal",
+              "unallocatedAmount",
+              "receivedOn",
+              "method",
+              "reference",
+              "status",
+              "reversedAt",
+              "reversalReason",
+              "version",
+              "recordedById",
+              "reversedById",
+              "createdAt",
+              "updatedAt",
+              "allocations"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "payment"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reverseAllocation": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/payments/:paymentId/allocations/:allocationId/reverse",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "currencyScale": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "amount": {
+                "type": "string"
+              },
+              "allocatedTotal": {
+                "type": "string"
+              },
+              "unallocatedAmount": {
+                "type": "string"
+              },
+              "receivedOn": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "BANK_TRANSFER",
+                  "CASH",
+                  "CARD",
+                  "CHEQUE",
+                  "OTHER"
+                ]
+              },
+              "reference": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "RECORDED",
+                  "REVERSED"
+                ]
+              },
+              "reversedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversalReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "recordedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "allocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "paymentId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "paymentId",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "customerId",
+              "currencyCode",
+              "currencyScale",
+              "amount",
+              "allocatedTotal",
+              "unallocatedAmount",
+              "receivedOn",
+              "method",
+              "reference",
+              "status",
+              "reversedAt",
+              "reversalReason",
+              "version",
+              "recordedById",
+              "reversedById",
+              "createdAt",
+              "updatedAt",
+              "allocations"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "payment"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reversePayment": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/payments/:paymentId/reverse",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "version",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "currencyScale": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "amount": {
+                "type": "string"
+              },
+              "allocatedTotal": {
+                "type": "string"
+              },
+              "unallocatedAmount": {
+                "type": "string"
+              },
+              "receivedOn": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "BANK_TRANSFER",
+                  "CASH",
+                  "CARD",
+                  "CHEQUE",
+                  "OTHER"
+                ]
+              },
+              "reference": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "RECORDED",
+                  "REVERSED"
+                ]
+              },
+              "reversedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversalReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "recordedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reversedById": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "allocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "paymentId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "paymentId",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "customerId",
+              "currencyCode",
+              "currencyScale",
+              "amount",
+              "allocatedTotal",
+              "unallocatedAmount",
+              "receivedOn",
+              "method",
+              "reference",
+              "status",
+              "reversedAt",
+              "reversalReason",
+              "version",
+              "recordedById",
+              "reversedById",
+              "createdAt",
+              "updatedAt",
+              "allocations"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "payment"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getInvoiceSettlement": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/invoices/:documentId/settlement",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "settlement": {
+            "type": "object",
+            "properties": {
+              "invoiceId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "number": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DRAFT",
+                  "ISSUED",
+                  "ACCEPTED",
+                  "DECLINED",
+                  "EXPIRED",
+                  "VOID"
+                ]
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "total": {
+                "type": "string"
+              },
+              "allocatedTotal": {
+                "type": "string"
+              },
+              "creditAppliedTotal": {
+                "type": "string"
+              },
+              "outstanding": {
+                "type": "string"
+              },
+              "settlementState": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "UNPAID",
+                      "PARTIALLY_PAID",
+                      "PAID"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "dueDate": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "overdue": {
+                "type": "boolean"
+              },
+              "asOf": {
+                "type": "string"
+              },
+              "allocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "paymentId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "paymentId",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "creditApplications": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "creditNoteId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "creditNoteNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "creditNoteId",
+                    "creditNoteNumber",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "invoiceId",
+              "number",
+              "status",
+              "customerId",
+              "currencyCode",
+              "total",
+              "allocatedTotal",
+              "creditAppliedTotal",
+              "outstanding",
+              "settlementState",
+              "dueDate",
+              "overdue",
+              "asOf",
+              "allocations",
+              "creditApplications"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "settlement"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getCreditNoteCredit": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/credit-notes/:documentId/applications",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "credit": {
+            "type": "object",
+            "properties": {
+              "creditNoteId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "number": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DRAFT",
+                  "ISSUED",
+                  "ACCEPTED",
+                  "DECLINED",
+                  "EXPIRED",
+                  "VOID"
+                ]
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "total": {
+                "type": "string"
+              },
+              "appliedTotal": {
+                "type": "string"
+              },
+              "available": {
+                "type": "string"
+              },
+              "applications": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "creditNoteId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "creditNoteNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "creditNoteId",
+                    "creditNoteNumber",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "creditNoteId",
+              "number",
+              "status",
+              "customerId",
+              "currencyCode",
+              "total",
+              "appliedTotal",
+              "available",
+              "applications"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "credit"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "applyCreditNote": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/credit-notes/:documentId/applications",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "applications": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "invoiceId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "amount": {
+                  "type": "string",
+                  "pattern": "^\\d{1,14}(\\.\\d{1,4})?$"
+                }
+              },
+              "required": [
+                "invoiceId",
+                "amount"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "applications"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "credit": {
+            "type": "object",
+            "properties": {
+              "creditNoteId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "number": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DRAFT",
+                  "ISSUED",
+                  "ACCEPTED",
+                  "DECLINED",
+                  "EXPIRED",
+                  "VOID"
+                ]
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "total": {
+                "type": "string"
+              },
+              "appliedTotal": {
+                "type": "string"
+              },
+              "available": {
+                "type": "string"
+              },
+              "applications": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "creditNoteId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "creditNoteNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "creditNoteId",
+                    "creditNoteNumber",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "creditNoteId",
+              "number",
+              "status",
+              "customerId",
+              "currencyCode",
+              "total",
+              "appliedTotal",
+              "available",
+              "applications"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "credit"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reverseCreditApplication": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/credit-notes/:documentId/applications/:applicationId/reverse",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "credit": {
+            "type": "object",
+            "properties": {
+              "creditNoteId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "number": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DRAFT",
+                  "ISSUED",
+                  "ACCEPTED",
+                  "DECLINED",
+                  "EXPIRED",
+                  "VOID"
+                ]
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "total": {
+                "type": "string"
+              },
+              "appliedTotal": {
+                "type": "string"
+              },
+              "available": {
+                "type": "string"
+              },
+              "applications": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "creditNoteId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "creditNoteNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "invoiceNumber": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "createdById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reversedById": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "creditNoteId",
+                    "creditNoteNumber",
+                    "invoiceId",
+                    "invoiceNumber",
+                    "currencyCode",
+                    "amount",
+                    "createdAt",
+                    "createdById",
+                    "reversedAt",
+                    "reversedById"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "creditNoteId",
+              "number",
+              "status",
+              "customerId",
+              "currencyCode",
+              "total",
+              "appliedTotal",
+              "available",
+              "applications"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "credit"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "listCustomerBalances": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/customer-balances",
+      "query": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "currencyCode": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 500,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "limit": {
+            "default": 25,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "balances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "customerId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "currencyCode": {
+                  "type": "string"
+                },
+                "currencyScale": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "receivable": {
+                  "type": "string"
+                },
+                "overdue": {
+                  "type": "string"
+                },
+                "unallocatedPayments": {
+                  "type": "string"
+                },
+                "unappliedCredit": {
+                  "type": "string"
+                },
+                "creditAvailable": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "customerId",
+                "currencyCode",
+                "currencyScale",
+                "receivable",
+                "overdue",
+                "unallocatedPayments",
+                "unappliedCredit",
+                "creditAvailable"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "asOf": {
+            "type": "string"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "balances",
+          "asOf",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getReconciliation": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/reconciliation",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "report": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "checkedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "check": {
+                      "type": "string",
+                      "enum": [
+                        "payment_allocated_total",
+                        "invoice_allocated_total",
+                        "credit_applied_total",
+                        "invoice_settlement",
+                        "payment_settlement",
+                        "credit_note_settlement",
+                        "live_link_state",
+                        "duplicate_live_allocation",
+                        "duplicate_live_credit_application",
+                        "credit_note_cap",
+                        "numbering_series",
+                        "content_hash"
+                      ]
+                    },
+                    "checked": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "discrepancies": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "check",
+                    "checked",
+                    "discrepancies"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "discrepancies": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "check": {
+                      "type": "string",
+                      "enum": [
+                        "payment_allocated_total",
+                        "invoice_allocated_total",
+                        "credit_applied_total",
+                        "invoice_settlement",
+                        "payment_settlement",
+                        "credit_note_settlement",
+                        "live_link_state",
+                        "duplicate_live_allocation",
+                        "duplicate_live_credit_application",
+                        "credit_note_cap",
+                        "numbering_series",
+                        "content_hash"
+                      ]
+                    },
+                    "recordType": {
+                      "type": "string",
+                      "enum": [
+                        "payment",
+                        "document",
+                        "allocation",
+                        "credit_application",
+                        "number_series"
+                      ]
+                    },
+                    "recordId": {
+                      "type": "string"
+                    },
+                    "expected": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "actual": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "check",
+                    "recordType",
+                    "recordId",
+                    "expected",
+                    "actual",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok",
+              "checkedAt",
+              "checks",
+              "discrepancies",
+              "truncated"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "report"
         ],
         "additionalProperties": false
       }

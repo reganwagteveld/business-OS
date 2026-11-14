@@ -1,6 +1,6 @@
-# Finance Zone data model (F1, implemented)
+# Finance Zone data model (F1 and F2, implemented)
 
-> Status: **F1 implemented** (Phase 6): migration `20261115000000_finance`, the finance module, and the API for quotes, invoices, credit notes and finance settings. The owner approved FD-L1, FD-L2, FD-L3, FD-T1, FD-T2 and FD-P1 (§14); every other FD-* decision is still open. §17 lists what F1 built and where it differs from the F0 design below. Payments, allocations and expenses have tables and database guards but no services until F2 and F3.
+> Status: **F1 implemented** (Phase 6): migration `20261115000000_finance`, the finance module, and the API for quotes, invoices, credit notes and finance settings. **F2 implemented** (PR #34, awaiting audit): migration `20261116000000_finance_payments`, payments, allocations, reversals, credit applications, settlement projections, customer balances and on-demand **internal integrity** reconciliation (§18; not bank-statement reconciliation). The owner approved FD-L1, FD-L2, FD-L3, FD-T1, FD-T2 and FD-P1 (§14); every other FD-* decision is still open. F2's choices on open decisions (§18.8) are **provisional pending owner approval**, not ratified policy. §17 lists what F1 built and where it differs from the F0 design below. Expenses have tables and database guards but no services until F3.
 > It follows [data-model.md](./data-model.md), [sales-data-model.md](./sales-data-model.md), [projects-data-model.md](./projects-data-model.md) and [scheduling-data-model.md](./scheduling-data-model.md): same tenancy, forced RLS, composite FKs, `<zone>:<action>` permission keys, audit and migration conventions.
 > Evidence: `apps/api/tests/integration/finance-integrity.test.ts` (the F0 spike suite moved onto the migrated tables, plus new tests) and `apps/api/tests/integration/finance.test.ts` (services and API). The F0 spike (`tests/isolation/finance-spike.test.ts` and its fixture) is kept as the design-time evidence.
 >
@@ -220,15 +220,17 @@ allocation: live ──reverse──▶ reversed
 - **Several payments, one invoice:** several allocations to one invoice (P1).
 - **Overpayment:** the unallocated rest stays on the payment as customer credit.
 - **Reversal** (a bounced cheque, a payment recorded in error): reverse its allocations, then the payment, in one unit of work. The database refuses to reverse a payment that is still allocated (P4). Nothing is deleted; reversed rows remain as history.
-- **Refunds** of customer credit, and applying credit notes to invoices, are F2 (FD-A2). The fixture's allocation mechanism is the pattern: a `finance_credit_applications` table with the same counters, CHECKs and lock order.
+- **Credit notes** settle nothing by being issued. Their credit reaches an invoice only through an explicit **credit application** (F2, §18.2), with the same counters, CHECKs and lock order as allocations. **Refunds** of customer credit are not implemented (FD-A2).
 - **Derived invoice state** (computed, never stored):
 
 | Derived | Rule |
 |---|---|
-| Unpaid | `ISSUED` and `allocated_total = 0` |
-| Partly paid | `ISSUED` and `0 < allocated_total < total` |
-| Paid | `ISSUED` and `allocated_total = total` |
+| Unpaid | `ISSUED` and `allocated_total + credit_applied_total = 0` |
+| Partly paid | `ISSUED` and `0 < allocated_total + credit_applied_total < total` |
+| Paid | `ISSUED` and `allocated_total + credit_applied_total = total` |
 | Overdue | `ISSUED`, not paid, `due_date <` today in the business's time zone |
+
+(F2: `credit_applied_total` is the credit applied to the invoice by credit applications, §18.2. Before F2 it did not exist and these rules used `allocated_total` alone.)
 
 ### 4.3 Expenses
 
@@ -315,6 +317,8 @@ Services take the locks explicitly at the start of the unit of work with `SELECT
 | Allocate (one payment, one or more invoices) | payment; invoices by id |
 | Reverse an allocation | payment; invoice |
 | Reverse a payment | payment; its allocated invoices by id |
+| Record payment with allocations (F2) | the new payment; invoices by id |
+| Apply a credit note / reverse an application (F2) | the credit note and the invoices together, by id |
 | Record / void an expense | expense |
 
 **Deadlock analysis.**
@@ -397,7 +401,7 @@ All reports are **per currency** (no conversion), computed from records only (no
 | **Invoiced revenue** (accrual) | Σ `subtotal` of `ISSUED` invoices with `issue_date` in the period, minus Σ `subtotal` of `ISSUED` credit notes with `issue_date` in the period. Excludes tax (tax is not revenue) and void documents. Quotes never count. |
 | **Tax invoiced** (informational) | The same with `tax_total`. Not a tax return. |
 | **Collected cash** | Σ `amount` of `RECORDED` payments with `received_on` in the period. Reversed payments are excluded (an "as known now" view). Whether a reversal should instead appear as a negative in the period it happened is FD-A1. Unallocated amounts count: cash is cash. |
-| **Receivables** at date D | Σ (`total − allocated_total`) of `ISSUED` invoices issued on or before D. F1 computes this from current counters (as of now). An as-of-past-date version sums allocations with `created_at ≤ D` and not reversed by D; F1 decides whether it is needed. Credit notes reduce receivables once credit applications exist (F2); until then a credit note reduces revenue but not the invoice's balance, and the UI shows the credit separately. |
+| **Receivables** at date D | Σ (`total − allocated_total`) of `ISSUED` invoices issued on or before D. F1 computes this from current counters (as of now). An as-of-past-date version sums allocations with `created_at ≤ D` and not reversed by D; F1 decides whether it is needed. F2: receivables are `total − allocated_total − credit_applied_total`, so an **applied** credit note reduces them; an issued but unapplied credit note reduces revenue, not the invoice's balance, and appears as customer credit (§18.4). |
 | **Overdue** at date D | Receivables of invoices with `due_date < D` |
 | **Expenses** | Σ (`amount − tax_amount`) of `RECORDED` expenses with `incurred_on` in the period (net of tax). Whether tax on expenses is recoverable, and therefore whether to report gross instead, depends on registration status (FD-T5). Gross is also available. |
 | **Recorded-cost project margin** | Per project and currency, over all time or a period: invoiced revenue linked to the project (invoices minus credit notes, net of tax) minus recorded expenses linked to the project (net). It is called "recorded-cost margin", never profit: it has no labour cost, overheads or unlinked costs. |
@@ -424,7 +428,7 @@ Additional safeguards for financial records:
 3. **Database-assigned numbers** that clients cannot choose or reset (L1).
 4. **Database-maintained counters** that clients cannot write (P3).
 5. **Content hash** at issue: `sha256` of the canonical document content (header, snapshots, lines; jsonb text form, lines ordered by position). Recomputing it later proves the stored content is what was issued (L1, L3, K7). It detects accidental change by anything that bypasses the guards (a migration, an administrative fix); it is not a signature and does not prove authorship (FD-L5: whether a jurisdiction needs signed or chained hashes).
-6. **Reconciliation check** (Z1 is its prototype): a scheduled read-only job in F2 compares every counter with the sum of its live allocations and every series with its issued numbers, and alerts on any difference.
+6. **Integrity reconciliation check** (Z1 is its prototype): F2 implements it as an on-demand, read-only endpoint (§18.5) over Business OS's own records, not bank statements, that compares every counter with the sum of its live links, every series with its issued numbers and every content hash with the content, and reports any difference. Scheduling it and alerting are not built (no scheduler without approval).
 7. **Database-owned transition metadata** (§4.4): times stamped by the database, reasons fixed after their transition, starting numbers fixed after first use.
 8. **Audit retention** for finance events must be at least the statutory retention of the records themselves (FD-L3), longer than the network-data scrubbing in data-model §7.
 
@@ -585,7 +589,7 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 | PR | Scope |
 |---|---|
 | F1 | Migration (this fixture's shape, with authorship and indexes), permissions, services and API for quotes, invoices, credit notes (drafts, issue, void), settings; the spike moves to the real tables; no UI. Needs ★ decisions. |
-| F2 | Payments, allocations, reversal; credit applications and refunds (FD-A2); reconciliation job |
+| F2 | Payments, allocations, reversal; credit applications (refunds wait for FD-A2); on-demand reconciliation (**implemented**, §18) |
 | F3 | Expenses and categories; receipt references |
 | F4 | Finance UI (web and desktop): documents, payments, expenses |
 | F5 | Reports (§9) and the customer and project finance tabs |
@@ -650,4 +654,193 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 
 ### 17.5 Not in F1
 
-Payments, allocations, reversals and credit applications (F2), expenses (F3), UI (F4), reports (F5), PDF and email, and any jurisdiction's mandatory document fields or tax rules (FD-L6, FD-T3, FD-T4). Where a supported jurisdiction has mandatory invoice content (for example a tax invoice's wording, the buyer's tax id above a threshold, or registration numbers), F1 does not check it: the identifiers are configurable and snapshotted, but their presence is not enforced.
+Payments, allocations, reversals and credit applications (F2, now §18), expenses (F3), UI (F4), reports (F5), PDF and email, and any jurisdiction's mandatory document fields or tax rules (FD-L6, FD-T3, FD-T4). Where a supported jurisdiction has mandatory invoice content (for example a tax invoice's wording, the buyer's tax id above a threshold, or registration numbers), F1 does not check it: the identifiers are configurable and snapshotted, but their presence is not enforced.
+
+## 18. F2 implementation
+
+### 18.1 What F2 built
+
+- **Migration** `20261116000000_finance_payments`. Additive, and like F1 it needs no privileged SQL. It adds:
+  - the `finance_credit_applications` table: forced RLS and the `tenant_isolation` policy, `ON DELETE RESTRICT` to `businesses`, two composite FKs, kind CHECKs, and a partial unique index allowing one live application per pair;
+  - one database-owned counter column, `finance_documents.credit_applied_total` (default 0, so existing rows are valid);
+  - CHECKs: settlement, applied credit, voided documents hold no applied credit, and a payment reversal needs a reason;
+  - a trigger function `finance_apply_credit_application`, three triggers (one reuses `finance_stamp_allocation`) and a partial index for open payments.
+  - It also **replaces** `finance_guard_document` (§18.6). This is the only change to an F1 object.
+- **Services** (`apps/api/src/modules/finance/server/payments.ts`, `settlement.ts`, `reconciliation.ts`) and **API** under `/api/v1/b/:slug/finance`. Contracts are in `packages/contracts/src/finance.ts`; the snapshot is regenerated.
+
+| Endpoint | Permission |
+|---|---|
+| `GET /payments` (filters: status, customer, currency, received-date range, unallocated, invoice; keyset on `(received_on, id)`), `GET /payments/:id` (with every allocation, live or reversed) | `finance:read` |
+| `POST /payments` (**`Idempotency-Key` required**, optional `allocations` in the same unit of work) | `finance:payments` |
+| `PATCH /payments/:id` (`reference` only, with `version`) | `finance:payments` |
+| `POST /payments/:id/allocations` (1–50 invoices, all or nothing) | `finance:payments` |
+| `POST /payments/:id/allocations/:allocationId/reverse` | `finance:payments` |
+| `POST /payments/:id/reverse` (`version`, `reason` 1–500) | `finance:payments` |
+| `GET /invoices/:id/settlement` | `finance:read` |
+| `GET /credit-notes/:id/applications` | `finance:read` |
+| `POST /credit-notes/:id/applications` (1–50 invoices, all or nothing) | `finance:payments` |
+| `POST /credit-notes/:id/applications/:applicationId/reverse` | `finance:payments` |
+| `GET /customer-balances` (per customer and currency; keyset on `(customer_id, currency_code)`) | `finance:read` |
+| `GET /reconciliation` | `finance:read` |
+
+Changes to existing contracts are **additive only**:
+- Documents gain `creditAppliedTotal` and the derived `settlementState`.
+- `GET /invoices` gains a `settlement` filter (`unpaid`, `partially_paid`, `paid`, `open`).
+- `overdue=true` now counts applied credit as well as payments.
+- Voiding an invoice or credit note answers `409 has_credit_applications` while credit is applied.
+
+No permission or role changed: FD-P1 is unchanged. `finance:issue` still issues credit notes; applying their credit is settlement, so it needs `finance:payments`.
+
+> **Provisional rules.** Wherever this section applies FD-A2, FD-A2a, FD-A2b, FD-A6, FD-A7 or FD-O2, the rule is a provisional implementation choice **pending owner approval** (§18.8), not a ratified business policy. Each is isolated in one service function or CHECK so it can be changed by a reviewed follow-up without touching recorded data.
+
+### 18.2 Credit applications (FD-A2, provisional pending owner approval)
+
+- An application links an **issued** credit note to an **issued** invoice. Both must have the same business, customer and currency. Two composite FKs share the customer and currency columns, so neither can be spoofed (test C2). The kinds are pinned by CHECKs.
+- *Provisional (FD-A2a):* a credit note can be applied **to any invoice of its customer and currency**, not only the invoice it credits. Its unapplied remainder is customer credit, like an unallocated payment.
+- Partial and repeated applications are allowed. There can be **one live application per (credit note, invoice)**; a correction is a reversal plus a new application.
+- `credit_applied_total` is maintained only by the application triggers. On an invoice it is the credit received; on a credit note, the credit applied out of it. CHECKs enforce:
+  - on invoices, `allocated_total + credit_applied_total ≤ total`: payments and credit together never over-settle;
+  - on credit notes, `credit_applied_total ≤ total`;
+  - quotes always hold 0;
+  - both values are rounded to the currency's scale.
+  Clients cannot write the counter: the guard refuses it with FN010.
+- **Reversal** is one way (`reversed_at`, stamped by the database), never a delete (column grants: `SELECT`, `INSERT`, `UPDATE (reversed_at, reversed_by_id)`).
+- **Voiding.** An invoice holding applied credit, or a credit note whose credit is applied, cannot be voided (FN014, backed by the CHECK `finance_documents_void_unapplied`); the applications are reversed first. F1's rules are unchanged: an invoice cannot be voided while it has allocations (FN007) or a live credit note (FN006), and a credit note's total never exceeds what its invoice has left (FN012).
+- *Provisional (FD-A2b):* applying and reversing credit needs `finance:payments`.
+- **Refunds** of customer credit (payments or credit notes) are **not implemented** (FD-A2 is not approved). No other irreversible accounting semantics are added.
+
+### 18.3 Payments, allocations and reversals
+
+- **Record.** The request requires `Idempotency-Key` (400 `idempotency_key_required`). The service takes a transaction-scoped advisory lock on the key and then reads it:
+  - a repeat of the same canonical request returns the original payment (200) and re-applies nothing;
+  - the same key with a different request is 409 `idempotency_conflict`;
+  - the partial unique index is the backstop.
+  Keys are per business. The customer must belong to the business and be active (409 `archived_reference`, the F1 rule for new links; *provisional, FD-A6*). The currency defaults to the business's and is validated against ISO 4217; its scale is snapshotted. The amount is exact, greater than zero and at most the currency's scale. `received_on` cannot be in the future in the business's time zone (*provisional, FD-A6*).
+- **Allocate.** Lock order: the payment, then the invoices by id. On the locked rows the service checks, in order:
+  - each target is an issued invoice of this business (otherwise 400 `invalid_invoice`; another business's invoice answers the same as a missing one);
+  - it has the same customer and currency (400 `customer_mismatch` / `currency_mismatch`);
+  - the amount fits the invoice's outstanding, meaning payments plus credit (409 `over_settlement`);
+  - the batch fits the payment's unallocated amount (409 `over_allocation`);
+  - there is no existing live pair (409 `already_allocated`).
+  Inserts run in invoice-id order. A batch is all or nothing. The database CHECKs and the unique index hold the same rules when the service loses a race; the route maps them to the same codes.
+- **Reverse an allocation.** Lock the payment, then the invoice. Set `reversed_at` (the database stamps it). A second attempt is 409 `already_reversed`. No reason is recorded (*provisional, FD-A7*): the actor and time are.
+- **Reverse a payment.** Lock the payment, then its allocated invoices by id. Reverse every live allocation, then the payment (`REVERSED`, reason required by the service and by the CHECK `finance_payments_reversal_reason_required`). All of this, and every audit entry, is one unit of work: if any part fails, nothing changes (test: the audit failure leaves every allocation live). Nothing is deleted. A reversed payment is final; it cannot be allocated or edited.
+- **Edit.** Only `reference` can change, with optimistic `version`, and only while `RECORDED` (the F1 guard's allow-list).
+- **Audit events:** `finance.payment.recorded`, `.updated` (field names only), `.reversed` (amount, method, `reversedAllocations`, `hasReason`); `finance.allocation.created`, `.reversed`; `finance.credit_application.created`, `.reversed`. They hold ids, amounts and currency, never the reference or reason text.
+
+### 18.4 Settlement projections (read-only, derived, never stored)
+
+- `settlementState` on every document: for an `ISSUED` invoice, `UNPAID` / `PARTIALLY_PAID` / `PAID` from `allocated_total + credit_applied_total` against `total`; null otherwise. No paid or overdue column exists (the test checks the schema).
+- `GET /invoices/:id/settlement` returns:
+  - the outstanding amount, `total − allocated_total − credit_applied_total`;
+  - `overdue`: issued, outstanding above 0, and `due_date` before today in the business's time zone (`asOf` says which day);
+  - every allocation and credit application, live or reversed.
+- `GET /customer-balances` reports, per customer and currency, from one statement:
+  - `receivable` and `overdue` from issued invoices;
+  - `unallocatedPayments`, the remainders of recorded payments;
+  - `unappliedCredit`, the remainders of issued credit notes;
+  - `creditAvailable`, the sum of the last two.
+- No currency conversion. All arithmetic is exact `numeric` / `Decimal` and formatted at each currency's scale.
+- **Limitation:** the `settlement` and `overdue` list filters select the matching invoice ids in one SQL predicate and then page. That is fine at the expected volumes, but it is not a keyset scan over a settlement index (F5 can add an expression index if needed).
+
+### 18.5 Integrity reconciliation (on demand, read-only)
+
+**Scope.** This is **internal integrity reconciliation**: it checks Business OS's own finance records against each other. It is **not bank reconciliation**. It reads no bank statement, feed or external balance, does not match recorded payments to bank transactions, and cannot show that recorded payments were actually received. Manual or imported bank-statement reconciliation is not implemented and is out of F2's scope (bank imports need separate approval). Nothing in the API or documentation should be read as bank reconciliation.
+
+`GET /reconciliation` runs **one SELECT statement** for the current business, so every check reads the same snapshot, even under `READ COMMITTED` and concurrent writes. It writes nothing, not even an audit row (the test compares the business's payments, documents and audit count before and after). It checks:
+
+| Check | Rule |
+|---|---|
+| `payment_allocated_total` | each payment's counter = the sum of its live allocations |
+| `invoice_allocated_total` | each document's counter = the sum of its live allocations |
+| `credit_applied_total` | each document's credit counter = the sum of its live credit applications (either side) |
+| `invoice_settlement` | `allocated + credit ≤ total`; a non-issued invoice holds no settlement |
+| `payment_settlement` | `allocated ≤ amount`; a reversed payment holds no allocations |
+| `credit_note_settlement` | applied credit ≤ total; only issued credit notes hold it; quotes never |
+| `live_link_state` | a live allocation links a recorded payment and an issued invoice; a live application links two issued documents |
+| `duplicate_live_allocation`, `duplicate_live_credit_application` | at most one live link per pair |
+| `credit_note_cap` | issued credit notes of an invoice ≤ its total (FN012) |
+| `numbering_series` | per series, the numbered documents are exactly `starting_value … next_value − 1`, each once; no numbered document without a series |
+| `content_hash` | every stored content hash equals `finance_content_hash` of the current content |
+
+Each discrepancy names the check, the record type and id, the expected and stored values, and a fixed description (no personal data). At most 500 are listed (`truncated` says if there were more), and each check reports how many records it covered. A discrepancy means something bypassed the guards and needs a person; **nothing is repaired automatically**.
+
+It is safe for later scheduled execution: it takes no locks beyond MVCC reads, is bounded per business and needs only `SELECT` and `EXECUTE` on `finance_content_hash`. **No scheduler, alerting or bank integration is added**; running it on a schedule (for example as a read-only job role per business) needs approval.
+
+### 18.6 Changes to F1 objects, for the audit
+
+1. `finance_guard_document` is replaced (`CREATE OR REPLACE`). The diff against F1 is exactly:
+   - `credit_applied_total` added to `mutable_after_issue`;
+   - inserts require it to be 0;
+   - direct writes are refused at trigger depth < 2 (FN010), as for `allocated_total`;
+   - a void is refused while it is non-zero (FN014).
+   Nothing else in the function changed. Without the first item, F1's deny-by-default freeze would refuse the new counter on issued documents.
+2. New CHECKs on existing tables: `finance_documents_credit_applied`, `finance_documents_settled`, `finance_documents_void_unapplied`, `finance_payments_reversal_reason_required`. Every existing row satisfies them: the counters default to 0, and no payment has been reversed outside the tests.
+3. New SQLSTATEs: FN014 (document has credit applications, mapped to `409 has_credit_applications`) and FN015 (document not open for credit, `409 invalid_state`). The route also maps the F2 CHECKs and unique indexes by name to `over_settlement`, `over_allocation`, `over_application`, `already_allocated`, `already_applied` and `idempotency_conflict`.
+4. Test fixture changes in `finance-integrity.test.ts`:
+   - the inventories (T1, TR1–TR3) list the new table, triggers and function;
+   - R1's bounced payment now gives a reason (the new CHECK).
+
+### 18.7 Evidence
+
+| Check | Result |
+|---|---|
+| `finance-integrity.test.ts` (database level, `bos_app` under forced RLS): F0/F1 suite plus **C1–C5** (credit applications, counters, voids, reversal reason) and **K9–K13** (K9: 40 concurrent mixed credit and payment settlements of one invoice, exactly 10 commit; K10: one credit note applied concurrently to 20 invoices, exactly 5 commit; K11: 120 crossed applications, allocations and reversals with ordered locks, no deadlock, counters exact; K12: void racing a credit application on 20 invoices, exactly one wins each time and no void invoice holds credit; K13: ten simultaneous reversals of one allocation and of one credit application, exactly one takes effect each), Z1 extended to credit counters | 50/50 locally (PostgreSQL 16.10, docker) |
+| `finance-payments.test.ts` (real route handlers): settlement states, one-to-many and many-to-one, overpayment and unallocated credit, validation and mismatches, allocation and payment reversal (atomicity under a failing audit write), idempotency (15 racing duplicates make one payment), payment-versus-payment race (10 × 30.00 on 100.00: exactly 3), allocation-versus-reversal and reversal-versus-allocation interleavings, credit-application limits and voids, F1 credit-note guard regression, cross-tenant 404s, FD-P1 matrix and no implicit access, five simultaneous reversals of one payment racing two reversals of a credit application on a mixed-settled invoice, reconciliation detecting tampered counters, content and numbering without modifying anything | 15/15 locally |
+| Whole integration suite (fresh database, all Zones) | 241/241 locally |
+| The two finance suites again on the same database (`FINANCE_TEST_IP_BLOCK=82`, as CI's pooler step runs them) | 65/65 locally |
+| Behind PgBouncer (transaction mode) | CI step "Finance integrity and payments suites behind the pooler" runs both suites with `bos_app` through PgBouncer 6433 (`docker/pgbouncer/pgbouncer.ini` gains a `business_os` entry). PgBouncer is not installed on the development Mac, so this runs in CI only: see the PR |
+| Mutation check of the F2 mechanisms (20 mutations, each on a fresh database) | Every mutation fails at least one test, except two layered backstops: `finance_documents_void_unapplied` (behind FN014; removing both fails C4) and the trigger's precision check (behind the scale-rounding term of `finance_documents_credit_applied`). The 20 mutations were: removing the settled, credit-applied and reason CHECKs; removing the live-pair index, the stamp trigger, the column grants, RLS, the customer and currency in either FK, and the kind CHECK; and removing each guard and trigger rule separately |
+| `pnpm contracts:check`, `typecheck`, `lint`, `boundaries`, `test` (unit), `db:check-migrations` | pass |
+
+### 18.8 Open decisions: provisional pending owner approval
+
+None of these is approved. Each row is what F2 implements **until the owner decides**; none is a ratified business policy, and the audit should treat each as open. Changing any of them is a reviewed follow-up that rewrites no recorded data.
+
+| # | Decision (open) | Provisional implementation | Status | Where it lives |
+|---|---|---|---|---|
+| FD-A2 | Credit applications and refunds | Credit applications implemented (reversible); refunds **not** implemented | Provisional, pending owner approval | `settlement.ts`; table `finance_credit_applications` |
+| FD-A2a | May a credit note's credit settle invoices other than the one it credits? | Yes: any issued invoice of the same customer and currency | Provisional, pending owner approval | `applyCreditNote` (a restriction to the credited invoice is one service check plus an optional CHECK) |
+| FD-A2b | Who may apply credit? | `finance:payments`, not `finance:issue` | Provisional, pending owner approval | the two application routes |
+| FD-A6 | Payments from archived customers; future-dated receipts | Both refused (`archived_reference`, `invalid_dates`) | Provisional, pending owner approval | `recordPayment` |
+| FD-A7 | Reasons on allocation and credit-application reversals | Not recorded (actor and time only); payment reversals require a reason (brief D) | Provisional, pending owner approval | reversal services; adding reason columns would be additive |
+| FD-O2 | Scheduled reconciliation and alerting | On demand only; no scheduler, no alerting | Provisional, pending owner approval | `reconciliation.ts` |
+| FD-A1 | Reversed payments in cash reports | Unchanged from F1 (open; reports are F5) | Open | — |
+
+### 18.9 Migration safety
+
+- Additive. The FKs the migration needs already exist (`finance_documents_link_key`). It needs no privileged SQL and changes no existing row.
+- It **must be applied after** `20261115000000_finance`. As of this PR that F1 migration may not be in production yet; production migrations need the owner's explicit approval and a Neon recovery branch, as for every Zone.
+- **Rollback before real use:** drop `finance_credit_applications`, `finance_apply_credit_application`, the new CHECKs and indexes and the column; restore F1's `finance_guard_document`; delete the migration's `_prisma_migrations` row.
+- **Rollback after real use:** do not drop. Hide the routes and fix forward.
+
+### 18.10 Error codes of the F2 endpoints
+
+Declared in `packages/contracts/src/finance.ts` as `FinanceSettlementErrorCode`. Every endpoint can also answer `404 not_found` (including another business's ids in the path), `403 forbidden`, `400 invalid_input` / `invalid_query` (schema), and `503 retryable` (deadlock or lock timeout, rolled back whole). 400 bodies are `{ error, message }`; 409 bodies are `{ error }`. Database backstops (a race the service check lost) answer the same code as the service check.
+
+| Code | Status | Answered by | Meaning |
+|---|---|---|---|
+| `idempotency_key_required` | 400 | `POST /payments` | No `Idempotency-Key` header |
+| `invalid_idempotency_key` | 400 | `POST /payments` | Key is not 1–200 visible ASCII characters |
+| `idempotency_conflict` | 409 | `POST /payments` | Same key, different request (service; unique index backstop) |
+| `invalid_customer` | 400 | `POST /payments` | Customer is not one of this business's |
+| `archived_reference` | 409 | `POST /payments` | Customer is archived (provisional, FD-A6) |
+| `invalid_currency` | 400 | `POST /payments` | Not an ISO 4217 currency, or scale above 4 |
+| `invalid_amount` | 400 | `POST /payments`, allocations, applications | Zero, negative, or more decimals than the currency |
+| `invalid_dates` | 400 | `POST /payments` | `receivedOn` in the future (provisional, FD-A6) |
+| `invalid_invoice` | 400 | `POST /payments` (with allocations), allocations, applications | Target is not an invoice of this business |
+| `customer_mismatch`, `currency_mismatch` | 400 | same | Target invoice has another customer or currency |
+| `invoice_not_open` | 409 | same | Target invoice is not `ISSUED` (backstop FN013) |
+| `payment_not_open` | 409 | allocations, `PATCH /payments/:id` | Payment is reversed |
+| `credit_note_not_open` | 409 | `POST /credit-notes/:id/applications` | Credit note is not `ISSUED` (backstop FN015, answered as `invalid_state`) |
+| `over_settlement` | 409 | allocations, applications | Payments plus credit would exceed the invoice total (backstop CHECK `finance_documents_settled`) |
+| `over_allocation` | 409 | allocations | Batch exceeds the payment's unallocated amount (backstop CHECK `finance_payments_allocated`) |
+| `over_application` | 409 | applications | Batch exceeds the credit note's unapplied credit (backstop CHECK `finance_documents_credit_applied`) |
+| `already_allocated`, `already_applied` | 409 | allocations, applications | A live link for that pair exists (backstop: partial unique indexes) |
+| `already_reversed` | 409 | allocation and application reversal | The link was already reversed |
+| `invalid_state` | 409 | `POST /payments/:id/reverse` | Payment already reversed (transitions answer `invalid_state`, §6.4); also the FN015 backstop |
+| `stale` | 409 | `PATCH /payments/:id`, `POST /payments/:id/reverse` | `version` is not the current one |
+| `has_credit_applications` | 409 | `POST /invoices/:id/void`, `POST /credit-notes/:id/void` | Credit is applied to or from the document (FN014) |
+| `invalid_cursor` | 400 | `GET /payments`, `GET /customer-balances` | Cursor not issued by that list |
+
+Contract responses: `FinancePaymentResponse` (payment with every allocation) for record, get, patch, allocate, reverse-allocation and reverse; `CreditNoteCreditResponse` for the application endpoints; `InvoiceSettlementResponse`, `ListPaymentsResponse`, `ListCustomerBalancesResponse` and `ReconciliationResponse` for the reads. Document responses gain `creditAppliedTotal` and `settlementState`.
