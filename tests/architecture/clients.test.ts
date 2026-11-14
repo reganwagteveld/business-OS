@@ -41,7 +41,7 @@ describe('client package manifests', () => {
 describe('Tauri desktop shell', () => {
   const conf = json<{
     identifier: string;
-    app: { withGlobalTauri: boolean; security: { csp: Record<string, string>; freezePrototype?: boolean } };
+    app: { withGlobalTauri: boolean; windows: { label: string; dragDropEnabled?: boolean }[]; security: { csp: Record<string, string>; freezePrototype?: boolean } };
     plugins?: Record<string, unknown>;
   }>('apps/desktop/src-tauri/tauri.conf.json');
 
@@ -64,6 +64,12 @@ describe('Tauri desktop shell', () => {
     expect(conf.app.withGlobalTauri).toBe(false);
     expect(conf.app.security.freezePrototype).toBe(true);
     expect(conf.plugins ?? {}).toEqual({});
+  });
+
+  it('leaves drag and drop to the page (Projects and Sales boards): the OS file-drop handler is off, as Windows WebView2 needs', () => {
+    // With Tauri's file drop on, WebView2 swallows HTML5 drag events, so boards could not be dragged on Windows.
+    // The app accepts no dropped files, so nothing is lost by turning it off.
+    expect(conf.app.windows.map((w) => [w.label, w.dragDropEnabled])).toEqual([['main', false]]);
   });
 
   it('has a strict Content Security Policy with no wildcards and no database hosts', () => {

@@ -3,4 +3,4 @@ export {
   archiveProject, createProject, getProject, listCustomerProjects, listProjects, projectSummary, restoreProject, updateProject, viewerOf,
 } from './server/projects';
 export type { Viewer } from './server/projects';
-export { archiveTask, createTask, listTasks, restoreTask, updateTask } from './server/tasks';
+export { archiveTask, createTask, listTasks, moveTask, restoreTask, updateTask } from './server/tasks';

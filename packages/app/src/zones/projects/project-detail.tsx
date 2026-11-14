@@ -1,4 +1,4 @@
-import type { Project, ProjectTask, TaskStatus, WorkPriority } from '@business-os/contracts';
+import type { Project, ProjectTask, TaskStatus } from '@business-os/contracts';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { Member } from '../../api/customers';
 import type { ProjectsClient } from '../../api/projects';
@@ -8,8 +8,10 @@ import { useDialog } from '../dialog';
 import { Problem, Skeleton } from '../problem';
 import { useLoad } from '../use-load';
 import { PriorityLabel, Progress, ProjectStatusBadge, TaskStatusBadge } from './badges';
-import { formatDate, formatWhen, isDay, memberName, PRIORITIES, TASK_STATUSES } from './format';
+import { explain, TaskEditor, TaskFields, taskValues, validate, type TaskValues } from './task-form';
+import { formatDate, formatWhen, memberName, TASK_STATUSES } from './format';
 import { customerLabel } from './project-list';
+import { TaskBoard } from './task-board';
 
 function Panel({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -31,27 +33,6 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 const muted = (text: string) => <span className="text-muted-foreground">{text}</span>;
-
-/** Plain words for a refused change. The record is reloaded so the screen shows the truth. */
-function explain(outcome: Exclude<Outcome<unknown>, { kind: 'ok' }>, what: 'project' | 'task'): string {
-  if (outcome.kind === 'conflict') {
-    switch (outcome.code) {
-      case 'stale': return `Someone else changed this ${what} a moment ago. The latest version is shown; check it and try again.`;
-      case 'archived': return what === 'project' ? 'This project is already archived.' : 'This task has been removed. The latest list is shown.';
-      case 'not_archived': return `This ${what} is not archived. The latest version is shown.`;
-      case 'project_archived': return 'This project is archived, so its tasks cannot change. Restore the project first.';
-      default: return 'This change could not be made. The latest version is shown.';
-    }
-  }
-  switch (outcome.kind) {
-    case 'invalid_input': return outcome.message;
-    case 'forbidden': return 'Your role does not allow this.';
-    case 'not_found': return `This ${what} no longer exists in this business.`;
-    case 'unreachable': return "Business OS didn't answer, so this may or may not have happened. The latest version is being loaded; check it before trying again.";
-    case 'rate_limited': return 'Too many requests. Wait a moment and try again.';
-    default: return 'Something went wrong. Nothing was changed.';
-  }
-}
 
 /**
  * One project: its details, linked customer, owner, real task progress and its tasks. Edit, archive
@@ -96,6 +77,8 @@ function Loaded({ project, client, slug, locale, timeZone, members, canUpdate, c
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const inFlight = useRef(false);
+  /** The board is the default way to see tasks; the list stays available. */
+  const [view, setView] = useState<'board' | 'list'>('board');
 
   const change = async (action: 'archive' | 'restore') => {
     if (inFlight.current) return;
@@ -120,6 +103,43 @@ function Loaded({ project, client, slug, locale, timeZone, members, canUpdate, c
   };
 
   const customer = customerLabel(project);
+  const viewSwitch = (
+    <div role="group" aria-label="Task view" className="inline-flex rounded-lg border border-border p-0.5">
+      {(['board', 'list'] as const).map((v) => (
+        <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
+          className={`rounded-md px-3 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring ${view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}>
+          {v === 'board' ? 'Board' : 'List'}
+        </button>
+      ))}
+    </div>
+  );
+  const side = (
+    <>
+      <Panel title="Progress">
+        <Progress counts={project.taskCounts} />
+        {project.taskCounts.total === 0 ? <p className="mt-2 text-xs text-muted-foreground">Progress appears once the project has tasks.</p> : null}
+      </Panel>
+      <Panel title="Details">
+        <dl className="divide-y divide-border">
+          <Row label="Customer">
+            {project.customerId
+              ? project.customer && onOpenCustomer
+                ? <button type="button" onClick={() => confirmLeave(() => onOpenCustomer(project.customerId!))} className="rounded-md text-left font-medium underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">{customer}</button>
+                : customer
+              : muted('None (internal)')}
+          </Row>
+          <Row label="Owner">{memberName(members, project.ownerUserId) ?? muted('No owner')}</Row>
+          <Row label="Start date">{project.startDate ? formatDate(project.startDate, locale) : muted('Not set')}</Row>
+          <Row label="Due date">{project.dueDate ? formatDate(project.dueDate, locale) : muted('Not set')}</Row>
+          {project.completedAt ? <Row label="Completed">{formatWhen(project.completedAt, timeZone, locale)}</Row> : null}
+          <Row label="Created">{formatWhen(project.createdAt, timeZone, locale)}</Row>
+        </dl>
+      </Panel>
+      <Panel title="Description">
+        {project.description ? <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">{project.description}</p> : <p className="text-sm text-muted-foreground">No description.</p>}
+      </Panel>
+    </>
+  );
   return (
     <>
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
@@ -153,39 +173,25 @@ function Loaded({ project, client, slug, locale, timeZone, members, canUpdate, c
         <p role={message.tone === 'error' ? 'alert' : 'status'} className={`mb-6 rounded-xl border px-4 py-3 text-sm ${message.tone === 'error' ? 'border-destructive/40 bg-destructive/5 text-destructive' : 'border-border bg-muted'}`}>{message.text}</p>
       ) : null}
 
-      <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
-          <TasksPanel
-            project={project} client={client} slug={slug} locale={locale} members={members} canManage={canManageTasks && !archived}
-            onTasksChanged={onChanged} onDraftChange={onDraftChange} confirmLeave={confirmLeave} onSessionEnded={onSessionEnded}
-          />
-        </div>
+      {view === 'board' ? (
         <div className="space-y-5">
-          <Panel title="Progress">
-            <Progress counts={project.taskCounts} />
-            {project.taskCounts.total === 0 ? <p className="mt-2 text-xs text-muted-foreground">Progress appears once the project has tasks.</p> : null}
-          </Panel>
-          <Panel title="Details">
-            <dl className="divide-y divide-border">
-              <Row label="Customer">
-                {project.customerId
-                  ? project.customer && onOpenCustomer
-                    ? <button type="button" onClick={() => confirmLeave(() => onOpenCustomer(project.customerId!))} className="rounded-md text-left font-medium underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">{customer}</button>
-                    : customer
-                  : muted('None (internal)')}
-              </Row>
-              <Row label="Owner">{memberName(members, project.ownerUserId) ?? muted('No owner')}</Row>
-              <Row label="Start date">{project.startDate ? formatDate(project.startDate, locale) : muted('Not set')}</Row>
-              <Row label="Due date">{project.dueDate ? formatDate(project.dueDate, locale) : muted('Not set')}</Row>
-              {project.completedAt ? <Row label="Completed">{formatWhen(project.completedAt, timeZone, locale)}</Row> : null}
-              <Row label="Created">{formatWhen(project.createdAt, timeZone, locale)}</Row>
-            </dl>
-          </Panel>
-          <Panel title="Description">
-            {project.description ? <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">{project.description}</p> : <p className="text-sm text-muted-foreground">No description.</p>}
-          </Panel>
+          <TaskBoard
+            project={project} client={client} slug={slug} locale={locale} timeZone={timeZone} members={members} canManage={canManageTasks && !archived}
+            viewSwitch={viewSwitch} onTasksChanged={onChanged} onDraftChange={onDraftChange} confirmLeave={confirmLeave} onSessionEnded={onSessionEnded}
+          />
+          <div className="grid gap-5 lg:grid-cols-3">{side}</div>
         </div>
-      </div>
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-3">
+          <div className="space-y-5 lg:col-span-2">
+            <TasksPanel
+              project={project} client={client} slug={slug} locale={locale} members={members} canManage={canManageTasks && !archived} viewSwitch={viewSwitch}
+              onTasksChanged={onChanged} onDraftChange={onDraftChange} confirmLeave={confirmLeave} onSessionEnded={onSessionEnded}
+            />
+          </div>
+          <div className="space-y-5">{side}</div>
+        </div>
+      )}
     </>
   );
 }
@@ -196,8 +202,8 @@ type Filter = TaskStatus | 'all';
  * The project's tasks in its order, filterable by status. Loaded in full (following the server's
  * cursors) so counts and filters are exact; a project too large to load says so instead of showing part.
  */
-function TasksPanel({ project, client, slug, locale, members, canManage, onTasksChanged, onDraftChange, confirmLeave, onSessionEnded }: {
-  project: Project; client: ProjectsClient; slug: string; locale?: string; members: Member[] | null; canManage: boolean;
+function TasksPanel({ project, client, slug, locale, members, canManage, viewSwitch, onTasksChanged, onDraftChange, confirmLeave, onSessionEnded }: {
+  project: Project; client: ProjectsClient; slug: string; locale?: string; members: Member[] | null; canManage: boolean; viewSwitch: ReactNode;
   onTasksChanged: () => void; onDraftChange: (key: string, dirty: boolean) => void; confirmLeave: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const tasks = useLoad(`tasks|${slug}|${project.id}`, (signal) => client.tasks(slug, project.id, { archived: 'active' }, signal));
@@ -247,7 +253,7 @@ function TasksPanel({ project, client, slug, locale, members, canManage, onTasks
   const filters: { value: Filter; label: string; n: number }[] = [{ value: 'all', label: 'All', n: list?.length ?? 0 }, ...TASK_STATUSES.map((s) => ({ value: s.value, label: s.label, n: counts[s.value] }))];
 
   return (
-    <Panel title="Tasks" aside={list ? <span className="text-xs text-muted-foreground">{project.taskCounts.total === 0 ? 'No tasks' : `${counts.DONE} of ${list.length} done`}</span> : undefined}>
+    <Panel title="Tasks" aside={<div className="flex flex-wrap items-center gap-3">{list ? <span className="text-xs text-muted-foreground">{project.taskCounts.total === 0 ? 'No tasks' : `${counts.DONE} of ${list.length} done`}</span> : null}{viewSwitch}</div>}>
       {canManage ? <NewTask client={client} slug={slug} projectId={project.id} members={members} onAdded={(t) => { setMessage({ tone: 'ok', text: `${t.title} was added.` }); setFilter((f) => (f === 'all' || f === t.status ? f : 'all')); refresh(); }} onDraftChange={onDraftChange} onSessionEnded={onSessionEnded} /> : null}
       {list && list.length > 0 ? (
         <div role="group" aria-label="Show tasks by status" className="mb-4 flex flex-wrap gap-2">
@@ -351,50 +357,6 @@ function TaskRow({ task, locale, members, canManage, busy, onToggleDone, onStatu
   );
 }
 
-interface TaskValues { title: string; description: string; priority: WorkPriority; assigneeUserId: string; dueDate: string }
-const taskValues = (t?: ProjectTask): TaskValues => ({
-  title: t?.title ?? '', description: t?.description ?? '', priority: t?.priority ?? 'MEDIUM', assigneeUserId: t?.assigneeUserId ?? '', dueDate: t?.dueDate ?? '',
-});
-
-function TaskFields({ uid, values, set, members, errors }: {
-  uid: string; values: TaskValues; set: (k: keyof TaskValues, v: string) => void; members: Member[] | null; errors: Partial<Record<keyof TaskValues, string>>;
-}) {
-  const people = (members ?? []).filter((m) => m.status === 'ACTIVE');
-  const missing = values.assigneeUserId && !people.some((m) => m.userId === values.assigneeUserId);
-  const small = 'w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
-  return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      <div>
-        <label htmlFor={`${uid}-priority`} className="mb-1 block text-xs font-medium text-muted-foreground">Priority</label>
-        <select id={`${uid}-priority`} value={values.priority} onChange={(e) => set('priority', e.target.value)} className={small}>
-          {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
-      </div>
-      <div>
-        <label htmlFor={`${uid}-assignee`} className="mb-1 block text-xs font-medium text-muted-foreground">Assignee</label>
-        <select id={`${uid}-assignee`} value={values.assigneeUserId} onChange={(e) => set('assigneeUserId', e.target.value)} className={small}>
-          <option value="">Unassigned</option>
-          {people.map((m) => <option key={m.userId} value={m.userId}>{m.name ?? 'Team member'}</option>)}
-          {missing ? <option value={values.assigneeUserId}>Current assignee</option> : null}
-        </select>
-      </div>
-      <div>
-        <label htmlFor={`${uid}-due`} className="mb-1 block text-xs font-medium text-muted-foreground">Due date</label>
-        <input id={`${uid}-due`} type="date" value={values.dueDate} onChange={(e) => set('dueDate', e.target.value)} className={small}
-          aria-invalid={errors.dueDate ? true : undefined} aria-describedby={errors.dueDate ? `${uid}-due-error` : undefined} />
-        {errors.dueDate ? <p id={`${uid}-due-error`} className="mt-1 text-xs font-medium text-destructive">{errors.dueDate}</p> : null}
-      </div>
-    </div>
-  );
-}
-
-function validate(v: TaskValues) {
-  const errors: Partial<Record<keyof TaskValues, string>> = {};
-  if (!v.title.trim()) errors.title = 'A task title is required';
-  if (v.dueDate && !isDay(v.dueDate)) errors.dueDate = 'Enter a real date';
-  return errors;
-}
-
 function NewTask({ client, slug, projectId, members, onAdded, onDraftChange, onSessionEnded }: {
   client: ProjectsClient; slug: string; projectId: string; members: Member[] | null; onAdded: (t: ProjectTask) => void;
   onDraftChange: (key: string, dirty: boolean) => void; onSessionEnded: () => void;
@@ -467,53 +429,6 @@ function NewTask({ client, slug, projectId, members, onAdded, onDraftChange, onS
       </button>
       {more ? <div className="mt-3"><TaskFields uid={uid} values={values} set={set} members={members} errors={errors} /></div> : null}
       {problem ? <p role="alert" className="mt-3 text-xs font-medium text-destructive">{problem}</p> : null}
-    </form>
-  );
-}
-
-function TaskEditor({ task, members, onSave, onCancel, onDirtyChange }: {
-  task: ProjectTask; members: Member[] | null; onSave: (patch: Record<string, unknown>) => Promise<boolean>; onCancel: () => void; onDirtyChange: (dirty: boolean) => void;
-}) {
-  const uid = useId();
-  const initial = taskValues(task);
-  const [values, setValues] = useState<TaskValues>(initial);
-  const [errors, setErrors] = useState<Partial<Record<keyof TaskValues, string>>>({});
-  const [busy, setBusy] = useState(false);
-  const dirty = JSON.stringify(values) !== JSON.stringify(initial);
-  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
-  const set = (k: keyof TaskValues, v: string) => setValues((x) => ({ ...x, [k]: v }));
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const found = validate(values);
-    setErrors(found);
-    if (Object.keys(found).length || busy) return;
-    const patch: Record<string, unknown> = {};
-    for (const k of Object.keys(values) as (keyof TaskValues)[]) {
-      if (values[k] === initial[k]) continue;
-      patch[k] = k === 'title' || k === 'description' || k === 'priority' ? values[k].trim() : values[k] || null;
-    }
-    if (Object.keys(patch).length === 0) return onCancel();
-    setBusy(true);
-    await onSave(patch);
-    setBusy(false);
-  };
-  return (
-    <form onSubmit={(e) => void submit(e)} noValidate aria-label={`Edit task ${task.title}`} className="space-y-3 rounded-xl border border-border p-4">
-      <div>
-        <label htmlFor={`${uid}-title`} className="mb-1 block text-xs font-medium text-muted-foreground">Title</label>
-        <input id={`${uid}-title`} autoFocus value={values.title} onChange={(e) => set('title', e.target.value)} maxLength={200} className={inputClass}
-          aria-invalid={errors.title ? true : undefined} aria-describedby={errors.title ? `${uid}-title-error` : undefined} />
-        {errors.title ? <p id={`${uid}-title-error`} className="mt-1 text-xs font-medium text-destructive">{errors.title}</p> : null}
-      </div>
-      <div>
-        <label htmlFor={`${uid}-description`} className="mb-1 block text-xs font-medium text-muted-foreground">Description</label>
-        <textarea id={`${uid}-description`} value={values.description} onChange={(e) => set('description', e.target.value)} rows={2} maxLength={5000} className={inputClass} />
-      </div>
-      <TaskFields uid={uid} values={values} set={set} members={members} errors={errors} />
-      <div className="flex gap-2">
-        <button type="submit" className={actionClass} disabled={busy}>{busy ? 'Saving…' : 'Save task'}</button>
-        <button type="button" className={secondaryClass} onClick={onCancel} disabled={busy}>Cancel</button>
-      </div>
     </form>
   );
 }
