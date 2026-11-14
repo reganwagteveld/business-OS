@@ -219,11 +219,11 @@ export function OpportunityForm({ sales, customers, slug, locale, businessCurren
         <fieldset className="grid gap-4 rounded-2xl border border-border p-5 sm:grid-cols-2">
           <legend className="px-2 text-sm font-semibold">Customer</legend>
           <CustomerPicker
-            id={`${uid}-customer`} customers={customers} slug={slug} selectedId={values.customerId} selectedName={customerName} error={errors.customerId}
+            id={`${uid}-customer`} customers={customers} slug={slug} selectedId={values.customerId} selectedName={customerName} error={errors.customerId} onSessionEnded={onSessionEnded}
             onPick={(c) => { set('customerId', c?.id ?? ''); set('contactId', ''); setCustomerName(c?.displayName ?? null); setContactName(null); }}
           />
           <ContactPicker
-            id={`${uid}-contactId`} customers={customers} slug={slug} customerId={values.customerId} value={values.contactId} error={errors.contactId}
+            id={`${uid}-contactId`} customers={customers} slug={slug} customerId={values.customerId} value={values.contactId} error={errors.contactId} onSessionEnded={onSessionEnded}
             onChange={(c) => { set('contactId', c?.id ?? ''); setContactName(c?.displayName ?? null); }}
           />
         </fieldset>
@@ -260,8 +260,9 @@ export function OpportunityForm({ sales, customers, slug, locale, businessCurren
 }
 
 /** Search the Customer Zone's active customers and pick one; no customers are created here. */
-function CustomerPicker({ id, customers, slug, selectedId, selectedName, error, onPick }: {
+function CustomerPicker({ id, customers, slug, selectedId, selectedName, error, onPick, onSessionEnded }: {
   id: string; customers: CustomersClient; slug: string; selectedId: string; selectedName: string | null; error?: string; onPick: (c: Customer | null) => void;
+  onSessionEnded: () => void;
 }) {
   const [text, setText] = useState('');
   const [q, setQ] = useState('');
@@ -295,7 +296,7 @@ function CustomerPicker({ id, customers, slug, selectedId, selectedName, error, 
       {q ? (
         <div aria-live="polite">
           {results.state.status === 'loading' ? <p className="mt-2 text-xs text-muted-foreground">Searching…</p> : failure ? (
-            <SearchError outcome={failure} what="search customers" onRetry={results.reload} />
+            <SearchError outcome={failure} what="search customers" onRetry={results.reload} onSessionEnded={onSessionEnded} />
           ) : list.length === 0 ? (
             <p className="mt-2 text-xs text-muted-foreground">No active customers match “{q}”.</p>
           ) : (
@@ -316,8 +317,9 @@ function CustomerPicker({ id, customers, slug, selectedId, selectedName, error, 
 }
 
 /** The chosen customer's active contacts only, so a contact always matches its customer. */
-function ContactPicker({ id, customers, slug, customerId, value, error, onChange }: {
+function ContactPicker({ id, customers, slug, customerId, value, error, onChange, onSessionEnded }: {
   id: string; customers: CustomersClient; slug: string; customerId: string; value: string; error?: string; onChange: (c: Contact | null) => void;
+  onSessionEnded: () => void;
 }) {
   const contacts = useLoad(`pick-contacts|${slug}|${customerId}`, (signal) => (customerId ? customers.contacts(slug, customerId, 'active', signal) : Promise.resolve({ kind: 'ok' as const, data: [] as Contact[] })));
   const list = contacts.state.status === 'done' && contacts.state.outcome.kind === 'ok' ? contacts.state.outcome.data : [];
@@ -333,14 +335,22 @@ function ContactPicker({ id, customers, slug, customerId, value, error, onChange
           {value && !list.some((c) => c.id === value) ? <option value={value}>Current contact</option> : null}
         </select>
       </Labelled>
-      {failure ? <SearchError outcome={failure} what="load this customer's contacts" onRetry={contacts.reload} /> : null}
+      {failure ? <SearchError outcome={failure} what="load this customer's contacts" onRetry={contacts.reload} onSessionEnded={onSessionEnded} /> : null}
     </div>
   );
 }
 
-/** A search or lookup that failed is never shown as "no results": say what went wrong and offer a retry. */
-function SearchError({ outcome, what, onRetry }: { outcome: Outcome<unknown>; what: string; onRetry: () => void }) {
-  const text = outcome.kind === 'unreachable'
+/**
+ * A search or lookup that failed is never shown as "no results": say what went wrong and offer a retry.
+ * An ended session is handed back to the app (as on every other Sales screen), never retried.
+ */
+function SearchError({ outcome, what, onRetry, onSessionEnded }: { outcome: Outcome<unknown>; what: string; onRetry: () => void; onSessionEnded: () => void }) {
+  const ended = outcome.kind === 'unauthenticated';
+  useEffect(() => {
+    if (ended) onSessionEnded();
+  }, [ended, onSessionEnded]);
+  const text = ended ? 'Your session has ended. Please sign in again.'
+    : outcome.kind === 'unreachable'
     ? (typeof navigator !== 'undefined' && navigator.onLine === false ? `You're offline, so we couldn't ${what}.` : `Can't reach Business OS, so we couldn't ${what}.`)
     : outcome.kind === 'forbidden' ? `Your role does not allow you to ${what}.`
     : outcome.kind === 'rate_limited' ? `Too many requests; we couldn't ${what} just now.`
@@ -348,7 +358,7 @@ function SearchError({ outcome, what, onRetry }: { outcome: Outcome<unknown>; wh
   return (
     <div role="alert" className="mt-2 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
       <span>{text}</span>
-      {outcome.kind !== 'forbidden' ? (
+      {outcome.kind !== 'forbidden' && !ended ? (
         <button type="button" onClick={onRetry} className="rounded-md font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">Try again</button>
       ) : null}
     </div>

@@ -519,3 +519,29 @@ describe('PR 16 review: failures never lose work or mislead', () => {
     await waitFor(() => expect([...(screen.getByLabelText('Contact') as HTMLSelectElement).options].map((o) => o.textContent)).toContain('Ana Ruiz'));
   });
 });
+
+describe('PR 16 re-audit: an ended session during a lookup', () => {
+  it('customer search: a 401 hands back to the app and offers no retry', async () => {
+    const p = pipelineWithStages();
+    const { api, user, handlers } = setup({ business: { customers: [customer({ displayName: 'Acme Pty Ltd' })] }, sales: { pipelines: [p] } });
+    await user.click(await screen.findByRole('button', { name: 'Add opportunity' }));
+    api.failNext(/^GET .*\/customers$/, () => new Response('{"error":"unauthenticated"}', { status: 401 }));
+    await user.type(await screen.findByLabelText('Customer'), 'acme');
+    expect(await screen.findByText('Your session has ended. Please sign in again.')).toBeTruthy();
+    await waitFor(() => expect(handlers.onSessionEnded).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+
+  it('contact list: a 401 hands back to the app and offers no retry', async () => {
+    const p = pipelineWithStages();
+    const acme = customer({ displayName: 'Acme Pty Ltd' });
+    const { api, user, handlers } = setup({ business: { customers: [acme], contacts: [contact(acme.id, { displayName: 'Ana Ruiz' })] }, sales: { pipelines: [p] } });
+    await user.click(await screen.findByRole('button', { name: 'Add opportunity' }));
+    await user.type(await screen.findByLabelText('Customer'), 'acme');
+    api.failNext(/^GET .*\/contacts$/, () => new Response('{"error":"unauthenticated"}', { status: 401 }));
+    await user.click(await screen.findByRole('button', { name: /Acme Pty Ltd/ }));
+    expect(await screen.findByText('Your session has ended. Please sign in again.')).toBeTruthy();
+    await waitFor(() => expect(handlers.onSessionEnded).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+});
