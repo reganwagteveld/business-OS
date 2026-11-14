@@ -20,6 +20,7 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
 }) {
   const { slug, name, timeZone, locale } = context.business;
   const canWrite = context.membership.permissions.includes('customers:write');
+  const canLogActivity = context.membership.permissions.includes('activity:write');
   const [view, setView] = useState<View>({ name: 'list' });
   const [query, setQuery] = useState<DirectoryQuery>({ q: '', status: 'active' });
   const [notice, setNotice] = useState<string | null>(null);
@@ -64,7 +65,7 @@ export function CustomerZone({ client, context, userLabel, onHome, onSwitch, onS
         ) : null}
         {view.name === 'detail' ? (
           <CustomerDetail
-            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite}
+            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity}
             onBack={() => go({ name: 'list' })} onEdit={(customer) => go({ name: 'edit', customer })} onSessionEnded={onSessionEnded}
           />
         ) : null}
