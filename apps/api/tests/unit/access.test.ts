@@ -66,3 +66,16 @@ describe('no privilege escalation', () => {
     for (const [actor, next, via, expected] of table) expect(canAssignRole(as(actor), next, via), `${actor} → ${next} (${via})`).toBe(expected);
   });
 });
+
+describe('Sales Zone permissions (docs/sales-data-model.md §5)', () => {
+  it('every role reads and writes opportunities; only OWNER and ADMIN configure pipelines', () => {
+    const matrix = Object.fromEntries(ROLES.map((role) => [role, ['sales:read', 'sales:write', 'sales:manage'].filter((p) => ROLE_PERMISSIONS[role].has(p as never))]));
+    expect(matrix).toEqual({
+      OWNER: ['sales:read', 'sales:write', 'sales:manage'],
+      ADMIN: ['sales:read', 'sales:write', 'sales:manage'],
+      MANAGER: ['sales:read', 'sales:write'],
+      MEMBER: ['sales:read', 'sales:write'],
+    });
+    expect(ZONE_PERMISSIONS.sales).toEqual(['sales:read', 'sales:write', 'sales:manage']);
+  });
+});

@@ -39,13 +39,14 @@ model Customer {
   updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt       DateTime?    @map("archived_at") @db.Timestamptz
 
-  business       Business    @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "customers_business_fkey")
+  business       Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "customers_business_fkey")
   /// The account owner must be a member of the same business (composite FK to memberships).
-  owner          Membership? @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "customers_owner_fkey")
+  owner          Membership?   @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "customers_owner_fkey")
   /// The primary contact must be one of THIS customer's contacts (three-column FK, deferred).
-  primaryContact Contact?    @relation("PrimaryContact", fields: [businessId, id, primaryContactId], references: [businessId, customerId, id], onDelete: NoAction, onUpdate: NoAction, map: "customers_primary_contact_fkey")
+  primaryContact Contact?      @relation("PrimaryContact", fields: [businessId, id, primaryContactId], references: [businessId, customerId, id], onDelete: NoAction, onUpdate: NoAction, map: "customers_primary_contact_fkey")
   contacts       Contact[]
   activities     Activity[]
+  opportunities  Opportunity[]
 
   @@unique([businessId, id])
   @@index([businessId, ownerUserId])
@@ -72,10 +73,11 @@ model Contact {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz
 
-  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "contacts_business_fkey")
-  customer   Customer?  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "contacts_customer_fkey")
-  primaryOf  Customer[] @relation("PrimaryContact")
-  activities Activity[]
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "contacts_business_fkey")
+  customer      Customer?     @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "contacts_customer_fkey")
+  primaryOf     Customer[]    @relation("PrimaryContact")
+  activities    Activity[]
+  opportunities Opportunity[]
 
   @@unique([businessId, id])
   @@unique([businessId, customerId, id])

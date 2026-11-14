@@ -11,6 +11,9 @@ export const ZONE_PERMISSIONS = {
   audit: ['audit:read'],
   customers: ['customers:read', 'customers:write', 'customers:delete'],
   activity: ['activity:read', 'activity:write'],
+  // sales:write covers opportunities (create, edit, move stage, win/lose/reopen, archive/restore);
+  // sales:manage covers pipeline configuration, a business setting (docs/sales-data-model.md §5).
+  sales: ['sales:read', 'sales:write', 'sales:manage'],
 } as const;
 
 export type Zone = keyof typeof ZONE_PERMISSIONS;
@@ -23,18 +26,18 @@ export type Role = (typeof ROLES)[number];
 /** Higher rank = more authority. Used only by the role-assignment rules below, never for access. */
 const RANK: Record<Role, number> = { OWNER: 4, ADMIN: 3, MANAGER: 2, MEMBER: 1 };
 
-const DATA: Permission[] = ['customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write'];
+const DATA: Permission[] = ['customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write', 'sales:read', 'sales:write'];
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   // Created the business; manages everything, including other owners; only owners may delete
   // (archive) the business or, later, manage billing.
   OWNER: new Set(ALL_PERMISSIONS),
   // Manages members below owner and the business settings; full data access.
-  ADMIN: new Set<Permission>(['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read', ...DATA]),
+  ADMIN: new Set<Permission>(['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read', 'sales:manage', ...DATA]),
   // Runs day-to-day work; can invite and manage MEMBERs only; no settings or audit log.
   MANAGER: new Set<Permission>(['business:read', 'members:read', 'members:invite', 'members:manage', ...DATA]),
   // Reads and writes business data; no member or settings management.
-  MEMBER: new Set<Permission>(['business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write']),
+  MEMBER: new Set<Permission>(['business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write', 'sales:read', 'sales:write']),
 };
 
 export function permissionsFor(role: Role): Permission[] {
