@@ -12,7 +12,7 @@ desktop=false
 reason=""
 
 # Paths whose change can affect the native desktop build. Anything matching runs the full
-# cross-platform matrix. Keep in sync with the table in the CI section of docs/architecture.md.
+# cross-platform matrix. Keep in sync with docs/ci.md and the self-test.
 desktop_paths() {
   case "$1" in
     apps/desktop/src-tauri/*) return 0 ;;          # Rust, Cargo.toml/lock, build.rs, tauri.conf*.json, capabilities, icons
