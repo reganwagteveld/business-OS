@@ -79,8 +79,10 @@ export async function updateSettings(db: AppTenantDb, actorUserId: string, input
   const changed = changedFields(before as unknown as Record<string, unknown>, data);
   if (changed.length === 0) return settingsDto(db);
   if (version === 0) {
-    // First save. A concurrent first save loses on the primary key (409 stale).
-    await db.financeSettings.create({ data: { ...data, createdById: actorUserId, updatedById: actorUserId } as never });
+    // First save. INSERT … ON CONFLICT DO NOTHING: a concurrent first save waits for the winner's commit,
+    // inserts nothing and answers 409 stale, without a unique violation aborting the unit of work.
+    const created = await db.financeSettings.createMany({ data: [{ ...data, createdById: actorUserId, updatedById: actorUserId } as never], skipDuplicates: true });
+    if (created.count === 0) throw new StateConflictError('stale');
   } else {
     const result = await db.financeSettings.updateMany({ where: { version }, data: { ...data, version: { increment: 1 }, updatedById: actorUserId } as never });
     if (result.count === 0) throw new StateConflictError('stale');
@@ -156,13 +158,17 @@ export async function updateSeries(db: AppTenantDb, actorUserId: string, kind: K
   // that it is fixed and the counter can never be reset or moved back (the database refuses it too).
   if (changed.includes('startingValue') && before.nextValue !== before.startingValue) throw new StateConflictError('series_in_use');
   if (!existing) {
+    // First save, as for the settings: a concurrent first save (or the first issue creating the series
+    // with its defaults) wins on (business_id, kind); this one inserts nothing and answers 409 stale.
     const start = (data.startingValue as bigint | undefined) ?? ONE;
-    await db.financeNumberSeries.create({
-      data: {
+    const created = await db.financeNumberSeries.createMany({
+      data: [{
         id: randomUUID(), kind, prefix: (data.prefix as string | undefined) ?? before.prefix, minDigits: (data.minDigits as number | undefined) ?? before.minDigits,
         startingValue: start, nextValue: start, createdById: actorUserId, updatedById: actorUserId,
-      } as never,
+      } as never],
+      skipDuplicates: true,
     });
+    if (created.count === 0) throw new StateConflictError('stale');
   } else {
     // Conditional on the version read above. An issue that commits a first number in between does not
     // change the version, but the database then refuses the starting-value change (FN008, 409 series_in_use).

@@ -432,6 +432,41 @@ describe('settings, numbering and tax rates', () => {
   });
 });
 
+describe('concurrent first saves (re-audit)', () => {
+  it('racing first saves of the settings and of a number series: exactly one wins, the others get 409 stale, one audit entry each', async () => {
+    const C = await team('fs');
+    const own = api(C.people.OWNER!, C.slug);
+    const adm = api(C.people.ADMIN!, C.slug);
+    const settings = await Promise.all(Array.from({ length: 8 }, (_, i) => (i % 2 ? own : adm).patchSettings({ version: 0, retentionYears: 8 + i })));
+    expect(settings.filter((r) => r.status === 200), JSON.stringify(settings.map((r) => r.status))).toHaveLength(1);
+    expect(settings.filter((r) => r.status === 409 && r.body.error === 'stale')).toHaveLength(7);
+    const winner = settings.find((r) => r.status === 200)!.body.settings;
+    expect((await own.settings()).body.settings).toMatchObject({ version: 1, retentionYears: winner.retentionYears });
+    const settingsAudits = await admin.query(`SELECT count(*)::int AS n FROM audit_events WHERE business_id = $1 AND action = 'finance.settings.changed' AND metadata->>'setting' = 'settings'`, [C.businessId]);
+    expect(settingsAudits.rows[0].n).toBe(1); // the losers' audit entries rolled back with them
+
+    const series = await Promise.all(Array.from({ length: 8 }, (_, i) => (i % 2 ? own : adm).patchSeries('invoice', { version: 0, startingValue: 100 + i })));
+    expect(series.filter((r) => r.status === 200), JSON.stringify(series.map((r) => r.status))).toHaveLength(1);
+    expect(series.filter((r) => r.status === 409 && r.body.error === 'stale')).toHaveLength(7);
+    const won = series.find((r) => r.status === 200)!.body.series;
+    const rows = await admin.query(`SELECT starting_value::int AS s, next_value::int AS n, version FROM finance_number_series WHERE business_id = $1 AND kind = 'INVOICE'`, [C.businessId]);
+    expect(rows.rows).toEqual([{ s: won.startingValue, n: won.startingValue, version: 1 }]);
+    const seriesAudits = await admin.query(`SELECT count(*)::int AS n FROM audit_events WHERE business_id = $1 AND action = 'finance.settings.changed' AND metadata->>'setting' = 'number_series'`, [C.businessId]);
+    expect(seriesAudits.rows[0].n).toBe(1);
+
+    // A first save racing the first issue (which creates the series with its defaults): the save either
+    // creates the series first or answers 409 stale; it never fails with 500.
+    const cust = (await own.createCustomer({ displayName: 'Race Co' })).body.customer.id;
+    const quote = (await own.createQuote({ customerId: cust, lines: [line()] })).body.document;
+    const [issued, saved] = await Promise.all([own.issue('quotes', quote.id, { version: 1 }), adm.patchSeries('quote', { version: 0, prefix: 'QT-' })]);
+    expect(issued.status).toBe(200);
+    expect([200, 409]).toContain(saved.status);
+    if (saved.status === 409) expect(saved.body.error).toBe('stale');
+    // Tenant isolation is unchanged: another business's first save is independent.
+    expect((await api(B.people.OWNER!, B.slug).patchSeries('invoice', { version: 0, prefix: 'B-' })).status).toBe(200);
+  }, 60_000);
+});
+
 describe('money: exact amounts across currencies and precision scales (FD-T2)', () => {
   it('rounds line by line, half away from zero, at each currency\'s precision, and refuses excess precision', async () => {
     const own = api(A.people.OWNER!, A.slug);
