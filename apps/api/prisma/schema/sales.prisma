@@ -83,13 +83,14 @@ model Opportunity {
   updatedAt         DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt        DateTime?         @map("archived_at") @db.Timestamptz
 
-  business Business             @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "opportunities_business_fkey")
-  customer Customer?            @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_customer_fkey")
-  contact  Contact?             @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_contact_fkey")
-  pipeline SalesPipeline        @relation(fields: [businessId, pipelineId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_pipeline_fkey")
-  stage    SalesStage           @relation(fields: [businessId, pipelineId, stageId], references: [businessId, pipelineId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_stage_fkey")
-  owner    Membership?          @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_owner_fkey")
-  outcomes OpportunityOutcome[]
+  business         Business             @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "opportunities_business_fkey")
+  customer         Customer?            @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_customer_fkey")
+  contact          Contact?             @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_contact_fkey")
+  pipeline         SalesPipeline        @relation(fields: [businessId, pipelineId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_pipeline_fkey")
+  stage            SalesStage           @relation(fields: [businessId, pipelineId, stageId], references: [businessId, pipelineId, id], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_stage_fkey")
+  owner            Membership?          @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_owner_fkey")
+  outcomes         OpportunityOutcome[]
+  financeDocuments FinanceDocument[]
 
   @@unique([businessId, id])
   @@index([businessId, status, createdAt(sort: Desc), id])

@@ -11,10 +11,16 @@ export class RecordNotFoundError extends Error {
   }
 }
 
+export type StateConflictCode =
+  | 'archived' | 'not_archived' | 'archived_reference' | 'not_open' | 'not_closed' | 'stale' | 'project_archived' | 'order_changed'
+  // Finance (docs/finance-data-model.md §5): a document or setting is not in a state that allows the change.
+  | 'invalid_state' | 'immutable' | 'invoice_not_open' | 'invoice_credited' | 'invoice_has_payments' | 'credit_exceeds_invoice'
+  | 'series_in_use' | 'number_conflict' | 'idempotency_conflict' | 'quote_not_convertible' | 'totals_mismatch';
+
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {
   readonly status = 409;
-  constructor(readonly code: 'archived' | 'not_archived' | 'archived_reference' | 'not_open' | 'not_closed' | 'stale' | 'project_archived' | 'order_changed') {
+  constructor(readonly code: StateConflictCode) {
     super(code);
     this.name = 'StateConflictError';
   }
@@ -27,4 +33,24 @@ export class RuleViolationError extends Error {
     super(code);
     this.name = 'RuleViolationError';
   }
+}
+
+/**
+ * The SQLSTATE of a database error, unwrapped from Prisma's driver-adapter error shapes (model
+ * operations and raw queries report it in different places). Undefined for anything else.
+ */
+export function sqlState(error: unknown): string | undefined {
+  const e = error as {
+    code?: unknown; cause?: { originalCode?: unknown; code?: unknown };
+    meta?: { code?: unknown; driverAdapterError?: { cause?: { originalCode?: unknown; code?: unknown } } };
+  } | null;
+  const candidates = [e?.meta?.driverAdapterError?.cause?.originalCode, e?.cause?.originalCode, e?.meta?.code, e?.cause?.code, e?.code];
+  return candidates.find((c): c is string => typeof c === 'string' && /^[0-9A-Z]{5}$/.test(c));
+}
+
+/** True for a unique violation on the named index or constraint (from Prisma's error metadata or message). */
+export function isUniqueViolation(error: unknown, name: string): boolean {
+  if (sqlState(error) !== '23505' && (error as { code?: string } | null)?.code !== 'P2002') return false;
+  const text = `${error instanceof Error ? error.message : ''} ${JSON.stringify((error as { meta?: unknown } | null)?.meta ?? {})}`;
+  return text.includes(name);
 }

@@ -48,10 +48,12 @@ model Project {
   updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime?     @map("archived_at") @db.Timestamptz
 
-  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "projects_business_fkey")
-  customer Customer?     @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "projects_customer_fkey")
-  owner    Membership?   @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "projects_owner_fkey")
-  tasks    ProjectTask[]
+  business         Business          @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "projects_business_fkey")
+  customer         Customer?         @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "projects_customer_fkey")
+  owner            Membership?       @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "projects_owner_fkey")
+  tasks            ProjectTask[]
+  financeDocuments FinanceDocument[]
+  financeExpenses  FinanceExpense[]
 
   @@unique([businessId, id])
   @@index([businessId, createdAt(sort: Desc), id])

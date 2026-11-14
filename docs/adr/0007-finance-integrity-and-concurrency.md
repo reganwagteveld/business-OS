@@ -4,6 +4,8 @@
 - Date: 2026-11-14
 - Related: [finance-data-model.md](../finance-data-model.md), ADR 0004 (database isolation design), ADR 0006 (scheduling: the same "database holds the invariant, locks are for liveness" approach)
 
+> **F1 note (2026-11-15).** Implemented by migration `20261115000000_finance` and the finance module, with the owner decisions FD-L1, FD-L2, FD-L3, FD-T1, FD-T2 and FD-P1. Two refinements for the audit, both in [finance-data-model.md §17.3](../finance-data-model.md#173-differences-from-the-f0-design-for-the-audit): guards raise their own SQLSTATEs in class `FN` (consequence 6), and a credit note's issue locks its invoice `FOR NO KEY UPDATE` (decision 4 said `FOR SHARE`) so that issued credit notes can never exceed the invoice total. The lock order is unchanged. After the audit (F1-01, F1-02) the content hash covers every material field, and a converted invoice is bound to its quote's customer and currency by the source-quote FK.
+
 ## Context
 
 The Finance Zone records quotes, invoices, credit notes, manual payments, allocations of payments to invoices, and expenses. Some properties must hold even when service code is wrong or requests race:

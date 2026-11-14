@@ -12,10 +12,17 @@ export * from './tenancy.ts';
 export * from './customers.ts';
 export * from './sales.ts';
 export * from './projects.ts';
+export * from './finance.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
 } from './projects.ts';
+import {
+  ConvertQuoteRequest, CreateCreditNoteRequest, CreateInvoiceRequest, CreateQuoteRequest, CreateTaxRateRequest, DiscardDraftRequest, FinanceDocumentResponse,
+  FinanceSettingsResponse, IssueDocumentRequest, ListCreditNotesQuery, ListFinanceDocumentsResponse, ListInvoicesQuery, ListNumberSeriesResponse,
+  ListQuotesQuery, ListTaxRatesQuery, ListTaxRatesResponse, NumberSeriesResponse, QuoteTransitionRequest, TaxRateResponse, UpdateCreditNoteRequest,
+  UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
+} from './finance.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
   ListOutcomesResponse, ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, UpdateOpportunityRequest,
@@ -94,6 +101,43 @@ export const endpoints = {
   restoreTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/restore', response: TaskResponse },
   /** Board move: status and order in one server-authoritative change (docs/projects-data-model.md §4). */
   moveTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/move', request: MoveTaskRequest, response: TaskResponse },
+  // Finance Zone F1 (docs/finance-data-model.md). No DELETE endpoints: drafts are discarded, issued documents voided.
+  listQuotes: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes', query: ListQuotesQuery, response: ListFinanceDocumentsResponse },
+  /** Optional Idempotency-Key header: a retried create returns the first draft. */
+  createQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes', request: CreateQuoteRequest, response: FinanceDocumentResponse },
+  getQuote: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes/:documentId', response: FinanceDocumentResponse },
+  updateQuote: { method: 'PATCH', path: '/api/v1/b/:slug/finance/quotes/:documentId', request: UpdateQuoteRequest, response: FinanceDocumentResponse },
+  issueQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes/:documentId/issue', request: IssueDocumentRequest, response: FinanceDocumentResponse },
+  acceptQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes/:documentId/accept', request: QuoteTransitionRequest, response: FinanceDocumentResponse },
+  declineQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes/:documentId/decline', request: QuoteTransitionRequest, response: FinanceDocumentResponse },
+  expireQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes/:documentId/expire', request: QuoteTransitionRequest, response: FinanceDocumentResponse },
+  voidQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes/:documentId/void', request: VoidDocumentRequest, response: FinanceDocumentResponse },
+  discardQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes/:documentId/discard', request: DiscardDraftRequest, response: FinanceDocumentResponse },
+  /** Creates a draft invoice from the quote (201). Never issues it; never changes the quote. Optional Idempotency-Key. */
+  convertQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes/:documentId/convert', request: ConvertQuoteRequest, response: FinanceDocumentResponse },
+  listInvoices: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices', query: ListInvoicesQuery, response: ListFinanceDocumentsResponse },
+  createInvoice: { method: 'POST', path: '/api/v1/b/:slug/finance/invoices', request: CreateInvoiceRequest, response: FinanceDocumentResponse },
+  getInvoice: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId', response: FinanceDocumentResponse },
+  updateInvoice: { method: 'PATCH', path: '/api/v1/b/:slug/finance/invoices/:documentId', request: UpdateInvoiceRequest, response: FinanceDocumentResponse },
+  issueInvoice: { method: 'POST', path: '/api/v1/b/:slug/finance/invoices/:documentId/issue', request: IssueDocumentRequest, response: FinanceDocumentResponse },
+  voidInvoice: { method: 'POST', path: '/api/v1/b/:slug/finance/invoices/:documentId/void', request: VoidDocumentRequest, response: FinanceDocumentResponse },
+  discardInvoice: { method: 'POST', path: '/api/v1/b/:slug/finance/invoices/:documentId/discard', request: DiscardDraftRequest, response: FinanceDocumentResponse },
+  /** Creates a draft credit note for an issued invoice (201). Optional Idempotency-Key. */
+  createCreditNote: { method: 'POST', path: '/api/v1/b/:slug/finance/invoices/:documentId/credit-notes', request: CreateCreditNoteRequest, response: FinanceDocumentResponse },
+  listCreditNotes: { method: 'GET', path: '/api/v1/b/:slug/finance/credit-notes', query: ListCreditNotesQuery, response: ListFinanceDocumentsResponse },
+  getCreditNote: { method: 'GET', path: '/api/v1/b/:slug/finance/credit-notes/:documentId', response: FinanceDocumentResponse },
+  updateCreditNote: { method: 'PATCH', path: '/api/v1/b/:slug/finance/credit-notes/:documentId', request: UpdateCreditNoteRequest, response: FinanceDocumentResponse },
+  issueCreditNote: { method: 'POST', path: '/api/v1/b/:slug/finance/credit-notes/:documentId/issue', request: IssueDocumentRequest, response: FinanceDocumentResponse },
+  voidCreditNote: { method: 'POST', path: '/api/v1/b/:slug/finance/credit-notes/:documentId/void', request: VoidDocumentRequest, response: FinanceDocumentResponse },
+  discardCreditNote: { method: 'POST', path: '/api/v1/b/:slug/finance/credit-notes/:documentId/discard', request: DiscardDraftRequest, response: FinanceDocumentResponse },
+  getFinanceSettings: { method: 'GET', path: '/api/v1/b/:slug/finance/settings', response: FinanceSettingsResponse },
+  updateFinanceSettings: { method: 'PATCH', path: '/api/v1/b/:slug/finance/settings', request: UpdateFinanceSettingsRequest, response: FinanceSettingsResponse },
+  listNumberSeries: { method: 'GET', path: '/api/v1/b/:slug/finance/number-series', response: ListNumberSeriesResponse },
+  /** :kind is quote, invoice or credit-note. */
+  updateNumberSeries: { method: 'PATCH', path: '/api/v1/b/:slug/finance/number-series/:kind', request: UpdateNumberSeriesRequest, response: NumberSeriesResponse },
+  listTaxRates: { method: 'GET', path: '/api/v1/b/:slug/finance/tax-rates', query: ListTaxRatesQuery, response: ListTaxRatesResponse },
+  createTaxRate: { method: 'POST', path: '/api/v1/b/:slug/finance/tax-rates', request: CreateTaxRateRequest, response: TaxRateResponse },
+  updateTaxRate: { method: 'PATCH', path: '/api/v1/b/:slug/finance/tax-rates/:taxRateId', request: UpdateTaxRateRequest, response: TaxRateResponse },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */
