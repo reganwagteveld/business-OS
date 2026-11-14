@@ -1,76 +1,200 @@
-/* Design tokens (architecture §6.5). shadcn/ui neutral base; light and dark from the start.
-   Dark mode follows the OS by default; a `.dark` / `.light` class on <html> overrides it (Phase 1c). */
+/* Business OS design system: Pixakova identity (architecture §6.5, UI Phase 1 design amendment).
+
+   Three layers, in this order:
+   1. Palette (`--pk-*`): the raw Pixakova colours. Provisional approximations of the reference
+      artwork. Components never use them directly; only the semantic tokens below do.
+   2. Semantic tokens (`--background`, `--primary`, `--glass-*`, `--atmo-*`, ...): what a colour is
+      for. Light values live on :root; dark values are declared twice, once for the OS preference and
+      once for the `.dark` class, and tests/tokens.test.ts keeps the two blocks identical.
+   3. Tailwind mapping (`@theme inline`) and the reusable treatments (`.bos-atmosphere`, `.bos-glass`).
+
+   Theme selection is unchanged: the OS preference by default; a `.dark` or `.light` class on <html>
+   overrides it. Dark is the primary expression of the identity. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* 1. Palette ------------------------------------------------------------------------------------ */
 :root {
-  color-scheme: light;
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --pk-midnight: #070f2d;
+  --pk-midnight-deep: #040a20;
+  --pk-navy: #14296b;
+  --pk-indigo: #384eba;
+  --pk-electric: #4f66d8;
+  --pk-violet: #7966bb;
+  --pk-lavender: #b28fc2;
+  --pk-pink: #d0a2c5;
+  --pk-mist: #f6f4fc;
+  --pk-ink: #0b1338;
 }
 
+/* 2. Semantic tokens: light ---------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --radius: 0.75rem;
+
+  /* Canvas and text */
+  --background: #f6f4fc;
+  --foreground: #0b1338;
+  --muted: #ece8f6;
+  --muted-foreground: #534e7a;
+
+  /* Opaque surfaces: card for content, raised for things above it, popover for menus */
+  --card: #ffffff;
+  --card-foreground: #0b1338;
+  --surface-raised: #fbfaff;
+  --popover: #ffffff;
+  --popover-foreground: #0b1338;
+
+  /* Interactive */
+  --primary: #384eba;
+  --primary-hover: #2e42a3;
+  --primary-foreground: #ffffff;
+  --secondary: #ebe6f7;
+  --secondary-hover: #dfd8f1;
+  --secondary-foreground: #1c2357;
+  --accent: rgb(121 102 187 / 0.1);
+  --accent-foreground: #0b1338;
+  --ring: #6b57b3;
+
+  /* Lines */
+  --border: #ddd6ec;
+  --input: #8f84b5;
+  --field: #ffffff;
+
+  /* Status: text-safe colour, a soft fill, and a solid fill with its own foreground */
+  --destructive: #b4234a;
+  --destructive-foreground: #ffffff;
+  --success: #1a7354;
+  --success-foreground: #ffffff;
+  --warning: #855400;
+  --warning-foreground: #ffffff;
+  --info: #2b53c7;
+  --info-foreground: #ffffff;
+
+  /* Overlays behind dialogs */
+  --overlay: rgb(11 19 56 / 0.4);
+
+  /* Glass: tint mixed at --glass-alpha, plus an opaque fallback when blur is unavailable */
+  --glass-tint: #ffffff;
+  --glass-fallback: #fdfcff;
+  --glass-border: rgb(255 255 255 / 0.75);
+  --glass-edge: rgb(121 102 187 / 0.18);
+  --glass-highlight: rgb(255 255 255 / 0.9);
+  --glass-shadow: 0 1px 2px rgb(20 41 107 / 0.06), 0 12px 32px -12px rgb(20 41 107 / 0.18);
+  --glass-blur: 18px;
+
+  /* Card shadow: restrained */
+  --shadow-card: 0 1px 2px rgb(20 41 107 / 0.06), 0 4px 16px -8px rgb(20 41 107 / 0.12);
+
+  /* Atmosphere: base gradient stops and the three lights */
+  --atmo-from: #f8f6fe;
+  --atmo-to: #e9e6fa;
+  --atmo-indigo: rgb(56 78 186 / 0.16);
+  --atmo-violet: rgb(121 102 187 / 0.22);
+  --atmo-lavender: rgb(178 143 194 / 0.3);
+  --atmo-pink: rgb(208 162 197 / 0.32);
+}
+
+/* 2. Semantic tokens: dark (OS preference) ------------------------------------------------------- */
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
+    --background: #070f2d;
+    --foreground: #f7f5ff;
+    --muted: #15215a;
+    --muted-foreground: #b8afd6;
+    --card: #0d1a47;
+    --card-foreground: #f7f5ff;
+    --surface-raised: #13235c;
+    --popover: #111f52;
+    --popover-foreground: #f7f5ff;
+    --primary: #4f66d8;
+    --primary-hover: #4258c8;
+    --primary-foreground: #ffffff;
+    --secondary: rgb(178 143 194 / 0.14);
+    --secondary-hover: rgb(178 143 194 / 0.22);
+    --secondary-foreground: #f7f5ff;
+    --accent: rgb(121 102 187 / 0.2);
+    --accent-foreground: #f7f5ff;
+    --ring: #c4a6d3;
+    --border: rgb(178 143 194 / 0.2);
+    --input: rgb(196 166 211 / 0.62);
+    --field: #0a1539;
+    --destructive: #f27b93;
+    --destructive-foreground: #1d0612;
+    --success: #5fd3a6;
+    --success-foreground: #04231a;
+    --warning: #f2c46d;
+    --warning-foreground: #2a1a00;
+    --info: #8fb0ff;
+    --info-foreground: #071338;
+    --overlay: rgb(4 10 32 / 0.6);
+    --glass-tint: #13235c;
+    --glass-fallback: #0f1d4d;
+    --glass-border: rgb(208 162 197 / 0.2);
+    --glass-edge: rgb(4 10 32 / 0.5);
+    --glass-highlight: rgb(255 255 255 / 0.08);
+    --glass-shadow: 0 1px 2px rgb(4 10 32 / 0.4), 0 20px 48px -20px rgb(4 10 32 / 0.8);
+    --glass-blur: 20px;
+    --shadow-card: 0 1px 2px rgb(4 10 32 / 0.4), 0 8px 24px -12px rgb(4 10 32 / 0.6);
+    --atmo-from: #070f2d;
+    --atmo-to: #14296b;
+    --atmo-indigo: rgb(56 78 186 / 0.45);
+    --atmo-violet: rgb(121 102 187 / 0.5);
+    --atmo-lavender: rgb(178 143 194 / 0.3);
+    --atmo-pink: rgb(208 162 197 / 0.28);
   }
 }
 
+/* 2. Semantic tokens: dark (`.dark` class). Keep identical to the block above. ------------------- */
 .dark {
   color-scheme: dark;
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: #070f2d;
+  --foreground: #f7f5ff;
+  --muted: #15215a;
+  --muted-foreground: #b8afd6;
+  --card: #0d1a47;
+  --card-foreground: #f7f5ff;
+  --surface-raised: #13235c;
+  --popover: #111f52;
+  --popover-foreground: #f7f5ff;
+  --primary: #4f66d8;
+  --primary-hover: #4258c8;
+  --primary-foreground: #ffffff;
+  --secondary: rgb(178 143 194 / 0.14);
+  --secondary-hover: rgb(178 143 194 / 0.22);
+  --secondary-foreground: #f7f5ff;
+  --accent: rgb(121 102 187 / 0.2);
+  --accent-foreground: #f7f5ff;
+  --ring: #c4a6d3;
+  --border: rgb(178 143 194 / 0.2);
+  --input: rgb(196 166 211 / 0.62);
+  --field: #0a1539;
+  --destructive: #f27b93;
+  --destructive-foreground: #1d0612;
+  --success: #5fd3a6;
+  --success-foreground: #04231a;
+  --warning: #f2c46d;
+  --warning-foreground: #2a1a00;
+  --info: #8fb0ff;
+  --info-foreground: #071338;
+  --overlay: rgb(4 10 32 / 0.6);
+  --glass-tint: #13235c;
+  --glass-fallback: #0f1d4d;
+  --glass-border: rgb(208 162 197 / 0.2);
+  --glass-edge: rgb(4 10 32 / 0.5);
+  --glass-highlight: rgb(255 255 255 / 0.08);
+  --glass-shadow: 0 1px 2px rgb(4 10 32 / 0.4), 0 20px 48px -20px rgb(4 10 32 / 0.8);
+  --glass-blur: 20px;
+  --shadow-card: 0 1px 2px rgb(4 10 32 / 0.4), 0 8px 24px -12px rgb(4 10 32 / 0.6);
+  --atmo-from: #070f2d;
+  --atmo-to: #14296b;
+  --atmo-indigo: rgb(56 78 186 / 0.45);
+  --atmo-violet: rgb(121 102 187 / 0.5);
+  --atmo-lavender: rgb(178 143 194 / 0.3);
+  --atmo-pink: rgb(208 162 197 / 0.28);
 }
 
+/* 3. Tailwind mapping ---------------------------------------------------------------------------- */
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -80,20 +204,33 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-surface-raised: var(--surface-raised);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
+  --color-field: var(--field);
   --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
+  --shadow-card: var(--shadow-card);
 }
 
 @layer base {
@@ -103,5 +240,68 @@
   body {
     @apply min-h-screen bg-background text-foreground antialiased;
     font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
+/* 3. Treatments ---------------------------------------------------------------------------------- */
+@layer components {
+  /* Atmospheric background. Pure CSS gradients: no images, no animation, no rendering libraries.
+     Variants are chosen per screen with data-atmosphere; dense screens should use "calm". */
+  .bos-atmosphere {
+    background-color: var(--atmo-from);
+    background-image:
+      radial-gradient(55% 50% at 88% 6%, var(--atmo-violet), transparent 70%),
+      radial-gradient(45% 45% at 70% 60%, var(--atmo-lavender), transparent 70%),
+      radial-gradient(50% 50% at 6% 96%, var(--atmo-pink), transparent 70%),
+      radial-gradient(70% 60% at 22% 18%, var(--atmo-indigo), transparent 72%),
+      linear-gradient(160deg, var(--atmo-from) 0%, var(--atmo-to) 100%);
+  }
+  .bos-atmosphere[data-atmosphere='dusk'] {
+    background-image:
+      radial-gradient(60% 55% at 80% 100%, var(--atmo-pink), transparent 70%),
+      radial-gradient(55% 50% at 30% 85%, var(--atmo-lavender), transparent 70%),
+      radial-gradient(60% 55% at 90% 20%, var(--atmo-violet), transparent 72%),
+      linear-gradient(180deg, var(--atmo-from) 0%, var(--atmo-to) 100%);
+  }
+  .bos-atmosphere[data-atmosphere='horizon'] {
+    background-image:
+      radial-gradient(90% 55% at 50% 110%, var(--atmo-violet), transparent 70%),
+      radial-gradient(60% 40% at 50% 100%, var(--atmo-pink), transparent 70%),
+      radial-gradient(80% 50% at 50% -10%, var(--atmo-indigo), transparent 70%),
+      linear-gradient(180deg, var(--atmo-from) 0%, var(--atmo-to) 130%);
+  }
+  .bos-atmosphere[data-atmosphere='calm'] {
+    background-image:
+      radial-gradient(50% 40% at 95% 0%, var(--atmo-violet), transparent 70%),
+      linear-gradient(180deg, var(--atmo-from) 0%, var(--atmo-from) 100%);
+  }
+
+  /* Frosted glass. --glass-alpha (0-1) sets translucency; GlassPanel sets it from its `strength`. */
+  .bos-glass {
+    --glass-alpha: 0.62;
+    background-color: var(--glass-fallback);
+    background-color: color-mix(in oklab, var(--glass-tint) calc(var(--glass-alpha) * 100%), transparent);
+    border: 1px solid var(--glass-border);
+    box-shadow: inset 0 1px 0 var(--glass-highlight), 0 0 0 1px var(--glass-edge), var(--glass-shadow);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+    backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  }
+  /* No blur available, or the user asked for less transparency: become an opaque surface. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .bos-glass {
+      background-color: var(--glass-fallback);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .bos-glass {
+      background-color: var(--glass-fallback);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+  @media (forced-colors: active) {
+    .bos-glass {
+      border-color: CanvasText;
+    }
   }
 }
