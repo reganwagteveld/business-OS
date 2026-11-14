@@ -106,10 +106,26 @@ export function OpportunityDetail({ sales, slug, id, locale, timeZone, refData, 
       setBusy(false);
     }
     if (outcome.kind === 'unauthenticated') return onSessionEnded();
-    close();
-    if (outcome.kind === 'ok') setMessage({ tone: 'ok', text: label });
-    else setMessage({ tone: 'error', text: explain(outcome) });
+    if (outcome.kind === 'ok') {
+      close();
+      setMessage({ tone: 'ok', text: label });
+    } else {
+      // The dialog and anything typed in it (a loss reason) stay until the outcome is known: either the
+      // person tries again or cancels, or the reloaded record shows the change did happen (below).
+      setMessage({ tone: 'error', text: explain(outcome) });
+    }
     if (!(outcome.kind === 'invalid_input' || outcome.kind === 'forbidden')) refresh();
+  }
+
+  // A request that got no answer may still have worked. Once the reloaded record shows the action took
+  // effect, the dialog has nothing left to do: close it and say so. Until then it (and its text) stays.
+  const done = shown && dialog && opp.state.status === 'done' && (
+    (dialog.kind === 'win' && shown.status === 'WON') || (dialog.kind === 'lose' && shown.status === 'LOST')
+    || (dialog.kind === 'reopen' && shown.status === 'OPEN') || (dialog.kind === 'archive' && shown.archivedAt !== null));
+  if (done && dialog) {
+    setDialog(null);
+    setReason('');
+    setMessage({ tone: 'ok', text: 'The latest version shows this change was made.' });
   }
 
   if (!shown) {
@@ -156,13 +172,14 @@ export function OpportunityDetail({ sales, slug, id, locale, timeZone, refData, 
         ) : null}
       </header>
 
-      {message ? (
+      {message && !(dialog && message.tone === 'error') ? (
         <p role={message.tone === 'ok' ? 'status' : 'alert'} className={`mb-5 rounded-xl border px-4 py-3 text-sm ${message.tone === 'ok' ? 'border-border bg-muted' : 'border-destructive/40 bg-destructive/5 text-destructive'}`}>{message.text}</p>
       ) : null}
       {archived ? <p role="status" className="mb-5 rounded-xl border border-border bg-muted px-4 py-3 text-sm">This opportunity is archived. It is hidden from the main list and cannot be changed until it is restored.</p> : null}
 
       {dialog ? (
         <div ref={dialogRef} onKeyDown={onDialogKey} role="alertdialog" aria-labelledby={`${uid}-dlg-title`} aria-describedby={`${uid}-dlg-body`} className="mb-6 rounded-2xl border border-border bg-card p-5">
+          {message?.tone === 'error' ? <p role="alert" className="mb-3 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">{message.text}</p> : null}
           {dialog.kind === 'win' ? (
             <>
               <h2 id={`${uid}-dlg-title`} className="text-base font-semibold">Mark “{o.title}” as won?</h2>

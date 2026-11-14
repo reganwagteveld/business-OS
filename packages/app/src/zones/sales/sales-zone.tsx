@@ -96,7 +96,16 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
       return;
     }
     if (result.kind === 'unauthenticated') return onSessionEnded();
-    setSettingUp(result.kind === 'forbidden' ? 'Your role cannot set up Sales in this business.' : result.kind === 'unreachable' ? "Can't reach Business OS. Nothing was set up; try again." : 'Sales could not be set up. Nothing was changed.');
+    if (result.kind === 'unreachable' || result.kind === 'failed' || result.kind === 'invalid') {
+      // No answer (or an unreadable one) does not mean nothing happened: the server may have set it up.
+      // Re-read the pipelines (read only) so the screen shows what is actually there. Setting up again
+      // is safe: it is idempotent and never creates a second pipeline.
+      setAddAfterSetUp(thenAdd);
+      ref.reload();
+      setSettingUp("Business OS didn't confirm the set-up, so it may or may not have happened. We're checking; if Sales still isn't set up, try again (it is safe to repeat).");
+      return;
+    }
+    setSettingUp(result.kind === 'forbidden' ? 'Your role cannot set up Sales in this business.' : 'Sales could not be set up. Nothing was changed.');
   };
 
   const viewKey = view.name === 'detail' ? `detail:${view.id}` : view.name === 'edit' ? `edit:${view.opportunity.id}` : view.name;
@@ -110,6 +119,10 @@ export function SalesZone({ sales, customers, context, userLabel, onHome, onSwit
 
   const refData = ref.state.status === 'done' && ref.state.outcome.kind === 'ok' ? ref.state.outcome.data : ref.previous?.kind === 'ok' ? ref.previous.data : null;
   const ready = ref.state.status === 'done' && refData !== null && refData.pipelines.length > 0;
+  if (settingUp && settingUp.startsWith("Business OS didn't confirm") && ready) {
+    setSettingUp(null);
+    setNotice('Sales is set up.');
+  }
   if (addAfterSetUp && ready) {
     // Adjusting state while rendering (React's documented pattern): open the form once set-up has loaded.
     setAddAfterSetUp(false);

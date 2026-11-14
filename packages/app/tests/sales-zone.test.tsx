@@ -429,3 +429,93 @@ describe('Zone navigation, business switching and desktop transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('PR 16 review: failures never lose work or mislead', () => {
+  it('a failed "Mark lost" keeps the dialog and the typed reason until the outcome is known', async () => {
+    const p = pipelineWithStages();
+    const { api, user } = setup({ sales: { pipelines: [p], opportunities: [opportunity(p, { title: 'Keep reason' })] } });
+    await user.click(await screen.findByRole('button', { name: 'Keep reason' }));
+    await user.click(await screen.findByRole('button', { name: 'Mark lost' }));
+    await user.type(screen.getByLabelText('Reason (optional)'), 'Budget cut');
+    api.salesNext((path) => (path.endsWith('/lose') ? 'network' : undefined));
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Mark lost' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(await within(dialog).findByText(/may or may not have happened/)).toBeTruthy();
+    expect((within(dialog).getByLabelText('Reason (optional)') as HTMLTextAreaElement).value).toBe('Budget cut');
+    await waitFor(() => expect(api.sales.alpha!.opportunities[0]!.status).toBe('OPEN'));
+    await user.click(within(dialog).getByRole('button', { name: 'Mark lost' })); // try again: same reason
+    expect(await screen.findByText('Marked as lost.')).toBeTruthy();
+    expect(api.sales.alpha!.opportunities[0]).toMatchObject({ status: 'LOST', lossReason: 'Budget cut' });
+  });
+
+  it('if the unanswered request did work, the reloaded record closes the dialog and says so', async () => {
+    const p = pipelineWithStages();
+    const { api, user } = setup({ sales: { pipelines: [p], opportunities: [opportunity(p, { title: 'Did it work' })] } });
+    await user.click(await screen.findByRole('button', { name: 'Did it work' }));
+    await user.click(await screen.findByRole('button', { name: 'Mark lost' }));
+    await user.type(screen.getByLabelText('Reason (optional)'), 'Applied anyway');
+    api.salesNext((path) => {
+      if (!path.endsWith('/lose')) return undefined;
+      Object.assign(api.sales.alpha!.opportunities[0]!, { status: 'LOST', closedAt: '2026-11-14T05:00:00.000Z', lossReason: 'Applied anyway', version: 2 });
+      return 'network'; // the server did it, but the answer was lost
+    });
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Mark lost' }));
+    expect(await screen.findByText('The latest version shows this change was made.')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Reopen' })).toBeTruthy();
+  });
+
+  it('a set-up timeout never claims nothing happened: it checks, and reports what is really there', async () => {
+    const second = setup();
+    const button = await screen.findByRole('button', { name: 'Set up Sales' }); // initial reads done
+    second.api.salesNext((path, method) => {
+      if (method !== 'POST') return undefined;
+      second.api.sales.alpha!.pipelines.push(pipelineWithStages()); // the server did it…
+      return 'network'; // …but the answer was lost
+    });
+    await second.user.click(button);
+    expect(await screen.findByText('Sales is set up.')).toBeTruthy();
+    expect(screen.queryByText(/Nothing was set up/)).toBeNull();
+    expect(await screen.findByText('No open opportunities yet')).toBeTruthy();
+    expect(second.api.sales.alpha!.pipelines).toHaveLength(1);
+  });
+
+  it('a set-up that really did not happen says it may not have, and repeating is safe', async () => {
+    const { api, user } = setup();
+    const button = await screen.findByRole('button', { name: 'Set up Sales' }); // initial reads done
+    api.salesNext((_, method) => (method === 'POST' ? 'network' : undefined));
+    await user.click(button);
+    expect(await screen.findByText(/may or may not have happened/)).toBeTruthy();
+    expect(screen.queryByText(/Nothing was set up/)).toBeNull();
+    await user.click(await screen.findByRole('button', { name: 'Set up Sales' }));
+    expect(await screen.findByText('No open opportunities yet')).toBeTruthy();
+    expect(api.sales.alpha!.pipelines).toHaveLength(1);
+  });
+
+  it('customer search: a network failure is an error with Try again, not "no matches"', async () => {
+    const p = pipelineWithStages();
+    const { api, user } = setup({ business: { customers: [customer({ displayName: 'Acme Pty Ltd' })] }, sales: { pipelines: [p] } });
+    await user.click(await screen.findByRole('button', { name: 'Add opportunity' }));
+    api.failNext(/^GET .*\/customers$/, () => 'network');
+    await user.type(await screen.findByLabelText('Customer'), 'acme');
+    const alert = await screen.findByText(/couldn't search customers/);
+    expect(alert.closest('[role="alert"]')).toBeTruthy();
+    expect(screen.queryByText(/No active customers match/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('button', { name: /Acme Pty Ltd/ })).toBeTruthy();
+  });
+
+  it('contacts: a failed load is an error with Try again, not "no contacts yet"', async () => {
+    const p = pipelineWithStages();
+    const acme = customer({ displayName: 'Acme Pty Ltd' });
+    const { api, user } = setup({ business: { customers: [acme], contacts: [contact(acme.id, { displayName: 'Ana Ruiz' })] }, sales: { pipelines: [p] } });
+    await user.click(await screen.findByRole('button', { name: 'Add opportunity' }));
+    await user.type(await screen.findByLabelText('Customer'), 'acme');
+    api.failNext(/^GET .*\/contacts$/, () => new Response('{"error":"internal_error"}', { status: 500 }));
+    await user.click(await screen.findByRole('button', { name: /Acme Pty Ltd/ }));
+    expect(await screen.findByText(/couldn't load this customer's contacts/)).toBeTruthy();
+    expect(screen.queryByText('This customer has no contacts yet.')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect([...(screen.getByLabelText('Contact') as HTMLSelectElement).options].map((o) => o.textContent)).toContain('Ana Ruiz'));
+  });
+});

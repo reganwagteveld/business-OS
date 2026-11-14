@@ -285,6 +285,7 @@ function CustomerPicker({ id, customers, slug, selectedId, selectedName, error, 
     );
   }
   const list = results.state.status === 'done' && results.state.outcome.kind === 'ok' ? results.state.outcome.data.customers : [];
+  const failure = results.state.status === 'done' && results.state.outcome.kind !== 'ok' ? results.state.outcome : null;
   return (
     <div className="sm:col-span-2">
       <label htmlFor={id} className="mb-1.5 block text-sm font-medium">Customer</label>
@@ -293,7 +294,9 @@ function CustomerPicker({ id, customers, slug, selectedId, selectedName, error, 
       <p id={`${id}-hint`} className="mt-1 text-xs text-muted-foreground">Optional. Customers come from the Customers Zone.</p>
       {q ? (
         <div aria-live="polite">
-          {results.state.status === 'loading' ? <p className="mt-2 text-xs text-muted-foreground">Searching…</p> : list.length === 0 ? (
+          {results.state.status === 'loading' ? <p className="mt-2 text-xs text-muted-foreground">Searching…</p> : failure ? (
+            <SearchError outcome={failure} what="search customers" onRetry={results.reload} />
+          ) : list.length === 0 ? (
             <p className="mt-2 text-xs text-muted-foreground">No active customers match “{q}”.</p>
           ) : (
             <ul aria-label="Matching customers" className="mt-2 divide-y divide-border rounded-xl border border-border">
@@ -318,7 +321,8 @@ function ContactPicker({ id, customers, slug, customerId, value, error, onChange
 }) {
   const contacts = useLoad(`pick-contacts|${slug}|${customerId}`, (signal) => (customerId ? customers.contacts(slug, customerId, 'active', signal) : Promise.resolve({ kind: 'ok' as const, data: [] as Contact[] })));
   const list = contacts.state.status === 'done' && contacts.state.outcome.kind === 'ok' ? contacts.state.outcome.data : [];
-  const hint = !customerId ? 'Choose a customer first.' : contacts.state.status === 'loading' ? 'Loading contacts…' : list.length === 0 ? 'This customer has no contacts yet.' : undefined;
+  const failure = customerId && contacts.state.status === 'done' && contacts.state.outcome.kind !== 'ok' ? contacts.state.outcome : null;
+  const hint = !customerId ? 'Choose a customer first.' : contacts.state.status === 'loading' ? 'Loading contacts…' : failure ? undefined : list.length === 0 ? 'This customer has no contacts yet.' : undefined;
   return (
     <div className="sm:col-span-2">
       <Labelled id={id} label="Contact" hint={hint} error={error}>
@@ -329,6 +333,24 @@ function ContactPicker({ id, customers, slug, customerId, value, error, onChange
           {value && !list.some((c) => c.id === value) ? <option value={value}>Current contact</option> : null}
         </select>
       </Labelled>
+      {failure ? <SearchError outcome={failure} what="load this customer's contacts" onRetry={contacts.reload} /> : null}
+    </div>
+  );
+}
+
+/** A search or lookup that failed is never shown as "no results": say what went wrong and offer a retry. */
+function SearchError({ outcome, what, onRetry }: { outcome: Outcome<unknown>; what: string; onRetry: () => void }) {
+  const text = outcome.kind === 'unreachable'
+    ? (typeof navigator !== 'undefined' && navigator.onLine === false ? `You're offline, so we couldn't ${what}.` : `Can't reach Business OS, so we couldn't ${what}.`)
+    : outcome.kind === 'forbidden' ? `Your role does not allow you to ${what}.`
+    : outcome.kind === 'rate_limited' ? `Too many requests; we couldn't ${what} just now.`
+    : `Something went wrong, so we couldn't ${what}.`;
+  return (
+    <div role="alert" className="mt-2 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+      <span>{text}</span>
+      {outcome.kind !== 'forbidden' ? (
+        <button type="button" onClick={onRetry} className="rounded-md font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">Try again</button>
+      ) : null}
     </div>
   );
 }
