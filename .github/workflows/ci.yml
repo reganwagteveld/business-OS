@@ -2,32 +2,66 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
+    tags: ['v*']
+  # Full validation on demand (any branch): Actions → CI → Run workflow.
+  workflow_dispatch:
+  # Weekly full run on main so toolchain drift (Rust stable, runner images) shows up before a release.
+  schedule:
+    - cron: '17 5 * * 1'
 
 permissions:
   contents: read
 
+# Pull requests: a new commit cancels the superseded run for the same PR only.
+# Everything else (main, release branches, tags, manual and scheduled runs) gets a group of its own,
+# so one validation run can never cancel or queue behind another.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PGBOUNCER_VERSION: 1.22.0-1build4
 
 jobs:
-  checks:
-    name: Workspace checks (API, web, contracts, security)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16.10
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      desktop: ${{ steps.classify.outputs.desktop }}
+      desktop_reason: ${{ steps.classify.outputs.desktop_reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull_request checkout is the merge commit; its first parent is the current base tip.
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Self-test the change classifier
+        run: .github/scripts/classify-changes.test.sh
+      - name: Decide whether the desktop matrix is needed
+        id: classify
         env:
-          POSTGRES_DB: business_os
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ci_postgres_only
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres -d business_os"
-          --health-interval 3s --health-timeout 3s --health-retries 20
-    env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
+            if [ "$parents" -ne 3 ]; then
+              echo "Expected a merge commit for the pull request checkout" >&2
+              exit 1
+            fi
+            git diff --name-only HEAD^1 HEAD | tee /dev/stderr | .github/scripts/classify-changes.sh | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "desktop=true" | tee -a "$GITHUB_OUTPUT"
+            echo "desktop_reason=full validation for $EVENT_NAME on $REF" | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  static:
+    name: Static checks (contracts, types, lint, boundaries)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env: &workspace-env
       # CI-only credentials, matching docker/init/01-roles.sql. Never used outside CI.
       # Server variables are read only by apps/api; the clients receive VITE_API_BASE_URL alone.
       DATABASE_URL: postgresql://bos_app:bos_local_app_password@localhost:5432/business_os?schema=public
@@ -50,23 +84,54 @@ jobs:
       SPIKE_JOBS_URL: postgresql://bos_jobs:bos_local_jobs_password@127.0.0.1:6433/business_os_spike
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - name: Install (workspace lockfile must be up to date)
-        run: pnpm install --frozen-lockfile
-      - name: Provision database roles (same script as local docker compose)
-        run: psql "postgresql://postgres:ci_postgres_only@localhost:5432/business_os" -v ON_ERROR_STOP=1 -f docker/init/01-roles.sql
+          persist-credentials: false
+      - uses: ./.github/actions/setup-workspace
       - name: API contracts (JSON schema snapshot is current)
         run: pnpm contracts:check
-      - run: pnpm typecheck
-      - run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
       - name: Boundaries (dependency-cruiser + source rules, incl. no database or server code in clients)
         run: pnpm boundaries
+
+  unit:
+    name: Unit, contract and architecture tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env: *workspace-env
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-workspace
       - name: Unit, contract and architecture tests
         run: pnpm test
+
+  database:
+    name: Database tests (roles, migrations, integration, RLS isolation)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.10
+        env:
+          POSTGRES_DB: business_os
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_postgres_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d business_os"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env: *workspace-env
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-workspace
+      - name: Provision database roles (same script as local docker compose)
+        run: psql "postgresql://postgres:ci_postgres_only@localhost:5432/business_os" -v ON_ERROR_STOP=1 -f docker/init/01-roles.sql
       - name: Apply migrations as the owner role
         run: pnpm --filter @business-os/api exec prisma migrate deploy
       - name: Apply privileged SQL (app_private functions) as an administrative role
@@ -74,22 +139,38 @@ jobs:
         env:
           ADMIN_DATABASE_URL: ${{ env.TEST_ADMIN_URL }}
           DEPLOYMENT_REGION: ${{ env.REGION }}
-      - name: Integration tests (PostgreSQL roles and isolation prerequisites)
+      - name: Integration tests (API, RBAC, tenancy, PostgreSQL roles and isolation prerequisites)
         run: pnpm test:integration
-      - name: Start PgBouncer in transaction mode (RLS spike pooler)
+      # Cached .deb files from the signed Ubuntu archive, keyed by the pinned version and runner image.
+      - name: Restore PgBouncer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pgbouncer-debs
+          key: pgbouncer-${{ env.PGBOUNCER_VERSION }}-${{ env.ImageOS }}-${{ env.ImageVersion }}
+      - name: Start PgBouncer ${{ env.PGBOUNCER_VERSION }} in transaction mode (RLS spike pooler)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq pgbouncer
-          sudo systemctl stop pgbouncer || true
-          pgbouncer --version
+          PGBOUNCER_DEB_DIR="$HOME/.cache/pgbouncer-debs" .github/scripts/install-pgbouncer.sh
           cd docker/pgbouncer && pgbouncer -d pgbouncer.ini
-          for i in $(seq 1 20); do pg_isready -h 127.0.0.1 -p 6433 && break; sleep 0.5; done
+          for _ in $(seq 1 20); do pg_isready -h 127.0.0.1 -p 6433 && break; sleep 0.5; done
       - name: RLS spike and isolation tests (S1-S13, behind the pooler)
         run: pnpm test:isolation
       - name: Migrations match schema
         run: pnpm db:check-migrations
+
+  build:
+    name: Build verification (API, web, desktop frontend, startup, bundle security)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env: *workspace-env
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-workspace
       - name: Build API, web app and desktop frontend
         run: pnpm build
+      # The health route validates configuration only and never touches the database, so this job
+      # needs no PostgreSQL service.
       - name: API boots and answers without owner credentials
         run: |
           cd apps/api
@@ -98,7 +179,7 @@ jobs:
             APP_BASE_URL="$APP_BASE_URL" REGION="$REGION" \
             DATABASE_REGION="$DATABASE_REGION" CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" \
             pnpm start --port 3100 &
-          for i in $(seq 1 30); do curl -sf localhost:3100/api/v1/health && break; sleep 1; done
+          for _ in $(seq 1 30); do curl -sf localhost:3100/api/v1/health && break; sleep 1; done
           curl -sf localhost:3100/api/v1/health | grep -q '"status":"ok"'
       - name: Client bundles contain no server configuration
         run: |
@@ -107,8 +188,13 @@ jobs:
             exit 1
           fi
 
+  # Native desktop build on all three platforms. Runs on every push to main or release branches,
+  # tags, manual and scheduled runs, and on pull requests that touch desktop-affecting paths
+  # (.github/scripts/classify-changes.sh).
   desktop:
     name: Desktop shell (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -123,22 +209,24 @@ jobs:
       VITE_API_BASE_URL: https://api.business-os.invalid
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Linux WebKitGTK prerequisites
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
+      # Key: job + OS + rustc version + Cargo.lock/Cargo.toml hashes (Swatinem/rust-cache). Only main
+      # writes the cache, so pull requests always restore main's dependency build and never evict it.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri -> target
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Only the desktop app and the packages it uses: the desktop build never installs the API.
-      - run: pnpm install --frozen-lockfile --filter "@business-os/desktop..."
+      - uses: ./.github/actions/setup-workspace
+        with:
+          filter: '@business-os/desktop...'
       # Unsigned verification build only. Code signing, notarisation and distribution are decided
       # before the first release (ADR 0005, open decisions); no artifacts are published.
       - name: Build the Tauri app (unsigned)
@@ -146,3 +234,87 @@ jobs:
       # Native sign-in code (D9a): URL allow-list, callback parsing, baked-in API origin.
       - name: Rust unit tests (desktop shell)
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+
+  # The single required status check. It runs even when jobs before it fail, are cancelled or are
+  # skipped, and passes only if every applicable check succeeded. A skipped job satisfies it only
+  # when it is the desktop matrix and the change classifier said the desktop matrix was not needed.
+  gate:
+    name: CI gate
+    if: always()
+    needs: [changes, static, unit, database, build, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # job timings for the summary only; the verdict never depends on them
+    env:
+      CHANGES: ${{ needs.changes.result }}
+      STATIC: ${{ needs.static.result }}
+      UNIT: ${{ needs.unit.result }}
+      DATABASE: ${{ needs.database.result }}
+      BUILD: ${{ needs.build.result }}
+      DESKTOP: ${{ needs.desktop.result }}
+      DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
+      DESKTOP_REASON: ${{ needs.changes.outputs.desktop_reason }}
+    steps:
+      - name: Summary
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          jobs="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs?per_page=100" || echo '{"jobs":[]}')"
+          dur() { # job name prefix -> "1m 23s" (longest matching job, e.g. the slowest desktop OS)
+            echo "$jobs" | jq -r --arg p "$1" '
+              [.jobs[] | select(.name | startswith($p)) | select(.completed_at != null)
+               | ((.completed_at | fromdate) - (.started_at | fromdate))] | max // empty
+              | "\(. / 60 | floor)m \(. % 60)s"'
+          }
+          icon() { case "$1" in success) echo "✅";; skipped) echo "⏭️";; *) echo "❌";; esac; }
+          {
+            echo "## CI summary"
+            echo
+            echo "| Category | Result | Duration |"
+            echo "|---|---|---|"
+            echo "| Static checks (contracts, types, lint, boundaries) | $(icon "$STATIC") $STATIC | $(dur 'Static checks') |"
+            echo "| Unit, contract and architecture tests | $(icon "$UNIT") $UNIT | $(dur 'Unit, contract') |"
+            echo "| Database (roles, migrations, integration, RLS isolation) | $(icon "$DATABASE") $DATABASE | $(dur 'Database tests') |"
+            echo "| Build verification (API, web, desktop frontend, startup, bundles) | $(icon "$BUILD") $BUILD | $(dur 'Build verification') |"
+            echo "| Desktop shell (Linux, macOS, Windows) | $(icon "$DESKTOP") $DESKTOP | $(dur 'Desktop shell') (slowest OS) |"
+            echo
+            echo "Desktop matrix required: **${DESKTOP_REQUIRED:-unknown}** ($DESKTOP_REASON)"
+            started="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT" --jq .run_started_at 2>/dev/null || true)"
+            if [ -n "$started" ]; then
+              total=$(( $(date +%s) - $(date -d "$started" +%s) ))
+              echo
+              echo "Total wall-clock time to this gate: **$((total / 60))m $((total % 60))s**"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Require every applicable check
+        run: |
+          fail=0
+          require() {
+            if [ "$2" != success ]; then
+              echo "::error title=$1 did not pass::$1 finished as '$2'; it must succeed."
+              fail=1
+            else
+              echo "ok   $1"
+            fi
+          }
+          require "Detect changes" "$CHANGES"
+          require "Static checks" "$STATIC"
+          require "Unit tests" "$UNIT"
+          require "Database tests" "$DATABASE"
+          require "Build verification" "$BUILD"
+          # Fail closed: anything other than an explicit "false" from the classifier requires desktop.
+          if [ "$DESKTOP_REQUIRED" != false ]; then
+            require "Desktop shell" "$DESKTOP"
+          elif [ "$DESKTOP" != skipped ] && [ "$DESKTOP" != success ]; then
+            echo "::error title=Desktop shell did not pass::Desktop shell ran and finished as '$DESKTOP'."
+            fail=1
+          else
+            echo "skip Desktop shell (not needed: $DESKTOP_REASON)"
+          fi
+          exit "$fail"
