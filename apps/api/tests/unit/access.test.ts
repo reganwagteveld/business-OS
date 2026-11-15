@@ -153,7 +153,20 @@ describe('Communications C1 permissions (docs/communications-c1.md §4)', () => 
       MANAGER: ['activity:read', 'activity:write', 'communications:read', 'communications:record'],
       MEMBER: ['activity:read', 'activity:write', 'communications:read', 'communications:record'],
     });
-    expect(ZONE_PERMISSIONS.communications).toEqual(['communications:read', 'communications:record']);
+    expect(ZONE_PERMISSIONS.communications).toEqual(['communications:read', 'communications:record', 'communications:connect', 'communications:manage_connections']);
     expect(ZONE_PERMISSIONS.activity).toEqual(['activity:read', 'activity:write', 'activity:read_restricted']);
+  });
+});
+
+describe('Communications C2-A permissions (docs/communications-c2.md §4, D-C2-2)', () => {
+  it('OWNER, ADMIN and MANAGER connect their own mailbox; only OWNER and ADMIN manage every connection; MEMBER neither', () => {
+    const keys = ['communications:connect', 'communications:manage_connections'] as const;
+    const matrix = Object.fromEntries(ROLES.map((role) => [role, keys.filter((p) => ROLE_PERMISSIONS[role].has(p))]));
+    expect(matrix).toEqual({
+      OWNER: [...keys],
+      ADMIN: [...keys],
+      MANAGER: ['communications:connect'],
+      MEMBER: [],
+    });
   });
 });

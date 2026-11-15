@@ -1,0 +1,108 @@
+// communications module, C2-A (docs/communications-c2.md §3.1): connected mailboxes, their encrypted
+// provider credentials, pending OAuth authorizations and durable sync jobs. No mail content is stored
+// here. Value sets are CHECK constraints; guards, partial unique indexes, column grants and RLS live in
+// migration 20261121000000_communications_providers.
+
+/// One connected mailbox in one business, owned by the member who consented at the provider.
+model MailConnection {
+  id                String    @db.Uuid
+  businessId        String    @map("business_id") @db.Uuid
+  provider          String
+  ownerUserId       String    @map("owner_user_id") @db.Uuid
+  providerAccountId String    @map("provider_account_id")
+  mailboxAddress    String    @map("mailbox_address")
+  displayName       String?   @map("display_name")
+  status            String    @default("ACTIVE")
+  sharing           String    @default("OWNER_ONLY")
+  grantedScopes     String[]  @map("granted_scopes")
+  syncEnabled       Boolean   @default(true) @map("sync_enabled")
+  syncCursor        String?   @map("sync_cursor")
+  lastSyncedAt      DateTime? @map("last_synced_at") @db.Timestamptz
+  lastErrorCode     String?   @map("last_error_code")
+  connectedAt       DateTime  @default(now()) @map("connected_at") @db.Timestamptz
+  statusChangedAt   DateTime  @default(now()) @map("status_changed_at") @db.Timestamptz
+  disconnectedAt    DateTime? @map("disconnected_at") @db.Timestamptz
+  disconnectedById  String?   @map("disconnected_by_id") @db.Uuid
+  version           Int       @default(1)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business    Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_connections_business_fkey")
+  credentials MailConnectionCredential?
+  oauthStates MailOAuthState[]
+  syncJobs    MailSyncJob[]
+
+  @@id([businessId, id])
+  @@index([businessId, ownerUserId, createdAt(sort: Desc)])
+  @@map("mail_connections")
+}
+
+/// Encrypted provider tokens (AES-256-GCM envelopes bound to business + connection). Only
+/// modules/communications/server/credentials.ts may use this model (boundary rule).
+model MailConnectionCredential {
+  businessId           String    @map("business_id") @db.Uuid
+  connectionId         String    @map("connection_id") @db.Uuid
+  keyId                String    @map("key_id")
+  refreshTokenEnc      String    @map("refresh_token_enc")
+  accessTokenEnc       String?   @map("access_token_enc")
+  accessTokenExpiresAt DateTime? @map("access_token_expires_at") @db.Timestamptz
+  refreshLeaseId       String?   @map("refresh_lease_id") @db.Uuid
+  refreshLeaseUntil    DateTime? @map("refresh_lease_until") @db.Timestamptz
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_connection_credentials_business_fkey")
+  connection MailConnection @relation(fields: [businessId, connectionId], references: [businessId, id], onDelete: Cascade, onUpdate: NoAction, map: "mail_connection_credentials_connection_fkey")
+
+  @@id([businessId, connectionId])
+  @@map("mail_connection_credentials")
+}
+
+/// One pending authorization (single use, short-lived). Only the hash of the state nonce is stored.
+model MailOAuthState {
+  id              String    @db.Uuid
+  businessId      String    @map("business_id") @db.Uuid
+  stateHash       String    @unique(map: "mail_oauth_states_state_hash_key") @map("state_hash") @db.Char(64)
+  userId          String    @map("user_id") @db.Uuid
+  provider        String
+  connectionId    String?   @map("connection_id") @db.Uuid
+  codeVerifierEnc String    @map("code_verifier_enc")
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz
+  consumedAt      DateTime? @map("consumed_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_oauth_states_business_fkey")
+  connection MailConnection? @relation(fields: [businessId, connectionId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "mail_oauth_states_connection_fkey")
+
+  @@id([businessId, id])
+  @@index([businessId, userId, expiresAt])
+  @@map("mail_oauth_states")
+}
+
+/// Durable sync work. At most one QUEUED or RUNNING job per connection (partial unique index).
+model MailSyncJob {
+  id             String    @db.Uuid
+  businessId     String    @map("business_id") @db.Uuid
+  connectionId   String    @map("connection_id") @db.Uuid
+  kind           String
+  status         String    @default("QUEUED")
+  requestedById  String?   @map("requested_by_id") @db.Uuid
+  attempts       Int       @default(0) @db.SmallInt
+  maxAttempts    Int       @default(5) @map("max_attempts") @db.SmallInt
+  runAfter       DateTime  @default(now()) @map("run_after") @db.Timestamptz
+  leaseId        String?   @map("lease_id") @db.Uuid
+  leaseExpiresAt DateTime? @map("lease_expires_at") @db.Timestamptz
+  startedAt      DateTime? @map("started_at") @db.Timestamptz
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz
+  lastErrorCode  String?   @map("last_error_code")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_sync_jobs_business_fkey")
+  connection MailConnection @relation(fields: [businessId, connectionId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "mail_sync_jobs_connection_fkey")
+
+  @@id([businessId, id])
+  @@index([businessId, status, runAfter])
+  @@index([businessId, connectionId, createdAt(sort: Desc)])
+  @@map("mail_sync_jobs")
+}
