@@ -8,7 +8,7 @@
 
 **In S1:**
 
-- **Calendars.** Business-wide calendars, each with its own IANA time zone and a colour. A business has one default calendar, created on demand.
+- **Calendars.** Business-wide calendars, each with its own IANA time zone and a colour. A business has exactly one default calendar once it has any calendar. The first calendar becomes the default, or initialisation creates one.
 - **Events.** Each event belongs to one calendar and has:
   - a title, notes and a location;
   - an optional customer link;
@@ -137,7 +137,17 @@ Every write that can change what a calendar's time looks like follows the steps 
 3. **The event row `FOR UPDATE`** (edits, cancel and archive), with a version re-check. A concurrent change returns `409 stale` and is never overwritten.
 4. **The conflict check, then the write.** Under READ COMMITTED each statement takes a new snapshot after the locks are granted, so the check sees every earlier writer's committed result. Both run in the same transaction, so **the check and the mutation are atomic**. The locks are released together at commit or rollback.
 
-Choosing the default calendar (initialising it, creating a calendar as the default, or making one the default) takes a separate per-business lock: `hashtextextended('scheduling.default:' || business_id, 0)`.
+**Default calendar.** Every change to which calendar is the default takes a separate per-business lock, `hashtextextended('scheduling.default:' || business_id, 0)`, **before it touches any calendar row**. That covers initialising the default, creating any calendar, creating a calendar as the default, and making one the default.
+
+- **Invariant (audit S1-01).** A business with any active calendar has exactly one default, and the default is active.
+  - Under that lock, a calendar created while the business has no default is inserted straight into the default slot, in the same statement that creates it. This holds whether or not `POST calendars/default` was called, and when creates and initialisations race.
+  - The unique `(business_id, default_slot)` index and the active-default CHECK back this up.
+  - The default cannot be archived, and the API has no "un-default" call.
+- **Ordering and staleness (audit S1-02).**
+  - Lock order is always the default lock, then calendar rows. A detail edit without `isDefault` takes only its own row and never the default lock. So no cycle is possible.
+  - Setting the new default re-checks the version the request was based on, so a stale "make default" fails with `409 stale` instead of winning over a concurrent edit.
+  - Clearing the previous default bumps its version, so edits racing it from the old version are also `stale`.
+  - The tests for both findings failed on the earlier code: a deadlock returned `retryable`, a stale request won, and concurrent creates left no default. They pass on the fix.
 
 **Evidence (all on real PostgreSQL 16):**
 

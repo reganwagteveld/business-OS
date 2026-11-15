@@ -55,33 +55,51 @@ export async function ensureDefaultCalendar(db: AppTenantDb, actorUserId: string
   return { calendar: toDto(calendar), created: inserted.count === 1 };
 }
 
-/** Makes `id` the default. Under the per-business lock: the old default is cleared, then the new one set. */
-async function makeDefault(db: AppTenantDb, actorUserId: string, id: string) {
-  await lockDefaultChoice(db);
+/**
+ * Makes `id` the default. The caller must already hold the per-business default lock (`lockDefaultChoice`),
+ * taken before it touched any calendar row: every default change takes that lock first and the rows after,
+ * so a detail edit and a default change cannot wait for each other in a cycle (S1-02). The old default is
+ * cleared, then the new one set; `expectedVersion` (when given) makes a stale request fail instead of
+ * silently winning over a concurrent edit.
+ */
+async function makeDefault(db: AppTenantDb, actorUserId: string, id: string, expectedVersion?: number) {
   const previous = await db.schedulingCalendar.findFirst({ where: { defaultSlot: 'default' }, select: { id: true } });
   if (previous?.id === id) return;
   if (previous) {
     await db.schedulingCalendar.updateMany({ where: { id: previous.id }, data: { defaultSlot: null, ...BUMP, updatedById: actorUserId } as never });
   }
-  const set = await db.schedulingCalendar.updateMany({ where: { id, archivedAt: null }, data: { defaultSlot: 'default', ...BUMP, updatedById: actorUserId } as never });
-  // Archived meanwhile: throwing rolls the whole unit of work back, so the old default is kept.
-  if (set.count === 0) throw new StateConflictError('archived');
+  const set = await db.schedulingCalendar.updateMany({
+    where: { id, archivedAt: null, ...(expectedVersion !== undefined ? { version: expectedVersion } : {}) },
+    data: { defaultSlot: 'default', ...BUMP, updatedById: actorUserId } as never,
+  });
+  // Archived or changed meanwhile: throwing rolls the whole unit of work back, so the old default is kept.
+  if (set.count === 0) throw new StateConflictError((await load(db, id)).archivedAt ? 'archived' : 'stale');
   await recordAudit(db, actorUserId, 'scheduling.calendar.default_changed', { type: 'scheduling_calendar', id }, { from: previous?.id ?? null });
 }
 
 export type CalendarInput = { name?: string; description?: string | null; colour?: string | null; timeZone?: string; isDefault?: true };
 
+/**
+ * Creates a calendar. The first active calendar of a business is always its default (S1-01): under the
+ * per-business default lock, a business with no active default gets this calendar inserted directly into
+ * the default slot, in the same statement that creates it, so no request order (including racing
+ * `ensureDefaultCalendar` or other creates) can leave active calendars without a default. The unique
+ * (business_id, default_slot) index still backs this up. `isDefault: true` moves the default here.
+ */
 export async function createCalendar(db: AppTenantDb, actorUserId: string, input: CalendarInput & { name: string }) {
   const id = randomUUID();
+  await lockDefaultChoice(db);
+  const hasDefault = (await db.schedulingCalendar.count({ where: { defaultSlot: 'default' } })) > 0;
   await db.schedulingCalendar.create({
     data: {
       id, name: input.name, description: input.description ?? null, colour: input.colour ?? null,
-      timeZone: input.timeZone ?? (await businessTimeZone(db)), createdById: actorUserId, updatedById: actorUserId,
+      timeZone: input.timeZone ?? (await businessTimeZone(db)), defaultSlot: hasDefault ? null : 'default',
+      createdById: actorUserId, updatedById: actorUserId,
     } as never,
   });
   // Names and descriptions stay out of the audit log.
-  await recordAudit(db, actorUserId, 'scheduling.calendar.created', { type: 'scheduling_calendar', id });
-  if (input.isDefault) await makeDefault(db, actorUserId, id);
+  await recordAudit(db, actorUserId, 'scheduling.calendar.created', { type: 'scheduling_calendar', id }, hasDefault ? undefined : { default: 'first_calendar' });
+  if (input.isDefault && hasDefault) await makeDefault(db, actorUserId, id);
   return toDto(await load(db, id));
 }
 
@@ -91,6 +109,8 @@ export async function getCalendar(db: AppTenantDb, id: string) {
 
 /** Edits details and the display zone, or makes the calendar the default. Archived calendars are read-only. */
 export async function updateCalendar(db: AppTenantDb, actorUserId: string, id: string, patch: CalendarInput & { version: number }) {
+  // Default lock before any row lock (S1-02): the same order as every other default change.
+  if (patch.isDefault) await lockDefaultChoice(db);
   const before = await load(db, id);
   if (before.archivedAt) throw new StateConflictError('archived');
   if (before.version !== patch.version) throw new StateConflictError('stale');
@@ -102,7 +122,7 @@ export async function updateCalendar(db: AppTenantDb, actorUserId: string, id: s
     if (result.count === 0) throw new StateConflictError((await load(db, id)).archivedAt ? 'archived' : 'stale');
     await recordAudit(db, actorUserId, 'scheduling.calendar.updated', { type: 'scheduling_calendar', id }, { fields });
   }
-  if (patch.isDefault && before.defaultSlot === null) await makeDefault(db, actorUserId, id);
+  if (patch.isDefault && before.defaultSlot === null) await makeDefault(db, actorUserId, id, fields.length > 0 ? patch.version + 1 : patch.version);
   return toDto(await load(db, id));
 }
 

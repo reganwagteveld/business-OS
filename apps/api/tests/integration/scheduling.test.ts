@@ -106,6 +106,30 @@ async function team(label: string) {
   return { slug, people, businessId: rows[0].id as string };
 }
 
+/** A business with only its OWNER: cheaper than `team` for tests that need a fresh default state. */
+async function solo(label: string) {
+  const owner = await newUser(`${label}-owner`);
+  const slug = `${label}-${randomUUID().slice(0, 8)}`;
+  const created = await businessesRoute.POST(req('POST', '/api/v1/businesses', {
+    cookie: owner.cookie, body: { name: `Business ${label}`, slug, countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' },
+  }));
+  expect(created.status).toBe(201);
+  const { rows } = await admin.query('SELECT id FROM businesses WHERE slug = $1', [slug]);
+  return { slug, owner, businessId: rows[0].id as string };
+}
+
+/** S1-01: a business with any active calendar has exactly one default, and the default is active. */
+async function expectOneDefault(businessId: string) {
+  const { rows } = await admin.query(
+    `SELECT count(*) FILTER (WHERE archived_at IS NULL)::int AS active,
+            count(*) FILTER (WHERE default_slot = 'default')::int AS defaults,
+            count(*) FILTER (WHERE default_slot = 'default' AND archived_at IS NULL)::int AS active_defaults
+     FROM scheduling_calendars WHERE business_id = $1`, [businessId]);
+  const r = rows[0];
+  if (r.active > 0) expect(r, 'active calendars need exactly one active default').toMatchObject({ defaults: 1, active_defaults: 1 });
+  else expect(r.defaults).toBe(0);
+}
+
 const json = async (res: Response) => ({ status: res.status, body: await res.json() });
 const api = (who: User, slug: string) => {
   const s = `/api/v1/b/${slug}/scheduling`;
@@ -228,6 +252,59 @@ describe('calendars', () => {
     const restored = await o.restoreCalendar(first.id, archived.body.calendar.version);
     expect(restored.body.calendar.archivedAt).toBeNull();
     expect((await o.restoreCalendar(first.id, restored.body.calendar.version)).body).toEqual({ error: 'not_archived' });
+  });
+
+  it('S1-01: the first calendar created through the API is the default, without calling initialisation', async () => {
+    const S = await solo('se');
+    const o = api(S.owner, S.slug);
+    await expectOneDefault(S.businessId);
+    const first = await o.createCalendar({ name: 'Front desk' });
+    expect(first.status).toBe(201);
+    expect(first.body.calendar).toMatchObject({ isDefault: true, name: 'Front desk' });
+    await expectOneDefault(S.businessId);
+    // Initialisation now finds it rather than adding a second calendar.
+    const init = await o.initDefault();
+    expect(init.status).toBe(200);
+    expect(init.body.calendar.id).toBe(first.body.calendar.id);
+    const second = await o.createCalendar({ name: 'Second' });
+    expect(second.body.calendar.isDefault).toBe(false);
+    const third = await o.createCalendar({ name: 'Third', isDefault: true });
+    expect(third.body.calendar.isDefault).toBe(true);
+    expect((await o.calendar(first.body.calendar.id)).body.calendar.isDefault).toBe(false);
+    await expectOneDefault(S.businessId);
+    // No supported call removes the default: archiving it is refused, "un-defaulting" is not part of the contract.
+    const t = (await o.calendar(third.body.calendar.id)).body.calendar;
+    expect((await o.archiveCalendar(t.id, t.version)).body).toEqual({ error: 'default_calendar' });
+    expect((await o.patchCalendar(t.id, { version: t.version, isDefault: false })).status).toBe(400);
+    // Archiving and restoring the others never leaves the business without a default.
+    for (const id of [first.body.calendar.id, second.body.calendar.id]) {
+      const c = (await o.calendar(id)).body.calendar;
+      const archived = (await o.archiveCalendar(id, c.version)).body.calendar;
+      await expectOneDefault(S.businessId);
+      await o.restoreCalendar(id, archived.version);
+      await expectOneDefault(S.businessId);
+    }
+    expect((await audits(first.body.calendar.id)).map((a) => [a.action, a.metadata])).toContainEqual(['scheduling.calendar.created', { default: 'first_calendar' }]);
+  });
+
+  it('S1-01: concurrent first creates and initialisations always leave exactly one default', async () => {
+    for (let round = 0; round < 4; round++) {
+      const S = await solo(`sf${round}`);
+      const o = api(S.owner, S.slug);
+      // Odd rounds: creates only, nobody initialises. Even rounds: creates racing initialisations.
+      const results = await Promise.all(round % 2 === 1
+        ? ['A', 'B', 'C', 'D', 'E'].map((name) => o.createCalendar({ name }))
+        : [
+          o.createCalendar({ name: 'A' }), o.initDefault(), o.createCalendar({ name: 'B' }), o.initDefault(),
+          o.createCalendar({ name: 'C', isDefault: true }), o.createCalendar({ name: 'D' }), o.initDefault(),
+        ]);
+      expect(results.map((r) => r.status).every((s) => s === 200 || s === 201), `round ${round}: ${results.map((r) => r.status)}`).toBe(true);
+      await expectOneDefault(S.businessId);
+      const listed = (await o.calendars()).body.calendars as { id: string; isDefault: boolean }[];
+      expect(listed.filter((c) => c.isDefault)).toHaveLength(1);
+      expect(listed.length).toBeGreaterThanOrEqual(round % 2 === 1 ? 5 : 4);
+      expect(listed.length).toBeLessThanOrEqual(5); // initialisation adds a calendar only when it ran before every create
+    }
   });
 
   it('refuses stale calendar edits', async () => {
@@ -701,6 +778,76 @@ describe('concurrency and the lock protocol', () => {
     await book(right, t, 1);
     const blocked = await m.patch(x.id, { version: x.version, calendarId: right });
     expect(blocked.status).toBe(409);
+  });
+
+  const defaultKey = (businessId: string) => `hashtextextended('scheduling.default:' || '${businessId}', 0)`;
+
+  it('S1-02: a default change takes the business default lock before any calendar row, so it cannot deadlock with another default change', async () => {
+    const S = await solo('sg');
+    const o = api(S.owner, S.slug);
+    await o.createCalendar({ name: 'Default' });
+    const r = (await o.createCalendar({ name: 'R' })).body.calendar;
+    // The holder plays a default change already in progress: it holds the default lock, then touches R's row,
+    // as makeDefault does when R is the previous default or the target.
+    await holder.query('BEGIN');
+    try {
+      await holder.query(`SELECT pg_advisory_xact_lock(${defaultKey(S.businessId)})`);
+      const edit = o.patchCalendar(r.id, { version: r.version, name: 'Renamed', isDefault: true });
+      expect(await finishesOrBlocks(admin, await backendPid(holder), edit)).toBe('blocked');
+      // The edit must not be holding R's row while it waits: this UPDATE finishes without waiting.
+      await holder.query("SET LOCAL lock_timeout = '3s'");
+      await holder.query(`UPDATE scheduling_calendars SET description = 'by the other change', version = version + 1 WHERE id = $1`, [r.id]);
+      await holder.query('COMMIT');
+      // R changed underneath the edit, so the edit is stale: nothing it asked for is applied.
+      expect((await edit).body).toEqual({ error: 'stale' });
+    } catch (error) {
+      await holder.query('ROLLBACK');
+      throw error;
+    }
+    const after = (await o.calendar(r.id)).body.calendar;
+    expect(after).toMatchObject({ name: 'R', description: 'by the other change', isDefault: false, version: r.version + 1 });
+    await expectOneDefault(S.businessId);
+  });
+
+  it('S1-02: concurrent detail edits and default reassignments: no deadlock, one default, stale requests never overwrite', async () => {
+    const S = await solo('sh');
+    const o = api(S.owner, S.slug);
+    const cals = [];
+    for (const name of ['P', 'Q', 'R']) cals.push((await o.createCalendar({ name })).body.calendar);
+    for (let round = 0; round < 8; round++) {
+      const now = await Promise.all(cals.map((c) => o.calendar(c.id).then((x) => x.body.calendar)));
+      const [p, q, r] = now;
+      const requests = [
+        { id: p.id, body: { version: p.version, name: `P${round}`, isDefault: true } },
+        { id: q.id, body: { version: q.version, isDefault: true } },
+        { id: r.id, body: { version: r.version, description: `r${round}`, isDefault: true } },
+        { id: p.id, body: { version: p.version, description: `p${round}` } },
+        { id: q.id, body: { version: q.version, colour: '#123456' } },
+        { id: r.id, body: { version: r.version, isDefault: true } },
+      ];
+      const results = await Promise.all(requests.map((x) => o.patchCalendar(x.id, x.body)));
+      for (const [i, res] of results.entries()) {
+        expect([200, 409], `round ${round} request ${i}: ${JSON.stringify(res.body)}`).toContain(res.status);
+        if (res.status === 409) expect(res.body).toEqual({ error: 'stale' });
+      }
+      await expectOneDefault(S.businessId);
+      // Each calendar took at most one of the changes made from the same version, and only a successful one.
+      // A request that asks for what is already there (the same colour, "make the default" on the default)
+      // changes nothing and is not counted.
+      const after = await Promise.all(cals.map((c) => o.calendar(c.id).then((x) => x.body.calendar)));
+      const changes = (x: (typeof requests)[number]) => {
+        const current = now.find((c) => c.id === x.id)!;
+        return Object.entries(x.body).some(([k, v]) => k !== 'version' && (k === 'isDefault' ? !current.isDefault : current[k] !== v));
+      };
+      const won = (id: string) => requests.filter((x, i) => x.id === id && results[i]!.status === 200 && changes(x));
+      for (const c of after) expect(won(c.id).length, `round ${round} ${c.name}`).toBeLessThanOrEqual(1);
+      if (won(p.id)[0]?.body.name) expect(after[0]!.name).toBe(`P${round}`);
+      else expect(after[0]!.name).toBe(p.name);
+      if (won(p.id)[0]?.body.description) expect(after[0]!.description).toBe(`p${round}`);
+      else expect(after[0]!.description).toBe(p.description);
+      if (won(r.id)[0]?.body.description) expect(after[2]!.description).toBe(`r${round}`);
+      else expect(after[2]!.description).toBe(r.description);
+    }
   });
 
   it('a concurrent edit of the same event is reported as stale, not overwritten', async () => {
