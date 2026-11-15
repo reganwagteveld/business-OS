@@ -27,7 +27,9 @@ export type StateConflictCode =
   // Scheduling S1: the default calendar cannot be archived; cancelled events are read-only.
   | 'default_calendar' | 'not_scheduled'
   // Finance F5 (docs/finance-documents-f5.md §7): generated documents.
-  | 'not_eligible' | 'not_draft' | 'no_original' | 'version_limit' | 'document_too_large' | 'branding_logo_invalid';
+  | 'not_eligible' | 'not_draft' | 'no_original' | 'version_limit' | 'document_too_large' | 'branding_logo_invalid'
+  // Communications C2-A (docs/communications-c2.md §10): mailbox connections and sync jobs.
+  | 'provider_not_configured' | 'already_connected' | 'account_mismatch' | 'disconnected' | 'not_active' | 'sync_disabled';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

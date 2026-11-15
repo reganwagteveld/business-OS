@@ -14,6 +14,30 @@ const originList = z
   .transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean))
   .pipe(z.array(z.string().regex(ORIGIN, 'Each CORS origin must be an exact origin such as https://app.example.com (no wildcard, no path)')));
 
+const optionalSecret = z.string().min(1).optional();
+
+/** "keyId:base64" pairs; each key must decode to exactly 32 bytes (AES-256). Key ids are unique. */
+const credentialKeys = z
+  .string()
+  .default('')
+  .transform((value, ctx) => {
+    const keys: { id: string; key: Buffer }[] = [];
+    for (const entry of value.split(',').map((e) => e.trim()).filter(Boolean)) {
+      const match = /^([a-z0-9][a-z0-9_-]{0,31}):([A-Za-z0-9+/_-]+={0,2})$/.exec(entry);
+      const key = match ? Buffer.from(match[2]!, 'base64') : undefined;
+      if (!match || key?.length !== 32) {
+        ctx.addIssue({ code: 'custom', message: 'Each credential key must be keyId:base64 of exactly 32 bytes (openssl rand -base64 32)' });
+        return z.NEVER;
+      }
+      if (keys.some((k) => k.id === match[1])) {
+        ctx.addIssue({ code: 'custom', message: 'Credential key ids must be unique' });
+        return z.NEVER;
+      }
+      keys.push({ id: match[1]!, key });
+    }
+    return keys;
+  });
+
 export const postgresUrl = z
   .url()
   .refine((url) => url.startsWith('postgresql://') || url.startsWith('postgres://'), 'Must be a PostgreSQL URL');
@@ -39,6 +63,16 @@ export const envSchema = z
     DATABASE_REGION: z.string().min(1),
     // Set by Vercel at runtime to the region the function is actually running in.
     VERCEL_REGION: z.string().optional(),
+    // Communications C2-A (docs/communications-c2.md §10). All optional: with no provider configured
+    // mailbox connections are off. Keys encrypt provider tokens at rest: "keyId:base64(32 bytes)",
+    // comma-separated, the first one encrypts and every listed one decrypts (rotation).
+    COMMUNICATIONS_CREDENTIAL_KEYS: credentialKeys,
+    GOOGLE_OAUTH_CLIENT_ID: optionalSecret,
+    GOOGLE_OAUTH_CLIENT_SECRET: optionalSecret,
+    MICROSOFT_OAUTH_CLIENT_ID: optionalSecret,
+    MICROSOFT_OAUTH_CLIENT_SECRET: optionalSecret,
+    // "common", "organizations", "consumers" or a directory (tenant) id.
+    MICROSOFT_OAUTH_TENANT: z.string().regex(/^(common|organizations|consumers|[0-9a-f-]{36})$/).default('common'),
   })
   .superRefine((value, ctx) => {
     if (value.REGION !== value.DATABASE_REGION) {
@@ -49,6 +83,16 @@ export const envSchema = z
     }
     if (value.EMAIL_TRANSPORT === 'resend' && (!value.RESEND_API_KEY || !value.EMAIL_FROM)) {
       ctx.addIssue({ code: 'custom', path: ['RESEND_API_KEY'], message: 'EMAIL_TRANSPORT=resend needs RESEND_API_KEY and EMAIL_FROM' });
+    }
+    for (const provider of ['GOOGLE', 'MICROSOFT'] as const) {
+      const id = value[`${provider}_OAUTH_CLIENT_ID`];
+      const secret = value[`${provider}_OAUTH_CLIENT_SECRET`];
+      if (Boolean(id) !== Boolean(secret)) {
+        ctx.addIssue({ code: 'custom', path: [`${provider}_OAUTH_CLIENT_SECRET`], message: `Set both ${provider}_OAUTH_CLIENT_ID and ${provider}_OAUTH_CLIENT_SECRET, or neither` });
+      }
+      if (id && value.COMMUNICATIONS_CREDENTIAL_KEYS.length === 0) {
+        ctx.addIssue({ code: 'custom', path: ['COMMUNICATIONS_CREDENTIAL_KEYS'], message: 'A mail provider is configured, so COMMUNICATIONS_CREDENTIAL_KEYS is required' });
+      }
     }
     if (value.VERCEL_REGION && value.VERCEL_REGION !== 'dev1') {
       const actual = VERCEL_TO_AWS_REGION[value.VERCEL_REGION];

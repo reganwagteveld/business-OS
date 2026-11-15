@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { ForbiddenError, authorize, permissionsFor, type Permission } from '@/modules/access';
 import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser } from '@/modules/identity';
 import { NotFoundError, type Actor } from '@/modules/tenancy';
-import { myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb } from '@/core/db';
+import { myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
 import { apiHeaders } from '@/core/http';
 import { isUniqueViolation, RecordNotFoundError, RuleViolationError, ServiceFailureError, sqlState, StateConflictError } from '@/core/http/errors';
 
@@ -41,13 +41,15 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   FN014: [409, 'has_credit_applications'], FN015: [409, 'invalid_state'],
   // F3 (migration 20261117000000_finance_expenses).
   FN016: [409, 'has_payments'], FN017: [409, 'archived_reference'], FN018: [409, 'expense_not_open'],
-  // F5 (migration 20261120000000_finance_documents): generated documents and branding assets.
+  // F5 (migration 20261122000000_finance_documents): generated documents and branding assets.
   FN019: [409, 'not_eligible'], FN020: [409, 'stale'], FN021: [409, 'immutable'],
   // People (migration 20261118000000_people, docs/people-data-model.md §4).
   PE001: [409, 'invalid_transition'], PE002: [409, 'manager_cycle'], PE003: [400, 'invalid_manager'], PE004: [409, 'immutable'],
   PE005: [409, 'has_direct_reports'], PE006: [409, 'terminated'], PE007: [409, 'archived_reference'], PE008: [409, 'in_use'],
   // Communications C1 (migration 20261119300000_communications): history guards.
   CM001: [409, 'immutable'], CM002: [409, 'immutable'], CM003: [409, 'immutable'], CM004: [400, 'invalid_date'],
+  // Communications C2-A (migration 20261121000000_communications_providers): connections and sync jobs.
+  CM005: [409, 'immutable'], CM006: [409, 'disconnected'], CM007: [409, 'invalid_transition'],
 };
 
 /**
@@ -95,6 +97,8 @@ function errorResponse(request: Request, error: unknown): Response {
   if (isUniqueViolation(error, 'finance_documents_business_id_kind_number')) return fail(request, 409, 'number_conflict');
   // A concurrent import of the same external id won the race; retrying reports it as a duplicate.
   if (isUniqueViolation(error, 'messages_external_key')) return fail(request, 409, 'idempotency_conflict');
+  // Another member connected the same mailbox at the same moment (C2-A).
+  if (isUniqueViolation(error, 'mail_connections_live_account_key')) return fail(request, 409, 'already_connected');
   if (state === '23514' || state === '23505') {
     const text = `${error instanceof Error ? error.message : ''} ${JSON.stringify((error as { meta?: unknown } | null)?.meta ?? {})}`;
     const hit = FINANCE_CONSTRAINTS.find(([pattern]) => pattern.test(text));
@@ -121,7 +125,7 @@ async function readInput<S extends z.ZodType>(request: Request, schema: S | unde
   return parsed.success ? { ok: true, data: parsed.data } : { ok: false };
 }
 
-/** Authentication and CSRF shared by both wrappers. Returns the user, or a response to send. */
+/** Authentication and CSRF shared by the wrappers. Returns the user, or a response to send. */
 async function authenticate(request: Request): Promise<{ user: CurrentUser; sessionToken: string } | Response> {
   const mode = classifyAuthRequest(request);
   if (mode.kind === 'reject') return fail(request, mode.status, mode.error);
@@ -263,5 +267,48 @@ export function tenantFileRoute(
     } catch (error) {
       return errorResponse(request, error);
     }
+  };
+}
+
+/**
+ * Browser navigation targets that must answer with a page, not JSON: the OAuth provider redirects
+ * the browser here (docs/communications-c2.md §7.1). Same authentication as the other wrappers (the
+ * signed-in session in this browser is required); GET only, so CSRF does not apply. The page is
+ * static text chosen by the handler: no input is ever echoed, nothing is cached, nothing can be
+ * framed and no script runs.
+ */
+export function browserRoute(
+  handler: (args: { request: Request; user: CurrentUser | null; sessionToken: string | null; memberships: (slug: string) => Promise<MembershipRow | undefined> }) => Promise<{ status: number; title: string; message: string }>,
+) {
+  return async (request: Request): Promise<Response> => {
+    let page: { status: number; title: string; message: string };
+    try {
+      const auth = await authenticate(request);
+      const signedIn = auth instanceof Response ? null : auth;
+      page = await handler({
+        request,
+        user: signedIn?.user ?? null,
+        sessionToken: signedIn?.sessionToken ?? null,
+        memberships: async (slug) => (signedIn ? (await myMemberships(signedIn.sessionToken)).find((m) => m.slug === slug) : undefined),
+      });
+    } catch (error) {
+      console.error('[api] unexpected error', error instanceof Error ? error.name : typeof error);
+      page = { status: 500, title: 'Something went wrong', message: 'Nothing was connected. Please try again from Business OS.' };
+    }
+    const escape = (v: string) => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`
+      + `<meta name="referrer" content="no-referrer"><title>${escape(page.title)}</title></head>`
+      + `<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;line-height:1.5">`
+      + `<h1 style="font-size:1.25rem">${escape(page.title)}</h1><p>${escape(page.message)}</p></body></html>`;
+    return new Response(html, {
+      status: page.status,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      },
+    });
   };
 }

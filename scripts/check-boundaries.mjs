@@ -82,8 +82,11 @@ export function serverViolations(files) {
       const methods = [...content.matchAll(/export\s+(?:async\s+)?(?:const|function)\s+(GET|POST|PUT|PATCH|DELETE)\b(.*)/g)];
       const tenant = name.startsWith('app/api/v1/b/');
       const unwrappedAllowed = /^app\/api\/v1\/(health|me|auth)\//.test(name);
+      // Browser navigation targets that answer with a page (the OAuth callback, docs/communications-c2.md §7.1).
+      const browserAllowed = name === 'app/api/v1/communications/oauth/callback/route.ts';
       for (const [, method, rest] of methods) {
-        const wrapper = /=\s*(tenantRoute|tenantFileRoute|publicRoute)\(/.exec(rest)?.[1];
+        const wrapper = /=\s*(tenantRoute|tenantFileRoute|publicRoute|browserRoute)\(/.exec(rest)?.[1];
+        if (wrapper === 'browserRoute' && !browserAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} may not use browserRoute (OAuth callback only)`);
         // tenantFileRoute (Finance F5 files) resolves the tenant exactly like tenantRoute and answers with bytes.
         if (tenant && wrapper !== 'tenantRoute' && wrapper !== 'tenantFileRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
         if (!tenant && !wrapper && !unwrappedAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} must use publicRoute (or be an allowed unauthenticated endpoint)`);
@@ -96,6 +99,11 @@ export function serverViolations(files) {
     }
     if (name !== 'core/config/schema.ts' && name !== 'core/db/auth-client.ts' && /\bAUTH_DATABASE_URL\b/.test(content)) {
       errors.push(`auth-client-only-in-identity: ${name} reads AUTH_DATABASE_URL; only core/db/auth-client.ts may`);
+    }
+    // Provider tokens (docs/communications-c2.md §7.2): only the credentials service touches them.
+    if (name !== 'modules/communications/server/credentials.ts' && /\bmailConnectionCredential\b|\bmail_connection_credentials\b/.test(content)
+        && name !== 'core/db/app-client.ts') {
+      errors.push(`credentials-only-in-credentials: ${name} touches mail connection credentials; only modules/communications/server/credentials.ts may`);
     }
     // Better Auth is an implementation detail of the identity module (architecture §7.1).
     if (!name.startsWith('modules/identity/') && importsOf(content).some((spec) => /^better-auth(\/|$)/.test(spec))) {

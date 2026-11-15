@@ -68,6 +68,10 @@ model Business {
   conversations             Conversation[]
   messages                  Message[]
   messageParticipants       MessageParticipant[]
+  mailConnections           MailConnection[]
+  mailCredentials           MailConnectionCredential[]
+  mailOAuthStates           MailOAuthState[]
+  mailSyncJobs              MailSyncJob[]
 
   @@map("businesses")
 }

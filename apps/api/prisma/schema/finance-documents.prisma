@@ -1,7 +1,7 @@
 // Finance F5: generated documents (docs/finance-documents-f5.md). PDF versions of issued quotes and
 // invoices, the per-business document branding, and branding assets (logos). Tenant tables with forced
 // RLS and composite (business_id, …) foreign keys like the rest of finance; the guards, CHECKs and
-// grants Prisma cannot express are in migration 20261120000000_finance_documents.
+// grants Prisma cannot express are in migration 20261122000000_finance_documents.
 //
 // Storage: PDF and logo bytes are kept in PostgreSQL (bytea) because Business OS has no object storage
 // yet (docs/finance-documents-f5.md §5, owner decision F5-D1). Rows are insert-only for bos_app.

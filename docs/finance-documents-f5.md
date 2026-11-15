@@ -2,7 +2,7 @@
 
 Status: implemented on branch `claude/project-thread-jtkv3b` (PR #42), owner decisions F5-D1 to F5-D4
 approved by Regan on 2026-11-15 and built in; awaiting re-audit. Not merged. Migration
-`20261120000000_finance_documents` is **not applied to production**.
+`20261122000000_finance_documents` is **not applied to production**.
 
 F5 turns issued quotes and invoices into A4 PDFs, keeps each PDF as an immutable version, and lets a
 business brand them. It adds no second invoice lifecycle and no sending: generating, previewing or
@@ -119,7 +119,7 @@ the authoritative Finance records. There is no second calculation engine:
 ## 5. Data model and storage
 
 Three tables (schema `prisma/schema/finance-documents.prisma`, migration
-`20261120000000_finance_documents`), all with forced RLS (`tenant_isolation`), `business_id` first in
+`20261122000000_finance_documents`), all with forced RLS (`tenant_isolation`), `business_id` first in
 every composite foreign key, `ON DELETE RESTRICT` to `businesses`, and RESTRICTIVE insert policies that
 require `generated_by_id` / `created_by_id` to equal the session user.
 
@@ -307,16 +307,15 @@ Inside the existing quote and invoice screens, without a redesign (`packages/app
 
 ## 11. Operations and migration
 
-- Migration `20261120000000_finance_documents` is additive (three new tables, functions, triggers,
+- Migration `20261122000000_finance_documents` is additive (three new tables, functions, triggers,
   grants, policies), wrapped in one transaction, no data backfill, no privileged extension. Rollback before
   any PDF exists: drop the three tables and four functions. After PDFs exist, rolling back loses them;
   restore from backup instead.
-- Ordering, checked 2026-11-15 against main `1b65e74` (latest migration `20261119300000_communications`)
-  and the only other open PR, #41 (C2-A, `20261121000000_communications_providers`): F5 sorts after main
-  and before C2-A, so either merge order applies cleanly as long as C2-A keeps its later timestamp. If
-  C2-A merges first, F5 must be renamed to sort after it before merging. A trial merge of the two
-  branches has text conflicts (no migration conflicts) in `apps/api/src/app/api/_lib/routes.ts`,
-  `apps/api/src/core/http/errors.ts` and `scripts/check-boundaries.mjs`; whoever merges second resolves them.
+- Ordering: C2-A (PR #41) merged first as `4f2d437` with `20261121000000_communications_providers`, so
+  F5's migration was renamed from `20261120000000_finance_documents` to `20261122000000_finance_documents`
+  (content unchanged, never applied to production under either name) to sort after it. The three text
+  conflicts with C2-A (`apps/api/src/app/api/_lib/routes.ts`, `apps/api/src/core/http/errors.ts`,
+  `scripts/check-boundaries.mjs`) were resolved by keeping both sides.
 - Deploy order (STAB-01 recommendation B): apply the migration before the code that uses it is published.
 - New runtime dependency: `pdfkit@0.20.2` (MIT). Dev-only: `pdfjs-dist`, `@types/pdfkit`. The font
   source package is used only by the generator script.
