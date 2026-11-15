@@ -192,3 +192,47 @@ export async function listCustomerBalances(db: AppTenantDb, query: { customerId?
   const last = page[page.length - 1];
   return { balances, asOf, nextCursor: rows.length > query.limit && last ? encodeCursor(list, { c: last.customer_id, k: last.currency_code }) : null };
 }
+
+type ReceivableRow = {
+  currency_code: string; currency_scale: number; outstanding: Decimal; overdue: Decimal; open_count: number; overdue_count: number; unallocated: Decimal; unapplied: Decimal;
+};
+
+/**
+ * F4 (read-only): the business's receivables per currency, for the Finance overview. The same counters
+ * and rules as customer balances, in one statement (one snapshot), grouped by currency only. Nothing is
+ * converted or added across currencies; unallocated payments and unapplied credit are reported beside the
+ * outstanding amount, never netted against it.
+ */
+export async function invoiceReceivables(db: AppTenantDb) {
+  const asOf = todayIn((await businessProfile(db)).timeZone);
+  const rows = await db.$queryRaw<ReceivableRow[]>`
+    WITH b AS (SELECT nullif(current_setting('app.business_id', true), '')::uuid AS id),
+    parts AS (
+      SELECT d.currency_code, d.currency_scale,
+             CASE WHEN d.kind = 'INVOICE' THEN d.total - d.allocated_total - d.credit_applied_total ELSE 0 END AS outstanding,
+             CASE WHEN d.kind = 'INVOICE' AND d.due_date < ${asOf}::date THEN d.total - d.allocated_total - d.credit_applied_total ELSE 0 END AS overdue,
+             CASE WHEN d.kind = 'INVOICE' AND d.total - d.allocated_total - d.credit_applied_total > 0 THEN 1 ELSE 0 END AS open_count,
+             CASE WHEN d.kind = 'INVOICE' AND d.due_date < ${asOf}::date AND d.total - d.allocated_total - d.credit_applied_total > 0 THEN 1 ELSE 0 END AS overdue_count,
+             0::numeric AS unallocated,
+             CASE WHEN d.kind = 'CREDIT_NOTE' THEN d.total - d.credit_applied_total ELSE 0 END AS unapplied
+        FROM finance_documents d, b
+       WHERE d.business_id = b.id AND d.status = 'ISSUED' AND d.kind IN ('INVOICE', 'CREDIT_NOTE')
+      UNION ALL
+      SELECT p.currency_code, p.currency_scale, 0, 0, 0, 0, p.amount - p.allocated_total, 0
+        FROM finance_payments p, b
+       WHERE p.business_id = b.id AND p.status = 'RECORDED' AND p.direction = 'RECEIVED')
+    SELECT currency_code::text, max(currency_scale)::int AS currency_scale, sum(outstanding) AS outstanding, sum(overdue) AS overdue,
+           sum(open_count)::int AS open_count, sum(overdue_count)::int AS overdue_count, sum(unallocated) AS unallocated, sum(unapplied) AS unapplied
+      FROM parts
+     GROUP BY currency_code
+    HAVING sum(outstanding) <> 0 OR sum(unallocated) <> 0 OR sum(unapplied) <> 0
+     ORDER BY currency_code`;
+  return {
+    asOf,
+    currencies: rows.map((r) => ({
+      currencyCode: r.currency_code, currencyScale: r.currency_scale, outstanding: formatAmount(new Decimal(r.outstanding), r.currency_scale),
+      overdue: formatAmount(new Decimal(r.overdue), r.currency_scale), openCount: Number(r.open_count), overdueCount: Number(r.overdue_count),
+      unallocatedPayments: formatAmount(new Decimal(r.unallocated), r.currency_scale), unappliedCredit: formatAmount(new Decimal(r.unapplied), r.currency_scale),
+    })),
+  };
+}

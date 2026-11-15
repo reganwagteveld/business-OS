@@ -112,13 +112,14 @@ function fakeApi(data: { categories: ExpenseCategory[]; expenses: FinanceExpense
   return { fetch, calls, rate, next: (h: (path: string, method: string) => Response | undefined) => next.push(h) };
 }
 
-function setup(o: { permissions?: string[]; categories?: ExpenseCategory[]; expenses?: FinanceExpense[]; before?: (api: ReturnType<typeof fakeApi>) => void } = {}) {
+function setup(o: { permissions?: string[]; categories?: ExpenseCategory[]; expenses?: FinanceExpense[]; before?: (api: ReturnType<typeof fakeApi>) => void; section?: string } = {}) {
   const travel = category('Travel', { systemKey: 'travel' });
   const data = { categories: o.categories ?? [travel, category('Software', { systemKey: 'software', position: 20 })], expenses: o.expenses ?? [] };
   const api = fakeApi(data);
   o.before?.(api);
   const handlers = { onHome: vi.fn(), onSwitch: vi.fn(), onSignOut: vi.fn(), onSessionEnded: vi.fn() };
-  render(<FinanceZone client={createFinanceClient(BASE, { kind: 'cookie' }, api.fetch)} context={ctx(o.permissions)} userLabel="Ada" {...handlers} />);
+  // F4: the Zone opens on its overview; these F3 tests start in the Expenses section (or Settings for categories).
+  render(<FinanceZone client={createFinanceClient(BASE, { kind: 'cookie' }, api.fetch)} context={ctx(o.permissions)} userLabel="Ada" section={o.section ?? 'expenses'} {...handlers} />);
   return { api, data, travel: data.categories[0]!, user: userEvent.setup() };
 }
 const heading = (name: string | RegExp) => screen.findByRole('heading', { name, level: 1 });
@@ -247,8 +248,8 @@ describe('expense form and lifecycle', () => {
 
 describe('categories', () => {
   it('adds, renames and archives categories (finance:manage)', async () => {
-    const { api, user } = setup();
-    await user.click(await screen.findByRole('button', { name: 'Categories' }));
+    const { api, user } = setup({ section: 'settings' });
+    await user.click(await screen.findByRole('button', { name: 'Expense categories' }));
     await heading('Expense categories');
     await user.type(screen.getByLabelText('New category'), 'Training');
     await user.click(screen.getByRole('button', { name: 'Add category' }));
@@ -269,14 +270,14 @@ describe('categories', () => {
   });
 
   it('a duplicate name is explained; without finance:manage the list is read-only', async () => {
-    const { user } = setup();
-    await user.click(await screen.findByRole('button', { name: 'Categories' }));
+    const { user } = setup({ section: 'settings' });
+    await user.click(await screen.findByRole('button', { name: 'Expense categories' }));
     await user.type(await screen.findByLabelText('New category'), 'travel');
     await user.click(screen.getByRole('button', { name: 'Add category' }));
     expect((await screen.findByRole('alert')).textContent).toContain('already has that name');
     cleanup();
-    const ro = setup({ permissions: MANAGER });
-    await ro.user.click(await screen.findByRole('button', { name: 'Categories' }));
+    const ro = setup({ permissions: MANAGER, section: 'settings' });
+    await ro.user.click(await screen.findByRole('button', { name: 'Expense categories' }));
     await screen.findByRole('table', { name: 'Expense categories' });
     expect(screen.queryByLabelText('New category')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();

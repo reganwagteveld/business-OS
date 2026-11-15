@@ -13,6 +13,8 @@ import { Breakable, linkClass, safeHref, telHref } from './links';
 import { ManageContacts } from './manage-contacts';
 import { ActivityComposer } from './activity-composer';
 import { CustomerProjects } from '../projects/customer-projects';
+import { CustomerFinance } from '../finance/customer-finance';
+import type { FinanceClient } from '../../api/finance';
 
 function Panel({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -40,10 +42,12 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  * One customer's workspace. Everything shown is a real record from the API; contacts and activity
  * are managed through the existing tenant-scoped API. Archive asks first and restore is one click.
  */
-export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, projects, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
+export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, projects, finance, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
   client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
   /** The customer's projects, shown only to people who may read projects (the server checks again). */
   projects?: ProjectsLink;
+  /** The customer's finance, shown only to people who may read finance (the server checks again). */
+  finance?: FinanceLink;
   onBack: () => void; onEdit: (c: Customer) => void;
   /** Open contact or activity drafts report here, so the Zone asks before anything would discard them. */
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
@@ -72,7 +76,7 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, c
         <Loaded
           key={shown.id}
           customer={shown} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity}
-          names={names} projects={projects} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
+          names={names} projects={projects} finance={finance} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
         />
       ) : null}
     </div>
@@ -80,10 +84,12 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, c
 }
 
 export interface ProjectsLink { client: ProjectsClient; onOpen: (projectId: string) => void }
+/** The customer's finance panel, passed only to people who hold finance:read. `onOpen` takes `invoice:<id>` or `quote:<id>`. */
+export interface FinanceLink { client: FinanceClient; onOpen: (target: string) => void }
 
-function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, names, projects, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
+function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, names, projects, finance, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
   customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
-  names: Map<string, string> | null; projects?: ProjectsLink; onEdit: (c: Customer) => void; onChanged: () => void;
+  names: Map<string, string> | null; projects?: ProjectsLink; finance?: FinanceLink; onEdit: (c: Customer) => void; onChanged: () => void;
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const archived = customer.archivedAt !== null;
@@ -180,13 +186,10 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActi
           {projects ? (
             <CustomerProjects client={projects.client} slug={slug} customerId={customer.id} onOpen={(id) => confirmDiscard(() => projects.onOpen(id))} onSessionEnded={onSessionEnded} />
           ) : null}
-          <section aria-label="Sales and Finance" className="rounded-2xl border border-dashed border-border px-5 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-xs font-medium text-muted-foreground">Sales and Finance</h2>
-              <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Coming soon</span>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">Quotes, invoices and payments for this customer will appear here when those Zones arrive.</p>
-          </section>
+          {finance ? (
+            <CustomerFinance client={finance.client} slug={slug} customerId={customer.id} locale={locale} timeZone={timeZone}
+              onOpen={(target) => confirmDiscard(() => finance.onOpen(target))} onSessionEnded={onSessionEnded} />
+          ) : null}
         </div>
       </div>
     </>

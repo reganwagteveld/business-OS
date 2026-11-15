@@ -434,8 +434,9 @@ describe('customer detail', () => {
     expect(screen.getByText('Quote follow-up')).toBeTruthy();
     expect(screen.getByText('Left a message')).toBeTruthy();
     expect(screen.getByText(/3 Nov 2026.*12:00/)).toBeTruthy(); // 04:00Z is 12:00 in Perth
-    expect(screen.getByLabelText('Sales and Finance')).toBeTruthy();
-    expect(within(screen.getByLabelText('Sales and Finance')).getByText('Coming soon')).toBeTruthy();
+    // F4: no finance link was given (no finance:read), so there is no finance panel and no placeholder.
+    expect(screen.queryByLabelText('Sales and Finance')).toBeNull();
+    expect(screen.queryByLabelText('Finance')).toBeNull();
   });
 
   it('empty contacts and activity are said plainly; a missing customer is "not found"', async () => {

@@ -11,7 +11,7 @@ export { idempotencyKeyOf } from './server/shared';
 export type { Kind as FinanceKind } from './server/shared';
 export { allocatePayment, getPayment, listPayments, recordPayment, reverseAllocation, reversePayment, updatePayment } from './server/payments';
 export type { ListPaymentsQuery, RecordPaymentInput, SettlementItem } from './server/payments';
-export { applyCreditNote, getCreditNoteCredit, getInvoiceSettlement, listCustomerBalances, reverseCreditApplication } from './server/settlement';
+export { applyCreditNote, getCreditNoteCredit, getInvoiceSettlement, invoiceReceivables, listCustomerBalances, reverseCreditApplication } from './server/settlement';
 export { runReconciliation } from './server/reconciliation';
 export {
   createCategory, createExpense, DEFAULT_CATEGORIES, ensureDefaultCategories, expensePayables, getExpense, listCategories, listExpenses,

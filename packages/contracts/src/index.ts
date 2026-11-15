@@ -25,7 +25,7 @@ import {
   UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
   AllocatePaymentRequest, ApplyCreditRequest, CreditNoteCreditResponse, FinancePaymentResponse, InvoiceSettlementResponse, ListCustomerBalancesQuery,
   ListCustomerBalancesResponse, ListPaymentsQuery, ListPaymentsResponse, ReconciliationResponse, RecordPaymentRequest, ReverseAllocationRequest,
-  ReverseCreditApplicationRequest, ReversePaymentRequest, UpdatePaymentRequest,
+  ReverseCreditApplicationRequest, ReversePaymentRequest, UpdatePaymentRequest, InvoiceReceivablesResponse,
 } from './finance.ts';
 import {
   AllocateExpensePaymentRequest, CreateExpenseCategoryRequest, CreateExpenseRequest, ExpenseCategoryResponse, ExpensePayablesResponse, ExpensePaymentResponse,
@@ -167,6 +167,8 @@ export const endpoints = {
     response: CreditNoteCreditResponse,
   },
   listCustomerBalances: { method: 'GET', path: '/api/v1/b/:slug/finance/customer-balances', query: ListCustomerBalancesQuery, response: ListCustomerBalancesResponse },
+  /** F4 (additive, read-only): receivables per currency for the whole business. */
+  getReceivables: { method: 'GET', path: '/api/v1/b/:slug/finance/receivables', response: InvoiceReceivablesResponse },
   /** Internal integrity reconciliation (read-only); not bank-statement reconciliation. */
   getReconciliation: { method: 'GET', path: '/api/v1/b/:slug/finance/reconciliation', response: ReconciliationResponse },
   // Finance F3: expense categories, expenses, payments made against expenses. No DELETE:

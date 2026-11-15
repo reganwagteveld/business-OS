@@ -4,7 +4,8 @@ import type { AuthTransport } from './auth';
 export type RawResult = { kind: 'response'; status: number; json: unknown } | { kind: 'network' };
 
 export interface Requester {
-  request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, signal?: AbortSignal): Promise<RawResult>;
+  /** `headers` adds request headers such as Idempotency-Key; it cannot replace the credential or content headers. */
+  request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>): Promise<RawResult>;
 }
 
 /**
@@ -14,8 +15,8 @@ export interface Requester {
  */
 export function createRequester(baseUrl: string, transport: AuthTransport, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Requester {
   return {
-    async request(method, path, body, signal) {
-      const headers: Record<string, string> = { accept: 'application/json' };
+    async request(method, path, body, signal, extra) {
+      const headers: Record<string, string> = { ...extra, accept: 'application/json' };
       if (body !== undefined) headers['content-type'] = 'application/json';
       if (transport.kind === 'bearer') {
         const token = await transport.getToken().catch(() => null);

@@ -1,4 +1,4 @@
-# Finance Zone data model (F1, F2 and F3, implemented)
+# Finance Zone data model (F1, F2 and F3 implemented; F4 interface §20)
 
 > Status: **F1 implemented** (Phase 6): migration `20261115000000_finance`, the finance module, and the API for quotes, invoices, credit notes and finance settings. **F2 implemented** (PR #34, awaiting audit): migration `20261116000000_finance_payments`, payments, allocations, reversals, credit applications, settlement projections, customer balances and on-demand **internal integrity** reconciliation (§18; not bank-statement reconciliation). The owner approved FD-L1, FD-L2, FD-L3, FD-T1, FD-T2 and FD-P1 (§14); every other FD-* decision is still open. F2's choices on open decisions (§18.8) are **provisional pending owner approval**, not ratified policy. §17 lists what F1 built and where it differs from the F0 design below. **F3** (this PR, awaiting audit): migration `20261117000000_finance_expenses`, expense categories, expenses with tax treatments, payments made against expenses in the same payments ledger (direction `PAID`), payables, and the first Finance Zone screens (§19). Owner decisions F3-D1, F3-D2 and F3-D3 are approved (§19.11); the rest of §19.11 is provisional.
 > It follows [data-model.md](./data-model.md), [sales-data-model.md](./sales-data-model.md), [projects-data-model.md](./projects-data-model.md) and [scheduling-data-model.md](./scheduling-data-model.md): same tenancy, forced RLS, composite FKs, `<zone>:<action>` permission keys, audit and migration conventions.
@@ -1051,3 +1051,39 @@ expense:                     DRAFT ──record──▶ RECORDED ──void (no
 ### 19.16 Out of scope (unchanged)
 
 Bank feeds and bank reconciliation, OCR, AI categorisation, recurring expenses, purchase orders, employee reimbursements, payroll, a general ledger, reporting (F5) and tax filings.
+
+## 20. F4 implementation: the Finance Zone interface
+
+F4 is the client for F1–F3. It changes no table, migration, guard, permission or write path. Its only API change is one additive, read-only endpoint, documented separately in [finance-f4-api-additions.md](./finance-f4-api-additions.md).
+
+### 20.1 What F4 built
+
+- **Navigation.** The Finance entry in the Zone registry now has sections (secondary navigation): Overview, Quotes, Invoices, Credit notes, Payments, Expenses, Settings. Every section is readable with `finance:read`; each write action checks its own key (§7.1) for presentation, and the API checks again.
+- **Overview.** Per-currency receivables (new `/receivables`) and payables (`/expense-payables`), attention items (overdue invoices, past-due expenses, payments with an unallocated amount, unissued draft invoices), recent invoices, quotes and payments, and quick actions by permission. Nothing is added across currencies; nothing is called cash, revenue or profit.
+- **Quotes, invoices, credit notes.** Server-paginated registers with status, customer, issue-date, settlement and overdue filters; draft create and edit with the shared customer picker and a line editor (business tax rates only; totals always the server's); issue with a confirmation that names the next number; accept, decline, expire; convert a quote to a draft invoice; void with a required reason; discard drafts; read-only issued view with the sealed bill-to and seller snapshots; invoice settlement history (payments and credit, live and reversed); credit notes started from an invoice, issued, and applied to open invoices of the same customer and currency, with reversal.
+- **Payments received.** Register (status, customer, unallocated, dates), record with an `Idempotency-Key` (retries reuse it) and optional allocation in the same step, allocate the unallocated rest later, reverse an allocation (the payment stays), reverse a payment with a required reason, edit the reference. Wording is "a record of money received outside Business OS"; nothing mentions bank reconciliation.
+- **Expenses.** F3's screens, now a section with two tabs (Expenses, Payments made). Added: "Record payment" on a recorded, unpaid expense; payments made (register, record with `Idempotency-Key` and matching to expenses, match later, reverse a link, reverse a payment). Still no receipt upload or download (F3-D2).
+- **Settings.** Seller details and identifiers, payment instructions, document defaults (payment terms, quote validity, default tax rate), numbering series (prefix, digits, starting number with the lock-after-first-use explained), tax rates (add, rename, archive, restore; the percentage never changes) and expense categories (F3 screen). Retention and legal hold are shown read-only, not editable here. Read-only without `finance:manage`.
+- **Customer finance panel.** On a customer's page (Customers Zone), only when the person holds `finance:read`: open and overdue amounts and credit per currency (`/customer-balances`), the latest invoices and quotes, opening them in the Finance Zone. The retired "Sales and Finance — coming soon" placeholder is gone. Within Finance, customer names and the customer picker need `customers:read`; without it, issued documents still show their bill-to snapshot and drafts show "Customer".
+
+### 20.2 Client rules
+
+- Money stays a decimal string end to end. The only client arithmetic is exact integer (BigInt) addition, subtraction and comparison of amounts of one currency (`zones/finance/decimal.ts`), for allocation totals and "what is left"; every total, tax and balance shown is the server's.
+- Every request body is checked against the strict contract before it is sent; every response is parsed with the contract.
+- Edits and transitions send the `version` they were based on; `409 stale` is explained with a reload, never retried blindly.
+- The Zone is mounted per business (`key={slug}`) and every read is keyed by the slug, so nothing from one business is shown or requested under another.
+- Unsaved-changes protection covers every form (documents, payments, settings, numbering) through the shell's guard.
+- No URL routing or deep links: sections and records are in-memory shell routes (`child`, `target` such as `invoice:<id>`).
+
+### 20.3 Evidence
+
+| Check | Result |
+|---|---|
+| `packages/app/tests/finance-f4.test.tsx` (23: decimals, client strictness and Idempotency-Key, navigation, overview, quotes, invoices, payments incl. lost-response retry, reversals, credit notes, settings, business switch, customer permissions, customer panel) | pass |
+| F3 UI tests (`finance-zone.test.tsx`, now opening the Expenses or Settings section) and all other app tests | 303/303 |
+| `finance-payments.test.ts` › F4 receivables (equals the per-customer balances per currency; tenant-scoped; `finance:read`) | pass; whole integration suite 268/268 on a fresh local database, finance suites again on the same database 115/115 |
+| typecheck, lint, boundaries, contracts snapshot, unit tests, api/web/desktop builds | pass |
+
+### 20.4 Deferred (not in F4)
+
+Free-text document search (needs an optional `q`), contact/opportunity/project pickers on documents, document PDFs and sending, reports (F5), refunds (FD-A2, FD-A8), receipts (FD-P6), bank feeds and bank reconciliation, URL deep links.

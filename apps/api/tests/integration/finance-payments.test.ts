@@ -72,6 +72,7 @@ import * as applicationsRoute from '@/app/api/v1/b/[slug]/finance/credit-notes/[
 import * as applicationReverse from '@/app/api/v1/b/[slug]/finance/credit-notes/[documentId]/applications/[applicationId]/reverse/route';
 import * as balancesRoute from '@/app/api/v1/b/[slug]/finance/customer-balances/route';
 import * as reconciliationRoute from '@/app/api/v1/b/[slug]/finance/reconciliation/route';
+import * as receivablesRoute from '@/app/api/v1/b/[slug]/finance/receivables/route';
 import { devOutbox } from '@/core/email';
 
 const BASE = process.env.APP_BASE_URL!;
@@ -199,6 +200,7 @@ const api = (who: User, slug: string) => {
     unapplyCredit: (creditNoteId: string, applicationId: string) =>
       post(applicationReverse, `/credit-notes/${creditNoteId}/applications/${applicationId}/reverse`, ctx({ slug, documentId: creditNoteId, applicationId }), {}),
     balances: (qs = '') => balancesRoute.GET(req('GET', `${F}/customer-balances${qs}`, { cookie: who.cookie }), ctx({ slug })).then(json),
+    receivables: () => receivablesRoute.GET(req('GET', `${F}/receivables`, { cookie: who.cookie }), ctx({ slug })).then(json),
     reconcile: () => reconciliationRoute.GET(req('GET', `${F}/reconciliation`, { cookie: who.cookie }), ctx({ slug })).then(json),
     createCreditNote: (invoiceId: string, body: unknown = {}) => post(invoiceCredit, `/invoices/${invoiceId}/credit-notes`, d(invoiceId), body),
   };
@@ -554,6 +556,52 @@ describe('credit applications', () => {
     const invDoc = (await own.get('invoices', inv)).body.document;
     expect(await own.void('invoices', inv, { version: invDoc.version, reason: 'x' })).toMatchObject({ status: 409, body: { error: 'invoice_credited' } });
     expect(await own.patch('invoices', inv, { version: invDoc.version, notes: 'changed' })).toMatchObject({ status: 409, body: { error: 'immutable' } });
+  });
+});
+
+describe('F4 receivables summary (read-only)', () => {
+  it('per currency only, equal to the sum of customer balances; overdue and counts; never nets credit; tenant-scoped; finance:read', async () => {
+    const own = api(A.people.OWNER!, A.slug);
+    // An overdue USD invoice partly paid, and an open NZD one: three currencies at least, none added together.
+    const usd = await issuedInvoice('70', { currencyCode: 'USD', due: '2026-02-01' });
+    expect((await own.record(pay('20', { currencyCode: 'USD', allocations: [{ invoiceId: usd, amount: '20' }] }))).status).toBe(201);
+    await issuedInvoice('5.5', { currencyCode: 'NZD' });
+    const r = await own.receivables();
+    expect(r.status).toBe(200);
+    const list = r.body.receivables.currencies as {
+      currencyCode: string; outstanding: string; overdue: string; openCount: number; overdueCount: number; unallocatedPayments: string; unappliedCredit: string;
+    }[];
+    expect(new Set(list.map((c) => c.currencyCode)).size).toBe(list.length);
+    expect(list.map((c) => c.currencyCode)).toEqual(expect.arrayContaining(['AUD', 'USD', 'NZD']));
+    // The whole-business figure is exactly the sum of the per-customer balances of the same currency.
+    const balances: { currencyCode: string; receivable: string; overdue: string; unallocatedPayments: string; unappliedCredit: string }[] = [];
+    for (let cursor: string | null = null, first = true; first || cursor; first = false) {
+      const page: { balances: typeof balances; nextCursor: string | null } = (await own.balances(`?limit=100${cursor ? `&cursor=${cursor}` : ''}`)).body;
+      balances.push(...page.balances);
+      cursor = page.nextCursor;
+    }
+    for (const c of list) {
+      const mine = balances.filter((b) => b.currencyCode === c.currencyCode);
+      const sum = (k: 'receivable' | 'overdue' | 'unallocatedPayments' | 'unappliedCredit') => mine.reduce((s, b) => s.add(b[k]), new Decimal(0));
+      expect(new Decimal(c.outstanding).eq(sum('receivable')), c.currencyCode).toBe(true);
+      expect(new Decimal(c.overdue).eq(sum('overdue')), c.currencyCode).toBe(true);
+      expect(new Decimal(c.unallocatedPayments).eq(sum('unallocatedPayments')), c.currencyCode).toBe(true);
+      expect(new Decimal(c.unappliedCredit).eq(sum('unappliedCredit')), c.currencyCode).toBe(true);
+      expect(c.overdueCount).toBeLessThanOrEqual(c.openCount);
+    }
+    const usdRow = list.find((c) => c.currencyCode === 'USD')!;
+    expect(new Decimal(usdRow.overdue).gte(new Decimal('50'))).toBe(true);
+    expect(usdRow.overdueCount).toBeGreaterThanOrEqual(1);
+    const nzd = list.find((c) => c.currencyCode === 'NZD')!;
+    expect(nzd).toMatchObject({ overdue: '0.00', overdueCount: 0 });
+    expect(nzd.openCount).toBeGreaterThanOrEqual(1);
+    // Another business sees only its own currencies (B is EUR with no records here); MEMBER has no finance:read.
+    const bList = (await api(B.people.OWNER!, B.slug).receivables()).body.receivables.currencies as { currencyCode: string }[];
+    expect(bList.some((c) => c.currencyCode === 'NZD')).toBe(false);
+    expect((await api(A.people.MEMBER!, A.slug).receivables()).status).toBe(403);
+    expect((await api(A.people.MANAGER!, A.slug).receivables()).status).toBe(200);
+    // Reading changed nothing.
+    expect((await own.reconcile()).body.report.ok).toBe(true);
   });
 });
 

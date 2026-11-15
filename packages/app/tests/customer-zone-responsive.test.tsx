@@ -193,7 +193,7 @@ describe('customer profile hierarchy', () => {
     return createFakeApi({ alpha: { ...emptyBusiness(), customers: [c], contacts: [amy, zed] } });
   };
 
-  it('contact details are links, the primary contact leads and is labelled, and Sales and Finance stays quiet', async () => {
+  it('contact details are links, the primary contact leads and is labelled, and no finance panel appears without a finance link', async () => {
     setWidth(1280);
     const { user } = mount(build());
     await user.click(await screen.findByRole('button', { name: 'Acme Pty Ltd' }));
@@ -205,12 +205,12 @@ describe('customer profile hierarchy', () => {
     expect(names[0]).toContain('Zed Primary'); // primary first although Amy sorts earlier
     expect(within(contacts).getByLabelText('Primary contact')).toBeTruthy();
     expect(within(contacts).getByRole('link', { name: 'zed@acme.example' })).toBeTruthy();
-    const sales = screen.getByLabelText('Sales and Finance');
-    expect(within(sales).getByText('Coming soon')).toBeTruthy();
-    expect(sales.className).toContain('border-dashed'); // present, but not a heavy card
+    // F4: the "coming soon" placeholder is retired; finance shows only for finance:read (passed as a link by the app).
+    expect(screen.queryByLabelText('Sales and Finance')).toBeNull();
+    expect(screen.queryByLabelText('Finance')).toBeNull();
     for (const label of ['Details', 'Notes', 'Contacts', 'Activity']) expect(screen.getByLabelText(label)).toBeTruthy();
     // On a small window the sections stack in this order, so contacts come before the long timeline.
-    const order = ['Details', 'Contacts', 'Notes', 'Activity', 'Sales and Finance'].map((l) => screen.getByLabelText(l));
+    const order = ['Details', 'Contacts', 'Notes', 'Activity'].map((l) => screen.getByLabelText(l));
     for (let i = 1; i < order.length; i++) expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

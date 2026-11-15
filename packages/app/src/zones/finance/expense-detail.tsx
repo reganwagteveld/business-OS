@@ -21,9 +21,14 @@ const WRAP = '[overflow-wrap:anywhere]';
  * never hidden). Receipt attachments are deferred (FD-P6). Drafts can be edited, recorded or discarded; a recorded
  * expense can only be voided, and only once its payments are reversed.
  */
-export function ExpenseDetail({ client, slug, id, locale, timeZone, today, categoryName, canWrite, canPay, onBack, onEdit, onChanged, onSessionEnded }: {
+export function ExpenseDetail({ client, slug, id, locale, timeZone, today, categoryName, canWrite, canPay, onBack, onEdit, onPay, onOpenPayment, onChanged, onSessionEnded }: {
   client: FinanceClient; slug: string; id: string; locale?: string; timeZone: string; today: string; categoryName: (id: string) => string;
-  canWrite: boolean; canPay: boolean; onBack: () => void; onEdit: (e: FinanceExpense) => void; onChanged: (message: string) => void; onSessionEnded: () => void;
+  canWrite: boolean; canPay: boolean; onBack: () => void; onEdit: (e: FinanceExpense) => void;
+  /** F4: record a supplier payment against this expense (finance:payments). */
+  onPay?: (e: FinanceExpense) => void;
+  /** F4: open the payment made behind an allocation. */
+  onOpenPayment?: (paymentId: string) => void;
+  onChanged: (message: string) => void; onSessionEnded: () => void;
 }) {
   const { state, reload } = useLoad(`expense|${slug}|${id}`, (signal) => client.expense(slug, id, signal));
   const [action, setAction] = useState<Action>(null);
@@ -38,12 +43,14 @@ export function ExpenseDetail({ client, slug, id, locale, timeZone, today, categ
   }
   const e = state.outcome.data;
   const money = (v: string) => formatMoney(v, e.currencyCode, locale);
-  const actions = canWrite ? (
+  const payable = e.status === 'RECORDED' && e.paymentState !== 'PAID' && onPay;
+  const actions = canWrite || payable ? (
     <>
-      {e.status === 'DRAFT' ? <Button variant="outline" onClick={() => onEdit(e)}>Edit</Button> : null}
-      {e.status === 'DRAFT' ? <Button variant="outline" onClick={() => setAction('void')}>Discard draft</Button> : null}
-      {e.status === 'RECORDED' ? <Button variant="outline" onClick={() => setAction('void')}>Void</Button> : null}
-      {e.status === 'DRAFT' ? <Button onClick={() => setAction('record')}>Record expense</Button> : null}
+      {canWrite && e.status === 'DRAFT' ? <Button variant="outline" onClick={() => onEdit(e)}>Edit</Button> : null}
+      {canWrite && e.status === 'DRAFT' ? <Button variant="outline" onClick={() => setAction('void')}>Discard draft</Button> : null}
+      {canWrite && e.status === 'RECORDED' ? <Button variant="outline" onClick={() => setAction('void')}>Void</Button> : null}
+      {canWrite && e.status === 'DRAFT' ? <Button onClick={() => setAction('record')}>Record expense</Button> : null}
+      {payable ? <Button onClick={() => onPay(e)}>Record payment</Button> : null}
     </>
   ) : null;
   const done = (message: string) => {
@@ -102,7 +109,11 @@ export function ExpenseDetail({ client, slug, id, locale, timeZone, today, categ
             <ul className="divide-y text-sm">
               {e.allocations.map((a) => (
                 <li key={a.id} className="flex flex-wrap justify-between gap-2 py-2">
-                  <span>{formatDate(a.paidOn, locale)} · {METHOD_LABEL[a.method]}{a.reversedAt ? ' · reversed' : ''}</span>
+                  {onOpenPayment ? (
+                    <button type="button" className="text-left underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => onOpenPayment(a.paymentId)}>
+                      {formatDate(a.paidOn, locale)} · {METHOD_LABEL[a.method]}{a.reversedAt ? ' · reversed' : ''}
+                    </button>
+                  ) : <span>{formatDate(a.paidOn, locale)} · {METHOD_LABEL[a.method]}{a.reversedAt ? ' · reversed' : ''}</span>}
                   <span className={a.reversedAt ? 'text-muted-foreground line-through tabular-nums' : 'tabular-nums'}>{money(a.amount)}</span>
                 </li>
               ))}
