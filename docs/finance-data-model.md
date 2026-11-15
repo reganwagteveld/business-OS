@@ -1097,3 +1097,9 @@ Free-text document search (needs an optional `q`), contact/opportunity/project p
 | P2 customer names under Strict Mode | `useCustomerNames` sets its live flag on every mount, not only in the initial ref value | rendering inside `<StrictMode>` |
 | P2 uncertain outcomes | No answer is described as "may already have been recorded/saved": requests with an Idempotency-Key say a retry of the same details is safe (the key is reused); versioned changes say to reload and check first. F3 expense screens now use the same wording and helper | lost response on a supplier payment (key reused, one record); lost response on a customer payment |
 | `useSubmit` and rejected promises | A rejected call is caught and shown as an uncertain outcome; the button is re-enabled; no unhandled rejection | a client whose `recordPayment` rejects |
+
+## 21. F5: generated documents
+
+Quote and invoice PDFs, their immutable versions and the business's document branding are specified in
+[finance-documents-f5.md](finance-documents-f5.md). F5 reads the F1 records and their sealed snapshots;
+it changes no F1 to F4 table, status or calculation, and adds no sent state.

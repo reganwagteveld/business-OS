@@ -71,6 +71,12 @@ export function financeMessage(code: string | undefined): string {
     case 'has_payments': return 'Payments are linked to this expense. Reverse those payment links first (the payments stay recorded), then void it.';
     case 'expense_not_open': return 'That expense is not recorded and open, so it cannot be paid.';
     case 'totals_mismatch': return 'The totals no longer match the lines. Reload the draft and try again.';
+    case 'not_eligible': return 'A PDF can only be kept for a numbered quote or invoice. Drafts have a preview only.';
+    case 'not_draft': return 'This is no longer a draft. Reload to see its stored PDFs.';
+    case 'no_original': return 'Create the original PDF first.';
+    case 'version_limit': return 'This document already has the maximum number of PDF versions.';
+    case 'document_too_large': return 'This document is too large to make into a PDF. Shorten its notes or lines.';
+    case 'branding_logo_invalid': return 'The logo could not be used. Upload it again in Finance settings, Documents.';
     default: return 'That change could not be made. Reload and try again.';
   }
 }

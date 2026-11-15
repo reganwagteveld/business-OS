@@ -3,9 +3,17 @@ import type { AuthTransport } from './auth';
 /** What came back from a request: a real HTTP response, or no response at all (offline, DNS, TLS, blocked). */
 export type RawResult = { kind: 'response'; status: number; json: unknown } | { kind: 'network' };
 
+/** A file response: the bytes on success, otherwise the JSON error body (never a partial file). */
+export type RawFileResult =
+  | { kind: 'file'; status: number; blob: Blob; contentType: string; sha256: string | null }
+  | { kind: 'response'; status: number; json: unknown }
+  | { kind: 'network' };
+
 export interface Requester {
   /** `headers` adds request headers such as Idempotency-Key; it cannot replace the credential or content headers. */
   request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>): Promise<RawResult>;
+  /** GET a binary file (a PDF or an image) with the same credentials. `accept` names the expected type. */
+  requestFile(path: string, accept: string, signal?: AbortSignal): Promise<RawFileResult>;
 }
 
 /**
@@ -14,16 +22,41 @@ export interface Requester {
  * cached or logged here. Clients never send a business id: the active business is the `:slug` in the path.
  */
 export function createRequester(baseUrl: string, transport: AuthTransport, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Requester {
+  /** Adds the bearer token (desktop). False means signed out: the request must not be sent. */
+  const authorise = async (headers: Record<string, string>) => {
+    if (transport.kind !== 'bearer') return true;
+    const token = await transport.getToken().catch(() => null);
+    // An empty credential store means signed out: do not send an unauthenticated request.
+    if (!token) return false;
+    headers.authorization = `Bearer ${token}`;
+    return true;
+  };
   return {
+    async requestFile(path, accept, signal) {
+      const headers: Record<string, string> = { accept: `${accept}, application/json` };
+      if (!(await authorise(headers))) return { kind: 'response', status: 401, json: undefined };
+      let res: Response;
+      try {
+        res = await fetchImpl(`${baseUrl}${path}`, { method: 'GET', headers, credentials: transport.kind === 'cookie' ? 'include' : 'omit', cache: 'no-store', signal });
+      } catch {
+        return { kind: 'network' };
+      }
+      const contentType = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+      if (!res.ok || contentType === 'application/json') {
+        const json = await res.json().catch(() => undefined);
+        return { kind: 'response', status: res.status, json };
+      }
+      try {
+        const blob = await res.blob();
+        return { kind: 'file', status: res.status, blob, contentType, sha256: res.headers.get('x-document-sha256') };
+      } catch {
+        return { kind: 'network' };
+      }
+    },
     async request(method, path, body, signal, extra) {
       const headers: Record<string, string> = { ...extra, accept: 'application/json' };
       if (body !== undefined) headers['content-type'] = 'application/json';
-      if (transport.kind === 'bearer') {
-        const token = await transport.getToken().catch(() => null);
-        // An empty credential store means signed out: do not send an unauthenticated request.
-        if (!token) return { kind: 'response', status: 401, json: undefined };
-        headers.authorization = `Bearer ${token}`;
-      }
+      if (!(await authorise(headers))) return { kind: 'response', status: 401, json: undefined };
       let res: Response;
       try {
         res = await fetchImpl(`${baseUrl}${path}`, {

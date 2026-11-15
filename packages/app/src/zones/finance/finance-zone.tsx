@@ -75,6 +75,8 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
     return {
       write: has('finance:write'), issue: has('finance:issue'), payments: has('finance:payments'), expenses: has('finance:expenses'),
       manage: has('finance:manage'), readCustomers: has('customers:read') && Boolean(customers),
+      pdfPreview: has('finance:documents_preview'), pdfGenerate: has('finance:documents_generate'), pdfDownload: has('finance:documents_download'),
+      branding: has('finance:documents_branding'),
     };
   }, [perms, customers]);
   const [view, setView] = useState<FinanceView>(() => initialView(section, initialTarget ?? initialExpenseId, initialAction, can));

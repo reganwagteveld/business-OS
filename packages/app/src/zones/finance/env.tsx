@@ -22,7 +22,7 @@ export type FinanceView =
   | { name: 'expense-payment-new'; expenseId?: string }
   | { name: 'settings'; tab?: SettingsTab };
 
-export type SettingsTab = 'business' | 'numbering' | 'tax-rates' | 'categories';
+export type SettingsTab = 'business' | 'numbering' | 'tax-rates' | 'categories' | 'documents';
 export interface PaymentPrefill { customerId: string; currencyCode: string; invoiceId?: string; amount?: string }
 
 /** The Zone's sections, the same ids as the registry's children (secondary navigation). */
@@ -64,6 +64,14 @@ export interface FinanceCan {
   manage: boolean;
   /** customers:read: search and name customers (held separately from any finance key). */
   readCustomers: boolean;
+  /** F5 finance:documents_preview: preview a PDF (a draft's watermarked preview, or a stored version). */
+  pdfPreview?: boolean;
+  /** F5 finance:documents_generate: create the original PDF or a new version. */
+  pdfGenerate?: boolean;
+  /** F5 finance:documents_download: download a stored PDF. */
+  pdfDownload?: boolean;
+  /** F5 finance:documents_branding: change the logo, colour, titles, terms and footer. */
+  branding?: boolean;
 }
 
 export interface FinanceEnv {

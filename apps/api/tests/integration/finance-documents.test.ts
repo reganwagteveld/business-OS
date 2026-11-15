@@ -5,11 +5,11 @@
  * actual text, pages and bytes, not only about HTTP statuses.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { crc32, deflateSync } from 'node:zlib';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Permission, Role } from '@/modules/access';
 import { readPdf } from '../support/pdf';
+import { png } from '../support/png';
 
 const custom: Partial<Record<Role, Permission[]>> = {};
 vi.mock('@/modules/access', async (importOriginal) => {
@@ -184,21 +184,6 @@ const audits = async (targetId: string) =>
 /** pdf.js reports kerned runs with stray spaces ("7 .625%"), so content checks compare text without whitespace. */
 const squash = (text: string) => text.replace(/\s+/g, '');
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
-
-/** A valid RGB PNG of the given size (solid colour), built by hand so the tests need no image library. */
-function png(width: number, height: number, rgb: [number, number, number] = [31, 75, 153]): Buffer {
-  const chunk = (type: string, data: Buffer) => {
-    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
-    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
-    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body) >>> 0);
-    return Buffer.concat([len, body, crc]);
-  };
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
-  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3).map((_, i) => rgb[i % 3]!)]);
-  const raw = Buffer.concat(Array.from({ length: height }, () => row));
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
-}
 
 let A: Awaited<ReturnType<typeof team>>;
 let B: Awaited<ReturnType<typeof team>>;

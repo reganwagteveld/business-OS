@@ -238,7 +238,8 @@ export async function renderDocument(s: DocumentSnapshot, logo: Buffer | null): 
       tableHeader();
     }
     let x = M.left;
-    doc.fillColor(INK);
+    // The repeated header leaves the semibold font selected: every row is set in the regular face.
+    doc.font('regular').fontSize(9).fillColor(INK);
     for (const c of cols) {
       text(cells[c.key]!, x + PAD, y + 5, { width: c.width - 2 * PAD, align: c.align });
       x += c.width;

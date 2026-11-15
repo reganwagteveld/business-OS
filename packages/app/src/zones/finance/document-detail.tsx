@@ -9,6 +9,7 @@ import { Problem } from '../problem';
 import { useLoad } from '../use-load';
 import { ApplyCreditDialog } from './credit';
 import { isPositive } from './decimal';
+import { DocumentPdfCard } from './document-pdf';
 import { PATH_KIND, useFinance } from './env';
 import { formatDate, formatMoney, formatWhen } from './format';
 import { ConfirmDialog, DocumentBadges, isOverdue, Item, KIND_LABEL, LoadingRows, okData, Row, useIdempotencyKey, useSubmit, WRAP } from './shared';
@@ -176,6 +177,8 @@ export function DocumentDetail({ path, id }: { path: DocumentPath; id: string })
           ) : null}
         </div>
       ) : null}
+
+      <DocumentPdfCard doc={d} />
 
       {kind === 'INVOICE' && d.status !== 'DRAFT' ? <InvoiceSettlementCard invoiceId={d.id} refresh={refresh} /> : null}
       {kind === 'INVOICE' && d.status !== 'DRAFT' ? <InvoiceCreditNotes invoiceId={d.id} refresh={refresh} /> : null}

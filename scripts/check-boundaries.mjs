@@ -83,8 +83,9 @@ export function serverViolations(files) {
       const tenant = name.startsWith('app/api/v1/b/');
       const unwrappedAllowed = /^app\/api\/v1\/(health|me|auth)\//.test(name);
       for (const [, method, rest] of methods) {
-        const wrapper = /=\s*(tenantRoute|publicRoute)\(/.exec(rest)?.[1];
-        if (tenant && wrapper !== 'tenantRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
+        const wrapper = /=\s*(tenantRoute|tenantFileRoute|publicRoute)\(/.exec(rest)?.[1];
+        // tenantFileRoute (Finance F5 files) resolves the tenant exactly like tenantRoute and answers with bytes.
+        if (tenant && wrapper !== 'tenantRoute' && wrapper !== 'tenantFileRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
         if (!tenant && !wrapper && !unwrappedAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} must use publicRoute (or be an allowed unauthenticated endpoint)`);
       }
     }

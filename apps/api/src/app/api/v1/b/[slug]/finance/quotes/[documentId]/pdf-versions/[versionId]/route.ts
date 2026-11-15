@@ -1,8 +1,9 @@
 import { preflight } from '@/core/http';
-import { pdfVersionRoutes } from '@/app/api/_lib/finance-documents';
+import { PDF_OPTIONS, pdfHandlers } from '@/app/api/_lib/finance-documents';
+import { tenantRoute } from '@/app/api/_lib/routes';
 
 export const dynamic = 'force-dynamic';
 
-/** One version's metadata, including its stable file reference (finance:read). */
-export const GET = pdfVersionRoutes('QUOTE').get;
+/** One stored PDF version's metadata and stable reference (finance:read). */
+export const GET = tenantRoute(PDF_OPTIONS.get, pdfHandlers('QUOTE').get);
 export const OPTIONS = preflight;
