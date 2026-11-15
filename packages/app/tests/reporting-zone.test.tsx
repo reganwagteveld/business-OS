@@ -87,7 +87,7 @@ describe('Reporting Zone', () => {
     await waitFor(() => expect(queries(api).some((q) => (q.date as { from?: string }).from === '2026-10-05')).toBe(true));
   });
 
-  it('lists the records behind the figure in the API's order', async () => {
+  it('lists the records behind the figure in the API order', async () => {
     const { user } = setup({ permissions: OWNER });
     const table = await screen.findByRole('table', { name: /records behind amount invoiced/i });
     expect(within(table).getAllByRole('row')).toHaveLength(4); // header + 3
