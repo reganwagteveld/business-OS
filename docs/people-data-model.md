@@ -164,7 +164,27 @@ Each is the conservative default implemented in this PR; changing one is a small
 | PD-8 | Departments | One current department per employee; flat (no parent departments); archive refused while in use. |
 | PD-9 | Business purge | People rows cascade with the business (as Projects). No per-employee erasure endpoint in P1. |
 
-## 8. Out of scope / later
+## 8. Future integration path
+
+Every later Zone links to an employee the same way People links to other records: a composite
+`(business_id, employee_id)` foreign key to `people_employees`, so a link to another business's
+employee is impossible. No other Zone copies employee fields; each reads them through the people
+module's public API, which applies the People permissions.
+
+- **Projects:** a future `project_employee_assignments` table (project, employee, role, date range)
+  and labour cost lines. These are separate from today's project owner and task assignee, which stay
+  platform members. Employment changes never rewrite project history: termination closes People
+  assignments only, and project rows keep their employee id.
+- **Finance:** workforce expenses and payroll preparation would reference the employee and the
+  Finance documents. Pay rates, tax and bank details would need their own access-controlled tables and
+  an owner decision (all excluded in P1).
+- **Scheduling:** rosters and attendance (`docs/scheduling-data-model.md`) reference the employee and
+  the workplace location. The employment status and dates in P1 say who can be rostered.
+- **Platform users:** the optional `user_id` link (through memberships) is the bridge for future
+  self-service and for record-scoped rules (for example, a line manager seeing their reports through
+  the reporting line). These narrow `authorize()`; they never replace the permission keys.
+
+## 9. Out of scope / later
 
 Client screens; self-service (an employee viewing their own record); record-scoped visibility for line
 managers; department hierarchy; multiple concurrent departments; future-dated changes; per-employee
