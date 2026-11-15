@@ -1,11 +1,25 @@
 -- Finance F6-1 scheduler (docs/finance-billing-f6.md §5, owner decision D-F6-1). Applied by an
 -- ADMINISTRATIVE role with `pnpm db:privileged`, after `prisma migrate deploy` has created the
--- recurring tables (migration 20261123000000_finance_billing). Idempotent.
+-- recurring tables (migration 20261126000000_finance_billing). Idempotent.
 --
 -- The billing worker is cross-tenant only in one respect: it must learn WHICH businesses have due
 -- work. Tenant RLS hides every business but the current one, so that list comes from this single
 -- SECURITY DEFINER function. It returns business ids and nothing else (no template, customer or
 -- amount), and the worker then does all real work as bos_app inside withTenant, under RLS.
+
+-- The function also joins public.businesses to leave archived businesses out. Its read right on
+-- businesses ("id", with the definer_business_read policy: archived_at IS NULL) is granted by
+-- 001_trusted_paths.sql, which this script never changes. Fail loudly here, not silently at run
+-- time, if that grant or policy is missing in the target database.
+DO $$
+BEGIN
+  IF NOT has_column_privilege('bos_definer', 'public.businesses', 'id', 'SELECT') THEN
+    RAISE EXCEPTION 'bos_definer cannot read public.businesses(id): apply 001_trusted_paths.sql first';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'businesses' AND policyname = 'definer_business_read') THEN
+    RAISE EXCEPTION 'policy definer_business_read on public.businesses is missing: apply 001_trusted_paths.sql first';
+  END IF;
+END $$;
 
 -- Column-limited read rights for the function's owner, plus row policies (FORCE RLS applies to it).
 GRANT SELECT ("id", "business_id", "status", "next_run_on", "time_zone") ON public.finance_recurring_templates TO bos_definer;

@@ -42,6 +42,7 @@ export function runProblem(code: string | null): string | null {
     case 'invalid_customer': case 'invalid_contact': case 'contact_customer_mismatch': return 'The customer or contact of this schedule is no longer valid. Fix the schedule, then retry.';
     case 'invalid_amount': return 'A line amount is not valid for this currency. Fix the lines, then retry.';
     case 'template_cancelled': return 'The schedule was cancelled before this period was generated.';
+    case 'template_paused': return 'The schedule was paused before this period was generated, so it was not billed.';
     case 'template_not_active': return 'The schedule was not active when this period came up.';
     case 'skipped_by_user': return 'Skipped by a person. This period will not be billed.';
     case 'lease_expired': return 'Generation was interrupted too many times. Retry it.';

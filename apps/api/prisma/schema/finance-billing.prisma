@@ -1,6 +1,6 @@
 // Finance F6-1 (docs/finance-billing-f6.md): recurring invoice templates and their generation runs.
 // Tenant tables: forced RLS, composite (business_id, …) foreign keys; CHECKs, guards and grants that
-// Prisma cannot express live in migration 20261123000000_finance_billing. No DELETE grant: templates
+// Prisma cannot express live in migration 20261126000000_finance_billing. No DELETE grant: templates
 // are cancelled, runs are skipped, and both keep their history.
 
 /// A schedule that generates DRAFT invoices for one customer in one currency. Generation never issues

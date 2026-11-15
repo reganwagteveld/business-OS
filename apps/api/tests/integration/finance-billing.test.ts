@@ -49,7 +49,7 @@ import * as skipRoute from '@/app/api/v1/b/[slug]/finance/recurring-invoices/[re
 import * as jobRoute from '@/app/api/internal/jobs/finance-billing/route';
 import { runBillingPass } from '@/app/api/_lib/billing-worker';
 import { withTenant } from '@/core/db';
-import { claimRecurringRun, executeRecurringRun, failRecurringRun } from '@/modules/finance';
+import { claimRecurringRun, executeRecurringRun, failRecurringRun, planDueRuns, TEMPLATES_PER_PLAN_BATCH } from '@/modules/finance';
 import { devOutbox } from '@/core/email';
 
 const BASE = process.env.APP_BASE_URL!;
@@ -409,6 +409,27 @@ describe('pause, resume, cancel, end date and generate now', () => {
     expect((await draftsOf(t.id)).map((d) => d.period_index)).toEqual([3]);
   });
 
+  it('pausing skips periods already planned but not generated, so resuming never produces older drafts (D-F6-12)', async () => {
+    const own = api(A.people.OWNER!, A.slug);
+    const t = (await own.create(template({ startDate: monthsAgo(2), name: 'Planned then paused' }))).body.recurringInvoice;
+    await runBillingPass({ deadlineMs: 30_000, runsPerBusiness: 0 }); // the worker planned three periods but generated none
+    expect((await runRows(t.id)).map((r) => r.status)).toEqual(['PENDING', 'PENDING', 'PENDING']);
+    const paused = (await own.pause(t.id, 1)).body.recurringInvoice;
+    expect(paused.status).toBe('PAUSED');
+    expect((await runRows(t.id)).map((r) => [r.status, r.error_code])).toEqual(Array(3).fill(['SKIPPED', 'template_paused']));
+    expect((await audits(t.id)).find((a) => a.action === 'finance.recurring.paused').metadata).toMatchObject({ skippedRuns: '3' });
+    const resumed = (await own.resume(t.id, paused.version)).body.recurringInvoice;
+    expect(resumed).toMatchObject({ status: 'ACTIVE', nextPeriodIndex: 3, nextRunOn: addCalendarMonths(monthsAgo(2), 3) });
+    await pass();
+    await pass();
+    expect(await draftsOf(t.id)).toEqual([]); // no catch-up drafts for the periods before or during the pause
+    expect((await runRows(t.id)).length).toBe(3);
+    // A person can still bill a period on purpose.
+    const made = await own.generate(t.id, resumed.version);
+    expect(made.status).toBe(201);
+    expect((await draftsOf(t.id)).map((d) => d.period_index)).toEqual([3]);
+  });
+
   it('cancelling is final and skips periods that were planned but not generated', async () => {
     const own = api(A.people.OWNER!, A.slug);
     const t = (await own.create(template({ startDate: TODAY, name: 'Cancel' }))).body.recurringInvoice;
@@ -578,6 +599,11 @@ describe('tenant isolation and database guards', () => {
     expect(fn).toMatchObject({ prosecdef: true, owner: 'bos_definer' });
     expect(fn.acl).toContain('bos_app=X');
     expect(fn.acl).not.toMatch(/(^|[{,])=X/); // not PUBLIC
+    // The function's join to businesses relies on 001_trusted_paths.sql (002 refuses to apply without it).
+    const biz = (await admin.query(`SELECT has_column_privilege('bos_definer', 'public.businesses', 'id', 'SELECT') AS id_read,
+        has_column_privilege('bos_definer', 'public.businesses', 'country_code', 'SELECT') AS other_read,
+        EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'businesses' AND policyname = 'definer_business_read') AS policy`)).rows[0];
+    expect(biz).toEqual({ id_read: true, other_read: false, policy: true });
     const cols = (await admin.query(`SELECT table_name, column_name FROM information_schema.column_privileges WHERE grantee = 'bos_definer' AND table_name LIKE 'finance_recurring_%' ORDER BY 1, 2`)).rows;
     expect(cols.map((c) => `${c.table_name}.${c.column_name}`)).toEqual([
       'finance_recurring_runs.business_id', 'finance_recurring_runs.lease_expires_at', 'finance_recurring_runs.run_after', 'finance_recurring_runs.status',
@@ -586,6 +612,45 @@ describe('tenant isolation and database guards', () => {
     ]);
     await pass();
   });
+});
+
+describe('large backlogs', () => {
+  it('plans a big backlog in bounded batches, each its own short transaction, and plans every period exactly once', async () => {
+    const C = await team('bc');
+    const own = api(C.people.OWNER!, C.slug);
+    const cust = (await own.createCustomer({ displayName: 'Backlog customer' })).body.customer.id;
+    const count = 2 * TEMPLATES_PER_PLAN_BATCH + 5;
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const res = await own.create({ name: `Backlog ${i}`, customerId: cust, frequency: 'MONTHLY', startDate: addCalendarMonths(TODAY, -15), lines: [line('10.00')] });
+      expect(res.status).toBe(201);
+      ids.push(res.body.recurringInvoice.id);
+    }
+    const summary = await runBillingPass({ deadlineMs: 30_000, runsPerBusiness: 0 });
+    expect(summary.businessErrors).toBe(0);
+    expect(summary.planBatches).toBeGreaterThanOrEqual(3);
+    const rows = (await admin.query(`SELECT template_id, count(*)::int AS n, count(DISTINCT period_index)::int AS d, min(period_index) AS lo, max(period_index) AS hi
+      FROM finance_recurring_runs WHERE business_id = $1 GROUP BY 1`, [C.businessId])).rows;
+    expect(rows.length).toBe(count);
+    for (const r of rows) expect([r.n, r.d, r.lo, r.hi]).toEqual([12, 12, 0, 11]); // 12 per pass (D-F6-5), no duplicates
+    expect((await admin.query('SELECT count(*)::int AS n FROM finance_documents WHERE business_id = $1', [C.businessId])).rows[0].n).toBe(0);
+    // One planning call never takes more than its batch, and says whether more is waiting (each
+    // template still has 4 of its 16 due periods left after the 12 of this pass).
+    const next = await withTenant({ businessId: C.businessId, userId: null }, (db) => planDueRuns(db, { templateLimit: 3 }));
+    expect(next).toMatchObject({ planned: 12, more: true });
+
+    // The due function finds the business while work is waiting; an archived business is never listed.
+    expect((await app.query('SELECT business_id FROM app_private.finance_billing_due(500)')).rows.map((r) => r.business_id)).toContain(C.businessId);
+    await admin.query('UPDATE businesses SET archived_at = now() WHERE id = $1', [C.businessId]);
+    try {
+      expect((await app.query('SELECT business_id FROM app_private.finance_billing_due(500)')).rows.map((r) => r.business_id)).not.toContain(C.businessId);
+    } finally {
+      await admin.query('UPDATE businesses SET archived_at = NULL WHERE id = $1', [C.businessId]);
+    }
+    // Leave nothing for later passes in this file.
+    for (const id of ids) expect((await own.pause(id, 1)).status).toBe(200);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM finance_recurring_runs WHERE business_id = $1 AND status <> 'SKIPPED'`, [C.businessId])).rows[0].n).toBe(0);
+  }, 180_000);
 });
 
 describe('the cron entry point', () => {
@@ -603,7 +668,7 @@ describe('the cron entry point', () => {
       const ok = await call(`Bearer ${'x'.repeat(40)}`);
       expect(ok.status).toBe(200);
       const body = await ok.json();
-      expect(Object.keys(body.summary).sort()).toEqual(['businessErrors', 'businesses', 'ended', 'failed', 'generated', 'leaseLost', 'planned', 'retrying', 'skipped', 'stoppedAtDeadline']);
+      expect(Object.keys(body.summary).sort()).toEqual(['businessErrors', 'businesses', 'ended', 'failed', 'generated', 'leaseLost', 'planBatches', 'planned', 'retrying', 'skipped', 'stoppedAtDeadline']);
       expect(JSON.stringify(body)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/); // no ids leave the job
     } finally {
       env.CRON_SECRET = saved;

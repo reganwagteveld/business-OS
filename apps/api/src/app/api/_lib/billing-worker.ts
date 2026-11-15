@@ -11,21 +11,33 @@ import { claimRecurringRun, executeRecurringRun, failRecurringRun, planDueRuns }
 
 export interface BillingPassSummary {
   businesses: number; planned: number; ended: number; generated: number; failed: number; retrying: number; skipped: number; leaseLost: number;
-  businessErrors: number; stoppedAtDeadline: boolean;
+  businessErrors: number; planBatches: number; stoppedAtDeadline: boolean;
 }
+
+/** Planning batches per business per pass (each up to TEMPLATES_PER_PLAN_BATCH templates); the rest waits for the next pass. */
+const MAX_PLAN_BATCHES = 25;
 
 export async function runBillingPass(opts: { deadlineMs: number; businessLimit?: number; runsPerBusiness?: number; leaseSeconds?: number }): Promise<BillingPassSummary> {
   const deadline = Date.now() + opts.deadlineMs;
-  const s: BillingPassSummary = { businesses: 0, planned: 0, ended: 0, generated: 0, failed: 0, retrying: 0, skipped: 0, leaseLost: 0, businessErrors: 0, stoppedAtDeadline: false };
+  const s: BillingPassSummary = { businesses: 0, planned: 0, ended: 0, generated: 0, failed: 0, retrying: 0, skipped: 0, leaseLost: 0, businessErrors: 0, planBatches: 0, stoppedAtDeadline: false };
   const ids = await businessesWithDueBilling(opts.businessLimit ?? 50);
   for (const id of ids) {
     if (Date.now() >= deadline) { s.stoppedAtDeadline = true; break; }
     s.businesses++;
     const unit = { businessId: id, userId: null };
     try {
-      const plan = await withTenant(unit, (db) => planDueRuns(db));
-      s.planned += plan.planned;
-      s.ended += plan.ended;
+      // Planning runs in bounded batches, each its own short transaction, so a large backlog never
+      // becomes one long transaction that could roll back as a whole.
+      const planned: string[] = [];
+      for (let batch = 0; batch < MAX_PLAN_BATCHES; batch++) {
+        if (Date.now() >= deadline) { s.stoppedAtDeadline = true; break; }
+        const plan = await withTenant(unit, (db) => planDueRuns(db, { exclude: planned }));
+        planned.push(...plan.templateIds);
+        s.planned += plan.planned;
+        s.ended += plan.ended;
+        s.planBatches++;
+        if (!plan.more) break;
+      }
       for (let n = 0; n < (opts.runsPerBusiness ?? 25); n++) {
         if (Date.now() >= deadline) { s.stoppedAtDeadline = true; break; }
         const claimed = await withTenant(unit, (db) => claimRecurringRun(db, { leaseSeconds: opts.leaseSeconds }));

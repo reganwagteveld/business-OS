@@ -284,15 +284,26 @@ export async function pauseRecurringInvoice(db: AppTenantDb, actorUserId: string
   const before = await lockAndLoad(db, id);
   if (before.status !== 'ACTIVE') throw new StateConflictError('invalid_state');
   if (before.version !== input.version) throw new StateConflictError('stale');
+  // Periods already planned but not generated are skipped now (D-F6-12, owner clarification): a
+  // resume must never produce drafts for periods that came up before or during the pause. FOR UPDATE
+  // waits for a run a worker is generating at this moment, so it either finishes first or is skipped.
+  // FAILED runs stay as they are: they only ever run again when a person presses Retry.
+  await db.$queryRaw`
+    SELECT 1 FROM finance_recurring_runs WHERE template_id = ${id}::uuid
+      AND business_id = nullif(current_setting('app.business_id', true), '')::uuid AND status IN ('PENDING', 'RUNNING') FOR UPDATE`;
+  const skipped = await db.financeRecurringRun.updateMany({
+    where: { templateId: id, status: { in: ['PENDING', 'RUNNING'] } },
+    data: { status: 'SKIPPED', errorCode: 'template_paused', leaseId: null, leaseExpiresAt: null, finishedAt: new Date() } as never,
+  });
   await db.financeRecurringTemplate.updateMany({ where: { id, version: input.version }, data: { status: 'PAUSED', version: { increment: 1 }, updatedById: actorUserId } as never });
-  await recordAudit(db, actorUserId, 'finance.recurring.paused', { type: 'finance_recurring_template', id }, {});
+  await recordAudit(db, actorUserId, 'finance.recurring.paused', { type: 'finance_recurring_template', id }, { skippedRuns: String(skipped.count) });
   return oneDto(db, await load(db, id));
 }
 
 /**
  * Resumes a paused schedule from the first period on or after today (in the schedule's zone):
- * periods that fell inside the pause are not billed (D-F6-12). Periods already planned before the
- * pause (PENDING runs) are processed as usual.
+ * periods that fell inside the pause are not billed (D-F6-12). Pausing already skipped every period
+ * that was planned but not generated, so resuming never produces drafts for earlier periods.
  */
 export async function resumeRecurringInvoice(db: AppTenantDb, actorUserId: string, id: string, input: { version: number }) {
   const before = await lockAndLoad(db, id);
@@ -461,12 +472,24 @@ async function createPeriodDraft(db: AppTenantDb, t: TemplateRow, periodIndex: n
  * Templates another worker is planning are skipped (SKIP LOCKED); planning the same period twice is a
  * no-op (UNIQUE (template, period) with ON CONFLICT DO NOTHING).
  */
-export async function planDueRuns(db: AppTenantDb): Promise<{ planned: number; ended: number }> {
+/** Templates planned per call (one short transaction each); the worker calls again while `more` is true. */
+export const TEMPLATES_PER_PLAN_BATCH = 20;
+
+/**
+ * Plans due periods for up to `templateLimit` templates, at most MAX_PERIODS_PER_PASS each. `exclude`
+ * holds the templates already planned earlier in the same pass, so a template with a long backlog
+ * gets at most 12 periods per pass however many batches the pass runs (D-F6-5).
+ */
+export async function planDueRuns(db: AppTenantDb, opts: { templateLimit?: number; exclude?: string[] } = {}): Promise<{ planned: number; ended: number; more: boolean; templateIds: string[] }> {
+  const limit = Math.min(Math.max(opts.templateLimit ?? TEMPLATES_PER_PLAN_BATCH, 1), 100);
+  const exclude = opts.exclude ?? [];
   const due = await db.$queryRaw<{ id: string }[]>`
     SELECT id::text FROM finance_recurring_templates
     WHERE business_id = nullif(current_setting('app.business_id', true), '')::uuid AND status = 'ACTIVE'
-      AND next_run_on <= (now() AT TIME ZONE time_zone)::date
-    ORDER BY next_run_on, id FOR NO KEY UPDATE SKIP LOCKED`;
+      AND next_run_on <= (now() AT TIME ZONE time_zone)::date AND NOT (id = ANY(${exclude}::uuid[]))
+    ORDER BY next_run_on, id LIMIT ${limit + 1} FOR NO KEY UPDATE SKIP LOCKED`;
+  const more = due.length > limit;
+  if (more) due.length = limit;
   let planned = 0;
   let ended = 0;
   for (const { id } of due) {
@@ -474,12 +497,22 @@ export async function planDueRuns(db: AppTenantDb): Promise<{ planned: number; e
     const schedule = { startDate: day(t.startDate), frequency: t.frequency as RecurringFrequency, intervalCount: t.intervalCount, endDate: dayOf(t.endDate) };
     const today = todayIn(t.timeZone);
     let index = t.nextPeriodIndex;
+    const ids: string[] = [];
+    const indexes: number[] = [];
+    const dates: string[] = [];
     for (let n = 0; n < MAX_PERIODS_PER_PASS; n++, index++) {
       const date = nextOf(schedule, index);
       if (date === null || date > today) break;
+      ids.push(randomUUID());
+      indexes.push(index);
+      dates.push(date);
+    }
+    if (ids.length > 0) {
+      // One statement per template, however many periods are due.
       const inserted = await db.$queryRaw<{ id: string }[]>`
         INSERT INTO finance_recurring_runs (id, business_id, template_id, period_index, period_date)
-        VALUES (${randomUUID()}::uuid, nullif(current_setting('app.business_id', true), '')::uuid, ${id}::uuid, ${index}::int, ${date}::date)
+        SELECT p.id, nullif(current_setting('app.business_id', true), '')::uuid, ${id}::uuid, p.idx, p.day
+          FROM unnest(${ids}::uuid[], ${indexes}::int[], ${dates}::date[]) AS p(id, idx, day)
         ON CONFLICT (business_id, template_id, period_index) DO NOTHING RETURNING id::text`;
       planned += inserted.length;
     }
@@ -493,7 +526,7 @@ export async function planDueRuns(db: AppTenantDb): Promise<{ planned: number; e
       await recordSystemAudit(db, 'finance.system.recurring.ended', { type: 'finance_recurring_template', id }, { lastPeriodIndex: String(index - 1) });
     }
   }
-  return { planned, ended };
+  return { planned, ended, more, templateIds: due.map((d) => d.id) };
 }
 
 export interface ClaimedRun { runId: string; leaseId: string }

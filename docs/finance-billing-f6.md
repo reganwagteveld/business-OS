@@ -20,7 +20,7 @@ integration and sends nothing.
 | Jobs | **No scheduler exists.** Architecture §9: platform cron → internal route, `bos_jobs` is purge-only, "no scheduler without approval". C2-B proposes Vercel Cron + an `app_private` dispatcher function, not built. | F6 needs the first business-data scheduler. Proposed design in §5; it needs a new privileged SQL file and a cron secret, so it is an owner decision (D-F6-1). |
 | Audit | `audit_tenant_write` requires `actor_user_id = session user`; C2-A added `audit_system_write` for `communications.system.*` only. | System-run generation needs a matching additive policy for `finance.system.*` (D-F6-2). |
 | Permissions | `finance:read/write/issue/payments/expenses/manage`; MANAGER has read, write, expenses. | One new key, `finance:billing` (§6, D-F6-3). |
-| Migrations | Newest on main `20261121000000`. F5 PR #42 **and** Reporting R1 PR #43 both use `20261122000000` (collision to resolve between those two). | F6 uses `20261123000000_finance_billing`, which sorts after all of them. |
+| Migrations | Newest on main `20261121000000`. F5 PR #42 **and** Reporting R1 PR #43 both use `20261122000000` (collision to resolve between those two). | F6 uses `20261126000000_finance_billing`, which sorts after all of them. |
 
 ## 2. PR boundaries (recommended)
 
@@ -59,8 +59,11 @@ reminder sending (needs C2-C + owner approval).
   with a stable code and wait for a person (Retry or Skip). Unexpected errors roll back the whole
   transaction and return the run to PENDING with backoff (1 min × 4^(n−1), capped at 6 h) up to
   `max_attempts` (5). The template stays ACTIVE either way.
-- Pause / resume: while paused nothing is generated. Resume continues from the first period on or
-  after today; periods that fell inside the pause are not billed (D-F6-12). Cancel skips every
+- Pause / resume: pausing skips every period that was planned but not yet generated
+  (`template_paused`), and while paused nothing is planned or generated. Resume continues from the
+  first period on or after today; periods before or inside the pause are never billed afterwards,
+  so a resume can't produce catch-up drafts (D-F6-12, confirmed by the owner). FAILED periods stay
+  failed and only run again if a person presses Retry. Cancel skips every
   waiting or failed run (`template_cancelled`) and is final. Drafts already generated never change.
 - "Generate next draft now" (person action) creates the next period's draft immediately, as that
   person, in one transaction, and advances the schedule.
@@ -83,7 +86,7 @@ reminder sending (needs C2-C + owner approval).
 - PDF via F5's renderer when F5 is merged; statements are regenerated on demand, the download is
   audited with a content hash (D-F6-9).
 
-## 5. Scheduler (implemented, inactive until D-F6-1 is approved)
+## 5. Scheduler (implemented; inactive until the owner turns it on, §8)
 
 `GET /api/internal/jobs/finance-billing` with `Authorization: Bearer $CRON_SECRET` (Vercel Cron's
 format; SHA-256 digests compared in constant time; 503 when the secret is unset, 401 when wrong). It
@@ -92,15 +95,16 @@ that returns only `business_id`s: businesses with an ACTIVE template whose next 
 own zone, a due PENDING run, or a RUNNING run whose lease expired. `bos_definer` can read only five
 columns of each table, through row policies limited to those statuses; EXECUTE is granted to
 `bos_app` only. For each business the worker opens `withTenant({ businessId, userId: null })` as
-`bos_app` (RLS applies), plans due periods (at most 12 per template per pass, `FOR NO KEY UPDATE
-SKIP LOCKED`, `INSERT … ON CONFLICT DO NOTHING`), then claims runs one at a time with `FOR UPDATE SKIP
+`bos_app` (RLS applies), plans due periods in bounded batches (20 templates per batch, each batch its own short
+transaction, one `INSERT … SELECT unnest … ON CONFLICT DO NOTHING` per template, `FOR NO KEY UPDATE
+SKIP LOCKED`; at most 12 periods per template per pass across all batches, and at most 25 batches), then claims runs one at a time with `FOR UPDATE SKIP
 LOCKED` and a 120 s lease, and executes each in its own transaction. Execution checks the lease is
 still held; a worker that lost it changes nothing. Expired leases are reclaimed by the next pass;
 a run whose attempts are used up fails with `lease_expired`. The pass stops at a 45 s budget and
 returns counts only (no tenant data). System-made drafts and transitions are audited as
 `finance.system.*` with no actor, allowed by the additive `audit_finance_system_write` policy.
 
-## 6. Owner decisions (recommended defaults, not approved)
+## 6. Owner decisions (recommended defaults; the owner supported them on 2026-11-15, with the D-F6-12 clarification that a resume must not produce catch-up invoices)
 
 | # | Decision | Recommended default |
 |---|---|---|
@@ -115,7 +119,7 @@ returns counts only (no tenant data). System-made drafts and transitions are aud
 | D-F6-9 | Statement PDFs | Generated on demand, not stored; download audited with content hash |
 | D-F6-10 | Statement basis | Balance-forward by document date in the business zone; voids and reversals as offsetting entries; one statement per currency |
 | D-F6-11 | Ageing buckets | Current, 1-30, 31-60, 61-90, 90+ days past due date |
-| D-F6-12 | Periods inside a pause | Not billed on resume; resume continues from the first period on or after today. "Generate next draft now" bills a period on purpose |
+| D-F6-12 | Periods inside a pause | Not billed on resume: pausing skips planned periods, resume continues from the first period on or after today. "Generate next draft now" bills a period on purpose |
 
 ## 7. Risks
 
@@ -133,9 +137,10 @@ Order matters because production auto-deploys main (see production-migrations):
 
 1. Approve D-F6-1 to D-F6-12 (or change them).
 2. Take a Neon recovery branch (for example `pre-f6-migrations`).
-3. Apply migrations in timestamp order: C2-A `20261121000000`, F5 `20261122000000` (both on main,
-   not yet applied to production), then `20261123000000_finance_billing`. R1 still needs a new
-   timestamp. F6-1 is rebased on main with F5; it does not depend on F5 or C2 code, only the order.
+3. Apply migrations in timestamp order. On main: C2-A `20261121000000`, F5 `20261122000000`,
+   Reporting R1 `20261124000000` (already applied to production); C2-B1 (PR 46) will add
+   `20261125000000`. F6 is `20261126000000_finance_billing`, after all of them. F6 depends on none of
+   their code, only on the order.
 4. Run `pnpm db:privileged` against production (applies `002_finance_billing_due.sql`; idempotent).
 5. Merge and deploy. Recurring screens work at this point; nothing runs on a schedule yet.
 6. To turn the scheduler on: set `CRON_SECRET` (at least 32 random characters) on the API project,

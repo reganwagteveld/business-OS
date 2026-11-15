@@ -36,6 +36,6 @@ export type { CreateVersionInput, PdfFile, PdfKind, PdfReason } from './server/d
 export {
   cancelRecurringInvoice, claimRecurringRun, createRecurringInvoice, executeRecurringRun, failRecurringRun, generateNextPeriod, getRecurringInvoice,
   listRecurringInvoices, listRecurringRuns, MAX_PERIODS_PER_PASS, pauseRecurringInvoice, planDueRuns, previewRecurringInvoice, resumeRecurringInvoice,
-  retryRecurringRun, skipRecurringRun, updateRecurringInvoice,
+  retryRecurringRun, skipRecurringRun, TEMPLATES_PER_PLAN_BATCH, updateRecurringInvoice,
 } from './server/recurring';
 export type { ClaimedRun, RecurringInput, RecurringPatch, RunOutcome } from './server/recurring';
