@@ -1,5 +1,5 @@
 diff --git a/packages/app/src/app.tsx b/packages/app/src/app.tsx
-index 2ca179d..9d99053 100644
+index 1f1a14b..26dce8d 100644
 --- a/packages/app/src/app.tsx
 +++ b/packages/app/src/app.tsx
 @@ -4,6 +4,7 @@ import { createCustomersClient, type CustomersClient } from './api/customers';
@@ -43,7 +43,7 @@ index 2ca179d..9d99053 100644
    const storage = useMemo(() => storageOverride ?? browserStorage(), [storageOverride]);
    const workspace = useWorkspace({ auth, tenancy, storage });
    const { phase } = workspace;
-@@ -214,6 +218,14 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
+@@ -221,6 +225,14 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
          onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
        />
      );
@@ -59,7 +59,7 @@ index 2ca179d..9d99053 100644
      screen = <HomeWithMetrics key={slug} customers={customers} context={active} user={phase.user} navigation={navigation} onOpen={open} onSessionEnded={workspace.retry} />;
    }
 diff --git a/packages/app/src/shell/registry.ts b/packages/app/src/shell/registry.ts
-index 419f4cb..05d99ef 100644
+index 61f1310..f3a9c8a 100644
 --- a/packages/app/src/shell/registry.ts
 +++ b/packages/app/src/shell/registry.ts
 @@ -11,7 +11,7 @@ import type { IconName } from './icons';
@@ -71,10 +71,10 @@ index 419f4cb..05d99ef 100644
  
  export interface ZoneChild {
    /** Stable within its Zone. */
-@@ -52,6 +52,7 @@ export const ZONES: readonly ZoneDefinition[] = [
-   { id: 'projects', name: 'Projects', description: 'Work, organised and connected', icon: 'projects', route: '/projects', order: 30, requires: ['projects:read'], availability: 'built' },
-   // F3: the Finance Zone's client screens start with expenses and categories (quotes, invoices and payments come later).
-   { id: 'finance', name: 'Finance', description: 'Understand your business finances', icon: 'finance', route: '/finance', order: 40, requires: ['finance:read'], availability: 'built' },
+@@ -63,6 +63,7 @@ export const ZONES: readonly ZoneDefinition[] = [
+       { id: 'settings', label: 'Settings', route: '/finance/settings' },
+     ],
+   },
 +  { id: 'scheduling', name: 'Schedule', description: 'Calendars and bookings', icon: 'operations', route: '/schedule', order: 45, requires: ['scheduling:read'], availability: 'built' },
    { id: 'people', name: 'People', description: 'Your team and their work', icon: 'people', route: '/people', order: 50, requires: [], availability: 'planned' },
    { id: 'operations', name: 'Operations', description: 'Keep everything moving', icon: 'operations', route: '/operations', order: 60, requires: [], availability: 'planned' },
