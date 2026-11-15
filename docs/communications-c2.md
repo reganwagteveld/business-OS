@@ -706,12 +706,23 @@ No new permission key. `canAttestBusinessMailbox` (OWNER only) is a role rule in
   who must be the session user. Target mailbox and Microsoft tenant must not change. Audited
   `reconnected` and `holder_changed` (previous and new holder ids). The database refuses any other
   holder change.
-- **Holder departs or loses `manage_connections`**: detected at the next sync claim. The job is
-  cancelled, the mailbox goes to `NEEDS_REAUTH` with `holder_inactive` (tokens deleted), and
-  `communications.system.holder_inactive` is audited. Another admin can take it over. PERSONAL
+- **Holder departs or loses `manage_connections`** (audit C2B1-01): invalidation is **lazy, not
+  immediate**. `holderActive()` runs only when a sync job is claimed. At that point the job is
+  cancelled, the mailbox goes to `NEEDS_REAUTH` with `holder_inactive`, the trigger deletes the
+  tokens, and `communications.system.holder_inactive` is audited; another admin can then take it
+  over. Until a claim happens, the departed holder's tokens stay stored (encrypted) and the row stays
+  `ACTIVE`. Removing the membership does not by itself delete them.
+  This is not exploitable in C2-B1: nothing uses stored tokens after the connect callback
+  (`obtainAccessToken` has no caller, and there is no worker), and the departed person can no
+  longer reach the business through the API. **C2-B3 must**: check the credential holder's authority
+  at every provider operation (each token use, not only the claim); stop jobs already running when
+  access is revoked (a fresh authority check before each provider call and before writing results,
+  so a running job ends at its next step); and prefer prompt invalidation from membership lifecycle
+  events (removal, suspension, role change) over relying only on the next claim. PERSONAL
   mailboxes keep the C2-A rule (`owner_inactive`). The 30-day departure grace in the approved
   register is read here as the grace before unshared personal mail is purged, which belongs to B2
-  (it needs stored mail and E1); the departing member's grant stops at once. Regan to confirm.
+  (it needs stored mail and E1); the departing member's access ends at once, and their stored grant is
+  invalidated at the next sync claim (above). Confirmed by Regan 2026-11-15.
 
 ### 16.6 Retention gate (D-C2-9, Regan's acceptance criterion 1)
 
@@ -825,7 +836,12 @@ from Sent as proof of non-delivery (an `UNKNOWN` send stays `UNKNOWN`, D-C2-13).
 5. **Address matching is exact on the primary address.** Aliases and secondary Workspace domains are
    not recognised (a Google Workspace mailbox on a secondary domain fails the `hd` check).
 6. **Departure is detected lazily** at the next sync claim, not by a membership trigger. Without sync
-   (B3) nothing uses the stale grant anyway.
+   (B3) nothing uses the stale grant; C2-B3 obligations are in §16.5 (audit C2B1-01).
+
+Owner decisions on PR 46 (Regan, 2026-11-15): (3) OWNER and ADMIN set or change retention through
+`manage_connections`; (2) OWNER-only attestation through the role rule is accepted, with no new
+permission; the 30-day departure grace applies to purging unshared personal mail (B2), not to
+continued access.
 
 ### 16.13 Known risks and Gate C (provider) items
 
