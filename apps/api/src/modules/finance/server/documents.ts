@@ -24,7 +24,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ---- rows and DTOs -------------------------------------------------------------------------------
 
-type Row = {
+export type Row = {
   id: string; kind: Kind; status: Status; number: string | null; customerId: string; contactId: string | null; opportunityId: string | null;
   projectId: string | null; sourceQuoteId: string | null; creditedInvoiceId: string | null; currencyCode: string; currencyScale: number;
   taxMode: string; issueDate: Date | null; dueDate: Date | null; validUntil: Date | null; subtotal: Decimal; taxTotal: Decimal; total: Decimal;
@@ -42,7 +42,7 @@ const select = {
   createdById: true, updatedById: true, issuedById: true, statusChangedById: true, voidedById: true, createdAt: true, updatedAt: true,
 } as const;
 
-type LineRow = {
+export type LineRow = {
   id: string; position: number; description: string; quantity: Decimal; unitPrice: Decimal; discountAmount: Decimal; taxRateId: string | null;
   taxName: string | null; taxRatePercent: Decimal; lineNet: Decimal; lineTax: Decimal;
 };
@@ -86,7 +86,7 @@ const lineDto = (l: LineRow, scale: number) => ({
   lineNet: formatAmount(l.lineNet, scale), lineTax: formatAmount(l.lineTax, scale),
 });
 
-async function linesOf(db: AppTenantDb, documentId: string): Promise<LineRow[]> {
+export async function linesOf(db: AppTenantDb, documentId: string): Promise<LineRow[]> {
   return (await db.financeDocumentLine.findMany({ where: { documentId }, select: lineSelect, orderBy: [{ position: 'asc' }, { id: 'asc' }] })) as LineRow[];
 }
 
@@ -96,7 +96,7 @@ async function dto(db: AppTenantDb, row: Row): Promise<DocumentDto> {
 }
 
 /** A document of this kind in this business. Another kind, or another business's id, is 404 (never 403). */
-async function load(db: AppTenantDb, kind: Kind, id: string): Promise<Row> {
+export async function load(db: AppTenantDb, kind: Kind, id: string): Promise<Row> {
   const row = (await db.financeDocument.findFirst({ where: { id, kind }, select })) as Row | null;
   if (!row) throw new RecordNotFoundError();
   return row;
@@ -456,7 +456,7 @@ export async function updateDraft(db: AppTenantDb, actorUserId: string, kind: Ki
 
 // ---- issue ---------------------------------------------------------------------------------------
 
-async function billToSnapshot(db: AppTenantDb, customerId: string, contactId: string | null) {
+export async function billToSnapshot(db: AppTenantDb, customerId: string, contactId: string | null) {
   const c = await db.customer.findFirstOrThrow({
     where: { id: customerId },
     select: {

@@ -23,7 +23,14 @@ export const ZONE_PERMISSIONS = {
   // customer, sales or project keys (or being a project owner or assignee) grant no finance access,
   // and finance keys grant nothing elsewhere. write = drafts; issue = issue, accept, decline, expire,
   // void; payments and expenses are for F2/F3; manage = numbering, tax rates, finance settings.
-  finance: ['finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage'],
+  // F5 documents (docs/finance-documents-f5.md §7): preview = draft previews and viewing stored PDF
+  // versions inline; generate = create the original PDF and add new versions; download = save a stored
+  // version as a file; branding = logo, colour, footer and template text. Viewing the records and the
+  // version history stays finance:read. None of them changes a financial record.
+  finance: [
+    'finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage',
+    'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download', 'finance:documents_branding',
+  ],
   // People (docs/people-data-model.md §5, decision PD-1). Separate from every other Zone. read = the
   // directory (work fields, org, reporting lines, history without reasons); read_sensitive = personal
   // details and history reasons; manage = employees, assignments, lifecycle, user links; configure =
@@ -56,9 +63,14 @@ export type Role = (typeof ROLES)[number];
 const RANK: Record<Role, number> = { OWNER: 4, ADMIN: 3, MANAGER: 2, MEMBER: 1 };
 
 const PROJECTS_WORK: Permission[] = ['projects:read', 'projects:create', 'projects:update', 'projects:manage_tasks'];
-/** FD-P1 defaults: MANAGER drafts and enters expenses; OWNER and ADMIN also issue, record payments and manage settings. */
-const FINANCE_WORK: Permission[] = ['finance:read', 'finance:write', 'finance:expenses'];
-const FINANCE_ALL: Permission[] = [...FINANCE_WORK, 'finance:issue', 'finance:payments', 'finance:manage'];
+/**
+ * FD-P1 defaults: MANAGER drafts and enters expenses; OWNER and ADMIN also issue, record payments and manage settings.
+ * F5 (provisional, owner decision F5-D3): everyone with finance access previews, generates and downloads
+ * documents; branding is a setting, so OWNER and ADMIN only.
+ */
+const FINANCE_DOCUMENTS: Permission[] = ['finance:documents_preview', 'finance:documents_generate', 'finance:documents_download'];
+const FINANCE_WORK: Permission[] = ['finance:read', 'finance:write', 'finance:expenses', ...FINANCE_DOCUMENTS];
+const FINANCE_ALL: Permission[] = [...FINANCE_WORK, 'finance:issue', 'finance:payments', 'finance:manage', 'finance:documents_branding'];
 /** PD-1 defaults: OWNER and ADMIN administer People; MANAGER sees the directory only; MEMBER has no People access. */
 const PEOPLE_ALL: Permission[] = ['people:read', 'people:read_sensitive', 'people:manage', 'people:configure'];
 /** Everyone in the business works with the schedule; configuring calendars is for whoever runs the work. */

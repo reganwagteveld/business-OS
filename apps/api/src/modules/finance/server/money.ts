@@ -73,3 +73,33 @@ export function documentTotals(lines: LineAmounts[]): Totals {
 export const formatAmount = (value: Decimal, scale: number): string => value.toFixed(scale);
 /** Quantities, unit prices and percentages without trailing zeros ("2.5", "0.0125", "10"). */
 export const formatPlain = (value: Decimal): string => value.toFixed();
+
+export interface TaxBreakdownRow { taxName: string | null; taxRatePercent: Decimal; net: Decimal; tax: Decimal }
+
+/**
+ * F5: the per-rate summary printed on a document, from the stored line amounts only (no rounding, no
+ * re-pricing: a sum of what F1 sealed). Grouped by the snapshotted tax name and percentage, in order of
+ * first appearance. Lines without tax form their own group (taxName null, 0%). Fails closed if the
+ * groups do not add up to the document's stored totals, so a document can never print figures that
+ * disagree with its record.
+ */
+export function taxBreakdown(
+  lines: { taxName: string | null; taxRatePercent: Decimal; lineNet: Decimal; lineTax: Decimal }[],
+  totals: { subtotal: Decimal; taxTotal: Decimal },
+): TaxBreakdownRow[] {
+  const rows: TaxBreakdownRow[] = [];
+  for (const l of lines) {
+    const name = l.taxName ?? null;
+    const row = rows.find((r) => r.taxName === name && r.taxRatePercent.eq(l.taxRatePercent));
+    if (row) {
+      row.net = row.net.add(l.lineNet);
+      row.tax = row.tax.add(l.lineTax);
+    } else {
+      rows.push({ taxName: name, taxRatePercent: new Decimal(l.taxRatePercent), net: new Decimal(l.lineNet), tax: new Decimal(l.lineTax) });
+    }
+  }
+  const net = rows.reduce((s, r) => s.add(r.net), new Decimal(0));
+  const tax = rows.reduce((s, r) => s.add(r.tax), new Decimal(0));
+  if (!net.eq(totals.subtotal) || !tax.eq(totals.taxTotal)) throw new Error('document totals do not match its lines');
+  return rows;
+}

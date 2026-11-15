@@ -6,8 +6,9 @@ anywhere but disposable local databases.
 Baseline: branched from `main` at `1b65e74` (STAB-01): Finance F1–F4 (#31, #34, #35, #37), People P1 (#36),
 Scheduling S1 (#38), Communications C1 (#39), STAB-01 (#40), UI phases 1–2 (#32, #33). Communications C2-A (#41,
 migration `20261121000000_communications_providers`) merged to `main` as `4f2d437` during this work and is merged into
-this branch; Reporting does not depend on it. Still open and **not** depended on: #42 (Finance F5, now migration
-`20261122000000_finance_documents`); Finance F6 has reserved `20261123000000`. The Reporting migration was therefore
+this branch; Reporting does not depend on it. Finance F5 (#42, migration `20261122000000_finance_documents`) merged to
+`main` as `186d53a` and is merged into this branch too; Reporting does not depend on it either. Finance F6 has reserved
+`20261123000000`. The Reporting migration was therefore
 renamed from `20261122000000_reporting` to **`20261124000000_reporting`** (contents unchanged; it had not been
 applied anywhere but disposable local databases).
 
@@ -119,7 +120,9 @@ deterministic order); drill-down pages ≤ 100 rows; 100 saved views per person 
 ≤ 16 KB (CHECK). The saved-view list is keyset-paginated (≤ 100 per page, `updated_at` desc then id, timestamps
 to the microsecond): rows the caller may not see are skipped while a page is filled, a request scans at most
 1,000 rows and then returns a cursor to continue, and following `nextCursor` to null reaches every visible view.
-Nothing is truncated (audit round 1 fixed an earlier fixed 500-row read). The client follows the cursor.
+Nothing is truncated (audit round 1 fixed an earlier fixed 500-row read). The client follows the cursor for up to
+50 pages of 100 (an injectable bound); if more remain, or the cursor stops moving, it returns an explicit `incomplete`
+(or failed) outcome and the Zone shows "Saved reports could not all be listed" rather than a silently shorter list.
 Drill-down uses keyset cursors bound to their list (`invalid_cursor` otherwise) with
 stable order (date desc, id desc; timestamps keep PostgreSQL microseconds in the cursor).
 
@@ -168,9 +171,9 @@ Migration **`20261124000000_reporting`** (additive, one transaction, `BEGIN … 
 - RLS enabled and **forced**: `tenant_isolation` plus RESTRICTIVE policies — private rows visible only to
   their owner, inserts/updates only by the owner (as `app.user_id`), deletes by the owner or of shared rows.
 - Depends only on the tenancy migration; touches no other Zone's objects. Sorts after main's newest
-  (`20261121000000`, C2-A), after #42 (`20261122000000_finance_documents`) and after F6's reserved
+  (`20261122000000_finance_documents`, F5) and after F6's reserved
   `20261123000000`, so fresh databases and production apply the same order whichever merges first (checked with
-  `.github/scripts/check-migration-order.sh` against main, and against main + #42 + a 20261123 F6 placeholder).
+  `.github/scripts/check-migration-order.sh` against current main, and against main + a 20261123 F6 placeholder).
   The file's header comment still names the older F5/C2-A timestamps: the contents were deliberately left
   byte-identical through the rename.
 - No privileged SQL step.
@@ -236,7 +239,7 @@ themes (token test). Screenshots: `docs/ui/screenshots/reporting-r1`.
   manage delete, stale version, audit; access lost after save; retired versions and unreadable configs; RLS
   backstops tested directly as `bos_app`; saved-view list pagination behind 550 newer views from another owner
   (520 the caller cannot see), complete for the caller and for the owner, tampered and cross-scope cursors refused.
-- `packages/app/tests/reporting-zone.test.tsx` (12) and `packages/ui/tests/charts.test.tsx` (5); three shell
+- `packages/app/tests/reporting-zone.test.tsx` (16, incl. client paging bound, incomplete state and a repeated cursor) and `packages/ui/tests/charts.test.tsx` (5); three shell
   tests updated for Insights → Reporting; token contrast pairs added.
 
 ## 12. Divergences from the brief

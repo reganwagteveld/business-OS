@@ -103,14 +103,17 @@ describe('Projects Zone permissions (docs/projects-data-model.md §5)', () => {
 });
 
 describe('Finance Zone permissions (docs/finance-data-model.md §7.1, owner decision FD-P1)', () => {
-  const FINANCE = ['finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage'] as const;
+  const FINANCE = [
+    'finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage',
+    'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download', 'finance:documents_branding',
+  ] as const;
 
-  it('grants exactly the approved default matrix', () => {
+  it('grants exactly the approved default matrix (F5 document keys provisional, F5-D3)', () => {
     const matrix = Object.fromEntries(ROLES.map((role) => [role, FINANCE.filter((p) => ROLE_PERMISSIONS[role].has(p))]));
     expect(matrix).toEqual({
       OWNER: [...FINANCE],
       ADMIN: [...FINANCE],
-      MANAGER: ['finance:read', 'finance:write', 'finance:expenses'],
+      MANAGER: ['finance:read', 'finance:write', 'finance:expenses', 'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download'],
       MEMBER: [],
     });
     expect(ZONE_PERMISSIONS.finance).toEqual([...FINANCE]);

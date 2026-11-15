@@ -1,0 +1,117 @@
+// Finance F5: generated documents (docs/finance-documents-f5.md). PDF versions of issued quotes and
+// invoices, the per-business document branding, and branding assets (logos). Tenant tables with forced
+// RLS and composite (business_id, …) foreign keys like the rest of finance; the guards, CHECKs and
+// grants Prisma cannot express are in migration 20261122000000_finance_documents.
+//
+// Storage: PDF and logo bytes are kept in PostgreSQL (bytea) because Business OS has no object storage
+// yet (docs/finance-documents-f5.md §5, owner decision F5-D1). Rows are insert-only for bos_app.
+
+/// One row per business: how its quotes and invoices look. Seller name, address, contact details,
+/// identifiers and payment instructions are NOT here: they stay in finance_settings (one source,
+/// already snapshotted onto every issued document). Created on first save.
+model FinanceDocumentBranding {
+  businessId   String   @id @map("business_id") @db.Uuid
+  /// "#RRGGBB" (CHECK).
+  accentColor  String   @default("#1F4B99") @map("accent_color")
+  /// The logo in use, an immutable asset row. Null: no logo.
+  logoAssetId  String?  @map("logo_asset_id") @db.Uuid
+  footerText   String?  @map("footer_text")
+  /// Per-kind template configuration. Null title: the template default ("Invoice", "Quote").
+  invoiceTitle String?  @map("invoice_title")
+  invoiceTerms String?  @map("invoice_terms")
+  quoteTitle   String?  @map("quote_title")
+  quoteTerms   String?  @map("quote_terms")
+  /// The default template for both kinds. F5 has one ("standard", CHECK).
+  templateId   String   @default("standard") @map("template_id")
+  version      Int      @default(1)
+  createdById  String?  @map("created_by_id") @db.Uuid
+  updatedById  String?  @map("updated_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_document_branding_business_fkey")
+  logo     FinanceBrandingAsset? @relation(fields: [businessId, logoAssetId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_document_branding_logo_fkey")
+
+  @@map("finance_document_branding")
+}
+
+/// An uploaded branding image (F5: logos). Immutable once inserted, never deleted by tenant code, so
+/// every PDF version can name the exact logo it was rendered with. Validated by the service (PNG or
+/// JPEG, size, dimensions, decodable); byte_size and sha256 are database-owned.
+model FinanceBrandingAsset {
+  id          String   @id @db.Uuid
+  businessId  String   @map("business_id") @db.Uuid
+  contentType String   @map("content_type")
+  /// Database-owned: octet_length(data).
+  byteSize    Int      @map("byte_size")
+  width       Int
+  height      Int
+  /// Database-owned: SHA-256 of data.
+  sha256      String   @db.Char(64)
+  data        Bytes
+  createdById String   @map("created_by_id") @db.Uuid
+  /// Database-owned.
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  business   Business                  @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_branding_assets_business_fkey")
+  brandingOf FinanceDocumentBranding[]
+  pdfs       FinanceDocumentPdf[]
+
+  @@unique([businessId, id])
+  @@index([businessId, createdAt])
+  @@map("finance_branding_assets")
+}
+
+/// A generated PDF version of an issued (or later-state) quote or invoice. Insert-only: a version never
+/// changes; a new version is a new row with a reason and a link to the one before. Holds the exact
+/// render input (snapshot) and the exact bytes served, with database-computed checksums.
+model FinanceDocumentPdf {
+  id                    String                @id @db.Uuid
+  businessId            String                @map("business_id") @db.Uuid
+  documentId            String                @map("document_id") @db.Uuid
+  /// QUOTE or INVOICE (CHECK); part of the composite FK to the document.
+  documentKind          FinanceDocumentKind   @map("document_kind")
+  /// 1, 2, 3 … per document, gapless (guard).
+  versionNumber         Int                   @map("version_number")
+  /// ORIGINAL for version 1 only; later versions say why they exist (CHECK).
+  reason                String
+  reasonNote            String?               @map("reason_note")
+  /// The version this one follows (same document). Null only for version 1.
+  previousVersionId     String?               @map("previous_version_id") @db.Uuid
+  /// Document facts at generation, checked against the document by the guard.
+  documentNumber        String                @map("document_number")
+  documentStatus        FinanceDocumentStatus @map("document_status")
+  documentContentSha256 String                @map("document_content_sha256") @db.Char(64)
+  templateId            String                @map("template_id")
+  templateVersion       Int                   @map("template_version")
+  renderer              String
+  /// The complete render input: financial and recipient details, branding, template. jsonb.
+  snapshot              Json
+  /// Database-owned: SHA-256 of snapshot::text.
+  snapshotSha256        String                @map("snapshot_sha256") @db.Char(64)
+  logoAssetId           String?               @map("logo_asset_id") @db.Uuid
+  fileName              String                @map("file_name")
+  contentType           String                @default("application/pdf") @map("content_type")
+  pageCount             Int                   @map("page_count")
+  /// Some text used characters the template fonts cannot draw; they are printed as a visible box (§6).
+  unsupportedCharacters Boolean               @default(false) @map("unsupported_characters")
+  /// Database-owned: octet_length(file_data) and SHA-256 of file_data.
+  byteSize              Int                   @map("byte_size")
+  fileSha256            String                @map("file_sha256") @db.Char(64)
+  fileData              Bytes                 @map("file_data")
+  generatedById         String                @map("generated_by_id") @db.Uuid
+  /// Database-owned.
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz
+
+  business        Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_document_pdfs_business_fkey")
+  document        FinanceDocument       @relation(fields: [businessId, documentId, documentKind], references: [businessId, id, kind], onDelete: NoAction, onUpdate: NoAction, map: "finance_document_pdfs_document_fkey")
+  logo            FinanceBrandingAsset? @relation(fields: [businessId, logoAssetId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_document_pdfs_logo_fkey")
+  previousVersion FinanceDocumentPdf?   @relation("PdfVersionChain", fields: [businessId, documentId, previousVersionId], references: [businessId, documentId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_document_pdfs_previous_fkey")
+  nextVersions    FinanceDocumentPdf[]  @relation("PdfVersionChain")
+
+  @@unique([businessId, id])
+  @@unique([businessId, documentId, id], map: "finance_document_pdfs_chain_key")
+  @@unique([businessId, documentId, versionNumber])
+  @@index([businessId, documentId, createdAt])
+  @@map("finance_document_pdfs")
+}

@@ -9,6 +9,7 @@ import { Problem } from '../problem';
 import { useLoad } from '../use-load';
 import { ApplyCreditDialog } from './credit';
 import { isPositive } from './decimal';
+import { DocumentPdfCard } from './document-pdf';
 import { PATH_KIND, useFinance } from './env';
 import { formatDate, formatMoney, formatWhen } from './format';
 import { ConfirmDialog, DocumentBadges, isOverdue, Item, KIND_LABEL, LoadingRows, okData, Row, useIdempotencyKey, useSubmit, WRAP } from './shared';
@@ -177,6 +178,8 @@ export function DocumentDetail({ path, id }: { path: DocumentPath; id: string })
         </div>
       ) : null}
 
+      <DocumentPdfCard doc={d} />
+
       {kind === 'INVOICE' && d.status !== 'DRAFT' ? <InvoiceSettlementCard invoiceId={d.id} refresh={refresh} /> : null}
       {kind === 'INVOICE' && d.status !== 'DRAFT' ? <InvoiceCreditNotes invoiceId={d.id} refresh={refresh} /> : null}
       {kind === 'CREDIT_NOTE' && d.status !== 'DRAFT' ? (
@@ -211,7 +214,7 @@ function IssueDialog({ doc, onClose, onDone, onReload }: { doc: FinanceDocument;
   return (
     <ConfirmDialog
       title={`Issue this ${KIND_LABEL[doc.kind].toLowerCase()}?`} confirmLabel={`Issue ${KIND_LABEL[doc.kind].toLowerCase()}`}
-      description={`Issuing ${money} gives it the next number${next ? ` (${next})` : ''} and seals its lines, totals, customer and seller details. It cannot be edited afterwards: corrections are a void${doc.kind === 'INVOICE' ? ' or a credit note' : ''}.`}
+      description={`Issuing ${money} gives it the next number${next ? ` (${next})` : ''} and seals its lines, totals, customer and seller details.${doc.kind === 'CREDIT_NOTE' ? '' : ' Its original PDF is made and kept at the same time, with your current document branding.'} It cannot be edited afterwards: corrections are a void${doc.kind === 'INVOICE' ? ' or a credit note' : ''}.`}
       busy={submit.busy} error={submit.error} stale={submit.stale} onReload={onReload} onClose={onClose} disabled={doc.lines.length === 0}
       onConfirm={() => void submit.run(() => env.client.issueDocument(env.slug, path, doc.id, {
         version: doc.version, issueDate, ...(due ? (doc.kind === 'QUOTE' ? { validUntil: due } : doc.kind === 'INVOICE' ? { dueDate: due } : {}) : {}),

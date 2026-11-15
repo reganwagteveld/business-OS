@@ -24,9 +24,9 @@ const ctx = (permissions: string[]): BusinessContext => ({
   membership: { id: randomUUID(), role: 'OWNER', permissions },
 });
 
-function setup(o: Parameters<typeof createFakeReporting>[0]) {
+function setup(o: Parameters<typeof createFakeReporting>[0] & { maxViewPages?: number }) {
   const api = createFakeReporting(o);
-  const client = createReportingClient('https://api.test', { kind: 'cookie' }, api.fetch);
+  const client = createReportingClient('https://api.test', { kind: 'cookie' }, api.fetch, { maxViewPages: o.maxViewPages });
   const handlers = { onHome: vi.fn(), onSwitch: vi.fn(), onSignOut: vi.fn(), onSessionEnded: vi.fn() };
   render(<ReportingZone key="alpha" client={client} context={ctx(o.permissions)} userLabel="Ada" {...handlers} />);
   return { api, handlers, user: userEvent.setup() };
@@ -39,6 +39,57 @@ describe('Reporting in the shell', () => {
     expect(ZONES.find((z) => z.id === 'reporting')).toMatchObject({ name: 'Reporting', availability: 'built', requires: ['reporting:read'] });
     expect(resolveNavigation({ state: 'ready', permissions: ['finance:read'] }).available.map((z) => z.id)).not.toContain('reporting');
     expect(resolveNavigation({ state: 'ready', permissions: ['reporting:read'] }).available.map((z) => z.id)).toEqual(['reporting']);
+  });
+});
+
+const sharedView = (title: string): SavedView => ({
+  id: randomUUID(), title, description: null, reportType: 'metrics', configVersion: 1, visibility: 'BUSINESS', ownerUserId: randomUUID(), isOwner: false,
+  version: 1, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z',
+  config: {
+    metrics: [{ id: 'sales.won_count', version: 1 }], date: { kind: 'relative', preset: 'last_month' }, granularity: 'month', groupBy: null, filters: {},
+    comparison: 'none', sort: { by: 'bucket', direction: 'asc' }, visualization: { chart: 'bar', showComparison: false },
+  },
+});
+
+describe('saved-view list paging in the client (audit R1 re-audit)', () => {
+  const five = () => Array.from({ length: 5 }, (_, i) => sharedView(`Report ${i}`));
+  const client = (o: { views: SavedView[]; pageSize: number; maxViewPages: number }, fetchImpl?: typeof fetch) => {
+    const api = createFakeReporting({ permissions: OWNER, views: o.views, pageSize: o.pageSize });
+    return { api, c: createReportingClient('https://api.test', { kind: 'cookie' }, fetchImpl ?? api.fetch, { maxViewPages: o.maxViewPages }) };
+  };
+
+  it('follows the cursor to the end within the bound and returns every view', async () => {
+    const views = five();
+    const { c, api } = client({ views, pageSize: 2, maxViewPages: 3 });
+    const out = await c.views('alpha');
+    expect(out.kind === 'ok' && out.data.map((v) => v.title)).toEqual(views.map((v) => v.title));
+    expect(api.calls.filter((x) => x.path === '/views')).toHaveLength(3);
+  });
+
+  it('reports an incomplete list when the bound is reached, never a partial success', async () => {
+    const { c } = client({ views: five(), pageSize: 2, maxViewPages: 2 });
+    const out = await c.views('alpha');
+    expect(out.kind).toBe('incomplete');
+    expect(out.kind === 'incomplete' && out.message).toMatch(/more saved reports than this list can show/);
+  });
+
+  it('stops with a failure if the server repeats a cursor', async () => {
+    const { api } = client({ views: five(), pageSize: 2, maxViewPages: 50 });
+    const stuck: typeof fetch = async (input, init) => {
+      const res = await api.fetch(input, init);
+      const body = await res.json();
+      if (body && 'nextCursor' in body) body.nextCursor = 'same';
+      return new Response(JSON.stringify(body), { status: res.status });
+    };
+    const c = createReportingClient('https://api.test', { kind: 'cookie' }, stuck, { maxViewPages: 50 });
+    expect((await c.views('alpha')).kind).toBe('failed');
+  });
+
+  it('tells the person in the Zone, and keeps the figures working', async () => {
+    setup({ permissions: OWNER, views: five(), pageSize: 2, maxViewPages: 2 });
+    expect(await screen.findByText('Saved reports could not all be listed')).toBeTruthy();
+    expect(screen.getByText(/more saved reports than this list can show/)).toBeTruthy();
+    expect(await screen.findByRole('figure', { name: 'Amount invoiced (AUD)' })).toBeTruthy();
   });
 });
 

@@ -71,6 +71,12 @@ export function financeMessage(code: string | undefined): string {
     case 'has_payments': return 'Payments are linked to this expense. Reverse those payment links first (the payments stay recorded), then void it.';
     case 'expense_not_open': return 'That expense is not recorded and open, so it cannot be paid.';
     case 'totals_mismatch': return 'The totals no longer match the lines. Reload the draft and try again.';
+    case 'not_eligible': return 'A PDF can only be kept for a numbered quote or invoice. Drafts have a preview only.';
+    case 'not_draft': return 'This is no longer a draft. Reload to see its stored PDFs.';
+    case 'no_original': return 'This document was issued before PDFs were kept, so it has no original PDF to add versions to.';
+    case 'version_limit': return 'This document already has the maximum number of PDF versions.';
+    case 'document_too_large': return 'This document is too large to make into a PDF. Shorten its notes or lines.';
+    case 'branding_logo_invalid': return 'The logo could not be used. Upload it again in Finance settings, Documents.';
     default: return 'That change could not be made. Reload and try again.';
   }
 }
@@ -137,6 +143,10 @@ export function describeFailure(out: SubmitResult, uncertainty: Uncertainty = 'v
     case 'not_found': return 'That record could not be found in this business. It may have been removed.';
     case 'unreachable': return uncertainMessage(uncertainty);
     case 'rate_limited': return 'Too many requests. Wait a moment and try again.';
+    case 'failed':
+      // 503: the work could not finish (for example the PDF of a quote or invoice being issued) and was rolled back.
+      if ((out as { status?: number }).status === 503) return 'Business OS could not finish this just now, so nothing was changed. Try again in a moment.';
+      return 'Business OS could not complete this. Reload to see the current state before trying again.';
     default: return 'Business OS could not complete this. Reload to see the current state before trying again.';
   }
 }

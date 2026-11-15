@@ -644,7 +644,7 @@ describe('tenancy and permissions', () => {
       expect((await who.applyCredit(cn, [{ invoiceId: inv, amount: '0.01' }])).status !== 403, `${role} apply`).toBe(mutate);
     }
     expect((await api(A.people.MANAGER!, A.slug).context()).body.membership.permissions.filter((x: string) => x.startsWith('finance:')))
-      .toEqual(['finance:read', 'finance:write', 'finance:expenses']);
+      .toEqual(['finance:read', 'finance:write', 'finance:expenses', 'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download']);
     // Every customer, sales and project key and finance:issue: still no payments, and issuing a credit note is not applying it.
     custom.ADMIN = ['business:read', 'customers:read', 'customers:write', 'customers:delete', 'sales:read', 'sales:write', 'sales:manage',
       'projects:read', 'projects:create', 'projects:update', 'projects:archive', 'projects:manage_tasks', 'finance:read', 'finance:issue'];

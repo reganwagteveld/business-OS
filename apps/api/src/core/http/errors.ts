@@ -26,6 +26,8 @@ export type StateConflictCode =
   | 'start_date_locked'
   // Scheduling S1: the default calendar cannot be archived; cancelled events are read-only.
   | 'default_calendar' | 'not_scheduled'
+  // Finance F5 (docs/finance-documents-f5.md §7): generated documents.
+  | 'not_eligible' | 'not_draft' | 'no_original' | 'version_limit' | 'document_too_large' | 'branding_logo_invalid'
   // Communications C2-A (docs/communications-c2.md §10): mailbox connections and sync jobs.
   | 'provider_not_configured' | 'already_connected' | 'account_mismatch' | 'disconnected' | 'not_active' | 'sync_disabled'
   // Reporting R1: per-owner saved-view cap; a stored view whose config this version cannot read.
@@ -37,6 +39,18 @@ export class StateConflictError extends Error {
   constructor(readonly code: StateConflictCode) {
     super(code);
     this.name = 'StateConflictError';
+  }
+}
+
+/**
+ * The server could not complete the request and nothing was changed (Finance F5): `generation_failed`
+ * (503, safe to retry) when a document could not be rendered, `integrity_error` (500) when stored bytes
+ * no longer match their recorded checksum. No detail is returned.
+ */
+export class ServiceFailureError extends Error {
+  constructor(readonly status: 500 | 503, readonly code: 'generation_failed' | 'integrity_error') {
+    super(code);
+    this.name = 'ServiceFailureError';
   }
 }
 

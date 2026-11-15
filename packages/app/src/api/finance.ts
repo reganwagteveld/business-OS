@@ -8,12 +8,14 @@ import {
   RecordPaymentRequest, ReverseAllocationRequest, ReverseExpensePaymentRequest, ReversePaymentRequest, TaxRateResponse, UpdateCreditNoteRequest, UpdateExpenseCategoryRequest,
   UpdateExpenseRequest, UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdatePaymentRequest, UpdateQuoteRequest,
   UpdateTaxRateRequest, VoidDocumentRequest, VoidExpenseRequest,
+  CreateDocumentPdfVersionRequest, DocumentBrandingResponse, DocumentPdfVersionResponse, ListDocumentPdfVersionsResponse, UpdateDocumentBrandingRequest,
+  UploadBrandingLogoRequest, type DocumentBranding, type DocumentPdfVersion,
   type CreditNoteCredit, type CustomerBalance, type ExpenseCategory, type ExpensePayment, type FinanceDocument, type FinanceDocumentKind,
   type FinanceDocumentListItem, type FinanceExpense, type FinanceExpenseListItem, type FinancePayment, type InvoiceReceivables, type InvoiceSettlement,
 } from '@business-os/contracts';
 import type { z } from 'zod';
 import type { AuthTransport } from './auth';
-import { createRequester, type RawResult } from './http';
+import { createRequester, type RawFileResult, type RawResult } from './http';
 import { classify, type Outcome } from './tenancy';
 
 export interface ExpenseQuery {
@@ -51,6 +53,17 @@ export interface ExpensePaymentQuery { status: 'recorded' | 'reversed' | 'all'; 
 export interface ExpensePaymentPage { payments: ExpensePaymentListItem[]; nextCursor: string | null }
 export interface BalancePage { balances: CustomerBalance[]; asOf: string; nextCursor: string | null }
 type QuoteAction = 'accept' | 'decline' | 'expire';
+
+// ---- F5: generated documents (docs/finance-documents-f5.md) ----------------------------------------
+export type { DocumentBranding, DocumentPdfVersion };
+export interface PdfVersionList { eligible: boolean; versions: DocumentPdfVersion[] }
+/** A fetched file. `blob` is the exact bytes the server sent; `sha256` is its checksum header. */
+export interface FetchedFile {
+  blob: Blob; contentType: string; sha256: string | null;
+  /** Draft previews only: some text used characters the PDF fonts cannot show (printed as a box). */
+  unsupportedCharacters?: boolean;
+}
+export type PdfMode = 'preview' | 'download';
 
 /**
  * Finance Zone calls for expenses and categories (docs/finance-data-model.md §19). The business is only
@@ -113,6 +126,19 @@ export interface FinanceClient {
   allocateExpensePayment(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<ExpensePayment>>;
   reverseExpenseAllocation(slug: string, id: string, allocationId: string, signal?: AbortSignal): Promise<Outcome<ExpensePayment>>;
   reverseExpensePayment(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<ExpensePayment>>;
+
+  // ---- F5: generated PDFs and document branding. Nothing here sends a document anywhere. -----------
+  pdfVersions(slug: string, path: 'quotes' | 'invoices', id: string, signal?: AbortSignal): Promise<Outcome<PdfVersionList>>;
+  /** Adds a later version with a reason. The original (version 1) is made when the document is issued. */
+  createPdfVersion(slug: string, path: 'quotes' | 'invoices', id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<DocumentPdfVersion>>;
+  /** The stored bytes of one version: `preview` for inline viewing, `download` for saving (audited). */
+  pdfFile(slug: string, path: 'quotes' | 'invoices', id: string, versionId: string, mode: PdfMode, signal?: AbortSignal): Promise<Outcome<FetchedFile>>;
+  /** A watermarked, never-stored preview of a draft. */
+  draftPdf(slug: string, path: 'quotes' | 'invoices', id: string, signal?: AbortSignal): Promise<Outcome<FetchedFile>>;
+  branding(slug: string, signal?: AbortSignal): Promise<Outcome<DocumentBranding>>;
+  updateBranding(slug: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<DocumentBranding>>;
+  uploadLogo(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<DocumentBranding>>;
+  logo(slug: string, signal?: AbortSignal): Promise<Outcome<FetchedFile>>;
 }
 
 /** The reversal endpoints take an empty, strict body (the same schema for all three). */
@@ -157,6 +183,15 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
   };
   const get = async <S extends z.ZodType, T>(path: string, schema: S, pick: (d: z.infer<S>) => T, signal?: AbortSignal) =>
     settle(await http.request('GET', path, undefined, signal), schema, pick);
+  const file = (raw: RawFileResult, expected: readonly string[]): Outcome<FetchedFile> => {
+    if (raw.kind === 'network') return { kind: 'unreachable' };
+    if (raw.kind === 'response') {
+      if (raw.status === 503) return { kind: 'failed', status: 503 };
+      return classify(raw.status, raw.json) ?? { kind: 'invalid' };
+    }
+    if (!expected.includes(raw.contentType)) return { kind: 'invalid' };
+    return { kind: 'ok', data: { blob: raw.blob, contentType: raw.contentType, sha256: raw.sha256, ...(raw.unsupportedCharacters === null ? {} : { unsupportedCharacters: raw.unsupportedCharacters }) } };
+  };
   const pick = <T, K extends string>(out: Outcome<Record<K, T>>, k: K): Outcome<T> => (out.kind === 'ok' ? { kind: 'ok', data: out.data[k] } : out);
   const base = (slug: string) => `/api/v1/b/${encodeURIComponent(slug)}/finance`;
   const doc = (slug: string, path: DocumentPath, id: string, tail = '') => `${base(slug)}/${path}/${encodeURIComponent(id)}${tail}`;
@@ -324,6 +359,31 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
     },
     async reverseExpensePayment(slug, id, input, signal) {
       return pick(await send('POST', `${base(slug)}/expense-payments/${encodeURIComponent(id)}/reverse`, ReverseExpensePaymentRequest, input, ExpensePaymentResponse, signal), 'payment');
+    },
+
+    async pdfVersions(slug, path, id, signal) {
+      return get(doc(slug, path, id, '/pdf-versions'), ListDocumentPdfVersionsResponse, (d) => d, signal);
+    },
+    async createPdfVersion(slug, path, id, input, signal) {
+      return pick(await send('POST', doc(slug, path, id, '/pdf-versions'), CreateDocumentPdfVersionRequest, input, DocumentPdfVersionResponse, signal), 'version');
+    },
+    async pdfFile(slug, path, id, versionId, mode, signal) {
+      return file(await http.requestFile(doc(slug, path, id, `/pdf-versions/${encodeURIComponent(versionId)}/${mode}`), 'application/pdf', signal), ['application/pdf']);
+    },
+    async draftPdf(slug, path, id, signal) {
+      return file(await http.requestFile(doc(slug, path, id, '/draft-pdf'), 'application/pdf', signal), ['application/pdf']);
+    },
+    async branding(slug, signal) {
+      return get(`${base(slug)}/document-branding`, DocumentBrandingResponse, (d) => d.branding, signal);
+    },
+    async updateBranding(slug, patch, signal) {
+      return pick(await send('PATCH', `${base(slug)}/document-branding`, UpdateDocumentBrandingRequest, patch, DocumentBrandingResponse, signal), 'branding');
+    },
+    async uploadLogo(slug, input, signal) {
+      return pick(await send('POST', `${base(slug)}/document-branding/logo`, UploadBrandingLogoRequest, input, DocumentBrandingResponse, signal), 'branding');
+    },
+    async logo(slug, signal) {
+      return file(await http.requestFile(`${base(slug)}/document-branding/logo`, 'image/png, image/jpeg', signal), ['image/png', 'image/jpeg']);
     },
   };
 }

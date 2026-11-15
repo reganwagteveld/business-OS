@@ -14,6 +14,7 @@ export * from './sales.ts';
 export * from './projects.ts';
 export * from './finance.ts';
 export * from './finance-expenses.ts';
+export * from './finance-documents.ts';
 export * from './people.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
@@ -32,6 +33,10 @@ import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
 } from './projects.ts';
+import {
+  CreateDocumentPdfVersionRequest, DocumentBrandingResponse, DocumentPdfVersionResponse, ListDocumentPdfVersionsResponse, UpdateDocumentBrandingRequest,
+  UploadBrandingLogoRequest,
+} from './finance-documents.ts';
 import {
   ConvertQuoteRequest, CreateCreditNoteRequest, CreateInvoiceRequest, CreateQuoteRequest, CreateTaxRateRequest, DiscardDraftRequest, FinanceDocumentResponse,
   FinanceSettingsResponse, IssueDocumentRequest, ListCreditNotesQuery, ListFinanceDocumentsResponse, ListInvoicesQuery, ListNumberSeriesResponse,
@@ -320,6 +325,32 @@ export const endpoints = {
   deleteSavedView: { method: 'DELETE', path: '/api/v1/b/:slug/reporting/views/:viewId', response: DeleteSavedViewResponse },
   /** Runs the stored configuration as the caller; metrics the caller may not read come back as per-metric errors. */
   runSavedView: { method: 'POST', path: '/api/v1/b/:slug/reporting/views/:viewId/run', response: RunSavedViewResponse },
+
+  // Finance F5 (docs/finance-documents-f5.md): document branding and PDF versions of quotes and invoices.
+  // The files themselves are served by fileEndpoints below. Nothing here sends a document.
+  getDocumentBranding: { method: 'GET', path: '/api/v1/b/:slug/finance/document-branding', response: DocumentBrandingResponse },
+  updateDocumentBranding: { method: 'PATCH', path: '/api/v1/b/:slug/finance/document-branding', request: UpdateDocumentBrandingRequest, response: DocumentBrandingResponse },
+  uploadBrandingLogo: { method: 'POST', path: '/api/v1/b/:slug/finance/document-branding/logo', request: UploadBrandingLogoRequest, response: DocumentBrandingResponse },
+  listQuotePdfVersions: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions', response: ListDocumentPdfVersionsResponse },
+  createQuotePdfVersion: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions', request: CreateDocumentPdfVersionRequest, response: DocumentPdfVersionResponse },
+  getQuotePdfVersion: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions/:versionId', response: DocumentPdfVersionResponse },
+  listInvoicePdfVersions: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions', response: ListDocumentPdfVersionsResponse },
+  createInvoicePdfVersion: { method: 'POST', path: '/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions', request: CreateDocumentPdfVersionRequest, response: DocumentPdfVersionResponse },
+  getInvoicePdfVersion: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId', response: DocumentPdfVersionResponse },
+} as const;
+
+/**
+ * Endpoints that answer with a file instead of JSON (Finance F5). Errors are still JSON ({ error }).
+ * `disposition` says how the file is served: inline (preview) or attachment (download).
+ */
+export const fileEndpoints = {
+  getBrandingLogo: { method: 'GET', path: '/api/v1/b/:slug/finance/document-branding/logo', contentType: 'image/png | image/jpeg', disposition: 'none' },
+  previewQuoteDraftPdf: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes/:documentId/draft-pdf', contentType: 'application/pdf', disposition: 'inline' },
+  previewQuotePdfVersion: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions/:versionId/preview', contentType: 'application/pdf', disposition: 'inline' },
+  downloadQuotePdfVersion: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions/:versionId/download', contentType: 'application/pdf', disposition: 'attachment' },
+  previewInvoiceDraftPdf: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/draft-pdf', contentType: 'application/pdf', disposition: 'inline' },
+  previewInvoicePdfVersion: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId/preview', contentType: 'application/pdf', disposition: 'inline' },
+  downloadInvoicePdfVersion: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId/download', contentType: 'application/pdf', disposition: 'attachment' },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */

@@ -11,7 +11,7 @@ import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser 
 import { NotFoundError, type Actor } from '@/modules/tenancy';
 import { myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
 import { apiHeaders } from '@/core/http';
-import { isUniqueViolation, RecordNotFoundError, RuleViolationError, sqlState, StateConflictError } from '@/core/http/errors';
+import { isUniqueViolation, RecordNotFoundError, RuleViolationError, ServiceFailureError, sqlState, StateConflictError } from '@/core/http/errors';
 
 type Params = Promise<Record<string, string | string[] | undefined>>;
 type RouteContext = { params: Params };
@@ -41,6 +41,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   FN014: [409, 'has_credit_applications'], FN015: [409, 'invalid_state'],
   // F3 (migration 20261117000000_finance_expenses).
   FN016: [409, 'has_payments'], FN017: [409, 'archived_reference'], FN018: [409, 'expense_not_open'],
+  // F5 (migration 20261122000000_finance_documents): generated documents and branding assets.
+  FN019: [409, 'not_eligible'], FN020: [409, 'stale'], FN021: [409, 'immutable'],
   // People (migration 20261118000000_people, docs/people-data-model.md §4).
   PE001: [409, 'invalid_transition'], PE002: [409, 'manager_cycle'], PE003: [400, 'invalid_manager'], PE004: [409, 'immutable'],
   PE005: [409, 'has_direct_reports'], PE006: [409, 'terminated'], PE007: [409, 'archived_reference'], PE008: [409, 'in_use'],
@@ -80,6 +82,7 @@ function errorResponse(request: Request, error: unknown): Response {
   if (error instanceof ForbiddenError || error instanceof TenantScopeError) return fail(request, 403, 'forbidden');
   if (error instanceof NotFoundError || error instanceof RecordNotFoundError) return fail(request, 404, 'not_found');
   if (error instanceof StateConflictError) return fail(request, 409, error.code);
+  if (error instanceof ServiceFailureError) return fail(request, error.status, error.code);
   if (error instanceof RuleViolationError) return json(request, 400, { error: error.code, message: error.detail });
   if (error instanceof TrustedPathError) {
     const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400 }[error.reason];
@@ -158,8 +161,37 @@ export function publicRoute<S extends z.ZodType | undefined, T>(
  * active memberships (in the database, from the verified session token) on every request; an
  * unknown slug and a business the caller does not belong to both answer 404.
  */
+type Resolved = { auth: { user: CurrentUser; sessionToken: string }; params: Record<string, string>; membership: { businessId: string }; actor: Actor };
+
+/**
+ * Shared by the tenant wrappers: authenticates, resolves the slug to a business through the caller's
+ * own active memberships (in the database, from the verified session token) and authorises. An unknown
+ * slug and a business the caller does not belong to both answer 404.
+ */
+async function resolveTenant(request: Request, context: RouteContext, permission: Permission): Promise<Resolved | Response> {
+  const auth = await authenticate(request);
+  if (auth instanceof Response) return auth;
+  const raw = await context.params;
+  const params = Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => typeof e[1] === 'string'));
+  const membership = (await myMemberships(auth.sessionToken)).find((m) => m.slug === params.slug);
+  if (!membership) return fail(request, 404, 'not_found');
+  const actor: Actor = {
+    userId: auth.user.id,
+    membershipId: membership.membershipId,
+    role: membership.role,
+    permissions: new Set(permissionsFor(membership.role)),
+  };
+  authorize(actor, permission);
+  return { auth, params, membership, actor };
+}
+
+/**
+ * Tenant routes: /api/v1/b/{slug}/… The slug is resolved to a business through the caller's own
+ * active memberships (in the database, from the verified session token) on every request; an
+ * unknown slug and a business the caller does not belong to both answer 404.
+ */
 export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodType | undefined = undefined>(
-  opts: { permission: Permission; input?: S; query?: Q; response: z.ZodType<T> },
+  opts: { permission: Permission; input?: S; query?: Q; response: z.ZodType<T>; /** Unit-of-work timeout; default 5 s (F5 rendering: 15 s). */ timeoutMs?: number },
   handler: (args: {
     request: Request;
     actor: Actor;
@@ -171,19 +203,9 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
 ) {
   return async (request: Request, context: RouteContext): Promise<Response> => {
     try {
-      const auth = await authenticate(request);
-      if (auth instanceof Response) return auth;
-      const raw = await context.params;
-      const params = Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => typeof e[1] === 'string'));
-      const membership = (await myMemberships(auth.sessionToken)).find((m) => m.slug === params.slug);
-      if (!membership) return fail(request, 404, 'not_found');
-      const actor: Actor = {
-        userId: auth.user.id,
-        membershipId: membership.membershipId,
-        role: membership.role,
-        permissions: new Set(permissionsFor(membership.role)),
-      };
-      authorize(actor, opts.permission);
+      const resolved = await resolveTenant(request, context, opts.permission);
+      if (resolved instanceof Response) return resolved;
+      const { auth, params, membership, actor } = resolved;
       const input = await readInput(request, opts.input);
       if (!input.ok) return fail(request, 400, 'invalid_input');
       let query: unknown = undefined;
@@ -194,9 +216,54 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
       }
       const result = await withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) =>
         handler({ request, actor, db, params, input: input.data as never, query: query as never }),
-      );
+      opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
       await result.afterCommit?.();
       return json(request, result.status ?? 200, opts.response.parse(result.body));
+    } catch (error) {
+      return errorResponse(request, error);
+    }
+  };
+}
+
+/** A file a tenant route returns instead of JSON (Finance F5: PDFs and logos). */
+export interface FileResult {
+  bytes: Uint8Array;
+  contentType: 'application/pdf' | 'image/png' | 'image/jpeg';
+  /** A complete Content-Disposition value (see contentDisposition in the finance module), or omitted for images. */
+  disposition?: string;
+  sha256: string;
+  /** Draft previews: some text used characters the fonts cannot draw (sent as X-Unsupported-Characters: true). */
+  unsupportedCharacters?: boolean;
+}
+
+/**
+ * Tenant routes that answer with a file (GET only). Same authentication, tenancy, authorisation and
+ * error mapping as tenantRoute; errors are still JSON. The file is never cached (private, no-store),
+ * never sniffed (nosniff), and carries its checksum. CORS callers (the desktop app) may read the
+ * file name and checksum headers.
+ */
+export function tenantFileRoute(
+  opts: { permission: Permission },
+  handler: (args: { request: Request; actor: Actor; db: AppTenantDb; params: Record<string, string> }) => Promise<FileResult>,
+) {
+  return async (request: Request, context: RouteContext): Promise<Response> => {
+    try {
+      const resolved = await resolveTenant(request, context, opts.permission);
+      if (resolved instanceof Response) return resolved;
+      const { auth, params, membership, actor } = resolved;
+      const file = await withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) => handler({ request, actor, db, params }), { timeoutMs: 15_000 });
+      const headers: Record<string, string> = {
+        ...apiHeaders(request),
+        'Content-Type': file.contentType,
+        'Content-Length': String(file.bytes.byteLength),
+        'X-Document-Sha256': file.sha256,
+        'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; sandbox",
+        'Cross-Origin-Resource-Policy': 'same-site',
+      };
+      if (file.disposition) headers['Content-Disposition'] = file.disposition;
+      if (file.unsupportedCharacters !== undefined) headers['X-Unsupported-Characters'] = String(file.unsupportedCharacters);
+      if (headers['Access-Control-Allow-Origin']) headers['Access-Control-Expose-Headers'] = 'Content-Disposition, X-Document-Sha256, X-Unsupported-Characters';
+      return new Response(file.bytes as unknown as BodyInit, { status: 200, headers });
     } catch (error) {
       return errorResponse(request, error);
     }

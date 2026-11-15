@@ -46693,6 +46693,1854 @@
         ],
         "additionalProperties": false
       }
+    },
+    "getDocumentBranding": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/document-branding",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "branding": {
+            "type": "object",
+            "properties": {
+              "accentColor": {
+                "type": "string"
+              },
+              "footerText": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invoiceTitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invoiceTerms": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quoteTitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quoteTerms": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "templateId": {
+                "type": "string",
+                "const": "standard"
+              },
+              "defaultTitles": {
+                "type": "object",
+                "properties": {
+                  "INVOICE": {
+                    "type": "string"
+                  },
+                  "QUOTE": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "INVOICE",
+                  "QUOTE"
+                ],
+                "additionalProperties": false
+              },
+              "logo": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "contentType": {
+                        "type": "string",
+                        "enum": [
+                          "image/png",
+                          "image/jpeg"
+                        ]
+                      },
+                      "byteSize": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "width": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "contentType",
+                      "byteSize",
+                      "width",
+                      "height",
+                      "sha256",
+                      "createdAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "accentColor",
+              "footerText",
+              "invoiceTitle",
+              "invoiceTerms",
+              "quoteTitle",
+              "quoteTerms",
+              "templateId",
+              "defaultTitles",
+              "logo",
+              "version",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "branding"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "updateDocumentBranding": {
+      "method": "PATCH",
+      "path": "/api/v1/b/:slug/finance/document-branding",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "accentColor": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          },
+          "footerText": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invoiceTitle": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 60
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invoiceTerms": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quoteTitle": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 60
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quoteTerms": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "logoAssetId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "branding": {
+            "type": "object",
+            "properties": {
+              "accentColor": {
+                "type": "string"
+              },
+              "footerText": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invoiceTitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invoiceTerms": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quoteTitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quoteTerms": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "templateId": {
+                "type": "string",
+                "const": "standard"
+              },
+              "defaultTitles": {
+                "type": "object",
+                "properties": {
+                  "INVOICE": {
+                    "type": "string"
+                  },
+                  "QUOTE": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "INVOICE",
+                  "QUOTE"
+                ],
+                "additionalProperties": false
+              },
+              "logo": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "contentType": {
+                        "type": "string",
+                        "enum": [
+                          "image/png",
+                          "image/jpeg"
+                        ]
+                      },
+                      "byteSize": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "width": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "contentType",
+                      "byteSize",
+                      "width",
+                      "height",
+                      "sha256",
+                      "createdAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "accentColor",
+              "footerText",
+              "invoiceTitle",
+              "invoiceTerms",
+              "quoteTitle",
+              "quoteTerms",
+              "templateId",
+              "defaultTitles",
+              "logo",
+              "version",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "branding"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "uploadBrandingLogo": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/document-branding/logo",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "contentType": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg"
+            ]
+          },
+          "dataBase64": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 700000
+          }
+        },
+        "required": [
+          "version",
+          "contentType",
+          "dataBase64"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "branding": {
+            "type": "object",
+            "properties": {
+              "accentColor": {
+                "type": "string"
+              },
+              "footerText": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invoiceTitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invoiceTerms": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quoteTitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quoteTerms": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "templateId": {
+                "type": "string",
+                "const": "standard"
+              },
+              "defaultTitles": {
+                "type": "object",
+                "properties": {
+                  "INVOICE": {
+                    "type": "string"
+                  },
+                  "QUOTE": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "INVOICE",
+                  "QUOTE"
+                ],
+                "additionalProperties": false
+              },
+              "logo": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "contentType": {
+                        "type": "string",
+                        "enum": [
+                          "image/png",
+                          "image/jpeg"
+                        ]
+                      },
+                      "byteSize": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "width": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "contentType",
+                      "byteSize",
+                      "width",
+                      "height",
+                      "sha256",
+                      "createdAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "accentColor",
+              "footerText",
+              "invoiceTitle",
+              "invoiceTerms",
+              "quoteTitle",
+              "quoteTerms",
+              "templateId",
+              "defaultTitles",
+              "logo",
+              "version",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "branding"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "listQuotePdfVersions": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "documentId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "documentKind": {
+                  "type": "string",
+                  "enum": [
+                    "QUOTE",
+                    "INVOICE"
+                  ]
+                },
+                "versionNumber": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "ORIGINAL",
+                    "BRANDING_UPDATED",
+                    "TEMPLATE_UPDATED",
+                    "RENDERING_CORRECTION",
+                    "OTHER"
+                  ]
+                },
+                "reasonNote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "previousVersionId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "documentNumber": {
+                  "type": "string"
+                },
+                "documentStatus": {
+                  "type": "string"
+                },
+                "documentContentSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "templateId": {
+                  "type": "string"
+                },
+                "templateVersion": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "renderer": {
+                  "type": "string"
+                },
+                "snapshotSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "logoAssetId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "fileName": {
+                  "type": "string"
+                },
+                "contentType": {
+                  "type": "string",
+                  "const": "application/pdf"
+                },
+                "pageCount": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "byteSize": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "fileSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "generatedById": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "reference": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "finance_document_pdf"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "sha256"
+                  ],
+                  "additionalProperties": false
+                },
+                "unsupportedCharacters": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "documentId",
+                "documentKind",
+                "versionNumber",
+                "reason",
+                "reasonNote",
+                "previousVersionId",
+                "documentNumber",
+                "documentStatus",
+                "documentContentSha256",
+                "templateId",
+                "templateVersion",
+                "renderer",
+                "snapshotSha256",
+                "logoAssetId",
+                "fileName",
+                "contentType",
+                "pageCount",
+                "byteSize",
+                "fileSha256",
+                "generatedById",
+                "createdAt",
+                "reference",
+                "unsupportedCharacters"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "eligible",
+          "versions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "createQuotePdfVersion": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "new_version"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "BRANDING_UPDATED",
+              "TEMPLATE_UPDATED",
+              "RENDERING_CORRECTION",
+              "OTHER"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "basedOnVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "mode",
+          "reason",
+          "basedOnVersion"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "documentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "documentKind": {
+                "type": "string",
+                "enum": [
+                  "QUOTE",
+                  "INVOICE"
+                ]
+              },
+              "versionNumber": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "ORIGINAL",
+                  "BRANDING_UPDATED",
+                  "TEMPLATE_UPDATED",
+                  "RENDERING_CORRECTION",
+                  "OTHER"
+                ]
+              },
+              "reasonNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "previousVersionId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "documentNumber": {
+                "type": "string"
+              },
+              "documentStatus": {
+                "type": "string"
+              },
+              "documentContentSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "templateId": {
+                "type": "string"
+              },
+              "templateVersion": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "renderer": {
+                "type": "string"
+              },
+              "snapshotSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "logoAssetId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fileName": {
+                "type": "string"
+              },
+              "contentType": {
+                "type": "string",
+                "const": "application/pdf"
+              },
+              "pageCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "byteSize": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "fileSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "generatedById": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "finance_document_pdf"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "unsupportedCharacters": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "documentId",
+              "documentKind",
+              "versionNumber",
+              "reason",
+              "reasonNote",
+              "previousVersionId",
+              "documentNumber",
+              "documentStatus",
+              "documentContentSha256",
+              "templateId",
+              "templateVersion",
+              "renderer",
+              "snapshotSha256",
+              "logoAssetId",
+              "fileName",
+              "contentType",
+              "pageCount",
+              "byteSize",
+              "fileSha256",
+              "generatedById",
+              "createdAt",
+              "reference",
+              "unsupportedCharacters"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getQuotePdfVersion": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions/:versionId",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "documentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "documentKind": {
+                "type": "string",
+                "enum": [
+                  "QUOTE",
+                  "INVOICE"
+                ]
+              },
+              "versionNumber": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "ORIGINAL",
+                  "BRANDING_UPDATED",
+                  "TEMPLATE_UPDATED",
+                  "RENDERING_CORRECTION",
+                  "OTHER"
+                ]
+              },
+              "reasonNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "previousVersionId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "documentNumber": {
+                "type": "string"
+              },
+              "documentStatus": {
+                "type": "string"
+              },
+              "documentContentSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "templateId": {
+                "type": "string"
+              },
+              "templateVersion": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "renderer": {
+                "type": "string"
+              },
+              "snapshotSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "logoAssetId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fileName": {
+                "type": "string"
+              },
+              "contentType": {
+                "type": "string",
+                "const": "application/pdf"
+              },
+              "pageCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "byteSize": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "fileSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "generatedById": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "finance_document_pdf"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "unsupportedCharacters": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "documentId",
+              "documentKind",
+              "versionNumber",
+              "reason",
+              "reasonNote",
+              "previousVersionId",
+              "documentNumber",
+              "documentStatus",
+              "documentContentSha256",
+              "templateId",
+              "templateVersion",
+              "renderer",
+              "snapshotSha256",
+              "logoAssetId",
+              "fileName",
+              "contentType",
+              "pageCount",
+              "byteSize",
+              "fileSha256",
+              "generatedById",
+              "createdAt",
+              "reference",
+              "unsupportedCharacters"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "listInvoicePdfVersions": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "documentId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "documentKind": {
+                  "type": "string",
+                  "enum": [
+                    "QUOTE",
+                    "INVOICE"
+                  ]
+                },
+                "versionNumber": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "ORIGINAL",
+                    "BRANDING_UPDATED",
+                    "TEMPLATE_UPDATED",
+                    "RENDERING_CORRECTION",
+                    "OTHER"
+                  ]
+                },
+                "reasonNote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "previousVersionId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "documentNumber": {
+                  "type": "string"
+                },
+                "documentStatus": {
+                  "type": "string"
+                },
+                "documentContentSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "templateId": {
+                  "type": "string"
+                },
+                "templateVersion": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "renderer": {
+                  "type": "string"
+                },
+                "snapshotSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "logoAssetId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "fileName": {
+                  "type": "string"
+                },
+                "contentType": {
+                  "type": "string",
+                  "const": "application/pdf"
+                },
+                "pageCount": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "byteSize": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "fileSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "generatedById": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "reference": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "finance_document_pdf"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "sha256"
+                  ],
+                  "additionalProperties": false
+                },
+                "unsupportedCharacters": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "documentId",
+                "documentKind",
+                "versionNumber",
+                "reason",
+                "reasonNote",
+                "previousVersionId",
+                "documentNumber",
+                "documentStatus",
+                "documentContentSha256",
+                "templateId",
+                "templateVersion",
+                "renderer",
+                "snapshotSha256",
+                "logoAssetId",
+                "fileName",
+                "contentType",
+                "pageCount",
+                "byteSize",
+                "fileSha256",
+                "generatedById",
+                "createdAt",
+                "reference",
+                "unsupportedCharacters"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "eligible",
+          "versions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "createInvoicePdfVersion": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "new_version"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "BRANDING_UPDATED",
+              "TEMPLATE_UPDATED",
+              "RENDERING_CORRECTION",
+              "OTHER"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "basedOnVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "mode",
+          "reason",
+          "basedOnVersion"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "documentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "documentKind": {
+                "type": "string",
+                "enum": [
+                  "QUOTE",
+                  "INVOICE"
+                ]
+              },
+              "versionNumber": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "ORIGINAL",
+                  "BRANDING_UPDATED",
+                  "TEMPLATE_UPDATED",
+                  "RENDERING_CORRECTION",
+                  "OTHER"
+                ]
+              },
+              "reasonNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "previousVersionId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "documentNumber": {
+                "type": "string"
+              },
+              "documentStatus": {
+                "type": "string"
+              },
+              "documentContentSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "templateId": {
+                "type": "string"
+              },
+              "templateVersion": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "renderer": {
+                "type": "string"
+              },
+              "snapshotSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "logoAssetId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fileName": {
+                "type": "string"
+              },
+              "contentType": {
+                "type": "string",
+                "const": "application/pdf"
+              },
+              "pageCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "byteSize": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "fileSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "generatedById": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "finance_document_pdf"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "unsupportedCharacters": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "documentId",
+              "documentKind",
+              "versionNumber",
+              "reason",
+              "reasonNote",
+              "previousVersionId",
+              "documentNumber",
+              "documentStatus",
+              "documentContentSha256",
+              "templateId",
+              "templateVersion",
+              "renderer",
+              "snapshotSha256",
+              "logoAssetId",
+              "fileName",
+              "contentType",
+              "pageCount",
+              "byteSize",
+              "fileSha256",
+              "generatedById",
+              "createdAt",
+              "reference",
+              "unsupportedCharacters"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getInvoicePdfVersion": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "documentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "documentKind": {
+                "type": "string",
+                "enum": [
+                  "QUOTE",
+                  "INVOICE"
+                ]
+              },
+              "versionNumber": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "ORIGINAL",
+                  "BRANDING_UPDATED",
+                  "TEMPLATE_UPDATED",
+                  "RENDERING_CORRECTION",
+                  "OTHER"
+                ]
+              },
+              "reasonNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "previousVersionId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "documentNumber": {
+                "type": "string"
+              },
+              "documentStatus": {
+                "type": "string"
+              },
+              "documentContentSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "templateId": {
+                "type": "string"
+              },
+              "templateVersion": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "renderer": {
+                "type": "string"
+              },
+              "snapshotSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "logoAssetId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fileName": {
+                "type": "string"
+              },
+              "contentType": {
+                "type": "string",
+                "const": "application/pdf"
+              },
+              "pageCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "byteSize": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "fileSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "generatedById": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "finance_document_pdf"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "unsupportedCharacters": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "documentId",
+              "documentKind",
+              "versionNumber",
+              "reason",
+              "reasonNote",
+              "previousVersionId",
+              "documentNumber",
+              "documentStatus",
+              "documentContentSha256",
+              "templateId",
+              "templateVersion",
+              "renderer",
+              "snapshotSha256",
+              "logoAssetId",
+              "fileName",
+              "contentType",
+              "pageCount",
+              "byteSize",
+              "fileSha256",
+              "generatedById",
+              "createdAt",
+              "reference",
+              "unsupportedCharacters"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "fileEndpoints": {
+    "getBrandingLogo": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/document-branding/logo",
+      "contentType": "image/png | image/jpeg",
+      "disposition": "none"
+    },
+    "previewQuoteDraftPdf": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/quotes/:documentId/draft-pdf",
+      "contentType": "application/pdf",
+      "disposition": "inline"
+    },
+    "previewQuotePdfVersion": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions/:versionId/preview",
+      "contentType": "application/pdf",
+      "disposition": "inline"
+    },
+    "downloadQuotePdfVersion": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions/:versionId/download",
+      "contentType": "application/pdf",
+      "disposition": "attachment"
+    },
+    "previewInvoiceDraftPdf": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/invoices/:documentId/draft-pdf",
+      "contentType": "application/pdf",
+      "disposition": "inline"
+    },
+    "previewInvoicePdfVersion": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId/preview",
+      "contentType": "application/pdf",
+      "disposition": "inline"
+    },
+    "downloadInvoicePdfVersion": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId/download",
+      "contentType": "application/pdf",
+      "disposition": "attachment"
     }
   },
   "authEndpoints": {

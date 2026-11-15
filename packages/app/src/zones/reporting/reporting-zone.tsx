@@ -136,6 +136,15 @@ export function ReportingZone({ client, context, userLabel, onHome, onSwitch, on
       }
     >
       {notice ? <Alert tone="info"><AlertDescription>{notice}</AlertDescription></Alert> : null}
+      {views.state.status === 'done' && views.state.outcome.kind !== 'ok' && views.state.outcome.kind !== 'unauthenticated' ? (
+        <Alert tone="warning" className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <AlertTitle>Saved reports could not all be listed</AlertTitle>
+            <AlertDescription>{views.state.outcome.kind === 'incomplete' ? views.state.outcome.message : 'The list of saved reports did not load. Figures below are not affected.'}</AlertDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={views.reload}>Try again</Button>
+        </Alert>
+      ) : null}
       <Toolbar
         settings={current} update={update} zones={zones} metrics={runnable.filter(inZone)} saved={savedList} openId={open?.id ?? ''} onOpen={openView}
         today={cat.today} metric={metric}
