@@ -3,10 +3,11 @@
 Status: implemented on `feature/reporting-r1` for audit. Not merged, not deployed, migration not applied
 anywhere but disposable local databases.
 
-Baseline: `main` at `1b65e74` (STAB-01). Confirmed merged on that commit: Finance F1–F4 (#31, #34, #35,
-#37), People P1 (#36), Scheduling S1 (#38), Communications C1 (#39), STAB-01 (#40), UI phases 1–2 (#32,
-#33). Open and **not** depended on: #41 (Communications C2-A, migration `20261121000000_communications_providers`)
-and #42 (Finance F5, migration `20261120000000_finance_documents`).
+Baseline: branched from `main` at `1b65e74` (STAB-01): Finance F1–F4 (#31, #34, #35, #37), People P1 (#36),
+Scheduling S1 (#38), Communications C1 (#39), STAB-01 (#40), UI phases 1–2 (#32, #33). Communications C2-A (#41,
+migration `20261121000000_communications_providers`) merged to `main` as `4f2d437` during this work and is merged into
+this branch; Reporting does not depend on it. Still open and **not** depended on: #42 (Finance F5, migration
+`20261120000000_finance_documents`).
 
 ## 1. What R1 is
 
