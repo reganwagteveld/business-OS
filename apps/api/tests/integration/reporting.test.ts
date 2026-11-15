@@ -139,10 +139,12 @@ const first = (r: Result) => {
 };
 /** Exact decimal sum of amount strings with two places (AUD/USD), without floating point. */
 const sum2 = (values: string[]) => {
-  const cents = values.reduce((s, v) => s + BigInt(v.replace('.', '')), 0n);
-  const sign = cents < 0n ? '-' : '';
-  const abs = cents < 0n ? -cents : cents;
-  return `${sign}${abs / 100n}.${String(abs % 100n).padStart(2, '0')}`;
+  const zero = BigInt(0);
+  const hundred = BigInt(100);
+  const cents = values.reduce((s, v) => s + BigInt(v.replace('.', '')), zero);
+  const sign = cents < zero ? '-' : '';
+  const abs = cents < zero ? -cents : cents;
+  return `${sign}${abs / hundred}.${String(abs % hundred).padStart(2, '0')}`;
 };
 
 let A: Awaited<ReturnType<typeof team>>;
