@@ -148,7 +148,8 @@ Notes:
 | `tenancy` | `businesses`, `memberships`, `invitations` | Which businesses exist; who belongs to which | `identity`, `core` |
 | `access` | none in Phase 1 (role→permission map in code) | `can(ctx, permission)`; permission registry | `tenancy`, `core` |
 | `customers` | `customers`, `contacts` | Customer and contact records | `access`, `activity`, `core` |
-| `activity` | `activities` | Business-facing timeline of what happened | `access`, `core` |
+| `activity` | `activities` | Business-facing timeline of what happened; the single timeline authority (restricted notes, logged interactions, message entries; docs/communications-c1.md) | `access`, `core` |
+| `communications` (C1) | `conversations`, `messages`, `message_participants` | Read-only history of messages exchanged outside Business OS; writes its timeline entries through `activity` | `activity`, `access`, `core` |
 | `core` (kernel) | `audit_events`, `job_runs` | DB, tenant context, authz plumbing, audit, scheduled jobs, config | nothing |
 
 **Modules are not Zones.** A module is a data and logic boundary. A Zone is a navigation and UI grouping. The Customer Zone composes `customers` and `activity`; the future Sales Zone will also read `customers`. This separation is what keeps "one source of truth" intact as Zones are added: no Zone ever gets its own copy of customers.

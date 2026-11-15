@@ -335,6 +335,7 @@ Activities record what happened, with whom, for which customer, at the time. The
 Tests in Phase 1d cover each row of this table.
 - `type` is free text validated against a registry in code (each module registers its activity types with a zod schema for `data`), not a Postgres enum, so new types do not need migrations.
 - **No mock activity.** Timelines start empty; the empty state explains how activity appears.
+- **Communications C1** (docs/communications-c1.md) extends this table with `visibility` (restricted notes), `edited_at`, and the composite message link `(conversation_id, message_id)` used only by `message.recorded` entries, following option A above. Conversations and messages live in the `communications` module's own tables; their timeline entries are rows here.
 
 ### 4.8 AuditEvent (core)
 

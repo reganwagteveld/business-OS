@@ -62,6 +62,9 @@ model Business {
   peopleStatusHistory       PeopleEmploymentStatusHistory[]
   schedulingCalendars       SchedulingCalendar[]
   schedulingEvents          SchedulingEvent[]
+  conversations             Conversation[]
+  messages                  Message[]
+  messageParticipants       MessageParticipant[]
 
   @@map("businesses")
 }

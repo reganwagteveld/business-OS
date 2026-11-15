@@ -17,6 +17,11 @@ export * from './finance-expenses.ts';
 export * from './people.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
+export * from './communications.ts';
+import {
+  ConversationResponse, CreateConversationRequest, ImportMessagesRequest, ImportMessagesResponse, ListConversationsQuery, ListConversationsResponse,
+  ListMessagesQuery, ListMessagesResponse, MessageResponse, RecordMessageRequest,
+} from './communications.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
@@ -47,7 +52,7 @@ import {
 } from './sales.ts';
 import {
   ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse,
-  ListActivitiesQuery, ListActivitiesResponse, ListContactsQuery, ListContactsResponse, ListCustomersQuery, ListCustomersResponse,
+  ListActivitiesQuery, ListActivitiesResponse, UpdateNoteRequest, ListContactsQuery, ListContactsResponse, ListCustomersQuery, ListCustomersResponse,
   UpdateContactRequest, UpdateCustomerRequest,
 } from './customers.ts';
 import {
@@ -93,6 +98,18 @@ export const endpoints = {
   restoreContact: { method: 'POST', path: '/api/v1/b/:slug/contacts/:contactId/restore', response: ContactResponse },
   listActivities: { method: 'GET', path: '/api/v1/b/:slug/activities', query: ListActivitiesQuery, response: ListActivitiesResponse },
   createActivity: { method: 'POST', path: '/api/v1/b/:slug/activities', request: CreateActivityRequest, response: ActivityResponse },
+  // Communications C1 (docs/communications-c1.md)
+  getActivity: { method: 'GET', path: '/api/v1/b/:slug/activities/:activityId', response: ActivityResponse },
+  updateNote: { method: 'PATCH', path: '/api/v1/b/:slug/activities/:activityId', request: UpdateNoteRequest, response: ActivityResponse },
+  removeActivity: { method: 'POST', path: '/api/v1/b/:slug/activities/:activityId/remove', response: ActivityResponse },
+  listConversations: { method: 'GET', path: '/api/v1/b/:slug/conversations', query: ListConversationsQuery, response: ListConversationsResponse },
+  createConversation: { method: 'POST', path: '/api/v1/b/:slug/conversations', request: CreateConversationRequest, response: ConversationResponse },
+  getConversation: { method: 'GET', path: '/api/v1/b/:slug/conversations/:conversationId', response: ConversationResponse },
+  listMessages: { method: 'GET', path: '/api/v1/b/:slug/conversations/:conversationId/messages', query: ListMessagesQuery, response: ListMessagesResponse },
+  recordMessage: { method: 'POST', path: '/api/v1/b/:slug/conversations/:conversationId/messages', request: RecordMessageRequest, response: MessageResponse },
+  importMessages: {
+    method: 'POST', path: '/api/v1/b/:slug/conversations/:conversationId/messages/import', request: ImportMessagesRequest, response: ImportMessagesResponse,
+  },
   // Sales Zone (docs/sales-data-model.md)
   listPipelines: { method: 'GET', path: '/api/v1/b/:slug/sales/pipelines', response: ListPipelinesResponse },
   createPipeline: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines', request: CreatePipelineRequest, response: PipelineResponse },

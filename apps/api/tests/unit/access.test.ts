@@ -142,3 +142,18 @@ describe('People Zone permissions (docs/people-data-model.md §5, decision PD-1)
     expect(ROLE_PERMISSIONS.MANAGER.has('people:manage')).toBe(false);
   });
 });
+
+describe('Communications C1 permissions (docs/communications-c1.md §4)', () => {
+  it('every role reads and records message history; only OWNER and ADMIN read restricted notes of others', () => {
+    const keys = ['activity:read', 'activity:write', 'activity:read_restricted', 'communications:read', 'communications:record'] as const;
+    const matrix = Object.fromEntries(ROLES.map((role) => [role, keys.filter((p) => ROLE_PERMISSIONS[role].has(p))]));
+    expect(matrix).toEqual({
+      OWNER: [...keys],
+      ADMIN: [...keys],
+      MANAGER: ['activity:read', 'activity:write', 'communications:read', 'communications:record'],
+      MEMBER: ['activity:read', 'activity:write', 'communications:read', 'communications:record'],
+    });
+    expect(ZONE_PERMISSIONS.communications).toEqual(['communications:read', 'communications:record']);
+    expect(ZONE_PERMISSIONS.activity).toEqual(['activity:read', 'activity:write', 'activity:read_restricted']);
+  });
+});

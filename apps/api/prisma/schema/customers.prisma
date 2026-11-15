@@ -52,6 +52,7 @@ model Customer {
   financePayments  FinancePayment[]
   financeExpenses  FinanceExpense[]
   schedulingEvents SchedulingEvent[]
+  conversations    Conversation[]
 
   @@unique([businessId, id])
   @@index([businessId, ownerUserId])
@@ -78,12 +79,14 @@ model Contact {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz
 
-  business         Business          @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "contacts_business_fkey")
-  customer         Customer?         @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "contacts_customer_fkey")
-  primaryOf        Customer[]        @relation("PrimaryContact")
-  activities       Activity[]
-  opportunities    Opportunity[]
-  financeDocuments FinanceDocument[]
+  business            Business             @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "contacts_business_fkey")
+  customer            Customer?            @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "contacts_customer_fkey")
+  primaryOf           Customer[]           @relation("PrimaryContact")
+  activities          Activity[]
+  opportunities       Opportunity[]
+  financeDocuments    FinanceDocument[]
+  conversations       Conversation[]
+  messageParticipants MessageParticipant[]
 
   @@unique([businessId, id])
   @@unique([businessId, customerId, id])
@@ -95,25 +98,33 @@ model Contact {
 
 /// Business-facing history (not the security audit log). Partition-ready primary key (business_id, id).
 model Activity {
-  id            String    @db.Uuid
-  businessId    String    @map("business_id") @db.Uuid
-  type          String
-  occurredAt    DateTime  @map("occurred_at") @db.Timestamptz
-  actorType     ActorType @default(USER) @map("actor_type")
-  actorUserId   String?   @map("actor_user_id") @db.Uuid
-  customerId    String?   @map("customer_id") @db.Uuid
-  contactId     String?   @map("contact_id") @db.Uuid
-  subject       String?
-  body          String?
-  data          Json      @default("{}")
-  schemaVersion Int       @default(1) @map("schema_version")
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz
+  id             String    @db.Uuid
+  businessId     String    @map("business_id") @db.Uuid
+  type           String
+  occurredAt     DateTime  @map("occurred_at") @db.Timestamptz
+  actorType      ActorType @default(USER) @map("actor_type")
+  actorUserId    String?   @map("actor_user_id") @db.Uuid
+  customerId     String?   @map("customer_id") @db.Uuid
+  contactId      String?   @map("contact_id") @db.Uuid
+  subject        String?
+  body           String?
+  data           Json      @default("{}")
+  schemaVersion  Int       @default(1) @map("schema_version")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
+  /// C1 (docs/communications-c1.md §2.1). RESTRICTED only for notes; enforced in the activity service.
+  visibility     String    @default("STANDARD")
+  editedAt       DateTime? @map("edited_at") @db.Timestamptz
+  /// Set only for message.recorded: the timeline entry of one recorded message (composite FKs).
+  conversationId String?   @map("conversation_id") @db.Uuid
+  messageId      String?   @map("message_id") @db.Uuid
 
-  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "activities_business_fkey")
-  customer Customer? @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_customer_fkey")
-  contact  Contact?  @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_contact_fkey")
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "activities_business_fkey")
+  customer     Customer?     @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_customer_fkey")
+  contact      Contact?      @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_contact_fkey")
+  conversation Conversation? @relation(fields: [businessId, conversationId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_conversation_fkey")
+  message      Message?      @relation(fields: [businessId, conversationId, messageId], references: [businessId, conversationId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_message_fkey")
 
   @@id([businessId, id])
   @@index([businessId, customerId, occurredAt(sort: Desc)])

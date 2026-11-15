@@ -130,7 +130,14 @@ export const ListContactsResponse = z.object({ contacts: z.array(Contact), nextC
 export const ContactResponse = z.object({ contact: Contact }).strict();
 
 /** Activity types a person can log. System types (customer.created, …) are written by the server only. */
-export const UserActivityType = z.enum(['note', 'call', 'meeting', 'email']);
+export const UserActivityType = z.enum(['note', 'call', 'meeting', 'email', 'interaction']);
+/** Who started a logged call, email or other interaction. Logging never means Business OS sent anything. */
+export const InteractionDirection = z.enum(['INBOUND', 'OUTBOUND']);
+/** Channels of an "interaction" (calls, meetings and emails have their own types). */
+export const InteractionChannel = z.enum(['SMS', 'CHAT', 'SOCIAL', 'IN_PERSON', 'OTHER']);
+/** RESTRICTED notes are visible to their author and to holders of activity:read_restricted only. */
+export const ActivityVisibility = z.enum(['STANDARD', 'RESTRICTED']);
+const DIRECTED: readonly string[] = ['call', 'email', 'interaction'];
 
 export const CreateActivityRequest = z
   .object({
@@ -140,10 +147,22 @@ export const CreateActivityRequest = z
     contactId: Uuid.optional(),
     subject: optionalText(200),
     body: optionalText(10000),
+    visibility: ActivityVisibility.optional(),
+    direction: InteractionDirection.optional(),
+    channel: InteractionChannel.optional(),
   })
   .strict()
   .refine((v) => v.customerId !== undefined || v.contactId !== undefined, 'Link the activity to a customer or a contact')
-  .refine((v) => Boolean(v.subject) || Boolean(v.body), 'Add a subject or some text');
+  .refine((v) => Boolean(v.subject) || Boolean(v.body), 'Add a subject or some text')
+  .refine((v) => v.visibility !== 'RESTRICTED' || v.type === 'note', 'Only notes can be restricted')
+  .refine((v) => v.direction === undefined || DIRECTED.includes(v.type), 'Only calls, emails and interactions have a direction')
+  .refine((v) => (v.type === 'interaction') === (v.channel !== undefined), 'An interaction needs a channel, and only interactions have one');
+
+/** The author edits a note's subject or text. Type, links, visibility and authorship never change. */
+export const UpdateNoteRequest = z
+  .object({ subject: optionalText(200), body: optionalText(10000) })
+  .strict()
+  .refine((v) => v.subject !== undefined || v.body !== undefined, 'Nothing to update');
 
 export const Activity = z
   .object({
@@ -158,12 +177,27 @@ export const Activity = z
     body: nullableString,
     data: z.record(z.string(), z.unknown()),
     createdAt: z.string().datetime(),
+    visibility: ActivityVisibility,
+    /** Set when the author edited the note. */
+    editedAt: isoOrNull,
+    /** Set only for message.recorded: the recorded message this timeline entry stands for. */
+    conversationId: Uuid.nullable(),
+    messageId: Uuid.nullable(),
   })
   .strict();
 export type Activity = z.infer<typeof Activity>;
 
+const ActivityTypeToken = z.string().regex(/^[a-z][a-z_]*(\.[a-z_]+)*$/).max(64);
 export const ListActivitiesQuery = z
-  .object({ customerId: Uuid.optional(), contactId: Uuid.optional(), cursor: Cursor, limit: Limit })
+  .object({
+    customerId: Uuid.optional(),
+    contactId: Uuid.optional(),
+    /** Comma-separated activity types, for example "note,call". Unknown types are a 400. */
+    types: z.string().max(400).transform((v) => v.split(',').filter(Boolean)).pipe(z.array(ActivityTypeToken).min(1).max(20)).optional(),
+    visibility: z.enum(['all', 'standard', 'restricted']).default('all'),
+    cursor: Cursor,
+    limit: Limit,
+  })
   .strict()
   .refine((v) => !(v.customerId && v.contactId), 'Filter by a customer or a contact, not both');
 export const ListActivitiesResponse = z.object({ activities: z.array(Activity), nextCursor: z.string().nullable() }).strict();

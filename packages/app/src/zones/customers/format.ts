@@ -51,7 +51,7 @@ const SYSTEM_LABEL: Record<string, string> = {
   'contact.customer_changed': 'Contact moved between customers',
   'contact.customer_removed': 'Contact unlinked from this customer',
 };
-const USER_LABEL: Record<string, string> = { note: 'Note', call: 'Call', meeting: 'Meeting', email: 'Email' };
+const USER_LABEL: Record<string, string> = { note: 'Note', call: 'Call', meeting: 'Meeting', email: 'Email', interaction: 'Interaction' };
 
 /** A readable headline for an activity. Updates list which fields changed (never their values). */
 export function activityTitle(a: Activity): string {
