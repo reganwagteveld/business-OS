@@ -23,6 +23,7 @@ const TENANT_MODELS = {
   financeDocumentLine: 'businessId', financePayment: 'businessId', financePaymentAllocation: 'businessId',
   financeCreditApplication: 'businessId',
   financeExpenseAllocation: 'businessId',
+  financeRecurringTemplate: 'businessId', financeRecurringRun: 'businessId',
   financeExpenseCategory: 'businessId', financeExpense: 'businessId',
   financeDocumentBranding: 'businessId', financeBrandingAsset: 'businessId', financeDocumentPdf: 'businessId',
   peopleDepartment: 'businessId', peopleLocation: 'businessId', peopleEmployee: 'businessId', peopleEmployeePersonalDetails: 'businessId',
@@ -50,6 +51,17 @@ export async function myMemberships(sessionToken: string): Promise<MembershipRow
   const rows = await appPrisma().$queryRaw<{ business_id: string; slug: string; name: string; role: MembershipRow['role']; membership_id: string }[]>`
     SELECT business_id::text, slug, name, role::text AS role, membership_id::text FROM app_private.my_memberships(${sessionToken})`;
   return rows.map((r) => ({ businessId: r.business_id, slug: r.slug, name: r.name, role: r.role, membershipId: r.membership_id }));
+}
+
+/**
+ * Scheduler (docs/finance-billing-f6.md §5): ids of businesses with due recurring-billing work, from
+ * the one SECURITY DEFINER function that may look across tenants. Ids only; all real work then runs
+ * as bos_app inside withTenant.
+ */
+export async function businessesWithDueBilling(limit: number): Promise<string[]> {
+  const rows = await appPrisma().$queryRaw<{ business_id: string }[]>`
+    SELECT business_id::text FROM app_private.finance_billing_due(${limit}::int)`;
+  return rows.map((r) => r.business_id);
 }
 
 export interface NewBusiness { name: string; slug: string; countryCode: string; timeZone: string; locale: string; currency: string }

@@ -101,7 +101,7 @@ describe('navigation', () => {
   });
 
   it('shell targets open the right record, and "new" respects permissions', () => {
-    const can = { write: true, issue: true, payments: true, expenses: true, manage: true, readCustomers: true };
+    const can = { write: true, issue: true, payments: true, expenses: true, manage: true, billing: true, readCustomers: true };
     expect(initialView('invoices', 'invoice:x', undefined, can)).toEqual({ name: 'document', path: 'invoices', id: 'x' });
     expect(initialView(undefined, 'abc', undefined, can)).toEqual({ name: 'expense', id: 'abc' }); // F3 bare expense id
     expect(initialView('quotes', undefined, 'new', can)).toEqual({ name: 'document-new', path: 'quotes' });

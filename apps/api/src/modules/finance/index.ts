@@ -1,6 +1,7 @@
 // Public API of the finance module (docs/finance-data-model.md, ADR 0007). Routes import only from here.
 // F1: quotes, invoices, credit notes and their settings. F2: payments, allocations, reversals, credit
 // applications, settlement projections and reconciliation. F3: expense categories, expenses and payments made against expenses (direction PAID in the same payments ledger).
+// F6-1: recurring invoice schedules and the billing worker's steps (plan, claim, execute, fail).
 export {
   convertQuote, createCreditNote, createInvoice, createQuote, discardDraft, getDocument, issueDocument, listDocuments, transitionQuote, updateDraft,
   voidDocument,
@@ -32,3 +33,9 @@ export { currentLogo, getBranding, updateBranding, uploadLogo } from './server/b
 export type { BrandingInput } from './server/branding';
 export { contentDisposition, createPdfVersion, draftPreview, getPdfVersion, issueWithOriginal, listPdfVersions, pdfVersionFile } from './server/document-pdfs';
 export type { CreateVersionInput, PdfFile, PdfKind, PdfReason } from './server/document-pdfs';
+export {
+  cancelRecurringInvoice, claimRecurringRun, createRecurringInvoice, executeRecurringRun, failRecurringRun, generateNextPeriod, getRecurringInvoice,
+  listRecurringInvoices, listRecurringRuns, MAX_PERIODS_PER_PASS, pauseRecurringInvoice, planDueRuns, previewRecurringInvoice, resumeRecurringInvoice,
+  retryRecurringRun, skipRecurringRun, TEMPLATES_PER_PLAN_BATCH, updateRecurringInvoice,
+} from './server/recurring';
+export type { ClaimedRun, RecurringInput, RecurringPatch, RunOutcome } from './server/recurring';

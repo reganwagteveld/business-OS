@@ -56,6 +56,8 @@ model Business {
   financeDocumentBranding   FinanceDocumentBranding?
   financeBrandingAssets     FinanceBrandingAsset[]
   financeDocumentPdfs       FinanceDocumentPdf[]
+  financeRecurringTemplates FinanceRecurringTemplate[]
+  financeRecurringRuns      FinanceRecurringRun[]
   peopleDepartments         PeopleDepartment[]
   peopleLocations           PeopleLocation[]
   peopleEmployees           PeopleEmployee[]

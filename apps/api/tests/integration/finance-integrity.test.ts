@@ -238,6 +238,8 @@ const FINANCE_TABLES = [
   'finance_expense_allocations',
   // F5 (docs/finance-documents-f5.md)
   'finance_document_branding', 'finance_branding_assets', 'finance_document_pdfs',
+  // F6-1
+  'finance_recurring_templates', 'finance_recurring_runs',
 ];
 
 describe('T: tenant isolation and composite FKs', () => {
@@ -632,6 +634,9 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       'finance_payment_allocations.finance_apply_allocation_reversal→finance_apply_allocation',
       'finance_payment_allocations.finance_stamp_allocation→finance_stamp_allocation',
       'finance_payments.finance_guard_payment→finance_guard_payment',
+      'finance_recurring_runs.finance_recurring_runs_guard→finance_recurring_runs_guard',
+      'finance_recurring_templates.finance_recurring_templates_guard_update→finance_recurring_templates_guard_update',
+      'finance_recurring_templates.finance_recurring_templates_stamp_insert→finance_recurring_templates_stamp_insert',
       'finance_settings.finance_stamp_times→finance_stamp_times',
       'finance_tax_rates.finance_stamp_times→finance_stamp_times',
     ]);
@@ -644,7 +649,8 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
     expect(rows.map((r) => r.name)).toEqual([
       'finance_apply_allocation', 'finance_apply_credit_application', 'finance_apply_expense_allocation', 'finance_content_hash', 'finance_document_content',
       'finance_document_files_immutable', 'finance_guard_document', 'finance_guard_document_pdf', 'finance_guard_expense', 'finance_guard_line', 'finance_guard_number_series',
-      'finance_guard_payment', 'finance_stamp_allocation', 'finance_stamp_branding_asset', 'finance_stamp_times',
+      'finance_guard_payment', 'finance_recurring_runs_guard', 'finance_recurring_templates_guard_update', 'finance_recurring_templates_stamp_insert',
+      'finance_stamp_allocation', 'finance_stamp_branding_asset', 'finance_stamp_times',
     ]);
     for (const r of rows) {
       expect(r.definer, r.name).toBe(false);

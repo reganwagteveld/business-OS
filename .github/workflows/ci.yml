@@ -185,6 +185,13 @@ jobs:
         env:
           DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
           PEOPLE_TEST_IP_BLOCK: '94'
+      # Finance F6-1 (docs/finance-billing-f6.md §5): the billing worker's claims, leases and concurrent passes
+      # again through the transaction-mode pooler.
+      - name: Finance billing suite behind the pooler
+        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/finance-billing.test.ts
+        env:
+          DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
+          BILLING_TEST_IP_BLOCK: '97'
       - name: Migrations match schema
         run: pnpm db:check-migrations
 

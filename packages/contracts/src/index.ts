@@ -3,6 +3,11 @@
 // response with them, so a breaking change fails CI on both sides.
 import { HealthResponse } from './health.ts';
 import {
+  CancelRecurringInvoiceRequest, CreateRecurringInvoiceRequest, GenerateRecurringInvoiceResponse, ListRecurringInvoicesQuery, ListRecurringInvoicesResponse, ListRecurringRunsQuery,
+  ListRecurringRunsResponse, RecurringInvoiceResponse, RecurringPreviewQuery, RecurringPreviewResponse, RecurringRunActionRequest, RecurringRunResponse,
+  RecurringTransitionRequest, UpdateRecurringInvoiceRequest,
+} from './finance-billing.ts';
+import {
   DesktopTokenRequest, DesktopTokenResponse, MeResponse, RequestPasswordResetRequest, ResetPasswordRequest, SignInRequest, SignUpRequest,
 } from './auth.ts';
 
@@ -15,6 +20,7 @@ export * from './projects.ts';
 export * from './finance.ts';
 export * from './finance-expenses.ts';
 export * from './finance-documents.ts';
+export * from './finance-billing.ts';
 export * from './people.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
@@ -273,6 +279,40 @@ export const endpoints = {
   getReceivables: { method: 'GET', path: '/api/v1/b/:slug/finance/receivables', response: InvoiceReceivablesResponse },
   /** Internal integrity reconciliation (read-only); not bank-statement reconciliation. */
   getReconciliation: { method: 'GET', path: '/api/v1/b/:slug/finance/reconciliation', response: ReconciliationResponse },
+  // Finance F6-1: recurring invoice schedules. Runs only ever create DRAFT invoices; nothing is issued
+  // or sent. Reads need finance:read, every change finance:billing (D-F6-3, proposed).
+  listRecurringInvoices: { method: 'GET', path: '/api/v1/b/:slug/finance/recurring-invoices', query: ListRecurringInvoicesQuery, response: ListRecurringInvoicesResponse },
+  createRecurringInvoice: { method: 'POST', path: '/api/v1/b/:slug/finance/recurring-invoices', request: CreateRecurringInvoiceRequest, response: RecurringInvoiceResponse },
+  getRecurringInvoice: { method: 'GET', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId', response: RecurringInvoiceResponse },
+  updateRecurringInvoice: {
+    method: 'PATCH', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId', request: UpdateRecurringInvoiceRequest, response: RecurringInvoiceResponse,
+  },
+  pauseRecurringInvoice: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/pause', request: RecurringTransitionRequest, response: RecurringInvoiceResponse,
+  },
+  resumeRecurringInvoice: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/resume', request: RecurringTransitionRequest, response: RecurringInvoiceResponse,
+  },
+  cancelRecurringInvoice: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/cancel', request: CancelRecurringInvoiceRequest, response: RecurringInvoiceResponse,
+  },
+  /** Generates the next period's draft now, as the signed-in member. */
+  generateRecurringInvoice: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/generate', request: RecurringTransitionRequest,
+    response: GenerateRecurringInvoiceResponse,
+  },
+  previewRecurringInvoice: {
+    method: 'GET', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/preview', query: RecurringPreviewQuery, response: RecurringPreviewResponse,
+  },
+  listRecurringRuns: {
+    method: 'GET', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/runs', query: ListRecurringRunsQuery, response: ListRecurringRunsResponse,
+  },
+  retryRecurringRun: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/runs/:runId/retry', request: RecurringRunActionRequest, response: RecurringRunResponse,
+  },
+  skipRecurringRun: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/runs/:runId/skip', request: RecurringRunActionRequest, response: RecurringRunResponse,
+  },
   // Finance F3: expense categories, expenses, payments made against expenses. No DELETE:
   // categories are archived, drafts discarded, recorded expenses voided, payments reversed.
   listExpenseCategories: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-categories', query: ListExpenseCategoriesQuery, response: ListExpenseCategoriesResponse },
