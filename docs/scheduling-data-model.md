@@ -1,5 +1,7 @@
 # Scheduling Zone data model (S0, proposed)
 
+> **S1 note (2026-11-15).** What S1 actually builds (calendars and events) is documented in [scheduling-s1.md](./scheduling-s1.md). This S0 proposal remains the reference for resources, private details and erasure.
+
 > Status: **Proposed for final architectural review** (S0). Nothing here is built. No migration exists, and S1 starts only after Regan and ChatGPT approve this document and [ADR 0006](./adr/0006-scheduling-conflicts-and-privacy.md).
 > It follows [data-model.md](./data-model.md), [sales-data-model.md](./sales-data-model.md) and [projects-data-model.md](./projects-data-model.md): same tenancy, RLS, composite FKs, permission keys, audit and migration conventions.
 > Evidence: `apps/api/tests/isolation/scheduling-spike.test.ts` with its fixture `tests/isolation/fixtures/scheduling-spike-schema.sql`, which is the exact shape S1 must migrate.

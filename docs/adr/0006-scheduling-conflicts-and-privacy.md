@@ -2,7 +2,9 @@
 
 - Status: **Proposed** (S0). Architecture provisionally approved by ChatGPT (final auditor) on 2026-11-14 subject to this ADR. Accepted only when Regan and ChatGPT approve; nothing in S1 starts before then.
 - Date: 2026-11-14
-- Related: [scheduling-data-model.md](../scheduling-data-model.md), ADR 0004 (database isolation design)
+- Related: [scheduling-data-model.md](../scheduling-data-model.md), ADR 0004 (database isolation design), [scheduling-s1.md](../scheduling-s1.md)
+
+> **S1 note (2026-11-15).** This ADR stays Proposed. S1 was approved by Regan to build a smaller, calendar-centred core: per-calendar advisory locks instead of the exclusion constraint, no `btree_gist`, no private entries and no erasure path. [scheduling-s1.md §2](../scheduling-s1.md#2-differences-from-s0-adr-0006-compatibility) lists each difference and how S1 keeps resources, private details and erasure possible later. Nothing in S1 accepts or rejects a decision recorded here.
 
 ## Context
 
