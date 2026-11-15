@@ -1,0 +1,94 @@
+// Finance F6-1 (docs/finance-billing-f6.md): recurring invoice templates and their generation runs.
+// Tenant tables: forced RLS, composite (business_id, …) foreign keys; CHECKs, guards and grants that
+// Prisma cannot express live in migration 20261126000000_finance_billing. No DELETE grant: templates
+// are cancelled, runs are skipped, and both keep their history.
+
+/// A schedule that generates DRAFT invoices for one customer in one currency. Generation never issues
+/// or sends anything. Lines are a priced-at-run-time copy of the draft line shape (jsonb), validated
+/// against the business's tax rates when written and again at every run.
+model FinanceRecurringTemplate {
+  id               String    @id @db.Uuid
+  businessId       String    @map("business_id") @db.Uuid
+  name             String
+  customerId       String    @map("customer_id") @db.Uuid
+  contactId        String?   @map("contact_id") @db.Uuid
+  projectId        String?   @map("project_id") @db.Uuid
+  currencyCode     String    @map("currency_code") @db.Char(3)
+  currencyScale    Int       @map("currency_scale") @db.SmallInt
+  /// WEEKLY | MONTHLY | QUARTERLY | ANNUAL (CHECK); every interval_count of them.
+  frequency        String
+  intervalCount    Int       @default(1) @map("interval_count") @db.SmallInt
+  startDate        DateTime  @map("start_date") @db.Date
+  endDate          DateTime? @map("end_date") @db.Date
+  /// IANA zone that decides which calendar day "today" is for this schedule.
+  timeZone         String    @map("time_zone")
+  paymentTermsDays Int?      @map("payment_terms_days") @db.SmallInt
+  notes            String?
+  lines            Json
+  /// ACTIVE | PAUSED | CANCELLED | ENDED (CHECK, transitions guarded).
+  status           String    @default("ACTIVE")
+  /// The next period to plan. Its date is next_run_on (NULL once ENDED or CANCELLED).
+  nextPeriodIndex  Int       @default(0) @map("next_period_index")
+  nextRunOn        DateTime? @map("next_run_on") @db.Date
+  pausedAt         DateTime? @map("paused_at") @db.Timestamptz
+  cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz
+  cancelledById    String?   @map("cancelled_by_id") @db.Uuid
+  endedAt          DateTime? @map("ended_at") @db.Timestamptz
+  version          Int       @default(1)
+  createdById      String?   @map("created_by_id") @db.Uuid
+  updatedById      String?   @map("updated_by_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_recurring_templates_business_fkey")
+  customer Customer              @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_templates_customer_fkey")
+  contact  Contact?              @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_templates_contact_fkey")
+  project  Project?              @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_templates_project_fkey")
+  runs     FinanceRecurringRun[]
+
+  @@unique([businessId, id])
+  @@index([businessId, status, nextRunOn])
+  @@index([businessId, customerId])
+  @@index([businessId, createdAt(sort: Desc), id])
+  @@map("finance_recurring_templates")
+}
+
+/// One period of one template: the idempotency record of generation. UNIQUE (template, period), so no
+/// retry, second worker or manual "generate now" can create a second draft for the same period. The
+/// draft insert and the move to GENERATED commit in one transaction.
+model FinanceRecurringRun {
+  id             String              @id @db.Uuid
+  businessId     String              @map("business_id") @db.Uuid
+  templateId     String              @map("template_id") @db.Uuid
+  periodIndex    Int                 @map("period_index")
+  periodDate     DateTime            @map("period_date") @db.Date
+  /// PENDING | RUNNING | GENERATED | FAILED | SKIPPED (CHECK, transitions guarded).
+  status         String              @default("PENDING")
+  /// SCHEDULE | MANUAL
+  trigger        String              @default("SCHEDULE")
+  requestedById  String?             @map("requested_by_id") @db.Uuid
+  attempts       Int                 @default(0) @db.SmallInt
+  maxAttempts    Int                 @default(5) @map("max_attempts") @db.SmallInt
+  runAfter       DateTime            @default(now()) @map("run_after") @db.Timestamptz
+  leaseId        String?             @map("lease_id") @db.Uuid
+  leaseExpiresAt DateTime?           @map("lease_expires_at") @db.Timestamptz
+  /// The DRAFT invoice this run created. Set exactly when GENERATED (CHECK).
+  documentId     String?             @map("document_id") @db.Uuid
+  documentKind   FinanceDocumentKind @default(INVOICE) @map("document_kind")
+  errorCode      String?             @map("error_code")
+  startedAt      DateTime?           @map("started_at") @db.Timestamptz
+  finishedAt     DateTime?           @map("finished_at") @db.Timestamptz
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business                 @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_recurring_runs_business_fkey")
+  template FinanceRecurringTemplate @relation(fields: [businessId, templateId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_runs_template_fkey")
+  document FinanceDocument?         @relation(fields: [businessId, documentId, documentKind], references: [businessId, id, kind], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_runs_document_fkey")
+
+  @@unique([businessId, id])
+  @@unique([businessId, templateId, periodIndex])
+  @@unique([businessId, documentId])
+  @@index([businessId, status, runAfter])
+  @@index([businessId, templateId, periodIndex(sort: Desc)])
+  @@map("finance_recurring_runs")
+}

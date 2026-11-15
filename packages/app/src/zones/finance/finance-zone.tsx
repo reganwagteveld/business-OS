@@ -18,6 +18,7 @@ import { DEFAULT_FILTERS, ExpenseList, type ListFilters } from './expense-list';
 import { ExpensePaymentDetail, ExpensePaymentForm, ExpensePaymentList } from './expense-payments';
 import { FinanceOverview } from './overview';
 import { PaymentDetail, PaymentForm, PaymentList } from './payments';
+import { RecurringDetail, RecurringForm, RecurringList } from './recurring';
 import { FinanceSettingsPage } from './settings';
 import { LoadingRows, okData, todayIn } from './shared';
 
@@ -74,7 +75,7 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
     const has = (p: string) => perms.includes(p);
     return {
       write: has('finance:write'), issue: has('finance:issue'), payments: has('finance:payments'), expenses: has('finance:expenses'),
-      manage: has('finance:manage'), readCustomers: has('customers:read') && Boolean(customers),
+      manage: has('finance:manage'), billing: has('finance:billing'), readCustomers: has('customers:read') && Boolean(customers),
       pdfPreview: has('finance:documents_preview'), pdfGenerate: has('finance:documents_generate'), pdfDownload: has('finance:documents_download'),
       branding: has('finance:documents_branding'),
     };
@@ -159,6 +160,18 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
     case 'document-edit':
       screen = needsLookups(taxRates !== null) ?? <EditDocument key={view.id} view={view} env={env} taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null} />;
       break;
+    case 'recurring-list': screen = <RecurringList />; break;
+    case 'recurring': screen = <RecurringDetail key={view.id} id={view.id} />; break;
+    case 'recurring-new':
+      screen = needsLookups(taxRates !== null) ?? (
+        <RecurringForm taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null}
+          onCancel={back({ name: 'recurring-list' })}
+          onSaved={(r) => go({ name: 'recurring', id: r.id }, 'Schedule saved. Drafts are generated on each billing date and are never issued or sent automatically.')} />
+      );
+      break;
+    case 'recurring-edit':
+      screen = needsLookups(taxRates !== null) ?? <EditRecurring key={view.id} id={view.id} env={env} taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null} />;
+      break;
     case 'payments': screen = <PaymentList />; break;
     case 'payment': screen = <PaymentDetail key={view.id} id={view.id} />; break;
     case 'payment-new':
@@ -225,6 +238,21 @@ function EditDocument({ view, env, taxRates, defaultTaxRateId }: {
   return (
     <DocumentForm path={view.path} doc={doc} taxRates={taxRates} defaultTaxRateId={defaultTaxRateId}
       onCancel={() => env.leave(() => env.go(detail))} onSaved={() => env.go(detail, 'Changes saved.')} />
+  );
+}
+
+function EditRecurring({ id, env, taxRates, defaultTaxRateId }: { id: string; env: FinanceEnv; taxRates: TaxRateOption[]; defaultTaxRateId: string | null }) {
+  const { state, reload } = useLoad(`recurring-edit|${env.slug}|${id}`, (signal) => env.client.recurringInvoice(env.slug, id, signal));
+  if (state.status === 'loading') return <LoadingRows label="Loading the schedule…" />;
+  if (state.outcome.kind !== 'ok') return <Problem outcome={state.outcome} what="This schedule" onRetry={reload} onSessionEnded={env.onSessionEnded} />;
+  const recurring = state.outcome.data;
+  const detail: FinanceView = { name: 'recurring', id: recurring.id };
+  if (recurring.status === 'CANCELLED' || recurring.status === 'ENDED') {
+    return <Alert tone="info"><AlertDescription>This schedule has finished, so it can no longer be edited. <button type="button" className="font-medium underline" onClick={() => env.go(detail)}>Open it</button></AlertDescription></Alert>;
+  }
+  return (
+    <RecurringForm recurring={recurring} taxRates={taxRates} defaultTaxRateId={defaultTaxRateId}
+      onCancel={() => env.leave(() => env.go(detail))} onSaved={() => env.go(detail, 'Changes saved. They apply to drafts generated from now on.')} />
   );
 }
 

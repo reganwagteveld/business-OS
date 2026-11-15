@@ -60,7 +60,10 @@ export function DocumentList({ path }: { path: DocumentPath }) {
   const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }));
   const filtered = sig !== JSON.stringify(DEFAULTS);
   const canAdd = path !== 'credit-notes' && can.write;
-  const add = canAdd ? <Button onClick={() => env.go({ name: 'document-new', path: path as 'quotes' | 'invoices' })}>{copy.add}</Button> : undefined;
+  const create = canAdd ? <Button onClick={() => env.go({ name: 'document-new', path: path as 'quotes' | 'invoices' })}>{copy.add}</Button> : null;
+  // Recurring schedules live under Invoices; anyone who can read finance can see them.
+  const recurring = path === 'invoices' ? <Button variant="outline" onClick={() => env.go({ name: 'recurring-list' })}>Recurring invoices</Button> : null;
+  const add = create || recurring ? <>{recurring}{create}</> : undefined;
   const statuses: [DocumentQuery['status'], string][] = path === 'quotes'
     ? [['all', 'All'], ['draft', 'Draft'], ['issued', 'Issued'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['expired', 'Expired'], ['void', 'Void']]
     : [['all', 'All'], ['draft', 'Draft'], ['issued', 'Issued'], ['void', 'Void']];

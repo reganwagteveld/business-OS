@@ -73,6 +73,9 @@ export const envSchema = z
     MICROSOFT_OAUTH_CLIENT_SECRET: optionalSecret,
     // "common", "organizations", "consumers" or a directory (tenant) id.
     MICROSOFT_OAUTH_TENANT: z.string().regex(/^(common|organizations|consumers|[0-9a-f-]{36})$/).default('common'),
+    // Finance F6-1 scheduler (docs/finance-billing-f6.md §5). Vercel Cron sends it as a bearer token to
+    // /api/internal/jobs/finance-billing. Unset means the job route refuses every call (nothing runs).
+    CRON_SECRET: z.string().min(32, 'CRON_SECRET must be at least 32 characters').optional(),
   })
   .superRefine((value, ctx) => {
     if (value.REGION !== value.DATABASE_REGION) {
