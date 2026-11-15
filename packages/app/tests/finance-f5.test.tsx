@@ -14,7 +14,25 @@ import { createCustomersClient, createFinanceClient, type BusinessContext } from
 import { createRequester } from '../src/api/http';
 import { FinanceZone } from '../src/zones/finance/finance-zone';
 import { customer } from './support/fake-api';
+import { openPdf } from '../src/zones/finance/pdf-render';
 import { createFakeFinance, doc, financeData, issued, NOW, type FinanceData } from './support/fake-finance';
+
+// PDF.js needs a real canvas, which jsdom does not have. The renderer is replaced here, and the real one
+// was checked in a real browser under the production CSP (see the PR). These tests check what the viewer does
+// with it: draw every page, release it on close, and say so clearly when it fails.
+vi.mock('../src/zones/finance/pdf-render', () => ({ openPdf: vi.fn() }));
+const drawn: { bytes: string; pages: number[]; destroyed: boolean }[] = [];
+function renderOk(pageCount = 2) {
+  vi.mocked(openPdf).mockImplementation(async (bytes) => {
+    const entry = { bytes: new TextDecoder().decode(bytes), pages: [] as number[], destroyed: false };
+    drawn.push(entry);
+    return {
+      pageCount,
+      drawPage: async (n) => void entry.pages.push(n),
+      destroy: async () => void (entry.destroyed = true),
+    };
+  });
+}
 
 const BASE = 'https://api.test';
 const PDF = ['finance:documents_preview', 'finance:documents_generate', 'finance:documents_download'];
@@ -120,14 +138,16 @@ function setup(o: { data?: FinanceData; permissions?: string[]; section?: string
   return { data, files, handlers, user: userEvent.setup() };
 }
 
-let clicked: { download: string; href: string }[] = [];
+let clicked: { download: string; href: string; target?: string }[] = [];
 beforeEach(() => {
   clicked = [];
+  drawn.length = 0;
+  renderOk();
   let n = 0;
   URL.createObjectURL = vi.fn(() => `blob:https://app.test/${++n}`);
   URL.revokeObjectURL = vi.fn();
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-    clicked.push({ download: this.download, href: this.href });
+    clicked.push({ download: this.download, href: this.href, ...(this.target ? { target: this.target } : {}) });
   });
 });
 afterEach(() => {
@@ -176,7 +196,7 @@ describe('F5 finance client files', () => {
 });
 
 describe('PDF card on a quote or invoice', () => {
-  it('an issued invoice shows the original made at issue: Preview shows it in a frame, Download saves it under its file name, nothing is generated', async () => {
+  it('an issued invoice shows the original made at issue: Preview draws its pages, Download saves it under its file name, nothing is generated', async () => {
     const acme = customer({ displayName: 'Acme Pty Ltd' });
     const inv = issued('INVOICE', acme, 'INV-0007', { amount: '100.00' });
     const files: Partial<Files> = { versions: new Map([[inv.id, [versionOf(inv, 1)]]]) };
@@ -189,11 +209,14 @@ describe('PDF card on a quote or invoice', () => {
     await user.click(screen.getByRole('button', { name: 'Preview PDF' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('INV-0007.pdf')).toBeTruthy();
-    await waitFor(() => expect(dialog.querySelector('iframe')?.getAttribute('src')).toMatch(/^blob:/));
+    // The pages are drawn from the bytes the server sent, not handed to the browser's PDF viewer in a frame.
+    expect(await within(dialog).findByRole('img', { name: 'INV-0007 · version 1, page 2 of 2' })).toBeTruthy();
+    await waitFor(() => expect(drawn).toEqual([{ bytes: '%PDF-1.7 test', pages: [1, 2], destroyed: false }]));
+    expect(dialog.querySelector('iframe, object, embed')).toBeNull();
     expect(f.calls.some((c) => c.path.endsWith('/preview') && c.accept?.includes('application/pdf'))).toBe(true);
     await user.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(URL.revokeObjectURL).toHaveBeenCalled();
+    expect(drawn[0]!.destroyed).toBe(true);
     await user.click(screen.getByRole('button', { name: 'Download PDF' }));
     await screen.findByText('Downloaded INV-0007.pdf.');
     expect(clicked).toEqual([{ download: 'INV-0007.pdf', href: expect.stringMatching(/^blob:/) }]);
@@ -266,7 +289,10 @@ describe('PDF card on a quote or invoice', () => {
     await user.click(await screen.findByRole('button', { name: 'Preview draft PDF' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/marked DRAFT and is not kept/)).toBeTruthy();
-    await waitFor(() => expect(dialog.querySelector('iframe')).not.toBeNull());
+    expect(await within(dialog).findByRole('img', { name: 'Draft invoice preview, page 1 of 2' })).toBeTruthy();
+    // A draft preview can be opened in a tab (the same bytes), but there is no download of a draft.
+    expect(within(dialog).queryByRole('button', { name: 'Download' })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Open in new tab' })).toBeTruthy();
     expect(files.calls.map((c) => `${c.method} ${c.path}`)).toEqual([`GET /invoices/${d.id}/draft-pdf`]);
   });
 
@@ -312,6 +338,88 @@ describe('PDF card on a quote or invoice', () => {
     await screen.findAllByText(/CN-0001/);
     expect(screen.queryByRole('heading', { name: 'PDF' })).toBeNull();
     expect(files.calls).toHaveLength(0);
+  });
+});
+
+describe('PDF preview fallbacks (Safari showed an empty frame)', () => {
+  const draftSetup = () => {
+    const acme = customer({ displayName: 'Acme Pty Ltd' });
+    const q = doc('QUOTE', { customerId: acme.id });
+    return { q, data: financeData({ customers: [acme], documents: [q] }) };
+  };
+
+  it('when the pages cannot be drawn, says so and offers a new tab instead of an empty panel; Try again draws afresh', async () => {
+    vi.mocked(openPdf).mockRejectedValueOnce(new Error('cannot draw'));
+    const { q, data } = draftSetup();
+    const { files, user } = setup({ data, section: 'quotes', target: `quote:${q.id}` });
+    await heading('Draft quote');
+    await user.click(await screen.findByRole('button', { name: 'Preview draft PDF' }));
+    const dialog = await screen.findByRole('dialog');
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert.textContent).toMatch(/The PDF was made, but this browser could not show it here. Open it in a new tab instead./);
+    await user.click(within(dialog).getByRole('button', { name: 'Open in new tab' }));
+    expect(clicked).toEqual([{ download: '', href: expect.stringMatching(/^blob:/), target: '_blank' }]);
+    await user.click(within(alert).getByRole('button', { name: 'Try again' }));
+    expect(await within(dialog).findByRole('img', { name: 'Draft quote preview, page 1 of 2' })).toBeTruthy();
+    // Neither the new tab nor the second attempt asked the server again: one preview, one audit entry.
+    expect(files.calls.map((c) => `${c.method} ${c.path}`)).toEqual([`GET /quotes/${q.id}/draft-pdf`]);
+  });
+
+  it('an issued version that cannot be drawn offers the audited download as well as a new tab', async () => {
+    vi.mocked(openPdf).mockImplementationOnce(async () => ({ pageCount: 1, drawPage: async () => { throw new Error('canvas'); }, destroy: async () => undefined }));
+    const acme = customer({ displayName: 'Acme Pty Ltd' });
+    const inv = issued('INVOICE', acme, 'INV-0031');
+    const { files, user } = setup({ data: financeData({ customers: [acme], documents: [inv] }), section: 'invoices', target: `invoice:${inv.id}`,
+      files: { versions: new Map([[inv.id, [versionOf(inv, 1)]]]) } });
+    await heading('INV-0031');
+    await user.click(await screen.findByRole('button', { name: 'Preview PDF' }));
+    const dialog = await screen.findByRole('dialog');
+    expect((await within(dialog).findByRole('alert')).textContent).toMatch(/Open it in a new tab or download it instead./);
+    await user.click(within(dialog).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(clicked).toEqual([{ download: 'INV-0031.pdf', href: expect.stringMatching(/^blob:/) }]));
+    expect(files.calls.map((c) => c.path.split('/').pop())).toEqual(['pdf-versions', 'preview', 'download']);
+  });
+
+  it('a PDF that fails to generate shows the reason and Try again, never a blank panel', async () => {
+    const { q, data } = draftSetup();
+    const { files, user } = setup({ data, section: 'quotes', target: `quote:${q.id}`,
+      files: { next: [(method, path) => (path.endsWith('/draft-pdf') ? json(503, { error: 'generation_failed' }) : undefined)] } });
+    await heading('Draft quote');
+    await user.click(await screen.findByRole('button', { name: 'Preview draft PDF' }));
+    const dialog = await screen.findByRole('dialog');
+    expect((await within(dialog).findByRole('alert')).textContent).toMatch(/The PDF could not be made right now. Nothing was stored./);
+    expect(within(dialog).queryByRole('button', { name: 'Open in new tab' })).toBeNull();
+    expect(drawn).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Try again' }));
+    expect(await within(dialog).findByRole('img', { name: 'Draft quote preview, page 2 of 2' })).toBeTruthy();
+    expect(files.calls.filter((c) => c.path.endsWith('/draft-pdf'))).toHaveLength(1); // the 503 answered by the override is not logged as a call
+  });
+
+  it('a response that is not a PDF is refused before anything is drawn', async () => {
+    const { q, data } = draftSetup();
+    const { user } = setup({ data, section: 'quotes', target: `quote:${q.id}`,
+      files: { next: [(method, path) => (path.endsWith('/draft-pdf') ? new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html' } }) : undefined)] } });
+    await heading('Draft quote');
+    await user.click(await screen.findByRole('button', { name: 'Preview draft PDF' }));
+    const dialog = await screen.findByRole('dialog');
+    expect((await within(dialog).findByRole('alert')).textContent).toMatch(/sent back something that is not a PDF/);
+    expect(drawn).toHaveLength(0);
+  });
+
+  it('inside the desktop app there is no new-tab button (its web view opens no tabs)', async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    try {
+      vi.mocked(openPdf).mockRejectedValueOnce(new Error('cannot draw'));
+      const { q, data } = draftSetup();
+      const { user } = setup({ data, section: 'quotes', target: `quote:${q.id}` });
+      await heading('Draft quote');
+      await user.click(await screen.findByRole('button', { name: 'Preview draft PDF' }));
+      const dialog = await screen.findByRole('dialog');
+      expect((await within(dialog).findByRole('alert')).textContent).toMatch(/this app could not show it here/);
+      expect(within(dialog).queryByRole('button', { name: 'Open in new tab' })).toBeNull();
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
   });
 });
 

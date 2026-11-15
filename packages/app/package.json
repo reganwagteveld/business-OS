@@ -15,6 +15,7 @@
   "dependencies": {
     "@business-os/contracts": "workspace:*",
     "@business-os/ui": "workspace:*",
+    "pdfjs-dist": "6.4.299",
     "zod": "^4.0.0"
   },
   "peerDependencies": {

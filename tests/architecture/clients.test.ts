@@ -115,6 +115,30 @@ describe('API contracts', () => {
   });
 });
 
+describe('PDF preview needs no frame, plugin or blob: page (F5 Safari fix)', () => {
+  // The preview draws pages with PDF.js on canvases and a same-origin worker. Frames of blob: URLs
+  // (which stayed blank in Safari) are no longer used, so neither policy allows them.
+  const webCsp = () => {
+    const vercel = json<{ headers: Array<{ headers: Array<{ key: string; value: string }> }> }>('apps/web/vercel.json');
+    const value = vercel.headers.flatMap((h) => h.headers).find((h) => h.key === 'Content-Security-Policy')!.value;
+    return Object.fromEntries(value.split(';').map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k!, v.join(' ')]));
+  };
+  it.each([
+    ['web', () => webCsp()],
+    ['desktop', () => json<{ app: { security: { csp: Record<string, string> } } }>('apps/desktop/src-tauri/tauri.conf.json').app.security.csp],
+  ])('%s: frames and workers are same-origin only, and plugins stay off', (_name, csp) => {
+    const policy = csp();
+    expect(policy['frame-src']).toBe("'self'");
+    expect(policy['worker-src']).toBe("'self'");
+    expect(policy['object-src']).toBe("'none'");
+    expect(policy['script-src']).toBe("'self'");
+  });
+  it('the app shows PDFs without an iframe, object or embed', () => {
+    const viewer = read('packages/app/src/zones/finance/document-pdf.tsx');
+    expect(viewer).not.toMatch(/<(iframe|object|embed)\b/);
+  });
+});
+
 describe('local development proxy (D9b)', () => {
   it('the browser app proxies only /api to the local API, and only in the dev server', async () => {
     const mod = (await import('../../apps/web/vite.config')) as { default: (env: { command: 'serve' | 'build'; mode: string }) => { server?: { proxy?: Record<string, { target: string }> } } };
