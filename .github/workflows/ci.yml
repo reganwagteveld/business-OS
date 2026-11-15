@@ -41,6 +41,16 @@ jobs:
         run: |
           .github/scripts/classify-changes.test.sh
           .github/scripts/ci-gate.test.sh
+          .github/scripts/check-migration-order.test.sh
+      # STAB-01: a new migration must sort after every migration already on the base branch, or a
+      # fresh database would apply it in a different order than production (docs/migration-readiness.md §4).
+      - name: New migrations sort after the base branch's newest
+        if: github.event_name == 'pull_request'
+        run: |
+          list() { git ls-tree --name-only "$1" apps/api/prisma/migrations/ | xargs -r -n1 basename; }
+          list HEAD^1 > "$RUNNER_TEMP/base-migrations"
+          list HEAD > "$RUNNER_TEMP/head-migrations"
+          .github/scripts/check-migration-order.sh "$RUNNER_TEMP/base-migrations" "$RUNNER_TEMP/head-migrations"
       - name: Decide whether the desktop matrix is needed
         id: classify
         env:
