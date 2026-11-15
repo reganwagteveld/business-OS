@@ -236,6 +236,8 @@ const FINANCE_TABLES = [
   'finance_payment_allocations', 'finance_expense_categories', 'finance_expenses', 'finance_credit_applications',
   // F3
   'finance_expense_allocations',
+  // F5 (docs/finance-documents-f5.md)
+  'finance_document_branding', 'finance_branding_assets', 'finance_document_pdfs',
 ];
 
 describe('T: tenant isolation and composite FKs', () => {
@@ -610,10 +612,15 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_proc p ON p.oid = tg.tgfoid
       WHERE NOT tg.tgisinternal AND n.nspname = 'public' AND (c.relname LIKE 'finance%' OR p.proname LIKE 'finance%') ORDER BY 1, 2`);
     expect(rows.map((r) => `${r.t}.${r.name}→${r.fn}`)).toEqual([
+      'finance_branding_assets.finance_branding_assets_immutable→finance_document_files_immutable',
+      'finance_branding_assets.finance_stamp_branding_asset→finance_stamp_branding_asset',
       'finance_credit_applications.finance_apply_credit_application_insert→finance_apply_credit_application',
       'finance_credit_applications.finance_apply_credit_application_reversal→finance_apply_credit_application',
       'finance_credit_applications.finance_stamp_credit_application→finance_stamp_allocation',
+      'finance_document_branding.finance_stamp_times→finance_stamp_times',
       'finance_document_lines.finance_guard_line→finance_guard_line',
+      'finance_document_pdfs.finance_document_pdfs_immutable→finance_document_files_immutable',
+      'finance_document_pdfs.finance_guard_document_pdf→finance_guard_document_pdf',
       'finance_documents.finance_guard_document→finance_guard_document',
       'finance_expense_allocations.finance_apply_expense_allocation_insert→finance_apply_expense_allocation',
       'finance_expense_allocations.finance_apply_expense_allocation_reversal→finance_apply_expense_allocation',
@@ -636,7 +643,8 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname LIKE 'finance%' ORDER BY 1`);
     expect(rows.map((r) => r.name)).toEqual([
       'finance_apply_allocation', 'finance_apply_credit_application', 'finance_apply_expense_allocation', 'finance_content_hash', 'finance_document_content',
-      'finance_guard_document', 'finance_guard_expense', 'finance_guard_line', 'finance_guard_number_series', 'finance_guard_payment', 'finance_stamp_allocation', 'finance_stamp_times',
+      'finance_document_files_immutable', 'finance_guard_document', 'finance_guard_document_pdf', 'finance_guard_expense', 'finance_guard_line', 'finance_guard_number_series',
+      'finance_guard_payment', 'finance_stamp_allocation', 'finance_stamp_branding_asset', 'finance_stamp_times',
     ]);
     for (const r of rows) {
       expect(r.definer, r.name).toBe(false);

@@ -79,7 +79,7 @@ passes (25/25).
    `communications.system.*` actions with `actor_user_id IS NULL` and no session user.
 6. **Shared files with Finance F5.** `access/permissions.ts`, `core/db/app-client.ts`,
    `app/api/_lib/routes.ts`, `contracts/index.ts` get additive edits on both branches; expect trivial
-   textual conflicts. F5 uses migration `20261120000000_finance_documents`; C2-A uses
+   textual conflicts. F5 uses migration `20261122000000_finance_documents`; C2-A uses
    `20261121000000_communications_providers`. Whichever merges second rebases and keeps its migration
    sorting last (agreed with the F5 thread).
 
@@ -454,7 +454,7 @@ The redirect URI is derived: `${APP_BASE_URL}/api/v1/communications/oauth/callba
 ## 12. Migration ordering, deploy and rollback
 
 - **Depends on:** `20261113150000_tenancy` (businesses, audit_events) only. It references no C1,
-  finance, people or scheduling table, so it is independent of F5 (`20261120000000_finance_documents`).
+  finance, people or scheduling table, so it is independent of F5 (`20261122000000_finance_documents`).
   It must sort after the newest migration on main when it merges (CI guard).
 - **Precondition:** none. No existing row changes. No privileged SQL (`db:privileged` not needed).
 - **Deploy:** safe under STAB-H1 option A or B. If code is live before the migration, only the new

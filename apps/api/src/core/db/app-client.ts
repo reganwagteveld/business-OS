@@ -24,6 +24,7 @@ const TENANT_MODELS = {
   financeCreditApplication: 'businessId',
   financeExpenseAllocation: 'businessId',
   financeExpenseCategory: 'businessId', financeExpense: 'businessId',
+  financeDocumentBranding: 'businessId', financeBrandingAsset: 'businessId', financeDocumentPdf: 'businessId',
   peopleDepartment: 'businessId', peopleLocation: 'businessId', peopleEmployee: 'businessId', peopleEmployeePersonalDetails: 'businessId',
   peopleDepartmentAssignment: 'businessId', peopleManagerAssignment: 'businessId', peopleEmploymentStatusHistory: 'businessId',
   schedulingCalendar: 'businessId', schedulingEvent: 'businessId',

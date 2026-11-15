@@ -217,6 +217,7 @@ model FinanceDocument {
   allocations       FinancePaymentAllocation[]
   creditApplied     FinanceCreditApplication[] @relation("CreditApplicationCreditNote")
   creditReceived    FinanceCreditApplication[] @relation("CreditApplicationInvoice")
+  pdfs              FinanceDocumentPdf[]
 
   @@unique([businessId, id])
   @@unique([businessId, id, kind], map: "finance_documents_kind_key")
@@ -477,4 +478,3 @@ model FinanceExpenseAllocation {
   @@index([businessId, expenseId])
   @@map("finance_expense_allocations")
 }
-

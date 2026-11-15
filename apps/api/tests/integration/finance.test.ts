@@ -567,7 +567,7 @@ describe('tenancy, permissions and isolation', () => {
     }
     // The context endpoint reports the same keys the routes enforce.
     expect((await api(A.people.MANAGER!, A.slug).context()).body.membership.permissions.filter((p: string) => p.startsWith('finance:')))
-      .toEqual(['finance:read', 'finance:write', 'finance:expenses']);
+      .toEqual(['finance:read', 'finance:write', 'finance:expenses', 'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download']);
     // Every customer, sales and project key, but no finance key: still no finance access.
     custom.ADMIN = ['business:read', 'customers:read', 'customers:write', 'customers:delete', 'sales:read', 'sales:write', 'sales:manage',
       'projects:read', 'projects:create', 'projects:update', 'projects:archive', 'projects:manage_tasks'];

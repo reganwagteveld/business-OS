@@ -8,12 +8,14 @@ import type { FinanceSettingsData, NumberSeriesData, TaxRateOption } from '../..
 import { ZonePage, type ZonePageTab } from '../../shell/zone-page';
 import { Problem } from '../problem';
 import { useLoad } from '../use-load';
+import { BrandingSettings } from './branding-settings';
 import { Categories } from './categories';
 import { useFinance, type SettingsTab } from './env';
 import { KIND_LABEL, LoadingRows, useSubmit, WRAP } from './shared';
 
 const TABS: readonly (ZonePageTab & { id: SettingsTab })[] = [
   { id: 'business', label: 'Business details' }, { id: 'numbering', label: 'Numbering' }, { id: 'tax-rates', label: 'Tax rates' }, { id: 'categories', label: 'Expense categories' },
+  { id: 'documents', label: 'Documents' },
 ];
 
 /**
@@ -31,13 +33,16 @@ export function FinanceSettingsPage({ tab = 'business', onChanged }: { tab?: Set
     business: { title: 'Business details', description: 'Your details as they appear on quotes, invoices and credit notes, and the defaults for new documents.' },
     numbering: { title: 'Numbering', description: 'Each kind of document is numbered in its own gapless sequence. Numbers are assigned only when a document is issued.' },
     'tax-rates': { title: 'Tax rates', description: 'Rates your documents and expenses can use. A rate’s percentage never changes once created: add a new rate instead.' },
+    documents: { title: 'Documents', description: 'How quote and invoice PDFs look: logo, colour, titles, terms and footer. PDFs already kept never change.' },
   }[tab];
+  const canChange = tab === 'documents' ? env.can.branding : env.can.manage;
   return (
     <ZonePage title={copy.title} description={copy.description} eyebrow="Finance · Settings" tabs={TABS} currentTab={tab} onTab={onTab}>
-      {!env.can.manage ? <Alert tone="info"><AlertDescription>You can view these settings. Only owners and admins can change them.</AlertDescription></Alert> : null}
+      {!canChange ? <Alert tone="info"><AlertDescription>You can view these settings. Only owners and admins can change them.</AlertDescription></Alert> : null}
       {tab === 'business' ? <BusinessSettings onChanged={onChanged} /> : null}
       {tab === 'numbering' ? <Numbering /> : null}
       {tab === 'tax-rates' ? <TaxRates onChanged={onChanged} /> : null}
+      {tab === 'documents' ? <BrandingSettings /> : null}
     </ZonePage>
   );
 }

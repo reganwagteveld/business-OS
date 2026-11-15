@@ -85,9 +85,10 @@ export function serverViolations(files) {
       // Browser navigation targets that answer with a page (the OAuth callback, docs/communications-c2.md §7.1).
       const browserAllowed = name === 'app/api/v1/communications/oauth/callback/route.ts';
       for (const [, method, rest] of methods) {
-        const wrapper = /=\s*(tenantRoute|publicRoute|browserRoute)\(/.exec(rest)?.[1];
+        const wrapper = /=\s*(tenantRoute|tenantFileRoute|publicRoute|browserRoute)\(/.exec(rest)?.[1];
         if (wrapper === 'browserRoute' && !browserAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} may not use browserRoute (OAuth callback only)`);
-        if (tenant && wrapper !== 'tenantRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
+        // tenantFileRoute (Finance F5 files) resolves the tenant exactly like tenantRoute and answers with bytes.
+        if (tenant && wrapper !== 'tenantRoute' && wrapper !== 'tenantFileRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
         if (!tenant && !wrapper && !unwrappedAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} must use publicRoute (or be an allowed unauthenticated endpoint)`);
       }
     }
