@@ -5,6 +5,7 @@
 // response is parsed with the contract, so a mismatch fails here.
 import type { Customer, FinanceExpense } from '@business-os/contracts';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -45,6 +46,16 @@ function setup(o: { data?: FinanceData; permissions?: string[]; section?: string
       section={o.section} initialTarget={o.target} initialAction={o.intent} {...handlers} />,
   );
   return { api, data, finance, customers, handlers, view, user: userEvent.setup() };
+}
+
+function expenseOf(over: Partial<FinanceExpense> = {}): FinanceExpense {
+  return {
+    id: randomUUID(), status: 'RECORDED', categoryId: randomUUID(), categoryName: 'Rent', projectId: null, customerId: null, description: 'Studio rent', supplierName: 'Quayside',
+    referenceNumber: null, notes: null, incurredOn: '2026-11-01', dueDate: '2026-11-07', currencyCode: 'AUD', currencyScale: 2, subtotal: '300.00', taxAmount: '30.00',
+    total: '330.00', taxTreatment: 'TAX_INCLUSIVE', taxRateId: null, taxName: 'GST', taxRatePercent: '10', paidTotal: '0.00', outstanding: '330.00', paymentState: 'UNPAID',
+    overdue: true, recordedAt: '2026-11-01T00:00:00.000Z', voidedAt: null, voidReason: null, version: 2, createdById: null, updatedById: null, recordedById: null,
+    voidedById: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', allocations: [], ...over,
+  };
 }
 
 function people(): { acme: Customer; zed: Customer } {
@@ -318,7 +329,9 @@ describe('payments', () => {
     expect(screen.getByText(/Settling \$120\.50, leaving \$0\.00 unallocated/)).toBeTruthy();
     api.loseNextResponse('POST', '/finance/payments');
     await user.click(screen.getByRole('button', { name: /^Record \$120\.50/ }));
-    expect((await screen.findByRole('alert')).textContent).toContain("Can't reach Business OS");
+    // No answer: the server may have recorded it. Say so, and that retrying the same details is safe.
+    expect((await screen.findByRole('alert')).textContent).toContain('may already have been recorded');
+    expect(screen.getByRole('alert').textContent).toContain('will not be recorded twice');
     await user.click(screen.getByRole('button', { name: /^Record \$120\.50/ }));
     expect(await heading(/\$120\.50 from Acme Pty Ltd/)).toBeTruthy();
     const posts = api.calls.filter((c) => c.method === 'POST' && c.path === '/finance/payments');
@@ -418,6 +431,119 @@ describe('expenses integration and submission safety', () => {
     await user.type(screen.getByLabelText('Description'), 'x');
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
+  });
+});
+
+describe('audit corrections (F4 round 1)', () => {
+  it('a supplier payment opened from an expense is not "unsaved" until the person edits it; any edit (no allocation change) arms the guard', async () => {
+    const e = expenseOf();
+    const { user } = setup({ data: financeData({ expenses: [e] }), target: e.id });
+    await heading('Quayside');
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+    await heading('Record supplier payment');
+    await screen.findByLabelText('Amount for Quayside');
+    // Hydrated from the expense only: leaving does not ask.
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await heading('Quayside')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    // Editing one field (the reference) is an unsaved change: cancelling asks.
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+    await screen.findByLabelText('Amount for Quayside');
+    await user.type(screen.getByLabelText('Reference (optional)'), 'EFT 77');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
+  });
+
+  it('the expense a payment was started from is loaded and selected even when it is not in the first 100 open expenses', async () => {
+    const many = Array.from({ length: 120 }, (_, i) => expenseOf({ supplierName: `Supplier ${i + 1}`, description: `Bill ${i + 1}` }));
+    const last = many[119]!;
+    const { api, user } = setup({ data: financeData({ expenses: many }), target: last.id });
+    await heading('Supplier 120');
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+    const box = await screen.findByLabelText('Amount for Supplier 120') as HTMLInputElement;
+    expect(box.value).toBe('330.00');
+    expect(api.calls.some((c) => c.path === '/finance/expenses' && c.query.limit === '100')).toBe(true); // the page did not contain it
+    expect(screen.queryByText(/will not be matched to any expense/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: /^Record \$330\.00/ }));
+    await heading(/\$330\.00 to Supplier 120/);
+    expect(api.calls.find((c) => c.method === 'POST' && c.path === '/finance/expense-payments')!.body).toMatchObject({ allocations: [{ expenseId: last.id, amount: '330.00' }] });
+  });
+
+  it('the invoice a payment was started from is selected even when it is not in the first 100 open invoices; unticking it is called out', async () => {
+    const { acme } = people();
+    const invoices = Array.from({ length: 105 }, (_, i) => issued('INVOICE', acme, `INV-${String(i + 1).padStart(4, '0')}`, { amount: '10.00' }));
+    const target = invoices[104]!;
+    const { user } = setup({ data: financeData({ customers: [acme], documents: invoices }), target: `invoice:${target.id}` });
+    await heading('INV-0105');
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+    expect((await screen.findByLabelText('Amount for INV-0105') as HTMLInputElement).value).toBe('10.00');
+    expect((screen.getByLabelText('Amount') as HTMLInputElement).value).toBe('10.00');
+    // Prefilled, untouched: leaving does not ask.
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await heading('INV-0105')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+    await screen.findByLabelText('Amount for INV-0105');
+    await user.click(screen.getByLabelText('Allocate it to invoices now'));
+    expect(screen.getByText(/will not be allocated to any invoice/)).toBeTruthy();
+  });
+
+  it('a lost answer on a supplier payment says it may already be recorded, and the identical retry reuses its Idempotency-Key', async () => {
+    const e = expenseOf();
+    const data = financeData({ expenses: [e] });
+    const { api, user } = setup({ data, target: e.id });
+    await heading('Quayside');
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+    await screen.findByLabelText('Amount for Quayside');
+    api.loseNextResponse('POST', '/finance/expense-payments');
+    await user.click(screen.getByRole('button', { name: /^Record \$330\.00/ }));
+    expect((await screen.findByRole('alert')).textContent).toContain('may already have been recorded');
+    await user.click(screen.getByRole('button', { name: /^Record \$330\.00/ }));
+    await heading(/\$330\.00 to Quayside/);
+    const posts = api.calls.filter((c) => c.method === 'POST' && c.path === '/finance/expense-payments');
+    expect(posts).toHaveLength(2);
+    expect(posts[1]!.headers['idempotency-key']).toBe(posts[0]!.headers['idempotency-key']);
+    expect(data.expensePayments).toHaveLength(1);
+  });
+
+  it('a submit whose call rejects is shown as an uncertain outcome, the button comes back, and nothing is left unhandled', async () => {
+    const { acme } = people();
+    const inv = issued('INVOICE', acme, 'INV-0001');
+    const data = financeData({ customers: [acme], documents: [inv] });
+    const api = createFakeFinance({ alpha: data });
+    const real = createFinanceClient(BASE, { kind: 'cookie' }, api.fetch);
+    const client = { ...real, recordPayment: vi.fn(() => Promise.reject(new Error('boom'))) };
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      render(<FinanceZone client={client} customers={createCustomersClient(BASE, { kind: 'cookie' }, api.fetch)} context={ctx('alpha')} userLabel="Ada"
+        initialTarget={`invoice:${inv.id}`} onHome={vi.fn()} onSwitch={vi.fn()} onSignOut={vi.fn()} onSessionEnded={vi.fn()} />);
+      const user = userEvent.setup();
+      await heading('INV-0001');
+      await user.click(screen.getByRole('button', { name: 'Record payment' }));
+      await screen.findByLabelText('Amount for INV-0001');
+      const submit = screen.getByRole('button', { name: /^Record \$100\.00/ });
+      await user.click(submit);
+      expect((await screen.findByRole('alert')).textContent).toContain('may already have been recorded');
+      expect((submit as HTMLButtonElement).disabled).toBe(false);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('customer names still arrive under React Strict Mode (effects mounted twice)', async () => {
+    const { acme } = people();
+    const draft = doc('INVOICE', { customerId: acme.id });
+    const api = createFakeFinance({ alpha: financeData({ customers: [acme], documents: [draft] }) });
+    render(
+      <StrictMode>
+        <FinanceZone client={createFinanceClient(BASE, { kind: 'cookie' }, api.fetch)} customers={createCustomersClient(BASE, { kind: 'cookie' }, api.fetch)} context={ctx('alpha')}
+          userLabel="Ada" section="invoices" onHome={vi.fn()} onSwitch={vi.fn()} onSignOut={vi.fn()} onSessionEnded={vi.fn()} />
+      </StrictMode>,
+    );
+    const table = await screen.findByRole('table', { name: 'Invoices' });
+    expect(await within(table).findByText('Acme Pty Ltd')).toBeTruthy(); // a draft has no snapshot: this is the live name
   });
 });
 

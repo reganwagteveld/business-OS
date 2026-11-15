@@ -3,7 +3,7 @@ import {
   Alert, AlertDescription, Button, Card, CardContent, CardHeader, CardTitle, Field, FormSection, Input, Select, Table, TableBody, TableCaption, TableCell,
   TableHead, TableHeader, TableRow,
 } from '@business-os/ui';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { ExpensePaymentQuery } from '../../api/finance';
 import { ZonePage, type ZonePageTab } from '../../shell/zone-page';
 import { Problem } from '../problem';
@@ -68,21 +68,18 @@ export function ExpensePaymentList({ tabs, onTab }: { tabs: readonly ZonePageTab
 }
 
 /** Choose recorded, not fully paid expenses of one currency and how much of each this payment covers. */
-function ExpenseAllocator({ currencyCode, scale, available, preselect, value, onChange }: {
-  currencyCode: string; scale: number; available: string | null; preselect?: string; value: Allocation[]; onChange: (v: Allocation[]) => void;
+function ExpenseAllocator({ currencyCode, scale, available, intended, value, onChange }: {
+  currencyCode: string; scale: number; available: string | null;
+  /** The expense this payment was started from, loaded on its own: always listed, however long the open list is. */
+  intended?: FinanceExpenseListItem | null;
+  value: Allocation[]; onChange: (v: Allocation[]) => void;
 }) {
   const env = useFinance();
-  const preselected = useRef(false);
-  const { state, reload } = useLoad(`open-expenses|${env.slug}|${currencyCode}`, async (signal) => {
-    const out = await env.client.expenses(env.slug, { status: 'recorded', payment: 'open', limit: 100 }, signal);
-    if (out.kind === 'ok' && preselect && !preselected.current && !signal.aborted) {
-      preselected.current = true;
-      const e = out.data.expenses.find((x) => x.id === preselect && x.currencyCode === currencyCode);
-      if (e && value.length === 0) onChange([{ expenseId: e.id, amount: e.outstanding }]);
-    }
-    return out;
-  });
-  const open = state.status === 'done' && state.outcome.kind === 'ok' ? state.outcome.data.expenses.filter((e) => e.currencyCode === currencyCode) : null;
+  const { state, reload } = useLoad(`open-expenses|${env.slug}|${currencyCode}`, (signal) =>
+    env.client.expenses(env.slug, { status: 'recorded', payment: 'open', limit: 100 }, signal));
+  const page = state.status === 'done' && state.outcome.kind === 'ok' ? state.outcome.data.expenses.filter((e) => e.currencyCode === currencyCode) : null;
+  const extra = intended && isOpenExpense(intended) && intended.currencyCode === currencyCode && !page?.some((e) => e.id === intended.id) ? [intended] : [];
+  const open = page ? [...extra, ...page] : null;
   const money = (v: string) => formatMoney(v, currencyCode, env.locale);
   const total = sum(value.map((a) => a.amount || '0'), scale);
   const left = available !== null && total !== null ? subtract(available, total, scale) : null;
@@ -135,6 +132,9 @@ function ExpenseAllocator({ currencyCode, scale, available, preselect, value, on
   );
 }
 
+/** Recorded and not fully paid: something is left to pay. */
+const isOpenExpense = (e: Pick<FinanceExpenseListItem, 'status' | 'paymentState' | 'outstanding'>) => e.status === 'RECORDED' && e.paymentState !== 'PAID' && isPositive(e.outstanding);
+
 const valid = (value: Allocation[], available: string | null, scale: number) => {
   if (value.some((a) => !isPositive(a.amount) || toUnits(a.amount, scale) === null)) return false;
   const total = sum(value.map((a) => a.amount), scale);
@@ -147,21 +147,32 @@ export function ExpensePaymentForm({ expenseId, onDone, onCancel }: { expenseId?
   const { currency, locale, today, markDirty } = env;
   const start = useMemo(() => ({ payeeName: '', currencyCode: currency, amount: '', paidOn: today, method: 'BANK_TRANSFER' as Method, reference: '' }), [currency, today]);
   const [v, setV] = useState(start);
+  const [allocations, setAllocations] = useState<Allocation[]>([]);
+  // What the form was filled with before the person touched it. Unsaved changes are measured against
+  // this, so hydrating from the expense is not a change, and any edit afterwards (amount, date, method,
+  // reference, payee or allocation) is.
+  const [baseline, setBaseline] = useState({ v: start, allocations: [] as Allocation[] });
   const [seeded, setSeeded] = useState(!expenseId);
-  // Starting from an expense ("Record payment" on it): the payee, currency and amount left to pay are filled in once.
+  // Starting from an expense ("Record payment" on it): the payee, currency, amount left to pay and the
+  // match to that expense are filled in once, from the expense itself (not from the open list's first page).
   const pre = useLoad<FinanceExpense | null>(`expense-prefill|${env.slug}|${expenseId ?? ''}`, async (signal) => {
     if (!expenseId) return { kind: 'ok' as const, data: null };
     const out = await env.client.expense(env.slug, expenseId, signal);
     if (out.kind === 'ok' && !signal.aborted) {
-      setV((x) => ({ ...x, payeeName: out.data.supplierName ?? '', currencyCode: out.data.currencyCode, amount: out.data.outstanding }));
+      const e = out.data;
+      const nextV = { ...start, payeeName: e.supplierName ?? '', currencyCode: e.currencyCode, amount: isOpenExpense(e) ? e.outstanding : '' };
+      const nextA = isOpenExpense(e) ? [{ expenseId: e.id, amount: e.outstanding }] : [];
+      setV(nextV);
+      setAllocations(nextA);
+      setBaseline({ v: nextV, allocations: nextA });
       setSeeded(true);
     }
     return out;
   });
-  const [allocations, setAllocations] = useState<Allocation[]>([]);
-  const submit = useSubmit(env.onSessionEnded);
+  const intended = okData(pre.state);
+  const submit = useSubmit(env.onSessionEnded, 'idempotent');
   const keyFor = useIdempotencyKey();
-  const dirty = (JSON.stringify(v) !== JSON.stringify(start) && !expenseId) || allocations.length > 0;
+  const dirty = JSON.stringify({ v, allocations }) !== JSON.stringify(baseline);
   useEffect(() => markDirty('form', dirty), [dirty, markDirty]);
   useEffect(() => () => markDirty('form', false), [markDirty]);
   const set = (patch: Partial<typeof v>) => setV((x) => ({ ...x, ...patch }));
@@ -212,8 +223,12 @@ export function ExpensePaymentForm({ expenseId, onDone, onCancel }: { expenseId?
           </div>
         </FormSection>
         <FormSection title="Expenses it pays" description="Optional. What is not matched stays on the payment, to match later.">
-          <ExpenseAllocator currencyCode={v.currencyCode} scale={scale} available={amountOk ? v.amount.trim() : null} preselect={expenseId} value={allocations} onChange={setAllocations} />
+          <ExpenseAllocator currencyCode={v.currencyCode} scale={scale} available={amountOk ? v.amount.trim() : null} intended={intended} value={allocations} onChange={setAllocations} />
+          {intended && !isOpenExpense(intended) ? <p role="status" className="mt-2 text-sm text-warning">This expense is not open for payment (it is already paid, a draft or void), so it is not selected.</p> : null}
         </FormSection>
+        {expenseId && allocations.length === 0 ? (
+          <Alert tone="warning" role="status"><AlertDescription>This payment will not be matched to any expense. It will be recorded as not matched.</AlertDescription></Alert>
+        ) : null}
         <div className="flex flex-wrap gap-3">
           <Button type="submit" loading={submit.busy} disabled={!amountOk || (allocations.length > 0 && !valid(allocations, v.amount.trim(), scale))}>
             Record {amountOk ? formatMoney(v.amount.trim(), v.currencyCode, locale) : 'payment'}

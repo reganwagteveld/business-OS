@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { FinanceClient, TaxRateOption } from '../../api/finance';
 import { ZonePage } from '../../shell/zone-page';
 import { conflictMessage, TREATMENT_LABEL } from './format';
+import { uncertainMessage } from './shared';
 
 type Values = {
   description: string; supplierName: string; referenceNumber: string; categoryId: string; incurredOn: string; dueDate: string; currencyCode: string;
@@ -59,9 +60,14 @@ export function ExpenseForm({ client, slug, today, currency, categories, taxRate
       notes: values.notes, incurredOn: values.incurredOn, dueDate: values.dueDate || null, taxTreatment: values.taxTreatment,
       taxRateId: taxed ? values.taxRateId || null : null, amount: values.amount.trim(),
     };
-    const out = expense
-      ? await client.updateExpense(slug, expense.id, { version: expense.version, ...common })
-      : await client.createExpense(slug, { ...common, currencyCode: values.currencyCode.trim().toUpperCase() });
+    let out: Awaited<ReturnType<typeof client.createExpense>>;
+    try {
+      out = expense
+        ? await client.updateExpense(slug, expense.id, { version: expense.version, ...common })
+        : await client.createExpense(slug, { ...common, currencyCode: values.currencyCode.trim().toUpperCase() });
+    } catch {
+      out = { kind: 'unreachable' }; // a rejected call is shown like a lost answer, never left unhandled
+    }
     setBusy(false);
     if (out.kind === 'ok') {
       onDirtyChange(false);
@@ -74,8 +80,11 @@ export function ExpenseForm({ client, slug, today, currency, categories, taxRate
       setMessage(out.message);
     } else if (out.kind === 'conflict') setMessage(conflictMessage(out.code));
     else if (out.kind === 'forbidden') setMessage('Your role does not allow entering expenses.');
-    else if (out.kind === 'unreachable') setMessage("Can't reach Business OS. Nothing was saved. Check your connection and try again.");
-    else setMessage('The expense could not be saved. Nothing was changed.');
+    else if (out.kind === 'unreachable') {
+      setMessage(expense
+        ? uncertainMessage('versioned')
+        : 'The connection dropped before Business OS answered, so this draft may already have been saved. Check the expense list before saving it again.');
+    } else setMessage('The expense could not be saved. Reload to see the current state before trying again.');
   }
 
   return (

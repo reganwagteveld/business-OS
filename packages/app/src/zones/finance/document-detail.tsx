@@ -276,7 +276,7 @@ function QuoteDialog({ doc, action, onClose, onDone, onReload }: { doc: FinanceD
 
 function ConvertDialog({ doc, onClose }: { doc: FinanceDocument; onClose: () => void }) {
   const env = useFinance();
-  const submit = useSubmit(env.onSessionEnded);
+  const submit = useSubmit(env.onSessionEnded, 'idempotent');
   const keyFor = useIdempotencyKey();
   const [due, setDue] = useState('');
   return (
@@ -299,7 +299,7 @@ function ConvertDialog({ doc, onClose }: { doc: FinanceDocument; onClose: () => 
 
 function CreditNoteDialog({ doc, onClose }: { doc: FinanceDocument; onClose: () => void }) {
   const env = useFinance();
-  const submit = useSubmit(env.onSessionEnded);
+  const submit = useSubmit(env.onSessionEnded, 'idempotent');
   const keyFor = useIdempotencyKey();
   const [copy, setCopy] = useState(false);
   return (

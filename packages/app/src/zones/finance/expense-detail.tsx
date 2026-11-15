@@ -9,6 +9,7 @@ import { ZonePage } from '../../shell/zone-page';
 import { Problem } from '../problem';
 import { useLoad } from '../use-load';
 import { LoadingRows } from './expense-list';
+import { useSubmit } from './shared';
 import {
   conflictMessage, formatDate, formatMoney, formatWhen, METHOD_LABEL, PAYMENT_LABEL, PAYMENT_TONE, STATUS_LABEL, STATUS_TONE, TREATMENT_LABEL,
 } from './format';
@@ -148,26 +149,6 @@ function Row({ label, strong, children }: { label: string; strong?: boolean; chi
       <dd>{children}</dd>
     </div>
   );
-}
-
-function useSubmit(onSessionEnded: () => void) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function run(call: () => Promise<{ kind: string; code?: string; message?: string }>, onOk: () => void) {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    const out = await call();
-    setBusy(false);
-    if (out.kind === 'ok') return onOk();
-    if (out.kind === 'unauthenticated') return onSessionEnded();
-    if (out.kind === 'conflict') return setError(conflictMessage(out.code));
-    if (out.kind === 'invalid_input') return setError(out.message ?? 'Please check the details.');
-    if (out.kind === 'forbidden') return setError('Your role does not allow this.');
-    if (out.kind === 'unreachable') return setError("Can't reach Business OS. Nothing was changed.");
-    setError('That did not work. Nothing was changed.');
-  }
-  return { busy, error, run };
 }
 
 function RecordDialog({ client, slug, expense, today, canPay, money, onClose, onDone, onSessionEnded }: {

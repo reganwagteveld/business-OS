@@ -1087,3 +1087,13 @@ F4 is the client for F1–F3. It changes no table, migration, guard, permission 
 ### 20.4 Deferred (not in F4)
 
 Free-text document search (needs an optional `q`), contact/opportunity/project pickers on documents, document PDFs and sending, reports (F5), refunds (FD-A2, FD-A8), receipts (FD-P6), bank feeds and bank reconciliation, URL deep links.
+
+### 20.5 Audit round 1 corrections
+
+| Finding | Fix | Regression tests |
+|---|---|---|
+| P1 supplier-payment unsaved-changes | Both payment forms keep a *baseline* (what the form was filled with from the expense or invoice it was started from); unsaved changes are measured against it, so hydration is not a change and any later edit to any field is | `finance-f4.test.tsx` › audit corrections (cancel with and without edits); `finance-f4-app.test.tsx` (leaving through Finance section navigation, business switch) |
+| P1 preselection beyond the first page | The intended expense comes from `GET /expenses/:id` (already loaded by the form) and is always listed and selected; the intended invoice is loaded with `GET /invoices/:id` when it is not on the first page. When it is not open, the form says so, and a payment started from a record but left unallocated is called out before it is recorded | 120 open expenses (target the 120th); 105 open invoices (target the 105th) |
+| P2 customer names under Strict Mode | `useCustomerNames` sets its live flag on every mount, not only in the initial ref value | rendering inside `<StrictMode>` |
+| P2 uncertain outcomes | No answer is described as "may already have been recorded/saved": requests with an Idempotency-Key say a retry of the same details is safe (the key is reused); versioned changes say to reload and check first. F3 expense screens now use the same wording and helper | lost response on a supplier payment (key reused, one record); lost response on a customer payment |
+| `useSubmit` and rejected promises | A rejected call is caught and shown as an uncertain outcome; the button is re-enabled; no unhandled rejection | a client whose `recordPayment` rejects |

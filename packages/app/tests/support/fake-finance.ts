@@ -167,7 +167,8 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
       if (query.status && query.status !== 'all') list = list.filter((e) => e.status === query.status!.toUpperCase());
       if (query.payment === 'open') list = list.filter((e) => e.status === 'RECORDED' && e.paymentState !== 'PAID');
       if (query.payment === 'overdue') list = list.filter((e) => e.overdue);
-      return json(200, { expenses: list.map(expenseItem), nextCursor: null });
+      const limit = Number(query.limit ?? 25);
+      return json(200, { expenses: list.slice(0, limit).map(expenseItem), nextCursor: list.length > limit ? 'next' : null });
     }
     if ((m = /^\/expenses\/([^/]+)$/.exec(p)) && method === 'GET') {
       const e = b.expenses.find((x) => x.id === m![1]);

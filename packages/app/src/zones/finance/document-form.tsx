@@ -49,7 +49,7 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
   const dirty = strip(values) !== strip(start);
   useEffect(() => markDirty('form', dirty), [dirty, markDirty]);
   useEffect(() => () => markDirty('form', false), [markDirty]);
-  const submit = useSubmit(env.onSessionEnded);
+  const submit = useSubmit(env.onSessionEnded, doc ? 'versioned' : 'idempotent');
   const keyFor = useIdempotencyKey();
   const [lineErrors, setLineErrors] = useState<string | null>(null);
   const set = (patch: Partial<Values>) => setValues((v) => ({ ...v, ...patch }));

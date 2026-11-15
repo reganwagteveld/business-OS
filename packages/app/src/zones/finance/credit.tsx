@@ -1,4 +1,4 @@
-import type { FinanceDocument } from '@business-os/contracts';
+import type { FinanceDocument, FinanceDocumentListItem } from '@business-os/contracts';
 import { Alert, AlertDescription, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@business-os/ui';
 import { useRef, useState } from 'react';
 import { Problem } from '../problem';
@@ -16,24 +16,42 @@ export type Allocation = { invoiceId: string; amount: string };
  * The amounts are exact decimal strings; the running total and what would be left are computed with
  * integer arithmetic. The server and database check every limit again (over-settlement, over-allocation).
  */
-export function InvoiceAllocator({ customerId, currencyCode, scale, available, preselect, value, onChange, label = 'Allocate to invoices' }: {
+export function InvoiceAllocator({ customerId, currencyCode, scale, available, preselect, value, onChange, onPreselect, label = 'Allocate to invoices' }: {
   customerId: string; currencyCode: string; scale: number;
   /** What there is to spread (payment amount, unallocated rest or available credit); null when not known yet. */
   available: string | null;
-  preselect?: string; value: Allocation[]; onChange: (next: Allocation[]) => void; label?: string;
+  /** The invoice this was started from. It is loaded on its own, so it is found however long the open list is. */
+  preselect?: string; value: Allocation[]; onChange: (next: Allocation[]) => void;
+  /**
+   * Receives the preselected allocation (or none, when the invoice is not open) instead of `onChange`, so the
+   * caller can treat it as the form's starting point rather than as a change the person made.
+   */
+  onPreselect?: (next: Allocation[]) => void;
+  label?: string;
 }) {
   const env = useFinance();
-  // Preselect one invoice (from "Record payment" on that invoice) for its open amount, once, when the list arrives.
   const preselected = useRef(false);
+  const [notOpen, setNotOpen] = useState<string | null>(null);
   const { state, reload } = useLoad(`open-invoices|${env.slug}|${customerId}`, async (signal) => {
     const out = await env.client.documents(env.slug, 'invoices', { status: 'all', settlement: 'open', customerId, limit: 100 }, signal);
-    if (out.kind === 'ok' && preselect && !preselected.current && !signal.aborted) {
-      preselected.current = true;
-      const inv = out.data.documents.find((d) => d.id === preselect && d.currencyCode === currencyCode);
-      const open = inv ? openAmount(inv) : null;
-      if (inv && open && value.length === 0) onChange([{ invoiceId: inv.id, amount: available && isPositive(available) ? min(open, available, scale) ?? open : open }]);
+    if (out.kind !== 'ok' || !preselect || preselected.current || signal.aborted) return out;
+    // The invoice this was started from may be beyond the first page of open invoices: load it directly.
+    let target: FinanceDocumentListItem | null = out.data.documents.find((d) => d.id === preselect) ?? null;
+    let documents = out.data.documents;
+    if (!target) {
+      const one = await env.client.document(env.slug, 'invoices', preselect, signal);
+      if (signal.aborted) return out;
+      if (one.kind !== 'ok') return one;
+      target = one.data;
+      documents = [one.data, ...documents];
     }
-    return out;
+    preselected.current = true;
+    const open = openAmount(target);
+    const eligible = target.status === 'ISSUED' && target.settlementState !== 'PAID' && target.customerId === customerId && target.currencyCode === currencyCode && open !== null && isPositive(open);
+    const next = eligible && value.length === 0 ? [{ invoiceId: target.id, amount: available && isPositive(available) ? min(open!, available, scale) ?? open! : open! }] : [];
+    if (!eligible) setNotOpen(`${target.number ?? 'That invoice'} is not open for settlement (it is a draft, void or already paid), so it is not selected.`);
+    (onPreselect ?? onChange)(next);
+    return { kind: 'ok', data: { ...out.data, documents: eligible ? documents : out.data.documents } };
   });
   const invoices = state.status === 'done' && state.outcome.kind === 'ok' ? state.outcome.data.documents.filter((d) => d.currencyCode === currencyCode) : null;
 
@@ -50,6 +68,7 @@ export function InvoiceAllocator({ customerId, currencyCode, scale, available, p
   return (
     <fieldset className="mt-4">
       <legend className="text-sm font-medium">{label}</legend>
+      {notOpen ? <p role="status" className="mt-1 text-sm text-warning">{notOpen}</p> : null}
       {state.status === 'loading' ? <LoadingRows label="Loading open invoices…" rows={2} /> : null}
       {state.status === 'done' && state.outcome.kind !== 'ok' ? <Problem outcome={state.outcome} what="Open invoices" onRetry={reload} onSessionEnded={env.onSessionEnded} /> : null}
       {invoices && invoices.length === 0 ? <p className="mt-1 text-sm text-muted-foreground">This customer has no open {currencyCode} invoices.</p> : null}

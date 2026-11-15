@@ -119,9 +119,14 @@ export function PaymentForm({ prefill, onDone, onCancel }: { prefill?: PaymentPr
   const [v, setV] = useState(start);
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [allocate, setAllocate] = useState(Boolean(prefill?.invoiceId));
-  const submit = useSubmit(env.onSessionEnded);
+  // What the form was filled with before the person touched it (the invoice it was started from, and its
+  // open amount, arrive after the first render). Unsaved changes are measured against this, not against
+  // the empty form, so filling it in is not a change and any edit afterwards is.
+  const [baseline, setBaseline] = useState({ v: start, allocations: [] as Allocation[], allocate: Boolean(prefill?.invoiceId) });
+  const submit = useSubmit(env.onSessionEnded, 'idempotent');
   const keyFor = useIdempotencyKey();
-  const dirty = JSON.stringify({ ...v, customerName: null }) !== JSON.stringify({ ...start, customerName: null }) || allocations.length > 0;
+  const snapshot = (x: typeof v, a: Allocation[], on: boolean) => JSON.stringify({ ...x, customerName: null, a, on });
+  const dirty = snapshot(v, allocations, allocate) !== snapshot(baseline.v, baseline.allocations, baseline.allocate);
   useEffect(() => markDirty('form', dirty), [dirty, markDirty]);
   useEffect(() => () => markDirty('form', false), [markDirty]);
   const set = (patch: Partial<typeof v>) => setV((x) => ({ ...x, ...patch }));
@@ -187,14 +192,21 @@ export function PaymentForm({ prefill, onDone, onCancel }: { prefill?: PaymentPr
             </label>
             {allocate ? (
               <InvoiceAllocator customerId={v.customerId} currencyCode={v.currencyCode} scale={scale} available={amountOk ? v.amount.trim() : null}
-                preselect={prefill?.invoiceId} value={allocations}
-                onChange={(next) => {
+                preselect={prefill?.invoiceId} value={allocations} onChange={setAllocations}
+                onPreselect={(next) => {
+                  // Started from an invoice: select it and, with no amount typed yet, suggest its open amount.
+                  // Both are the form's starting point, not unsaved changes.
+                  const nextV = v.amount.trim() === '' && next.length === 1 ? { ...v, amount: next[0]!.amount } : v;
+                  setV(nextV);
                   setAllocations(next);
-                  // Started from an invoice with no amount typed yet: suggest its open amount as the payment.
-                  if (prefill?.invoiceId && v.amount.trim() === '' && next.length === 1) set({ amount: next[0]!.amount });
+                  const untouched = snapshot(v, [], false) === snapshot(baseline.v, [], false);
+                  setBaseline({ v: untouched ? nextV : baseline.v, allocations: next, allocate: baseline.allocate });
                 }} />
             ) : null}
           </FormSection>
+        ) : null}
+        {prefill?.invoiceId && (!allocate || allocations.length === 0) ? (
+          <Alert tone="warning" role="status"><AlertDescription>This payment will not be allocated to any invoice. It will be recorded as unallocated customer credit.</AlertDescription></Alert>
         ) : null}
         <div className="flex flex-wrap gap-3">
           <Button type="submit" loading={submit.busy} disabled={!v.customerId || !amountOk || !allocOk}>

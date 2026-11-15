@@ -106,7 +106,14 @@ export function useCustomerNames(customers: CustomersClient | null, slug: string
   const [names, setNames] = useState<Record<string, string | null>>({});
   const asked = useRef(new Set<string>());
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Set on every mount, not only the first: React Strict Mode runs effects, their cleanup and the effects
+  // again, so a flag cleared only in cleanup would stay false and drop every name that arrives later.
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   return {
     get: (id) => names[id],
     request: (ids) => {

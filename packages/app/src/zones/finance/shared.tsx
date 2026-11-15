@@ -78,10 +78,19 @@ export function financeMessage(code: string | undefined): string {
 export type SubmitResult = { kind: string; code?: string; message?: string; fields?: Record<string, string> };
 
 /**
- * One request at a time, and every failure in words. `stale` is set when the server says the record
- * changed underneath (409 stale), so the screen can offer a reload instead of a blind retry.
+ * How a request that got no answer should be described. `idempotent`: the request carried an
+ * Idempotency-Key, so repeating exactly the same request is safe. `versioned`: a change based on a
+ * version, which a repeat would refuse as stale if the first attempt went through, so the person should
+ * reload and check first. Either way the server may already have done it: never say "nothing changed".
  */
-export function useSubmit(onSessionEnded: () => void) {
+export type Uncertainty = 'idempotent' | 'versioned';
+
+/**
+ * One request at a time, and every failure in words. `stale` is set when the server says the record
+ * changed underneath (409 stale), so the screen can offer a reload instead of a blind retry. A call that
+ * rejects (a bug, an aborted fetch) is handled like a request that got no answer: shown, never thrown.
+ */
+export function useSubmit(onSessionEnded: () => void, uncertainty: Uncertainty = 'versioned') {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -94,15 +103,17 @@ export function useSubmit(onSessionEnded: () => void) {
     setError(null);
     setFields({});
     setStale(false);
-    let out: T;
+    let out: SubmitResult;
     try {
       out = await call();
+    } catch {
+      out = { kind: 'unreachable' };
     } finally {
       inFlight.current = false;
       setBusy(false);
     }
     if (out.kind === 'ok') return onOk(out as Extract<T, { kind: 'ok' }>);
-    setError(describeFailure(out));
+    setError(describeFailure(out, uncertainty));
     if (out.kind === 'unauthenticated') onSessionEnded();
     if (out.kind === 'conflict' && out.code === 'stale') setStale(true);
     if (out.kind === 'invalid_input') setFields(out.fields ?? {});
@@ -110,16 +121,23 @@ export function useSubmit(onSessionEnded: () => void) {
   return { busy, error, fields, stale, run, reset: () => { setError(null); setFields({}); setStale(false); } };
 }
 
-export function describeFailure(out: SubmitResult): string {
+/** No answer from the server: it may or may not have done it. */
+export function uncertainMessage(uncertainty: Uncertainty): string {
+  return uncertainty === 'idempotent'
+    ? 'The connection dropped before Business OS answered, so this may already have been recorded. Trying again with the same details is safe: it will not be recorded twice.'
+    : 'The connection dropped before Business OS answered, so this change may already have been saved. Reload to check before trying again.';
+}
+
+export function describeFailure(out: SubmitResult, uncertainty: Uncertainty = 'versioned'): string {
   switch (out.kind) {
     case 'unauthenticated': return 'Your session has ended. Please sign in again.';
     case 'conflict': return financeMessage(out.code);
     case 'invalid_input': return out.message ?? 'Please check the details.';
     case 'forbidden': return 'Your role in this business does not allow this.';
     case 'not_found': return 'That record could not be found in this business. It may have been removed.';
-    case 'unreachable': return "Can't reach Business OS. Nothing was changed. Check your connection and try again.";
+    case 'unreachable': return uncertainMessage(uncertainty);
     case 'rate_limited': return 'Too many requests. Wait a moment and try again.';
-    default: return 'That did not work. Nothing was changed.';
+    default: return 'Business OS could not complete this. Reload to see the current state before trying again.';
   }
 }
 
