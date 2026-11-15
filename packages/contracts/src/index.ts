@@ -18,6 +18,7 @@ export * from './people.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
 export * from './communications.ts';
+export * from './reporting.ts';
 import {
   ConversationResponse, CreateConversationRequest, ImportMessagesRequest, ImportMessagesResponse, ListConversationsQuery, ListConversationsResponse,
   ListMessagesQuery, ListMessagesResponse, MessageResponse, RecordMessageRequest,
@@ -66,6 +67,10 @@ import {
   ListLocationsResponse, ListOrgUnitsQuery, LocationResponse, PersonalDetailsResponse, UpdateDepartmentRequest, UpdateEmployeeRequest,
   UpdateLocationRequest, UpdatePersonalDetailsRequest,
 } from './people.ts';
+import {
+  CreateSavedViewRequest, DeleteSavedViewResponse, ListSavedViewsQuery, ListSavedViewsResponse, ReportingCatalogResponse, ReportingDetailsRequest,
+  ReportingDetailsResponse, ReportingQueryRequest, ReportingQueryResponse, RunSavedViewResponse, SavedViewResponse, UpdateSavedViewRequest,
+} from './reporting.ts';
 
 export const API_VERSION = 'v1' as const;
 
@@ -278,6 +283,21 @@ export const endpoints = {
   cancelEvent: { method: 'POST', path: '/api/v1/b/:slug/scheduling/events/:eventId/cancel', request: EventTransitionRequest, response: EventResponse },
   archiveEvent: { method: 'POST', path: '/api/v1/b/:slug/scheduling/events/:eventId/archive', request: EventTransitionRequest, response: EventResponse },
   checkAvailability: { method: 'GET', path: '/api/v1/b/:slug/scheduling/availability', query: AvailabilityQuery, response: AvailabilityResponse },
+  // Reporting R1 (docs/reporting-r1.md). Registered metrics only; every run is checked against reporting:read
+  // AND each metric's source permissions. Query and details are POST because their bodies are structured;
+  // neither changes anything.
+  reportingCatalog: { method: 'GET', path: '/api/v1/b/:slug/reporting/metrics', response: ReportingCatalogResponse },
+  runReport: { method: 'POST', path: '/api/v1/b/:slug/reporting/query', request: ReportingQueryRequest, response: ReportingQueryResponse },
+  reportDetails: { method: 'POST', path: '/api/v1/b/:slug/reporting/details', request: ReportingDetailsRequest, response: ReportingDetailsResponse },
+  listSavedViews: { method: 'GET', path: '/api/v1/b/:slug/reporting/views', query: ListSavedViewsQuery, response: ListSavedViewsResponse },
+  createSavedView: { method: 'POST', path: '/api/v1/b/:slug/reporting/views', request: CreateSavedViewRequest, response: SavedViewResponse },
+  getSavedView: { method: 'GET', path: '/api/v1/b/:slug/reporting/views/:viewId', response: SavedViewResponse },
+  /** Owner only. 409 stale when `version` is not the current one. */
+  updateSavedView: { method: 'PATCH', path: '/api/v1/b/:slug/reporting/views/:viewId', request: UpdateSavedViewRequest, response: SavedViewResponse },
+  /** The owner, or reporting:manage for a shared view. Deletes the configuration only; no source data is touched. */
+  deleteSavedView: { method: 'DELETE', path: '/api/v1/b/:slug/reporting/views/:viewId', response: DeleteSavedViewResponse },
+  /** Runs the stored configuration as the caller; metrics the caller may not read come back as per-metric errors. */
+  runSavedView: { method: 'POST', path: '/api/v1/b/:slug/reporting/views/:viewId/run', response: RunSavedViewResponse },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */

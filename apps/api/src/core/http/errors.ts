@@ -25,7 +25,9 @@ export type StateConflictCode =
   | 'invalid_transition' | 'has_direct_reports' | 'manager_cycle' | 'in_use' | 'duplicate_employee_number' | 'user_already_linked' | 'terminated'
   | 'start_date_locked'
   // Scheduling S1: the default calendar cannot be archived; cancelled events are read-only.
-  | 'default_calendar' | 'not_scheduled';
+  | 'default_calendar' | 'not_scheduled'
+  // Reporting R1: per-owner saved-view cap; a stored view whose config this version cannot read.
+  | 'too_many_views' | 'view_config_invalid';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

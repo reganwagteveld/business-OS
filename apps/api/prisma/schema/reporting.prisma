@@ -1,0 +1,38 @@
+// reporting module (docs/reporting-r1.md): saved report configurations ONLY. Reporting stores no
+// results, no snapshots and no copies of source data: every run re-reads the owning Zones through their
+// own services. Tenant table with forced RLS, plus restrictive owner/visibility policies, CHECKs and
+// column grants that live in the migration because Prisma cannot express them.
+
+/// One saved report: which registered metrics to run, and how (date, grouping, filters, comparison, sort,
+/// chart). `config` is validated against the contract on every write and against the current metric
+/// registry on every run, so a view never runs a metric that no longer exists or that the viewer may
+/// not read. PRIVATE views are visible to their owner only; BUSINESS views to everyone in the business
+/// who holds reporting:read (and can read every source the view uses). Only the owner edits a view.
+model ReportingSavedView {
+  id            String   @id @db.Uuid
+  businessId    String   @map("business_id") @db.Uuid
+  /// The member who created the view. Fixed at insert (no UPDATE grant); equals the session user (RLS).
+  ownerUserId   String   @map("owner_user_id") @db.Uuid
+  title         String
+  description   String?
+  /// 'metrics' in R1 (CHECK). Room for later report types without a schema change.
+  reportType    String   @default("metrics") @map("report_type")
+  /// The saved configuration (contract SavedViewConfig). Never query results.
+  config        Json
+  /// Version of the config format the row was written with (1 in R1).
+  configVersion Int      @default(1) @map("config_version")
+  /// PRIVATE or BUSINESS (CHECK).
+  visibility    String   @default("PRIVATE")
+  /// Optimistic concurrency: +1 on every change; an edit must name the version it was based on.
+  version       Int      @default(1)
+  updatedById   String   @map("updated_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "reporting_saved_views_business_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, ownerUserId, updatedAt(sort: Desc), id])
+  @@index([businessId, visibility, updatedAt(sort: Desc), id])
+  @@map("reporting_saved_views")
+}
