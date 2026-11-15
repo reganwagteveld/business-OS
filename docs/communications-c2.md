@@ -286,16 +286,26 @@ or put in error messages (tests scan responses, audit rows and console output).
    refresh token on every use, so two concurrent refreshes would invalidate each other; the lease makes
    refresh single-flight. Google usually returns no new refresh token; the old one is kept.
 4. **Fencing (C2A-01).** The lease alone is not enough: it can expire while a slow attempt is still
-   waiting on the provider, and a second attempt can take over and succeed. Every outcome is therefore
-   written with a check of the `credential_version` that the attempt read, in the same statement:
+   waiting on the provider, and a second attempt can take over. Every outcome is therefore written
+   with a check of **both** the `credential_version` and the exact `refresh_lease_id` that the attempt
+   holds, in the same statement:
    - success: `UPDATE … SET tokens, credential_version = new uuid, lease cleared WHERE
-     credential_version = read version`; zero rows means the attempt is obsolete, its tokens are
-     dropped and the caller gets a retryable `busy`.
-   - `invalid_grant`: in one transaction, `UPDATE … WHERE credential_version = read version` and,
-     only if that matched, `NEEDS_REAUTH` with `reauth_required`, credentials deleted, pending jobs
-     cancelled and a system audit event. If the version changed (a replacement refresh or a reconnect
-     wrote new tokens), nothing changes and the caller gets `busy`. The check and the invalidation are
-     atomic.
+     credential_version = read version AND refresh_lease_id = own lease`; zero rows means the attempt
+     is obsolete, its tokens are dropped and the caller gets a retryable `busy`.
+   - `invalid_grant`: in one transaction, the same conditional `UPDATE` and, only if it matched,
+     `NEEDS_REAUTH` with `reauth_required`, credentials deleted, pending jobs cancelled and a system
+     audit event. Otherwise nothing changes and the caller gets `busy`. The check and the
+     invalidation are atomic (the row lock makes the second condition re-check after any concurrent
+     writer commits).
+   - The version catches an attempt that was overtaken by a newer write (replacement refresh,
+     reconnect). The lease id catches an attempt whose lease was taken over by another worker that has
+     not written anything yet, so the version is still the same.
+   - **Expired but not taken over:** the holder of an expired lease may still complete, as long as its
+     lease id is unchanged. Taking over always replaces the lease id, so an unchanged id proves no
+     other attempt started. Refusing would be harmful here: Microsoft has already rotated the refresh
+     token, so dropping the response would lose the only valid token and force a reconnect. This
+     differs on purpose from sync jobs (§9), where an expired lease authorises nothing, because sync
+     work can simply be redone.
 5. Others poll briefly for the fresh token, then give up with a retryable `busy` error.
 6. `invalid_grant` for the current credentials (user revoked access, password change, admin policy,
    Google's 7-day expiry for apps in testing mode) requires reauthorisation. Only the owner can
@@ -534,6 +544,6 @@ The redirect URI is derived: `${APP_BASE_URL}/api/v1/communications/oauth/callba
 - No grant is revoked by the app (C2A-03): after disconnect the Google or Microsoft grant stays until
   the user removes the app. The stored tokens are gone, so Business OS can no longer use it.
 - A refresh holder stalled past its 30-second lease while a second attempt refreshes a Microsoft
-  token: both send the same rotating refresh token, so the provider may reject one of them. Fencing
-  keeps the winner's credentials; only if the provider has already invalidated the winner's token too
-  would the next refresh correctly ask for reconnection. Rare, and never silent.
+  token: both send the same rotating refresh token, so the provider may reject the second. Fencing
+  keeps the lease owner in charge and drops the stalled attempt's answer; if the owner's refresh is
+  then refused, the mailbox correctly asks for reconnection. Rare, and never silent.

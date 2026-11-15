@@ -122,16 +122,20 @@ export async function markReauthRequired(db: AppTenantDb, connectionId: string, 
 }
 
 /**
- * C2A-01 fence: a refused refresh token invalidates the connection only if the credentials still
- * hold the version that refresh read. The conditional UPDATE locks the credential row and re-checks
- * the version after any concurrent writer committed, and the status change happens in the same
- * transaction, so a successful replacement refresh (which writes a new version) always wins over a
- * delayed invalid_grant. Returns false when the response was obsolete.
+ * C2A-01 fence: a refused refresh token invalidates the connection only if this attempt still owns
+ * the refresh: the credentials hold the version it read AND its exact lease id. The conditional
+ * UPDATE locks the credential row and re-checks both after any concurrent writer committed, and the
+ * status change happens in the same transaction. So neither a replacement refresh that already
+ * stored new credentials (new version) nor one that has only taken over the lease (new lease id) can
+ * be disrupted by a delayed invalid_grant. Returns false when the response was obsolete.
+ *
+ * An expired lease that nobody has taken over still authorises its holder (§7.3): the lease id is
+ * replaced on takeover, so an unchanged id proves no other attempt started.
  */
-export async function invalidateIfCurrent(db: AppTenantDb, connectionId: string, version: string, provider: string): Promise<boolean> {
+export async function invalidateIfCurrent(db: AppTenantDb, connectionId: string, version: string, lease: string, provider: string): Promise<boolean> {
   const current = await db.$queryRaw<{ connection_id: string }[]>`
     UPDATE "mail_connection_credentials" SET "refresh_lease_id" = NULL, "refresh_lease_until" = NULL, "updated_at" = now()
-     WHERE "connection_id" = ${connectionId}::uuid AND "credential_version" = ${version}::uuid
+     WHERE "connection_id" = ${connectionId}::uuid AND "credential_version" = ${version}::uuid AND "refresh_lease_id" = ${lease}::uuid
     RETURNING "connection_id"::text`;
   if (current.length !== 1) return false;
   await markReauthRequired(db, connectionId, provider, 'reauth_required');
@@ -143,9 +147,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * A valid access token for an ACTIVE connection (§7.3). Refresh is single-flight across processes:
  * one caller takes a short lease (database time) and refreshes over the network with no transaction
- * open. Every outcome is fenced by the credential version the refresh read, not by the lease: new
- * tokens are stored, and an invalid_grant invalidates the connection, only if no other refresh has
- * replaced the credentials meanwhile (an expired lease may have been taken over). Others wait briefly.
+ * open. Every outcome is fenced by the credential version the refresh read AND its exact lease id:
+ * new tokens are stored, and an invalid_grant invalidates the connection, only if no other attempt
+ * has replaced the credentials or taken over the lease meanwhile. Others wait briefly.
  */
 export async function obtainAccessToken(
   run: TenantRun,
@@ -167,8 +171,8 @@ export async function obtainAccessToken(
       tokens = await adapter.refresh(s.refreshToken);
     } catch (error) {
       if (error instanceof ProviderError && error.code === 'invalid_grant') {
-        const current = await run((db) => invalidateIfCurrent(db, connectionId, s.version, s.connection.provider), { system: true });
-        // Obsolete: another refresh already replaced the token this one used. Not a revocation.
+        const current = await run((db) => invalidateIfCurrent(db, connectionId, s.version, s.lease, s.connection.provider), { system: true });
+        // Obsolete: another attempt replaced the credentials or took over the lease. Not a revocation.
         if (!current) throw new ProviderError('busy');
       } else {
         await run((db) => db.mailConnectionCredential.updateMany({ where: { connectionId, refreshLeaseId: s.lease }, data: { refreshLeaseId: null, refreshLeaseUntil: null } }));
@@ -178,8 +182,9 @@ export async function obtainAccessToken(
     const b = credentialBox();
     const { businessId, id } = s.connection;
     const stored = await run((db) => db.mailConnectionCredential.updateMany({
-      // Fenced by version: lost if another refresh, a reconnect or a disconnect replaced the row.
-      where: { connectionId, credentialVersion: s.version },
+      // Fenced by version and lease: lost if another refresh, a reconnect or a disconnect replaced
+      // the credentials, or another attempt took over the lease (even before it wrote anything).
+      where: { connectionId, credentialVersion: s.version, refreshLeaseId: s.lease },
       data: {
         keyId: b.activeKeyId,
         credentialVersion: randomUUID(),

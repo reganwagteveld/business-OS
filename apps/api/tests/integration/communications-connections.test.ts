@@ -581,7 +581,7 @@ describe('credential refresh, revocation and reconnection', () => {
     expect(failure.metadata).toEqual({ provider: 'GOOGLE', reason: 'already_connected' });
   });
 
-  describe('C2A-01: refresh outcomes are fenced by the credential version', () => {
+  describe('C2A-01: refresh outcomes are fenced by the credential version and the lease id', () => {
     /** An adapter whose refresh waits for `release` and then answers `outcome`. */
     function delayed(outcome: 'invalid_grant' | 'success') {
       let release!: () => void;
@@ -640,6 +640,54 @@ describe('credential refresh, revocation and reconnection', () => {
       expect(await obtainAccessToken(run, id)).toBe(replacement);
       const sealed = (await admin.query('SELECT refresh_token_enc FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0].refresh_token_enc;
       expect(credentialBox().open(sealed, credentialAad(A.businessId, id, 'refresh'))).not.toBe('rt-obsolete-attempt');
+    });
+
+    // Final C2A-01 re-audit: worker B has taken over the lease but not yet written anything, so the
+    // credential version is still the one worker A read. Only the lease id tells them apart.
+    for (const outcome of ['invalid_grant', 'success'] as const) {
+      it(`an obsolete worker's late ${outcome} cannot disrupt a worker that took over its lease but has not written yet`, async () => {
+        const { owner, id, run } = await expiringConnection();
+        const versionAtStart = (await admin.query('SELECT credential_version::text AS v FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0].v;
+        const workerA = delayed(outcome);
+        const a = obtainAccessToken(run, id, { adapter: workerA.adapter }).catch((e: unknown) => e);
+        await workerA.started;
+        const leaseA = (await admin.query('SELECT refresh_lease_id::text AS l FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0].l;
+        // A's lease expires; B takes a replacement lease against the same credential version.
+        await admin.query("UPDATE mail_connection_credentials SET refresh_lease_until = now() - interval '1 second' WHERE connection_id = $1", [id]);
+        const workerB = delayed('success');
+        const b = obtainAccessToken(run, id, { adapter: workerB.adapter }).catch((e: unknown) => e);
+        await workerB.started;
+        const during = (await admin.query('SELECT credential_version::text AS v, refresh_lease_id::text AS l FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0];
+        expect(during.v).toBe(versionAtStart);
+        expect(during.l).not.toBe(leaseA);
+        // A's late answer arrives first: refused as obsolete, nothing changes.
+        workerA.release();
+        expect(await a).toMatchObject({ code: 'busy' });
+        expect((await admin.query('SELECT credential_version::text AS v, refresh_lease_id::text AS l FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0]).toEqual(during);
+        expect((await api(owner, A.slug).get(id)).body.connection).toMatchObject({ status: 'ACTIVE', lastErrorCode: null });
+        expect(await count("SELECT count(*) AS n FROM audit_events WHERE target_id = $1 AND action = 'communications.system.reauth_required'", [id])).toBe(0);
+        // B then completes normally under its own lease.
+        workerB.release();
+        expect(await b).toBe('at-obsolete-attempt'); // the delayed double's token, stored by B
+        const after = (await admin.query('SELECT credential_version::text AS v, refresh_lease_id FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0];
+        expect(after.v).not.toBe(versionAtStart);
+        expect(after.refresh_lease_id).toBeNull();
+        expect(await obtainAccessToken(run, id)).toBe('at-obsolete-attempt');
+      });
+    }
+
+    it('an expired lease that nobody took over still lets its holder store a successful refresh (documented semantics)', async () => {
+      // Discarding it would lose a rotated Microsoft refresh token; the unchanged lease id proves no
+      // other attempt started, so storing is safe.
+      const { id, run } = await expiringConnection();
+      const slow = delayed('success');
+      const attempt = obtainAccessToken(run, id, { adapter: slow.adapter }).catch((e: unknown) => e);
+      await slow.started;
+      await admin.query("UPDATE mail_connection_credentials SET refresh_lease_until = now() - interval '1 second' WHERE connection_id = $1", [id]);
+      slow.release();
+      expect(await attempt).toBe('at-obsolete-attempt');
+      const sealed = (await admin.query('SELECT refresh_token_enc FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0].refresh_token_enc;
+      expect(credentialBox().open(sealed, credentialAad(A.businessId, id, 'refresh'))).toBe('rt-obsolete-attempt');
     });
 
     it('an invalid_grant for the current credentials still requires reauthorisation (and only once)', async () => {
