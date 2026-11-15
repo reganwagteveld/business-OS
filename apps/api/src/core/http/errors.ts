@@ -23,7 +23,9 @@ export type StateConflictCode =
   | 'duplicate_name' | 'has_payments' | 'expense_not_open' | 'over_payment'
   // People (docs/people-data-model.md §4).
   | 'invalid_transition' | 'has_direct_reports' | 'manager_cycle' | 'in_use' | 'duplicate_employee_number' | 'user_already_linked' | 'terminated'
-  | 'start_date_locked';
+  | 'start_date_locked'
+  // Scheduling S1: the default calendar cannot be archived; cancelled events are read-only.
+  | 'default_calendar' | 'not_scheduled';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

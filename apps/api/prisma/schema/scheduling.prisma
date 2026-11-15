@@ -1,0 +1,80 @@
+// scheduling module (docs/scheduling-s1.md): business calendars and the events on them. Tenant tables:
+// forced RLS, composite (business_id, …) foreign keys, and integrity CHECKs that live in the migration
+// because Prisma cannot express them. No DELETE grant: calendars and events are archived, events are
+// cancelled, and both keep their history.
+
+enum SchedulingEventStatus {
+  SCHEDULED
+  CANCELLED
+}
+
+/// A business calendar. Industry independent (a salon's chairs, a clinic's rooms, a team's diary are all
+/// calendars). Shared by everyone in the business who holds scheduling:read; private calendars are
+/// deferred. Exactly one active default per business: `default_slot` is 'default' on it and NULL on every
+/// other calendar, and a unique index on (business_id, default_slot) does the rest (the Sales pattern).
+model SchedulingCalendar {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  description String?
+  /// #RRGGBB or NULL (CHECK).
+  colour      String?
+  /// IANA zone the calendar's events are shown in. Validated by the API against the runtime's zone list.
+  timeZone    String    @map("time_zone")
+  /// 'default' on the business's default calendar, NULL elsewhere. Exposed as `isDefault`.
+  defaultSlot String?   @map("default_slot")
+  /// Optimistic concurrency: +1 on every change; an edit must name the version it was based on.
+  version     Int       @default(1)
+  createdById String    @map("created_by_id") @db.Uuid
+  updatedById String    @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  business Business          @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "scheduling_calendars_business_fkey")
+  events   SchedulingEvent[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, defaultSlot])
+  @@index([businessId, archivedAt, name, id])
+  @@map("scheduling_calendars")
+}
+
+/// One scheduled occurrence on one calendar: a half-open interval [start_at, end_at) of UTC instants.
+/// Cancelled events keep their row (status CANCELLED, cancelled_at); archived events keep theirs too.
+/// Only active (not archived), SCHEDULED events with blocks_availability take part in conflict checks.
+model SchedulingEvent {
+  id                 String                @id @db.Uuid
+  businessId         String                @map("business_id") @db.Uuid
+  calendarId         String                @map("calendar_id") @db.Uuid
+  title              String
+  description        String?
+  location           String?
+  startAt            DateTime              @map("start_at") @db.Timestamptz
+  endAt              DateTime              @map("end_at") @db.Timestamptz
+  status             SchedulingEventStatus @default(SCHEDULED)
+  blocksAvailability Boolean               @default(true) @map("blocks_availability")
+  /// The Customer Zone's own customer (no copy). Optional.
+  customerId         String?               @map("customer_id") @db.Uuid
+  /// Set exactly while the status is CANCELLED (CHECK).
+  cancelledAt        DateTime?             @map("cancelled_at") @db.Timestamptz
+  cancelledById      String?               @map("cancelled_by_id") @db.Uuid
+  version            Int                   @default(1)
+  createdById        String                @map("created_by_id") @db.Uuid
+  updatedById        String                @map("updated_by_id") @db.Uuid
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt         DateTime?             @map("archived_at") @db.Timestamptz
+
+  business Business           @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "scheduling_events_business_fkey")
+  calendar SchedulingCalendar @relation(fields: [businessId, calendarId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_calendar_fkey")
+  customer Customer?          @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_customer_fkey")
+
+  @@unique([businessId, id])
+  /// Calendar views and the conflict check: events on one calendar by start (end is bounded by the 31-day maximum duration).
+  @@index([businessId, calendarId, startAt, id])
+  /// Business-wide date ranges.
+  @@index([businessId, startAt, id])
+  @@index([businessId, customerId])
+  @@map("scheduling_events")
+}

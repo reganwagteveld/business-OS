@@ -27,6 +27,10 @@ export const ZONE_PERMISSIONS = {
   // details and history reasons; manage = employees, assignments, lifecycle, user links; configure =
   // departments and locations. Being someone's manager in the reporting line grants none of these.
   people: ['people:read', 'people:read_sensitive', 'people:manage', 'people:configure'],
+  // Scheduling S1 (docs/scheduling-s1.md §5). Calendars are shared by the whole business (no private
+  // calendars yet). create/update/cancel cover events (cancel also archives an event, both keep history);
+  // manage_calendars covers creating, editing, archiving and restoring calendars and choosing the default.
+  scheduling: ['scheduling:read', 'scheduling:create', 'scheduling:update', 'scheduling:cancel', 'scheduling:manage_calendars'],
 } as const;
 
 export type Zone = keyof typeof ZONE_PERMISSIONS;
@@ -45,8 +49,11 @@ const FINANCE_WORK: Permission[] = ['finance:read', 'finance:write', 'finance:ex
 const FINANCE_ALL: Permission[] = [...FINANCE_WORK, 'finance:issue', 'finance:payments', 'finance:manage'];
 /** PD-1 defaults: OWNER and ADMIN administer People; MANAGER sees the directory only; MEMBER has no People access. */
 const PEOPLE_ALL: Permission[] = ['people:read', 'people:read_sensitive', 'people:manage', 'people:configure'];
+/** Everyone in the business works with the schedule; configuring calendars is for whoever runs the work. */
+const SCHEDULING_WORK: Permission[] = ['scheduling:read', 'scheduling:create', 'scheduling:update', 'scheduling:cancel'];
 const DATA: Permission[] = [
   'customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK, 'projects:archive',
+  ...SCHEDULING_WORK, 'scheduling:manage_calendars',
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
@@ -62,6 +69,7 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   // access (FD-P1) and no People access (PD-1).
   MEMBER: new Set<Permission>([
     'business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK,
+    ...SCHEDULING_WORK,
   ]),
 };
 
