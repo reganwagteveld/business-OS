@@ -1,7 +1,7 @@
 import {
   ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse, endpointPath, endpoints,
   ListActivitiesResponse, ListContactsResponse, ListCustomersResponse, UpdateContactRequest,
-  MembersResponse, UpdateCustomerRequest, type Activity, type Contact, type Customer, type CustomerSummary, Member as MemberSchema,
+  MembersResponse, UpdateCustomerRequest, ListConversationsResponse, ListMessagesResponse, type Conversation, type Message, type Activity, type Contact, type Customer, type CustomerSummary, Member as MemberSchema,
 } from '@business-os/contracts';
 import type { z } from 'zod';
 import type { AuthTransport } from './auth';
@@ -14,6 +14,8 @@ export const MAX_CONTACT_PAGES = 50;
 export type RecordStatus = 'active' | 'archived' | 'all';
 export interface CustomerPage { customers: Customer[]; nextCursor: string | null }
 export interface ActivityPage { activities: Activity[]; nextCursor: string | null }
+export interface ConversationPage { conversations: Conversation[]; nextCursor: string | null }
+export interface MessagePage { messages: Message[]; nextCursor: string | null }
 export type Member = z.infer<typeof MemberSchema>;
 export type CustomerInput = z.input<typeof CreateCustomerRequest>;
 export type CustomerPatch = z.input<typeof UpdateCustomerRequest>;
@@ -37,7 +39,12 @@ export interface CustomersClient {
   restoreContact(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Contact>>;
   /** Logs a note, call, meeting or email. The server attributes it to the signed-in person. */
   createActivity(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Activity>>;
-  activities(slug: string, customerId: string, cursor?: string, signal?: AbortSignal): Promise<Outcome<ActivityPage>>;
+  /** One customer's timeline, newest first; `types` narrows it to some activity types. */
+  activities(slug: string, customerId: string, cursor?: string, signal?: AbortSignal, types?: string[]): Promise<Outcome<ActivityPage>>;
+  /** Conversations recorded for one customer (history from outside Business OS), newest first. */
+  conversations(slug: string, customerId: string, cursor?: string, signal?: AbortSignal): Promise<Outcome<ConversationPage>>;
+  /** One conversation's recorded messages, oldest first. Read-only. */
+  messages(slug: string, conversationId: string, cursor?: string, signal?: AbortSignal): Promise<Outcome<MessagePage>>;
   /** Active members, for the optional customer owner. */
   members(slug: string, signal?: AbortSignal): Promise<Outcome<Member[]>>;
 }
@@ -147,9 +154,17 @@ export function createCustomersClient(baseUrl: string, transport: AuthTransport,
       if (!checked.success) return invalid(checked.error);
       return settle(await http.request('POST', path(endpoints.createActivity.path, { slug }), checked.data, signal), ActivityResponse, (d) => d.activity);
     },
-    async activities(slug, customerId, cursor, signal) {
-      const raw = await http.request('GET', path(endpoints.listActivities.path, { slug }) + qs({ customerId, cursor, limit: 25 }), undefined, signal);
+    async activities(slug, customerId, cursor, signal, types) {
+      const raw = await http.request('GET', path(endpoints.listActivities.path, { slug }) + qs({ customerId, cursor, limit: 25, types: types?.join(',') }), undefined, signal);
       return settle(raw, ListActivitiesResponse, (d) => d);
+    },
+    async conversations(slug, customerId, cursor, signal) {
+      const raw = await http.request('GET', path(endpoints.listConversations.path, { slug }) + qs({ customerId, cursor, limit: 25 }), undefined, signal);
+      return settle(raw, ListConversationsResponse, (d) => d);
+    },
+    async messages(slug, conversationId, cursor, signal) {
+      const raw = await http.request('GET', path(endpoints.listMessages.path, { slug, conversationId }) + qs({ cursor, limit: 50 }), undefined, signal);
+      return settle(raw, ListMessagesResponse, (d) => d);
     },
     async members(slug, signal) {
       const raw = await http.request('GET', path(endpoints.listMembers.path, { slug }), undefined, signal);

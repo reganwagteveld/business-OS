@@ -1,0 +1,34 @@
+import 'server-only';
+// Helpers for the activity and communications routes (docs/communications-c1.md §4–5).
+import { RecordNotFoundError } from '@/core/http/errors';
+import { authorize, can } from '@/modules/access';
+import type { ActivityViewer } from '@/modules/activity';
+import type { Actor } from '@/modules/tenancy';
+import { isUuid } from './routes';
+
+/** A malformed id answers exactly like a missing one (404). */
+export const idOf = (name: string) => (params: Record<string, string>): string => {
+  const value = params[name];
+  if (!isUuid(value)) throw new RecordNotFoundError();
+  return value;
+};
+export const activityIdOf = idOf('activityId');
+export const conversationIdOf = idOf('conversationId');
+
+/**
+ * The reader of a timeline, from the verified actor only. Timeline entries name customers and
+ * contacts, so reading them also needs customers:read (related-record permission).
+ */
+export function activityViewer(actor: Actor): ActivityViewer {
+  authorize(actor, 'customers:read');
+  return {
+    userId: actor.userId,
+    canReadRestricted: can(actor, 'activity:read_restricted'),
+    canReadMessages: can(actor, 'communications:read'),
+  };
+}
+
+/** Conversations name customers and contacts too. */
+export function requireCustomerRead(actor: Actor): void {
+  authorize(actor, 'customers:read');
+}

@@ -1,0 +1,81 @@
+// communications module (docs/communications-c1.md §2). Historical conversations and messages
+// recorded or imported into Business OS. Nothing here was sent by Business OS: there is no provider,
+// no delivery state and no "sent by Business OS" source. Value sets are CHECK constraints (free text
+// plus zod, data-model §2), immutability and partial unique indexes live in the migration.
+
+model Conversation {
+  id               String    @db.Uuid
+  businessId       String    @map("business_id") @db.Uuid
+  channel          String
+  subject          String?
+  customerId       String?   @map("customer_id") @db.Uuid
+  contactId        String?   @map("contact_id") @db.Uuid
+  source           String    @default("MANUAL")
+  externalSource   String?   @map("external_source")
+  externalThreadId String?   @map("external_thread_id")
+  createdById      String    @map("created_by_id") @db.Uuid
+  lastMessageAt    DateTime? @map("last_message_at") @db.Timestamptz
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "conversations_business_fkey")
+  customer   Customer?  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "conversations_customer_fkey")
+  contact    Contact?   @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "conversations_contact_fkey")
+  messages   Message[]
+  activities Activity[]
+
+  @@id([businessId, id])
+  @@index([businessId, customerId, createdAt(sort: Desc), id])
+  @@index([businessId, contactId, createdAt(sort: Desc), id])
+  @@index([businessId, createdAt(sort: Desc), id])
+  @@map("conversations")
+}
+
+/// Immutable once written (trigger messages_immutable, no UPDATE/DELETE grant).
+model Message {
+  id                String   @db.Uuid
+  businessId        String   @map("business_id") @db.Uuid
+  conversationId    String   @map("conversation_id") @db.Uuid
+  direction         String
+  source            String
+  occurredAt        DateTime @map("occurred_at") @db.Timestamptz
+  recordedAt        DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+  recordedById      String   @map("recorded_by_id") @db.Uuid
+  subject           String?
+  body              String?
+  externalSource    String?  @map("external_source")
+  externalMessageId String?  @map("external_message_id")
+  contentHash       String   @map("content_hash") @db.Char(64)
+
+  business     Business             @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "messages_business_fkey")
+  conversation Conversation         @relation(fields: [businessId, conversationId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "messages_conversation_fkey")
+  participants MessageParticipant[]
+  activities   Activity[]
+
+  @@id([businessId, id])
+  @@unique([businessId, conversationId, id], map: "messages_conversation_link_key")
+  @@index([businessId, conversationId, occurredAt, id])
+  @@map("messages")
+}
+
+/// Immutable once written. Sender and recipients of one message, in order per role.
+model MessageParticipant {
+  id          String  @db.Uuid
+  businessId  String  @map("business_id") @db.Uuid
+  messageId   String  @map("message_id") @db.Uuid
+  role        String
+  position    Int     @db.SmallInt
+  displayName String? @map("display_name")
+  address     String?
+  contactId   String? @map("contact_id") @db.Uuid
+  userId      String? @map("user_id") @db.Uuid
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "message_participants_business_fkey")
+  message  Message  @relation(fields: [businessId, messageId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "message_participants_message_fkey")
+  contact  Contact? @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "message_participants_contact_fkey")
+
+  @@id([businessId, id])
+  @@unique([businessId, messageId, role, position])
+  @@index([businessId, contactId])
+  @@map("message_participants")
+}

@@ -31,6 +31,7 @@ export function CustomerZone({ client, context, userLabel, projects, finance, in
   const { slug, name, timeZone, locale } = context.business;
   const canWrite = context.membership.permissions.includes('customers:write');
   const canLogActivity = context.membership.permissions.includes('activity:write');
+  const canReadMessages = context.membership.permissions.includes('communications:read');
   const [view, setView] = useState<View>(initialCustomerId ? { name: 'detail', id: initialCustomerId } : initialAction === 'new' && canWrite ? { name: 'new' } : { name: 'list' });
   const [query, setQuery] = useState<DirectoryQuery>({ q: '', status: 'active' });
   const [notice, setNotice] = useState<string | null>(null);
@@ -80,7 +81,7 @@ export function CustomerZone({ client, context, userLabel, projects, finance, in
         ) : null}
         {view.name === 'detail' ? (
           <CustomerDetail
-            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} projects={projects} finance={finance}
+            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages} projects={projects} finance={finance}
             onBack={() => leave(() => go({ name: 'list' }))} onEdit={(customer) => go({ name: 'edit', customer })}
             onDraftChange={markDraft} confirmDiscard={leave} onSessionEnded={onSessionEnded}
           />

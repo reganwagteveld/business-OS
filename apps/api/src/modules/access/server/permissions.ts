@@ -10,7 +10,9 @@ export const ZONE_PERMISSIONS = {
   members: ['members:read', 'members:invite', 'members:manage'],
   audit: ['audit:read'],
   customers: ['customers:read', 'customers:write', 'customers:delete'],
-  activity: ['activity:read', 'activity:write'],
+  // read_restricted: see RESTRICTED notes written by others (docs/communications-c1.md §4). Authors
+  // always see their own; editing and removing are author-only under activity:write.
+  activity: ['activity:read', 'activity:write', 'activity:read_restricted'],
   // sales:write covers opportunities (create, edit, move stage, win/lose/reopen, archive/restore);
   // sales:manage covers pipeline configuration, a business setting (docs/sales-data-model.md §5).
   sales: ['sales:read', 'sales:write', 'sales:manage'],
@@ -31,6 +33,8 @@ export const ZONE_PERMISSIONS = {
   // calendars yet). create/update/cancel cover events (cancel also archives an event, both keep history);
   // manage_calendars covers creating, editing, archiving and restoring calendars and choosing the default.
   scheduling: ['scheduling:read', 'scheduling:create', 'scheduling:update', 'scheduling:cancel', 'scheduling:manage_calendars'],
+  // Communications C1: conversations and recorded/imported historical messages. Nothing is sent.
+  communications: ['communications:read', 'communications:record'],
 } as const;
 
 export type Zone = keyof typeof ZONE_PERMISSIONS;
@@ -51,9 +55,12 @@ const FINANCE_ALL: Permission[] = [...FINANCE_WORK, 'finance:issue', 'finance:pa
 const PEOPLE_ALL: Permission[] = ['people:read', 'people:read_sensitive', 'people:manage', 'people:configure'];
 /** Everyone in the business works with the schedule; configuring calendars is for whoever runs the work. */
 const SCHEDULING_WORK: Permission[] = ['scheduling:read', 'scheduling:create', 'scheduling:update', 'scheduling:cancel'];
+/** C1 defaults: every role reads and records message history; restricted notes are OWNER/ADMIN (plus the author). */
+const COMMUNICATIONS: Permission[] = ['communications:read', 'communications:record'];
 const DATA: Permission[] = [
   'customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK, 'projects:archive',
   ...SCHEDULING_WORK, 'scheduling:manage_calendars',
+  ...COMMUNICATIONS,
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
@@ -61,7 +68,7 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   // (archive) the business or, later, manage billing.
   OWNER: new Set(ALL_PERMISSIONS),
   // Manages members below owner and the business settings; full data access.
-  ADMIN: new Set<Permission>(['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read', 'sales:manage', ...DATA, ...FINANCE_ALL, ...PEOPLE_ALL]),
+  ADMIN: new Set<Permission>(['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read', 'sales:manage', ...DATA, ...FINANCE_ALL, ...PEOPLE_ALL, 'activity:read_restricted']),
   // Runs day-to-day work; can invite and manage MEMBERs only; no settings or audit log.
   MANAGER: new Set<Permission>(['business:read', 'members:read', 'members:invite', 'members:manage', ...DATA, ...FINANCE_WORK, 'people:read']),
   // Reads and writes business data; no member or settings management. Works on projects and their
@@ -70,6 +77,7 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   MEMBER: new Set<Permission>([
     'business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK,
     ...SCHEDULING_WORK,
+    ...COMMUNICATIONS,
   ]),
 };
 

@@ -1,4 +1,4 @@
-import type { Activity, Customer } from '@business-os/contracts';
+import type { Customer } from '@business-os/contracts';
 import { useRef, useState, type ReactNode } from 'react';
 import type { CustomersClient } from '../../api/customers';
 import type { ProjectsClient } from '../../api/projects';
@@ -7,11 +7,13 @@ import { Problem, Skeleton } from '../problem';
 import { useDialog } from '../dialog';
 import { useLoad } from '../use-load';
 import { KindBadge, StatusBadge } from './directory';
-import { activityTitle, addressLines, formatWhen, isSystemActivity } from './format';
-import { CallIcon, EmailIcon, MeetingIcon, NoteIcon } from './icons';
+import { addressLines, formatWhen } from './format';
 import { Breakable, linkClass, safeHref, telHref } from './links';
 import { ManageContacts } from './manage-contacts';
 import { ActivityComposer } from './activity-composer';
+import { ActivityTimeline } from '../activity/activity-timeline';
+import { ConversationHistory } from '../activity/conversation-history';
+import { NoteComposer } from '../activity/note-composer';
 import { CustomerProjects } from '../projects/customer-projects';
 import { CustomerFinance } from '../finance/customer-finance';
 import type { FinanceClient } from '../../api/finance';
@@ -42,8 +44,10 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  * One customer's workspace. Everything shown is a real record from the API; contacts and activity
  * are managed through the existing tenant-scoped API. Archive asks first and restore is one click.
  */
-export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, projects, finance, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
+export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, canReadMessages = false, projects, finance, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
   client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
+  /** communications:read: show the conversation history panel. */
+  canReadMessages?: boolean;
   /** The customer's projects, shown only to people who may read projects (the server checks again). */
   projects?: ProjectsLink;
   /** The customer's finance, shown only to people who may read finance (the server checks again). */
@@ -75,7 +79,7 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, c
         // place instead of remounting it, so open drafts below are never thrown away.
         <Loaded
           key={shown.id}
-          customer={shown} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity}
+          customer={shown} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages}
           names={names} projects={projects} finance={finance} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
         />
       ) : null}
@@ -87,8 +91,8 @@ export interface ProjectsLink { client: ProjectsClient; onOpen: (projectId: stri
 /** The customer's finance panel, passed only to people who hold finance:read. `onOpen` takes `invoice:<id>`, `quote:<id>` or `payment:<id>`. */
 export interface FinanceLink { client: FinanceClient; onOpen: (target: string) => void }
 
-function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, names, projects, finance, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
-  customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
+function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, canReadMessages, names, projects, finance, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
+  customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean; canReadMessages: boolean;
   names: Map<string, string> | null; projects?: ProjectsLink; finance?: FinanceLink; onEdit: (c: Customer) => void; onChanged: () => void;
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
@@ -181,6 +185,11 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActi
         </div>
         <div className="lg:col-span-2 lg:row-start-3">
           <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} canWrite={canLogActivity && !archived} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
+          {canReadMessages ? (
+            <div className="mt-5">
+              <ConversationsPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} onSessionEnded={onSessionEnded} />
+            </div>
+          ) : null}
         </div>
         <div className="space-y-5 self-start lg:col-start-3 lg:row-start-3">
           {projects ? (
@@ -200,68 +209,31 @@ function ActivityPanel({ customerId, client, slug, locale, timeZone, names, canW
   customerId: string; client: CustomersClient; slug: string; locale?: string; timeZone: string; names: Map<string, string> | null; canWrite: boolean;
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
-  const [stack, setStack] = useState<string[]>([]);
-  const cursor = stack[stack.length - 1];
-  const { state, reload } = useLoad(`activity|${slug}|${customerId}|${cursor ?? ''}`, (signal) => client.activities(slug, customerId, cursor, signal));
+  const [refresh, setRefresh] = useState(0);
+  const saved = () => setRefresh((n) => n + 1);
   return (
     <Panel title="Activity">
-      {canWrite ? <ActivityComposer client={client} slug={slug} customerId={customerId} onSaved={() => { setStack([]); reload(); }} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} /> : null}
-      {state.status === 'loading' ? <Skeleton rows={3} label="Loading activity…" /> : null}
-      {state.status === 'done' && state.outcome.kind !== 'ok' ? <Problem outcome={state.outcome} what="Activity" onRetry={reload} onSessionEnded={onSessionEnded} /> : null}
-      {state.status === 'done' && state.outcome.kind === 'ok' ? (
-        <>
-          {state.outcome.data.activities.length === 0 ? <p className="text-sm text-muted-foreground">No activity yet.</p> : (
-            <ol className="space-y-3.5">
-              {state.outcome.data.activities.map((a) => <ActivityItem key={a.id} a={a} locale={locale} timeZone={timeZone} who={a.actorUserId ? (names ? names.get(a.actorUserId) ?? 'A team member' : null) : 'System'} />)}
-            </ol>
-          )}
-          {stack.length > 0 || state.outcome.data.nextCursor ? (
-            <nav aria-label="Activity pages" className="mt-5 flex justify-between border-t border-border pt-4">
-              <button type="button" className={secondaryClass} disabled={stack.length === 0} onClick={() => setStack(stack.slice(0, -1))}>Newer</button>
-              <button type="button" className={secondaryClass} disabled={!state.outcome.data.nextCursor} onClick={() => state.outcome.kind === 'ok' && state.outcome.data.nextCursor && setStack([...stack, state.outcome.data.nextCursor])}>Older</button>
-            </nav>
-          ) : null}
-        </>
+      {canWrite ? (
+        <div className="mb-5 space-y-3">
+          <NoteComposer client={client} slug={slug} customerId={customerId} onSaved={saved} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
+          <ActivityComposer client={client} slug={slug} customerId={customerId} onSaved={saved} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
+        </div>
       ) : null}
+      <ActivityTimeline load={(cursor, types, signal) => client.activities(slug, customerId, cursor, signal, types)} loadKey={`${slug}|${customerId}`} refreshKey={refresh}
+        names={names} locale={locale} timeZone={timeZone} onSessionEnded={onSessionEnded}
+        emptyHint="Notes, logged calls, meetings and emails, recorded messages and changes to this customer appear here." />
     </Panel>
   );
 }
 
-const USER_KIND: Record<string, { label: string; Icon: () => React.JSX.Element }> = {
-  note: { label: 'Note', Icon: NoteIcon },
-  call: { label: 'Call', Icon: CallIcon },
-  meeting: { label: 'Meeting', Icon: MeetingIcon },
-  email: { label: 'Email', Icon: EmailIcon },
-};
-
-/**
- * Things people logged (notes, calls, meetings, emails) get an icon and normal weight. Automated
- * changes are smaller and quieter, with no icon, so the human history reads first. Both keep who and when.
- */
-function ActivityItem({ a, who, locale, timeZone }: { a: Activity; who: string | null; locale?: string; timeZone: string }) {
-  const meta = (
-    <p className="mt-0.5 text-xs text-muted-foreground">{who ? `${who} · ` : ''}<time dateTime={a.occurredAt}>{formatWhen(a.occurredAt, timeZone, locale)}</time></p>
-  );
-  if (isSystemActivity(a)) {
-    return (
-      <li data-kind="system" className="flex gap-3 pl-1.5">
-        <span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-border" />
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{activityTitle(a)}</p>
-          {meta}
-        </div>
-      </li>
-    );
-  }
-  const kind = USER_KIND[a.type] ?? USER_KIND.note!;
+function ConversationsPanel({ customerId, client, slug, locale, timeZone, names, onSessionEnded }: {
+  customerId: string; client: CustomersClient; slug: string; locale?: string; timeZone: string; names: Map<string, string> | null; onSessionEnded: () => void;
+}) {
   return (
-    <li data-kind="user" className="flex gap-3">
-      <span role="img" aria-label={kind.label} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-foreground"><kind.Icon /></span>
-      <div className="min-w-0">
-        <p className="text-sm font-medium [overflow-wrap:anywhere]">{activityTitle(a)}</p>
-        {a.body ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground [overflow-wrap:anywhere]">{a.body}</p> : null}
-        {meta}
-      </div>
-    </li>
+    <Panel title="Conversations">
+      <ConversationHistory loadConversations={(cursor, signal) => client.conversations(slug, customerId, cursor, signal)}
+        loadMessages={(conversationId, cursor, signal) => client.messages(slug, conversationId, cursor, signal)}
+        loadKey={`${slug}|${customerId}`} names={names} locale={locale} timeZone={timeZone} onSessionEnded={onSessionEnded} />
+    </Panel>
   );
 }

@@ -3,11 +3,14 @@
  * (paths, query, status codes, strict bodies) and keeps each business's records apart. The app's real
  * client and contract schemas sit in front of it, so a response that breaks the contract fails the test.
  */
-import { CreateActivityRequest, CreateContactRequest, UpdateContactRequest, CreateCustomerRequest, UpdateCustomerRequest, type Activity, type Contact, type Customer } from '@business-os/contracts';
+import {
+  CreateActivityRequest, CreateContactRequest, UpdateContactRequest, CreateCustomerRequest, UpdateCustomerRequest, type Activity, type Contact, type Conversation, type Customer,
+  type Message,
+} from '@business-os/contracts';
 import { randomUUID } from 'node:crypto';
 
 export interface FakeMember { id: string; userId: string; name: string | null; role: 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER'; status: 'ACTIVE' | 'SUSPENDED'; createdAt: string }
-export interface FakeBusiness { customers: Customer[]; contacts: Contact[]; activities: Activity[]; members: FakeMember[] }
+export interface FakeBusiness { customers: Customer[]; contacts: Contact[]; activities: Activity[]; members: FakeMember[]; conversations?: Conversation[]; messages?: Message[] }
 export interface Call { method: string; slug: string; path: string; query: Record<string, string>; body: unknown; headers: Record<string, string> }
 type Interceptor = (call: Call) => Response | Promise<Response> | 'network' | undefined;
 
@@ -29,7 +32,17 @@ export function contact(customerId: string | null, over: Partial<Contact> = {}):
 }
 export function activity(customerId: string | null, over: Partial<Activity> = {}): Activity {
   return {
-    id: uuid(), type: 'note', occurredAt: NOW, actorType: 'USER', actorUserId: null, customerId, contactId: null, subject: null, body: null, data: {}, createdAt: NOW, ...over,
+    id: uuid(), type: 'note', occurredAt: NOW, actorType: 'USER', actorUserId: null, customerId, contactId: null, subject: null, body: null, data: {}, createdAt: NOW,
+    visibility: 'STANDARD', editedAt: null, conversationId: null, messageId: null, ...over,
+  };
+}
+export function conversation(customerId: string | null, over: Partial<Conversation> = {}): Conversation {
+  return { id: uuid(), channel: 'EMAIL', subject: null, customerId, contactId: null, source: 'MANUAL', createdById: uuid(), lastMessageAt: null, createdAt: NOW, ...over };
+}
+export function message(conversationId: string, over: Partial<Message> = {}): Message {
+  return {
+    id: uuid(), conversationId, direction: 'INBOUND', source: 'MANUAL', occurredAt: NOW, recordedAt: NOW, recordedById: uuid(), subject: null, body: null,
+    externalSource: null, externalMessageId: null, participants: [], ...over,
   };
 }
 export const emptyBusiness = (): FakeBusiness => ({ customers: [], contacts: [], activities: [], members: [] });
@@ -95,6 +108,20 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
         if (answered === 'network') throw new TypeError('Failed to fetch');
         if (answered) return answered;
       }
+      // Communications C1: conversation lists and their messages (read-only in this fake).
+      const conv = /^\/api\/v1\/b\/([^/]+)\/conversations(?:\/([^/]+)\/messages)?$/.exec(url.pathname);
+      if (conv && method === 'GET') {
+        const cbiz = businesses[conv[1]!];
+        if (!cbiz) return json(404, { error: 'not_found' });
+        if (conv[2]) {
+          if (!(cbiz.conversations ?? []).some((c) => c.id === conv[2])) return json(404, { error: 'not_found' });
+          const rows = (cbiz.messages ?? []).filter((m) => m.conversationId === conv[2]).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
+          return json(200, { messages: rows, nextCursor: null });
+        }
+        const q = call.query;
+        const rows = (cbiz.conversations ?? []).filter((c) => !q.customerId || c.customerId === q.customerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        return json(200, { conversations: rows, nextCursor: null });
+      }
       if (!match) return json(404, { error: 'not_found' });
       const biz = businesses[match[1]!];
       if (!biz) return json(404, { error: 'not_found' }); // not a member of this business
@@ -121,7 +148,8 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
 
       if (resource === 'activities' && method === 'GET') {
         const q = call.query;
-        const rows = biz.activities.filter((a) => !q.customerId || a.customerId === q.customerId).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+        const types = q.types ? q.types.split(',') : null;
+        const rows = biz.activities.filter((a) => (!q.customerId || a.customerId === q.customerId) && (!types || types.includes(a.type))).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
         const start = offsetOf(q.cursor);
         const limit = Number(q.limit ?? 25);
         return json(200, { activities: rows.slice(start, start + limit), nextCursor: start + limit < rows.length ? cursorOf(start + limit) : null });
@@ -182,7 +210,9 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
         if (parsed.data.occurredAt && new Date(parsed.data.occurredAt).getTime() > Date.now() + 366 * 86_400_000) {
           return json(400, { error: 'invalid_date', message: 'The date is too far in the future.' });
         }
-        const row = activity(parsed.data.customerId ?? null, { ...parsed.data, id: uuid(), occurredAt: parsed.data.occurredAt ?? now, createdAt: now } as Activity);
+        const { direction, channel, visibility, ...fields } = parsed.data;
+        const data = { ...(channel ? { channel } : {}), ...(direction ? { direction } : {}) };
+        const row = activity(parsed.data.customerId ?? null, { ...fields, data, visibility: visibility ?? 'STANDARD', id: uuid(), occurredAt: parsed.data.occurredAt ?? now, createdAt: now } as Activity);
         biz.activities.push(row);
         return json(201, { activity: row });
       }
