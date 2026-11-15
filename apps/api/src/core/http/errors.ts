@@ -25,7 +25,9 @@ export type StateConflictCode =
   | 'invalid_transition' | 'has_direct_reports' | 'manager_cycle' | 'in_use' | 'duplicate_employee_number' | 'user_already_linked' | 'terminated'
   | 'start_date_locked'
   // Scheduling S1: the default calendar cannot be archived; cancelled events are read-only.
-  | 'default_calendar' | 'not_scheduled';
+  | 'default_calendar' | 'not_scheduled'
+  // Finance F5 (docs/finance-documents-f5.md §7): generated documents.
+  | 'not_eligible' | 'not_draft' | 'no_original' | 'version_limit' | 'document_too_large' | 'branding_logo_invalid';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {
@@ -33,6 +35,18 @@ export class StateConflictError extends Error {
   constructor(readonly code: StateConflictCode) {
     super(code);
     this.name = 'StateConflictError';
+  }
+}
+
+/**
+ * The server could not complete the request and nothing was changed (Finance F5): `generation_failed`
+ * (503, safe to retry) when a document could not be rendered, `integrity_error` (500) when stored bytes
+ * no longer match their recorded checksum. No detail is returned.
+ */
+export class ServiceFailureError extends Error {
+  constructor(readonly status: 500 | 503, readonly code: 'generation_failed' | 'integrity_error') {
+    super(code);
+    this.name = 'ServiceFailureError';
   }
 }
 

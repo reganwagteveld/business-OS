@@ -6,7 +6,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
-import { authEndpoints, endpoints } from '../../packages/contracts/src/index';
+import { authEndpoints, endpoints, fileEndpoints } from '../../packages/contracts/src/index';
 import { apiOrigin, generatedConfig } from '../../apps/desktop/scripts/tauri-config.mjs';
 
 const ROOT = resolve(__dirname, '../..');
@@ -101,7 +101,7 @@ describe('Tauri desktop shell', () => {
 });
 
 describe('API contracts', () => {
-  it.each(Object.entries(endpoints))('%s is implemented by an API route handler', (_name, endpoint) => {
+  it.each(Object.entries({ ...endpoints, ...fileEndpoints }))('%s is implemented by an API route handler', (_name, endpoint) => {
     const file = resolve(ROOT, 'apps/api/src/app', `.${endpoint.path.replace(/:([A-Za-z]+)/g, '[$1]')}`, 'route.ts');
     expect(existsSync(file), `${file} should exist`).toBe(true);
     expect(read(file.slice(ROOT.length + 1))).toMatch(new RegExp(`export (async )?(function|const) ${endpoint.method}\\b`));

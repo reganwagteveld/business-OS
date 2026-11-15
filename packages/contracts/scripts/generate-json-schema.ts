@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { authEndpoints, endpoints } from '../src/index.ts';
+import { authEndpoints, endpoints, fileEndpoints } from '../src/index.ts';
 
 const out = fileURLToPath(new URL('../schema/api-v1.json', import.meta.url));
 const doc = {
@@ -20,6 +20,7 @@ const doc = {
       },
     ]),
   ),
+  fileEndpoints,
   authEndpoints: Object.fromEntries(
     Object.entries(authEndpoints).map(([name, e]) => [
       name,
