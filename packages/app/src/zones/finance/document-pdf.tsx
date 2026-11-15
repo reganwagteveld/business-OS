@@ -3,12 +3,13 @@ import {
   Alert, AlertDescription, Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle, Field,
   Select, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Textarea,
 } from '@business-os/ui';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DocumentPdfVersion, FetchedFile, PdfVersionList } from '../../api/finance';
 import type { Outcome } from '../../api/tenancy';
 import { useLoad } from '../use-load';
 import { useFinance } from './env';
 import { formatWhen } from './format';
+import type { RenderedPdf } from './pdf-render';
 import { describeFailure, KIND_LABEL, LoadingRows, useSubmit } from './shared';
 
 // Finance F5 (docs/finance-documents-f5.md §8): the PDF of a quote or invoice. A draft has a watermarked
@@ -44,10 +45,10 @@ const revoke = (url: string | null) => {
 };
 
 /**
- * Points an element (an iframe or img) at a local blob URL, and releases the URL when the bytes change or
+ * Points an img at a local blob URL, and releases the URL when the bytes change or
  * the element goes away. The URL is set on the element directly, so a remount (Strict Mode) gets a fresh one.
  */
-export function useBlobSource<E extends HTMLIFrameElement | HTMLImageElement>(blob: Blob | null) {
+export function useBlobSource<E extends HTMLImageElement>(blob: Blob | null) {
   const ref = useRef<E | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -265,47 +266,142 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Shows a PDF in a sandboxed frame from a local blob URL. The URL is released when the viewer closes. */
+/** True inside the Tauri desktop app, whose web view does not open new browser tabs. */
+const inDesktopShell = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+/**
+ * Opens the bytes already on screen in a new browser tab, where the browser's own PDF viewer can show,
+ * print or save them. Nothing is fetched again, so this is the same view the preview already recorded.
+ */
+function openInNewTab(blob: Blob) {
+  const url = objectUrl(blob);
+  if (!url) return;
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  document.body.append(a);
+  a.click();
+  a.remove();
+  // The new tab reads the blob as it opens; release it once that has had ample time.
+  setTimeout(() => revoke(url), 60_000);
+}
+
+/**
+ * Shows a PDF in a dialog by drawing its pages with PDF.js (see pdf-render.ts), never with the browser's
+ * built-in viewer in a frame, which stayed blank in Safari. If the pages cannot be drawn, the dialog says
+ * so and offers to open the PDF in a new tab or download it, rather than leaving an empty panel.
+ */
 function PdfViewer({ title, fileName, load, onDownload, onClose }: {
   title: string; fileName: string | null; load: (signal: AbortSignal) => Promise<Outcome<FetchedFile>>; onDownload?: () => void; onClose: () => void;
 }) {
   const env = useFinance();
   const state = useLoad(`pdfview|${title}`, load);
   const file = state.state.status === 'done' && state.state.outcome.kind === 'ok' ? state.state.outcome.data : null;
-  const frame = useBlobSource<HTMLIFrameElement>(file?.blob ?? null);
-  const canShow = typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function';
   const failed = state.state.status === 'done' && state.state.outcome.kind !== 'ok' ? state.state.outcome : null;
+  // The bytes whose pages could not be drawn. New bytes (after Try again) get a fresh attempt.
+  const [undrawable, setUndrawable] = useState<Blob | null>(null);
+  const drawFailed = !!file && undrawable === file.blob;
+  const onDrawFailed = useCallback((blob: Blob) => setUndrawable(blob), []);
   useEffect(() => {
     if (failed?.kind === 'unauthenticated') env.onSessionEnded();
   }, [failed, env]);
+  const canOpenTab = !!file && !inDesktopShell() && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function';
   return (
     <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
       <DialogContent className="flex h-[min(90vh,60rem)] max-w-4xl flex-col">
         <DialogTitle>{title}</DialogTitle>
         <DialogDescription>{fileName ?? 'Draft preview. It is marked DRAFT and is not kept.'}</DialogDescription>
         {file?.unsupportedCharacters ? <Alert tone="warning" className="mt-3"><AlertDescription>{UNSUPPORTED}</AlertDescription></Alert> : null}
-        <div className="mt-4 min-h-0 flex-1 overflow-hidden rounded-lg border bg-muted">
+        <div className="mt-4 min-h-0 flex-1 overflow-auto rounded-lg border bg-muted">
           {failed ? (
             <div className="p-4">
               <Alert tone="danger" role="alert"><AlertDescription>
                 The PDF could not be shown. {fileFailure(failed)} <button type="button" className="font-medium underline underline-offset-2" onClick={state.reload}>Try again</button>
               </AlertDescription></Alert>
             </div>
-          ) : file && canShow ? (
-            <iframe ref={frame} title={title} className="size-full" />
+          ) : file && drawFailed ? (
+            <div className="p-4">
+              <Alert tone="danger" role="alert"><AlertDescription>
+                The PDF was made, but this {inDesktopShell() ? 'app' : 'browser'} could not show it here.{' '}
+                {canOpenTab && onDownload ? 'Open it in a new tab or download it instead.' : canOpenTab ? 'Open it in a new tab instead.' : onDownload ? 'Download it instead.' : ''}{' '}
+                <button type="button" className="font-medium underline underline-offset-2" onClick={() => setUndrawable(null)}>Try again</button>
+              </AlertDescription></Alert>
+            </div>
           ) : file ? (
-            <p className="p-4 text-sm text-muted-foreground">This device cannot show the PDF here. Download it instead.</p>
+            <PdfPages blob={file.blob} title={title} onFailed={onDrawFailed} />
           ) : (
             <div className="p-4"><LoadingRows label="Preparing the PDF…" rows={3} /></div>
           )}
         </div>
-        {file && canShow ? <p className="mt-2 text-xs text-muted-foreground">If the PDF does not appear, {onDownload ? 'use Download to open it in your PDF viewer' : 'this device cannot show it here'}.</p> : null}
         <DialogFooter>
+          {canOpenTab ? <Button variant="outline" onClick={() => openInNewTab(file.blob)}>Open in new tab</Button> : null}
           {onDownload ? <Button variant="outline" onClick={onDownload}>Download</Button> : null}
           <Button onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** How long drawing may take before the viewer gives up and offers the other ways to open the PDF. */
+const DRAW_TIMEOUT_MS = 20_000;
+
+/** The pages of one PDF, each drawn on its own canvas. Calls onFailed once if any step fails or times out. */
+function PdfPages({ blob, title, onFailed }: { blob: Blob; title: string; onFailed: (blob: Blob) => void }) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const [opened, setOpened] = useState<{ blob: Blob; pageCount: number } | null>(null);
+  const pageCount = opened?.blob === blob ? opened.pageCount : null;
+  useEffect(() => {
+    let live = true;
+    let doc: RenderedPdf | null = null;
+    const fail = () => {
+      if (live) {
+        live = false;
+        onFailed(blob);
+      }
+    };
+    const timer = setTimeout(fail, DRAW_TIMEOUT_MS);
+    void (async () => {
+      try {
+        // PDF.js is large, so it is fetched the first time a preview is opened.
+        const { openPdf } = await import('./pdf-render');
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        doc = await openPdf(bytes);
+        if (!live) return void doc.destroy();
+        if (doc.pageCount < 1) return fail();
+        setOpened({ blob, pageCount: doc.pageCount });
+        // Wait for React to put the canvases in place, then draw them in order.
+        await new Promise((r) => setTimeout(r, 0));
+        // Fit the panel (less its padding), up to the widest a page is shown (max-w-[52rem] below).
+        const width = Math.min(832, Math.max(320, (box.current?.clientWidth ?? 800) - 32));
+        for (let n = 1; n <= doc.pageCount; n++) {
+          const canvas = box.current?.querySelector<HTMLCanvasElement>(`canvas[data-page="${n}"]`);
+          if (!live) return;
+          if (!canvas) return fail();
+          await doc.drawPage(n, canvas, width);
+        }
+        clearTimeout(timer);
+      } catch {
+        fail();
+      }
+    })();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+      void doc?.destroy();
+    };
+  }, [blob, onFailed]);
+  return (
+    <div ref={box} className="flex flex-col items-center gap-4 p-4" aria-busy={pageCount === null}>
+      {pageCount === null ? <div className="w-full"><LoadingRows label="Drawing the PDF…" rows={3} /></div> : null}
+      {Array.from({ length: pageCount ?? 0 }, (_, i) => (
+        <canvas
+          key={i} data-page={i + 1} role="img" aria-label={`${title}, page ${i + 1} of ${pageCount}`}
+          className="h-auto w-full max-w-[52rem] shadow-card"
+        />
+      ))}
+    </div>
   );
 }
 

@@ -253,14 +253,20 @@ Inside the existing quote and invoice screens, without a redesign (`packages/app
 - **Issue dialog** adds: "Its original PDF is made and kept at the same time, with your current
   document branding." A 503 at issue shows "Business OS could not finish this just now, so nothing was
   changed. Try again in a moment."; the document stays a draft.
-- Preview opens the bytes in a dialog from a local `blob:` URL in an iframe; the URL is released on close.
+- Preview draws the bytes in a dialog with PDF.js (`pdf-render.ts`, `pdfjs-dist` legacy build, loaded
+  only when a preview opens): each page on a canvas, with a same-origin worker. It no longer uses the
+  browser's own PDF viewer in a `blob:` iframe, which showed an empty panel in Safari (§13). If the
+  pages cannot be drawn (or drawing takes over 20 s) the dialog says so and offers **Open in new tab**
+  (the same bytes, not fetched again, so not audited twice; hidden in the desktop app) and, for stored
+  versions with `finance:documents_download`, the audited **Download**. Drafts have no download.
   Download saves the stored bytes under the server's file name. Loading, success, warning (unsupported
   characters), stale and failure (503: "Nothing was stored") states are shown in words.
 - Wording never says or implies sent; the card states that downloading does not send the PDF to anyone.
 - **Settings, Documents tab** (`branding-settings.tsx`): logo upload, preview and removal; accent colour;
   footer; invoice and quote titles and terms. Read-only without `finance:documents_branding`.
-- CSP: `frame-src 'self' blob:` and `img-src … blob:` were added to the web (`vercel.json`) and desktop
-  (`tauri.conf.json`) policies so the local preview can display. Nothing remote is allowed.
+- CSP: `img-src … blob:` was added to the web (`vercel.json`) and desktop (`tauri.conf.json`) policies
+  for the local logo preview. `frame-src` is back to `'self'` (the preview has no frame) and
+  `worker-src 'self'` names the PDF.js worker explicitly. Nothing remote is allowed.
 
 ## 9. Tests and evidence
 
@@ -350,7 +356,13 @@ Still open:
   and an anchor download of a second blob URL saved `INV-0001.pdf` byte-identical to the source. As a
   control, the previous CSP (without `blob:`) blocked the frame with a `frame-src` violation. Safari and
   Firefox were not checked; their PDF viewers differ, and the dialog keeps a Download fallback.
+- **Safari fix (2026-11-15).** Safari on macOS showed the draft preview dialog with an empty panel.
+  The exact WebKit cause was not reproduced (no Safari in the cloud build environment), so the fix
+  removes the dependency on the browser's built-in viewer instead: PDF.js draws the pages. Chromium
+  drew the F5 sample PDFs (1-page draft with watermark, 4-page invoice, EUR/de-DE) under the exact
+  production CSP with the real worker and no CSP violations (`docs/evidence/finance-f5/pdfjs-preview-chromium.png`). Safari, Firefox and the desktop app still
+  need a manual check.
 - **Native desktop (Tauri) not verified.** WebView2 (Windows) and WKWebView (macOS) blob iframes and
-  anchor downloads need a real desktop build; the desktop CSP has the same `frame-src 'self' blob:`. CI
+  anchor downloads need a real desktop build (the preview now uses PDF.js and a module worker, not a frame). CI
   builds the desktop bundles; a manual check on the Mac is still needed.
 - Production: nothing deployed, no migration applied.
