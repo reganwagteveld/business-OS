@@ -517,6 +517,46 @@ The redirect URI is derived: `${APP_BASE_URL}/api/v1/communications/oauth/callba
 | D-C2-13 | Delivery wording | "Sent from your mailbox" only after the provider accepted it; "Sending…", "Not sent" and "Unknown, checking" otherwise; never "Delivered" | C2-C |
 | D-C2-14 | Who may send from a `BUSINESS` mailbox | Members with `communications:send`; the owner's mailbox sends "as" the mailbox | C2-C |
 
+### Approved register (Regan, 2026-11-15)
+
+The table above records the defaults C2-A was built on. The final decision register approved on
+2026-11-15 supersedes it where they differ. The changes that matter for C2-B onwards:
+
+- **Mailbox kinds (D-C2-3, D-C2-8, D-C2-14):** `PERSONAL` and `BUSINESS` mailboxes; the credential
+  holder is separate from the controlling business; `mail_connection_members` grant READ or SEND.
+  A `BUSINESS` mailbox needs a verified domain (DNS TXT) or a designated business address; a
+  consumer-domain address may be a `BUSINESS` mailbox only with an OWNER attestation, a live access
+  check and an audit event. Departure gives a 30-day grace before the mailbox stops.
+- **Sync (D-C2-6, D-C2-7):** `BUSINESS` mail is staged in intake for 30 days; `PERSONAL` mail is
+  never staged. Backfill defaults to 90 days (30, 90, 180 or 365 selectable).
+- **Retention (D-C2-9):** retention applies per message copy in four categories. Retained AU records
+  are kept 7 years. Ordinary communications have **no default**: each business must set an explicit
+  period. Provider-side deletion is not mirrored. Erasure goes through an erasure ledger with legal
+  hold.
+- **Attachments (D-C2-12):** manual saving first; automatic saving is deferred.
+- **AI processing:** opt-in only.
+- **Sending (D-C2-13):** direct sending with minimal scopes (`gmail.send`, `Mail.Send`); draft-first
+  was rejected because Gmail drafts need the restricted `gmail.compose` scope and Graph drafts need
+  `Mail.ReadWrite`. Outbound states are `QUEUED`, `SENDING`, `SUBMITTED` (Graph 202), `ACCEPTED`,
+  `FAILED`, `UNKNOWN` and `BOUNCED`. `UNKNOWN` is never turned into `FAILED` automatically and is
+  never resent automatically. Sender identity is configurable, with a mandatory audit event.
+- **Gates:** A (engineering), B (legal and privacy) and C (provider verification, tracked per
+  provider) are separate and each must pass before real customer mailboxes are connected.
+- **Sequence:** C2-B1 (mailbox kinds, domains, members), then E1 (erasure), then C2-B2, C2-B3 and
+  C2-B4. C2-C (sending) and C2-D are separate stages.
+
+**Acceptance criteria added at approval:**
+
+1. **Retention before business use.** An explicit ordinary-communications retention period must be
+   set for the business before `BUSINESS` mailbox sync starts, **and** before any `PERSONAL` mailbox
+   content can be shared with the business or promoted into an ordinary business record. Without a
+   period both actions are refused.
+2. **Outbound correlation is tested per provider (C2-C).** C2-C must test, for each provider, how
+   reliably a sent message can be matched back: whether custom headers survive, whether the Sent
+   folder can be read, and how Microsoft shared mailboxes behave. It must not assume that custom
+   headers are directly searchable, and it must not treat absence from the Sent folder as proof
+   that a message was not delivered (such a message stays `UNKNOWN`).
+
 ### What Regan must set up before any real connection (owner actions, not done by C2-A)
 
 1. **Google:** a Google Cloud project owned by Pixakova; OAuth consent screen (external, app name,
