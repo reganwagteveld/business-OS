@@ -165,8 +165,9 @@ export async function getReceivablesAgeing(
   const { timeZone, today } = await dateContext(db, q.asOf);
   const asOf = q.asOf ?? today;
   const list = 'finance:ageing';
-  const after = decodeCursor(q.cursor, list, ['c', 'k', 'd'] as const);
-  if (after && (!UUID.test(after.c) || !/^[A-Z]{3}$/.test(after.k) || after.d !== asOf)) invalidCursor();
+  // Keys must not be `k`: encodeCursor stores the list name under `k`.
+  const after = decodeCursor(q.cursor, list, ['c', 'u', 'd'] as const);
+  if (after && (!UUID.test(after.c) || !/^[A-Z]{3}$/.test(after.u) || after.d !== asOf)) invalidCursor();
   const records = await loadRecords(db, timeZone, asOf, { customerId: q.customerId, currencyCode: q.currencyCode });
   const positions = positionsAt(records, asOf).filter((p) => !isEmptyPosition(p));
   positions.forEach(logImbalance);
@@ -186,7 +187,7 @@ export async function getReceivablesAgeing(
     totals.set(p.currencyCode, t);
   }
 
-  const startAt = after ? positions.findIndex((p) => p.customerId > after.c || (p.customerId === after.c && p.currencyCode > after.k)) : 0;
+  const startAt = after ? positions.findIndex((p) => p.customerId > after.c || (p.customerId === after.c && p.currencyCode > after.u)) : 0;
   const page = startAt < 0 ? [] : positions.slice(startAt, startAt + q.limit);
   const more = startAt >= 0 && startAt + q.limit < positions.length;
   const last = page[page.length - 1];
@@ -198,7 +199,7 @@ export async function getReceivablesAgeing(
   }));
   return {
     asOf, timeZone, totals: currencyTotals, rows,
-    nextCursor: more && last ? encodeCursor(list, { c: last.customerId, k: last.currencyCode, d: asOf }) : null,
+    nextCursor: more && last ? encodeCursor(list, { c: last.customerId, u: last.currencyCode, d: asOf }) : null,
   };
 }
 
