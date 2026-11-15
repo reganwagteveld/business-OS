@@ -14,6 +14,7 @@ export * from './sales.ts';
 export * from './projects.ts';
 export * from './finance.ts';
 export * from './finance-expenses.ts';
+export * from './people.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
@@ -46,6 +47,13 @@ import {
   AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, ChangeRoleRequest, CreateBusinessRequest, CreateBusinessResponse,
   CreateInvitationRequest, InvitationResponse, InvitationsResponse, ListBusinessesResponse, MemberResponse, MembersResponse, OkResponse,
 } from './tenancy.ts';
+
+import {
+  ChangeDepartmentRequest, ChangeEmploymentStatusRequest, ChangeManagerRequest, CreateDepartmentRequest, CreateEmployeeRequest, CreateLocationRequest,
+  DepartmentResponse, EmployeeHistoryResponse, EmployeeResponse, ListDepartmentsResponse, ListEmployeesQuery, ListEmployeesResponse,
+  ListLocationsResponse, ListOrgUnitsQuery, LocationResponse, PersonalDetailsResponse, UpdateDepartmentRequest, UpdateEmployeeRequest,
+  UpdateLocationRequest, UpdatePersonalDetailsRequest,
+} from './people.ts';
 
 export const API_VERSION = 'v1' as const;
 
@@ -197,6 +205,34 @@ export const endpoints = {
   reverseExpensePayment: {
     method: 'POST', path: '/api/v1/b/:slug/finance/expense-payments/:paymentId/reverse', request: ReverseExpensePaymentRequest, response: ExpensePaymentResponse,
   },
+  // People Zone P1 (docs/people-data-model.md). No DELETE: employees are never deleted, departments and
+  // locations are archived, assignments are closed, status history is append-only.
+  listEmployees: { method: 'GET', path: '/api/v1/b/:slug/people/employees', query: ListEmployeesQuery, response: ListEmployeesResponse },
+  createEmployee: { method: 'POST', path: '/api/v1/b/:slug/people/employees', request: CreateEmployeeRequest, response: EmployeeResponse },
+  getEmployee: { method: 'GET', path: '/api/v1/b/:slug/people/employees/:employeeId', response: EmployeeResponse },
+  updateEmployee: { method: 'PATCH', path: '/api/v1/b/:slug/people/employees/:employeeId', request: UpdateEmployeeRequest, response: EmployeeResponse },
+  changeEmploymentStatus: {
+    method: 'POST', path: '/api/v1/b/:slug/people/employees/:employeeId/status', request: ChangeEmploymentStatusRequest, response: EmployeeResponse,
+  },
+  changeEmployeeDepartment: { method: 'POST', path: '/api/v1/b/:slug/people/employees/:employeeId/department', request: ChangeDepartmentRequest, response: EmployeeResponse },
+  changeEmployeeManager: { method: 'POST', path: '/api/v1/b/:slug/people/employees/:employeeId/manager', request: ChangeManagerRequest, response: EmployeeResponse },
+  getEmployeeHistory: { method: 'GET', path: '/api/v1/b/:slug/people/employees/:employeeId/history', response: EmployeeHistoryResponse },
+  /** people:read_sensitive. */
+  getEmployeePersonalDetails: { method: 'GET', path: '/api/v1/b/:slug/people/employees/:employeeId/personal', response: PersonalDetailsResponse },
+  /** people:manage and people:read_sensitive. */
+  updateEmployeePersonalDetails: {
+    method: 'PATCH', path: '/api/v1/b/:slug/people/employees/:employeeId/personal', request: UpdatePersonalDetailsRequest, response: PersonalDetailsResponse,
+  },
+  listDepartments: { method: 'GET', path: '/api/v1/b/:slug/people/departments', query: ListOrgUnitsQuery, response: ListDepartmentsResponse },
+  createDepartment: { method: 'POST', path: '/api/v1/b/:slug/people/departments', request: CreateDepartmentRequest, response: DepartmentResponse },
+  updateDepartment: { method: 'PATCH', path: '/api/v1/b/:slug/people/departments/:departmentId', request: UpdateDepartmentRequest, response: DepartmentResponse },
+  archiveDepartment: { method: 'POST', path: '/api/v1/b/:slug/people/departments/:departmentId/archive', response: DepartmentResponse },
+  restoreDepartment: { method: 'POST', path: '/api/v1/b/:slug/people/departments/:departmentId/restore', response: DepartmentResponse },
+  listLocations: { method: 'GET', path: '/api/v1/b/:slug/people/locations', query: ListOrgUnitsQuery, response: ListLocationsResponse },
+  createLocation: { method: 'POST', path: '/api/v1/b/:slug/people/locations', request: CreateLocationRequest, response: LocationResponse },
+  updateLocation: { method: 'PATCH', path: '/api/v1/b/:slug/people/locations/:locationId', request: UpdateLocationRequest, response: LocationResponse },
+  archiveLocation: { method: 'POST', path: '/api/v1/b/:slug/people/locations/:locationId/archive', response: LocationResponse },
+  restoreLocation: { method: 'POST', path: '/api/v1/b/:slug/people/locations/:locationId/restore', response: LocationResponse },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */

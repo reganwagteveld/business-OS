@@ -5,6 +5,7 @@ import 'server-only';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { canAssignRole, canManageMember, ForbiddenError, type Principal, type Role } from '@/modules/access';
 import type { AppTenantDb } from '@/core/db';
+import { unlinkRemovedMember } from '@/modules/people';
 
 /** Who is acting: the verified membership of the signed-in user in the current business. */
 export interface Actor extends Principal {
@@ -82,6 +83,8 @@ export async function removeMember(db: AppTenantDb, actor: Actor, membershipId: 
   // (projects/server/tasks.ts), so this multi-row update can never deadlock with one.
   await db.$queryRaw`SELECT id FROM project_tasks WHERE assignee_user_id = ${target.userId}::uuid AND business_id = nullif(current_setting('app.business_id', true), '')::uuid ORDER BY id FOR UPDATE`;
   await db.projectTask.updateMany({ where: { assigneeUserId: target.userId }, data: { assigneeUserId: null, version: { increment: 1 } } as never });
+  // An employee record linked to this person stays; only the link goes (people_employees_user_fkey).
+  await unlinkRemovedMember(db, actor.userId, target.userId);
   await db.membership.delete({ where: { id: membershipId } });
   await audit(db, actor, 'membership.removed', 'membership', membershipId, { role: target.role });
 }

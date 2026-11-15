@@ -41,6 +41,9 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   FN014: [409, 'has_credit_applications'], FN015: [409, 'invalid_state'],
   // F3 (migration 20261117000000_finance_expenses).
   FN016: [409, 'has_payments'], FN017: [409, 'archived_reference'], FN018: [409, 'expense_not_open'],
+  // People (migration 20261118000000_people, docs/people-data-model.md §4).
+  PE001: [409, 'invalid_transition'], PE002: [409, 'manager_cycle'], PE003: [400, 'invalid_manager'], PE004: [409, 'immutable'],
+  PE005: [409, 'has_direct_reports'], PE006: [409, 'terminated'], PE007: [409, 'archived_reference'], PE008: [409, 'in_use'],
 };
 
 /**
@@ -58,6 +61,11 @@ const FINANCE_CONSTRAINTS: [RegExp, string][] = [
   [/finance_expenses_paid/, 'over_payment'],
   [/finance_expense_allocations_active_key/, 'already_allocated'],
   [/finance_expense_categories_active_name_key/, 'duplicate_name'],
+  // People: the unique indexes behind the service checks (a race the service lost).
+  [/people_employees_number_key/, 'duplicate_employee_number'],
+  [/people_employees_user_key/, 'user_already_linked'],
+  [/people_departments_active_name_key|people_locations_active_name_key/, 'duplicate_name'],
+  [/people_department_assignments_open_key|people_manager_assignments_open_key|people_employee_personal_details_pkey/, 'stale'],
 ];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

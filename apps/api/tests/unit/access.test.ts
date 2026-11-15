@@ -124,3 +124,21 @@ describe('Finance Zone permissions (docs/finance-data-model.md §7.1, owner deci
     for (const key of FINANCE) expect(key.startsWith('finance:')).toBe(true);
   });
 });
+
+describe('People Zone permissions (docs/people-data-model.md §5, decision PD-1)', () => {
+  const PEOPLE = ['people:read', 'people:read_sensitive', 'people:manage', 'people:configure'] as const;
+
+  it('grants exactly the proposed default matrix: view and administer are separate keys', () => {
+    const matrix = Object.fromEntries(ROLES.map((role) => [role, PEOPLE.filter((p) => ROLE_PERMISSIONS[role].has(p))]));
+    expect(matrix).toEqual({ OWNER: [...PEOPLE], ADMIN: [...PEOPLE], MANAGER: ['people:read'], MEMBER: [] });
+    expect(ZONE_PERMISSIONS.people).toEqual([...PEOPLE]);
+  });
+
+  it('is not implied by any other Zone and implies nothing elsewhere', () => {
+    for (const key of PEOPLE) expect(ROLE_PERMISSIONS.MEMBER.has(key)).toBe(false);
+    for (const key of PEOPLE) expect(key.startsWith('people:')).toBe(true);
+    // Directory access never includes sensitive fields or administration.
+    expect(ROLE_PERMISSIONS.MANAGER.has('people:read_sensitive')).toBe(false);
+    expect(ROLE_PERMISSIONS.MANAGER.has('people:manage')).toBe(false);
+  });
+});

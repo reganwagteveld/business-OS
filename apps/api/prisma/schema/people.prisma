@@ -1,0 +1,194 @@
+// people module (docs/people-data-model.md). Tenant tables: forced RLS, composite (business_id, …)
+// foreign keys, guard triggers and integrity CHECKs that live in the migration because Prisma cannot
+// express them. Employees are not users: the optional user link goes through memberships.
+
+enum EmploymentStatus {
+  PENDING
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CASUAL
+  CONTRACTOR
+  TEMPORARY
+  OTHER
+}
+
+/// An organisational unit. archived_at = inactive.
+model PeopleDepartment {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  description String?
+  version     Int       @default(1)
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  business    Business                     @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_departments_business_fkey")
+  assignments PeopleDepartmentAssignment[]
+
+  @@unique([businessId, id])
+  @@index([businessId, name, id])
+  @@map("people_departments")
+}
+
+/// A workplace. Name and free-text address only: no coordinates.
+model PeopleLocation {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  address     String?
+  version     Int       @default(1)
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+
+  business  Business         @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_locations_business_fkey")
+  employees PeopleEmployee[]
+
+  @@unique([businessId, id])
+  @@index([businessId, name, id])
+  @@map("people_locations")
+}
+
+/// A person the business employs or engages. Never deleted. Work information only; personal details
+/// are in people_employee_personal_details.
+model PeopleEmployee {
+  id             String           @id @db.Uuid
+  businessId     String           @map("business_id") @db.Uuid
+  /// Optional; unique per business case-insensitively (partial expression index in the migration).
+  employeeNumber String?          @map("employee_number")
+  givenName      String           @map("given_name")
+  familyName     String           @map("family_name")
+  preferredName  String?          @map("preferred_name")
+  jobTitle       String?          @map("job_title")
+  employmentType EmploymentType?  @map("employment_type")
+  workEmail      String?          @map("work_email")
+  workPhone      String?          @map("work_phone")
+  status         EmploymentStatus @default(PENDING)
+  startDate      DateTime?        @map("start_date") @db.Date
+  /// Set exactly while TERMINATED (CHECK).
+  endDate        DateTime?        @map("end_date") @db.Date
+  locationId     String?          @map("location_id") @db.Uuid
+  /// Optional link to a member of this business. Grants nothing.
+  userId         String?          @map("user_id") @db.Uuid
+  version        Int              @default(1)
+  createdById    String?          @map("created_by_id") @db.Uuid
+  updatedById    String?          @map("updated_by_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business              Business                        @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_employees_business_fkey")
+  location              PeopleLocation?                 @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_employees_location_fkey")
+  member                Membership?                     @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "people_employees_user_fkey")
+  personalDetails       PeopleEmployeePersonalDetails?
+  departmentAssignments PeopleDepartmentAssignment[]
+  managerAssignments    PeopleManagerAssignment[]       @relation("employee")
+  reportAssignments     PeopleManagerAssignment[]       @relation("manager")
+  statusHistory         PeopleEmploymentStatusHistory[]
+
+  @@unique([businessId, id])
+  @@index([businessId, familyName, givenName, id])
+  @@index([businessId, createdAt(sort: Desc), id])
+  @@index([businessId, status])
+  @@index([businessId, locationId])
+  @@map("people_employees")
+}
+
+/// Personal (non-work) details, 1:1 with an employee. Readable only with people:read_sensitive.
+model PeopleEmployeePersonalDetails {
+  employeeId                   String   @id @map("employee_id") @db.Uuid
+  businessId                   String   @map("business_id") @db.Uuid
+  personalEmail                String?  @map("personal_email")
+  personalPhone                String?  @map("personal_phone")
+  homeAddress                  String?  @map("home_address")
+  emergencyContactName         String?  @map("emergency_contact_name")
+  emergencyContactRelationship String?  @map("emergency_contact_relationship")
+  emergencyContactPhone        String?  @map("emergency_contact_phone")
+  version                      Int      @default(1)
+  updatedById                  String?  @map("updated_by_id") @db.Uuid
+  createdAt                    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_personal_details_business_fkey")
+  employee PeopleEmployee @relation(fields: [businessId, employeeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_personal_details_employee_fkey")
+
+  @@unique([businessId, employeeId])
+  @@map("people_employee_personal_details")
+}
+
+/// Effective-dated department membership [starts_on, ends_on). At most one open row per employee.
+model PeopleDepartmentAssignment {
+  id           String    @id @db.Uuid
+  businessId   String    @map("business_id") @db.Uuid
+  employeeId   String    @map("employee_id") @db.Uuid
+  departmentId String    @map("department_id") @db.Uuid
+  startsOn     DateTime  @map("starts_on") @db.Date
+  endsOn       DateTime? @map("ends_on") @db.Date
+  createdById  String?   @map("created_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  endedById    String?   @map("ended_by_id") @db.Uuid
+  endedAt      DateTime? @map("ended_at") @db.Timestamptz
+
+  business   Business         @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_department_assignments_business_fkey")
+  employee   PeopleEmployee   @relation(fields: [businessId, employeeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_department_assignments_employee_fkey")
+  department PeopleDepartment @relation(fields: [businessId, departmentId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_department_assignments_department_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, employeeId, startsOn])
+  @@index([businessId, departmentId])
+  @@map("people_department_assignments")
+}
+
+/// Effective-dated reporting line [starts_on, ends_on). At most one open row per employee; no cycles.
+model PeopleManagerAssignment {
+  id                String    @id @db.Uuid
+  businessId        String    @map("business_id") @db.Uuid
+  employeeId        String    @map("employee_id") @db.Uuid
+  managerEmployeeId String    @map("manager_employee_id") @db.Uuid
+  startsOn          DateTime  @map("starts_on") @db.Date
+  endsOn            DateTime? @map("ends_on") @db.Date
+  createdById       String?   @map("created_by_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  endedById         String?   @map("ended_by_id") @db.Uuid
+  endedAt           DateTime? @map("ended_at") @db.Timestamptz
+
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_manager_assignments_business_fkey")
+  employee PeopleEmployee @relation("employee", fields: [businessId, employeeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_manager_assignments_employee_fkey")
+  manager  PeopleEmployee @relation("manager", fields: [businessId, managerEmployeeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_manager_assignments_manager_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, employeeId, startsOn])
+  @@index([businessId, managerEmployeeId])
+  @@map("people_manager_assignments")
+}
+
+/// Append-only: every status an employee has had. bos_app may only SELECT and INSERT.
+model PeopleEmploymentStatusHistory {
+  id            String            @id @db.Uuid
+  businessId    String            @map("business_id") @db.Uuid
+  employeeId    String            @map("employee_id") @db.Uuid
+  fromStatus    EmploymentStatus? @map("from_status")
+  toStatus      EmploymentStatus  @map("to_status")
+  effectiveDate DateTime          @map("effective_date") @db.Date
+  /// Sensitive: returned only with people:read_sensitive. Never copied into the audit log.
+  reason        String?
+  recordedById  String?           @map("recorded_by_id") @db.Uuid
+  recordedAt    DateTime          @default(now()) @map("recorded_at") @db.Timestamptz
+
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_status_history_business_fkey")
+  employee PeopleEmployee @relation(fields: [businessId, employeeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_status_history_employee_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, employeeId, recordedAt])
+  @@map("people_employment_status_history")
+}
