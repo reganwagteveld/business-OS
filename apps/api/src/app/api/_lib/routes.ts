@@ -50,6 +50,7 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   CM001: [409, 'immutable'], CM002: [409, 'immutable'], CM003: [409, 'immutable'], CM004: [400, 'invalid_date'],
   // Communications C2-A (migration 20261121000000_communications_providers): connections and sync jobs.
   CM005: [409, 'immutable'], CM006: [409, 'disconnected'], CM007: [409, 'invalid_transition'],
+  CM008: [409, 'holder_change_not_allowed'], CM009: [409, 'retention_not_set'], CM010: [409, 'business_mailbox_rule'],
 };
 
 /**
@@ -99,6 +100,8 @@ function errorResponse(request: Request, error: unknown): Response {
   if (isUniqueViolation(error, 'messages_external_key')) return fail(request, 409, 'idempotency_conflict');
   // Another member connected the same mailbox at the same moment (C2-A).
   if (isUniqueViolation(error, 'mail_connections_live_account_key')) return fail(request, 409, 'already_connected');
+  if (isUniqueViolation(error, 'mail_business_domains_live_key')) return fail(request, 409, 'domain_exists');
+  if (isUniqueViolation(error, 'mail_business_addresses_live_key')) return fail(request, 409, 'already_designated');
   if (state === '23514' || state === '23505') {
     const text = `${error instanceof Error ? error.message : ''} ${JSON.stringify((error as { meta?: unknown } | null)?.meta ?? {})}`;
     const hit = FINANCE_CONSTRAINTS.find(([pattern]) => pattern.test(text));
@@ -217,6 +220,39 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
       const result = await withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) =>
         handler({ request, actor, db, params, input: input.data as never, query: query as never }),
       opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
+      await result.afterCommit?.();
+      return json(request, result.status ?? 200, opts.response.parse(result.body));
+    } catch (error) {
+      return errorResponse(request, error);
+    }
+  };
+}
+
+/**
+ * Tenant routes whose work includes a network call (C2-B1 domain verification: a DNS lookup). Same
+ * authentication, tenancy, authorisation and error mapping as tenantRoute, but the handler gets `run`
+ * instead of one `db`: it opens a unit of work, makes the call with no transaction open, then opens
+ * another (the pattern of the OAuth callback, docs/communications-c2.md §7.1).
+ */
+export function tenantRunRoute<S extends z.ZodType | undefined, T>(
+  opts: { permission: Permission; input?: S; response: z.ZodType<T> },
+  handler: (args: {
+    request: Request;
+    actor: Actor;
+    params: Record<string, string>;
+    input: S extends z.ZodType ? z.infer<S> : undefined;
+    run: <R>(work: (db: AppTenantDb) => Promise<R>) => Promise<R>;
+  }) => Promise<Result<T>>,
+) {
+  return async (request: Request, context: RouteContext): Promise<Response> => {
+    try {
+      const resolved = await resolveTenant(request, context, opts.permission);
+      if (resolved instanceof Response) return resolved;
+      const { auth, params, membership, actor } = resolved;
+      const input = await readInput(request, opts.input);
+      if (!input.ok) return fail(request, 400, 'invalid_input');
+      const run = <R>(work: (db: AppTenantDb) => Promise<R>) => withTenant({ businessId: membership.businessId, userId: auth.user.id }, work);
+      const result = await handler({ request, actor, params, input: input.data as never, run });
       await result.afterCommit?.();
       return json(request, result.status ?? 200, opts.response.parse(result.body));
     } catch (error) {

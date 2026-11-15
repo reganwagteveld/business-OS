@@ -75,6 +75,10 @@ model Business {
   mailOAuthStates           MailOAuthState[]
   mailSyncJobs              MailSyncJob[]
   reportingSavedViews       ReportingSavedView[]
+  mailBusinessDomains       MailBusinessDomain[]
+  mailBusinessAddresses     MailBusinessAddress[]
+  mailConnectionMembers     MailConnectionMember[]
+  mailRetentionSetting      MailRetentionSetting?
 
   @@map("businesses")
 }
@@ -96,6 +100,7 @@ model Membership {
   ownedProjects      Project[]
   assignedTasks      ProjectTask[]
   linkedEmployees    PeopleEmployee[]
+  mailboxGrants      MailConnectionMember[]
 
   @@unique([businessId, userId])
   @@unique([businessId, id])

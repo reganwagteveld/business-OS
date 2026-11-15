@@ -85,10 +85,14 @@ export function serverViolations(files) {
       // Browser navigation targets that answer with a page (the OAuth callback, docs/communications-c2.md §7.1).
       const browserAllowed = name === 'app/api/v1/communications/oauth/callback/route.ts';
       for (const [, method, rest] of methods) {
-        const wrapper = /=\s*(tenantRoute|tenantFileRoute|publicRoute|browserRoute)\(/.exec(rest)?.[1];
+        const wrapper = /=\s*(tenantRoute|tenantFileRoute|tenantRunRoute|publicRoute|browserRoute)\(/.exec(rest)?.[1];
         if (wrapper === 'browserRoute' && !browserAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} may not use browserRoute (OAuth callback only)`);
         // tenantFileRoute (Finance F5 files) resolves the tenant exactly like tenantRoute and answers with bytes.
-        if (tenant && wrapper !== 'tenantRoute' && wrapper !== 'tenantFileRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
+        // tenantRunRoute (C2-B1 domain verification) resolves it the same way and runs a network call between
+        // two units of work; only the listed route may use it.
+        const runAllowed = name === 'app/api/v1/b/[slug]/communications/business-domains/[domainId]/verify/route.ts';
+        if (wrapper === 'tenantRunRoute' && !runAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} may not use tenantRunRoute (domain verification only)`);
+        if (tenant && wrapper !== 'tenantRoute' && wrapper !== 'tenantFileRoute' && wrapper !== 'tenantRunRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
         if (!tenant && !wrapper && !unwrappedAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} must use publicRoute (or be an allowed unauthenticated endpoint)`);
       }
     }

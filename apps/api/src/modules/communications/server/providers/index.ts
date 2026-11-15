@@ -26,5 +26,5 @@ export function oauthRedirectUri(): string {
 
 export { googleAdapter } from './google';
 export { microsoftAdapter } from './microsoft';
-export { ProviderError } from './types';
-export type { MailProvider, MailProviderAdapter, ProviderAccount, TokenSet } from './types';
+export { MICROSOFT_CONSUMER_TENANT, ProviderError } from './types';
+export type { BusinessMailboxProof, MailProvider, MailProviderAdapter, ProviderAccount, ScopePurpose, TokenSet } from './types';

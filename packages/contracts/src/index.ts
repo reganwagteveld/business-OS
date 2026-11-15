@@ -34,6 +34,9 @@ import {
 import {
   AuthorizeMailConnectionRequest, AuthorizeMailConnectionResponse, ListMailConnectionsQuery, ListMailConnectionsResponse, ListMailProvidersResponse,
   ListMailSyncJobsResponse, MailConnectionResponse, MailSyncJobResponse, RequestMailSyncRequest, UpdateMailConnectionRequest,
+  CreateMailBusinessAddressRequest, CreateMailBusinessDomainRequest, ListMailBusinessAddressesQuery, ListMailBusinessAddressesResponse,
+  ListMailBusinessDomainsResponse, ListMailConnectionMembersResponse, MailBusinessAddressResponse, MailBusinessDomainResponse, MailRetentionResponse,
+  SetMailConnectionMemberRequest, SetMailRetentionRequest, VersionedRequest,
 } from './communications-connections.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
@@ -148,6 +151,41 @@ export const endpoints = {
     method: 'POST', path: '/api/v1/b/:slug/communications/connections/:connectionId/sync', request: RequestMailSyncRequest, response: MailSyncJobResponse,
   },
   listMailSyncJobs: { method: 'GET', path: '/api/v1/b/:slug/communications/connections/:connectionId/sync-jobs', response: ListMailSyncJobsResponse },
+  // Communications C2-B1 (docs/communications-c2.md §16): business mailbox identity and lifecycle.
+  listMailBusinessDomains: { method: 'GET', path: '/api/v1/b/:slug/communications/business-domains', response: ListMailBusinessDomainsResponse },
+  /** 201; the response carries the TXT record value once. */
+  createMailBusinessDomain: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/business-domains', request: CreateMailBusinessDomainRequest, response: MailBusinessDomainResponse,
+  },
+  /** Looks up the TXT record now; 409 dns_record_not_found if it is not there (yet). */
+  verifyMailBusinessDomain: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/business-domains/:domainId/verify', request: VersionedRequest, response: MailBusinessDomainResponse,
+  },
+  removeMailBusinessDomain: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/business-domains/:domainId/remove', request: VersionedRequest, response: MailBusinessDomainResponse,
+  },
+  listMailBusinessAddresses: {
+    method: 'GET', path: '/api/v1/b/:slug/communications/business-addresses', query: ListMailBusinessAddressesQuery, response: ListMailBusinessAddressesResponse,
+  },
+  createMailBusinessAddress: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/business-addresses', request: CreateMailBusinessAddressRequest, response: MailBusinessAddressResponse,
+  },
+  removeMailBusinessAddress: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/business-addresses/:addressId/remove', request: VersionedRequest, response: MailBusinessAddressResponse,
+  },
+  listMailConnectionMembers: {
+    method: 'GET', path: '/api/v1/b/:slug/communications/connections/:connectionId/members', response: ListMailConnectionMembersResponse,
+  },
+  /** Grants or changes a member's access to a BUSINESS mailbox; answers with the member list. */
+  setMailConnectionMember: {
+    method: 'PUT', path: '/api/v1/b/:slug/communications/connections/:connectionId/members/:userId', request: SetMailConnectionMemberRequest,
+    response: ListMailConnectionMembersResponse,
+  },
+  removeMailConnectionMember: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/connections/:connectionId/members/:userId/remove', response: ListMailConnectionMembersResponse,
+  },
+  getMailRetention: { method: 'GET', path: '/api/v1/b/:slug/communications/retention', response: MailRetentionResponse },
+  setMailRetention: { method: 'PUT', path: '/api/v1/b/:slug/communications/retention', request: SetMailRetentionRequest, response: MailRetentionResponse },
   // Sales Zone (docs/sales-data-model.md)
   listPipelines: { method: 'GET', path: '/api/v1/b/:slug/sales/pipelines', response: ListPipelinesResponse },
   createPipeline: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines', request: CreatePipelineRequest, response: PipelineResponse },

@@ -160,7 +160,9 @@ describe('Google adapter', () => {
 
   it('identifies the account by OIDC sub and refuses unverified addresses', async () => {
     const calls = stubFetch(() => json({ sub: '1234567890', email: 'Owner@Example.com', email_verified: true, name: 'Owner' }));
-    expect(await google.account('at-1')).toEqual({ providerAccountId: '1234567890', address: 'owner@example.com', displayName: 'Owner' });
+    expect(await google.account('at-1')).toEqual({
+      providerAccountId: '1234567890', address: 'owner@example.com', displayName: 'Owner', tenantId: null, hostedDomain: null,
+    });
     expect(new Headers(calls[0]!.init.headers).get('authorization')).toBe('Bearer at-1');
     stubFetch(() => json({ sub: '1', email: 'x@example.com', email_verified: false }));
     await expect(google.account('at')).rejects.toMatchObject({ code: 'invalid_response' });
@@ -190,7 +192,9 @@ describe('Microsoft adapter', () => {
     expect(microsoft.hasScopes(['https://graph.microsoft.com/Mail.Read', 'https://graph.microsoft.com/User.Read', 'openid'], 'read')).toBe(true);
     expect(microsoft.hasScopes(['User.Read'], 'read')).toBe(false);
     stubFetch(() => json({ id: '00000000-0000-0000-0000-00000000abcd', mail: 'Sales@Contoso.example', userPrincipalName: 'sales@contoso.example', displayName: 'Sales' }));
-    expect(await microsoft.account('at')).toEqual({ providerAccountId: '00000000-0000-0000-0000-00000000abcd', address: 'sales@contoso.example', displayName: 'Sales' });
+    expect(await microsoft.account('at')).toEqual({
+      providerAccountId: '00000000-0000-0000-0000-00000000abcd', address: 'sales@contoso.example', displayName: 'Sales', tenantId: null, hostedDomain: null,
+    });
     stubFetch(() => json({ id: 'x', mail: null, userPrincipalName: 'nomailbox@contoso.example' }));
     await expect(microsoft.account('at')).rejects.toMatchObject({ code: 'invalid_response' });
   });
@@ -201,6 +205,81 @@ describe('Microsoft adapter', () => {
     expect(calls[0]!.url).toBe('https://login.microsoftonline.com/common/oauth2/v2.0/token');
     expect(await microsoft.revoke('rt-2')).toBe('unsupported');
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('C2-B1 business mailbox identity (T-C2-1, T-C2-2)', () => {
+  const google = googleAdapter(config);
+  const microsoft = microsoftAdapter({ ...config, tenant: 'common' });
+  const TID = '11111111-2222-3333-4444-555555555555';
+  const idToken = (claims: Record<string, unknown>) => `e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`;
+
+  it('Google: same scopes for both kinds; the Workspace domain comes from hd; the mailbox is the signed-in account', async () => {
+    expect(google.requiredScopes('business_read')).toEqual(google.requiredScopes('read'));
+    stubFetch(() => json({ sub: 'g-1', email: 'Info@Acme.example', email_verified: true, name: 'Info', hd: 'Acme.example' }));
+    const principal = await google.account('at');
+    expect(principal).toMatchObject({ providerAccountId: 'g-1', hostedDomain: 'acme.example', tenantId: null });
+    const calls = stubFetch(() => json({ emailAddress: 'info@acme.example', messagesTotal: 3 }));
+    expect(await google.businessMailbox('at', principal, 'info@acme.example')).toEqual({
+      mailboxAccountId: 'g-1', mailboxAddress: 'info@acme.example', displayName: 'Info', organisationDomains: ['acme.example'],
+    });
+    expect(calls.map((c) => c.url)).toEqual(['https://gmail.googleapis.com/gmail/v1/users/me/profile']);
+    // A consumer account has no organisation domains.
+    expect((await google.businessMailbox('at', { ...principal, hostedDomain: null }, 'x')).organisationDomains).toBeNull();
+  });
+
+  it('Microsoft: business connections add Mail.Read.Shared and User.ReadBasic.All, personal ones do not', () => {
+    const scopes = (purpose: 'read' | 'business_read') =>
+      new URL(microsoft.authorizationUrl({ state: 's.n', codeChallenge: 'c', redirectUri, purpose })).searchParams.get('scope')!.split(' ');
+    expect(scopes('read')).not.toContain('Mail.Read.Shared');
+    expect(scopes('business_read')).toEqual(['offline_access', 'openid', 'email', 'User.Read', 'Mail.Read', 'Mail.Read.Shared', 'User.ReadBasic.All']);
+    expect(scopes('business_read').join(' ')).not.toMatch(/Send|ReadWrite/);
+    const granted = ['https://graph.microsoft.com/Mail.Read', 'https://graph.microsoft.com/User.Read'];
+    expect(microsoft.hasScopes(granted, 'read')).toBe(true);
+    expect(microsoft.hasScopes(granted, 'business_read')).toBe(false);
+    expect(microsoft.hasScopes([...granted, 'Mail.Read.Shared', 'https://graph.microsoft.com/User.ReadBasic.All'], 'business_read')).toBe(true);
+  });
+
+  it('Microsoft: the tenant comes from the ID token of the same token response, and its oid must be the /me id', async () => {
+    stubFetch(() => json({ access_token: 'at', refresh_token: 'rt', expires_in: 60, id_token: idToken({ tid: TID.toUpperCase(), oid: 'user-1' }) }));
+    const tokens = await microsoft.exchangeCode({ code: 'c', codeVerifier: 'v', redirectUri, purpose: 'business_read' });
+    expect(tokens.idTokenClaims).toMatchObject({ tid: TID.toUpperCase() });
+    stubFetch(() => json({ id: 'user-1', mail: 'admin@contoso.example', displayName: 'Admin' }));
+    expect(await microsoft.account('at', tokens.idTokenClaims)).toMatchObject({ providerAccountId: 'user-1', tenantId: TID });
+    await expect(microsoft.account('at', { tid: TID, oid: 'someone-else' })).rejects.toMatchObject({ code: 'invalid_response' });
+    // A garbled ID token is ignored, never trusted.
+    stubFetch(() => json({ access_token: 'at', refresh_token: 'rt', expires_in: 60, id_token: 'not-a-jwt' }));
+    expect((await microsoft.exchangeCode({ code: 'c', codeVerifier: 'v', redirectUri })).idTokenClaims).toBeUndefined();
+  });
+
+  it('Microsoft shared mailbox: resolved by address, read through /users/{id}, never /me; tenant domains reported', async () => {
+    const principal = { providerAccountId: 'user-1', address: 'admin@contoso.example', displayName: 'Admin', tenantId: TID, hostedDomain: null };
+    const calls = stubFetch((url) => {
+      if (url.includes('/users/info%40contoso.example')) return json({ id: 'shared-9', mail: 'Info@Contoso.example', displayName: 'Info' });
+      if (url.includes('/users/shared-9/mailFolders/inbox')) return json({ id: 'inbox' });
+      if (url.includes('/organization')) return json({ value: [{ verifiedDomains: [{ name: 'Contoso.example' }, { name: 'contoso.onmicrosoft.com' }] }] });
+      return json({ error: 'unexpected' }, 500);
+    });
+    expect(await microsoft.businessMailbox('at', principal, 'info@contoso.example')).toEqual({
+      mailboxAccountId: 'shared-9', mailboxAddress: 'info@contoso.example', displayName: 'Info', organisationDomains: ['contoso.example', 'contoso.onmicrosoft.com'],
+    });
+    expect(calls.some((c) => c.url.includes('/me'))).toBe(false);
+    // No such mailbox, or no Full Access to it: stable codes for the callback to map.
+    stubFetch(() => json({ error: { code: 'Request_ResourceNotFound' } }, 404));
+    await expect(microsoft.businessMailbox('at', principal, 'nobody@contoso.example')).rejects.toMatchObject({ code: 'not_found' });
+    stubFetch((url) => (url.includes('mailFolders') ? json({ error: { code: 'ErrorAccessDenied' } }, 403) : json({ id: 'shared-9', mail: 'info@contoso.example' })));
+    await expect(microsoft.businessMailbox('at', principal, 'info@contoso.example')).rejects.toMatchObject({ code: 'insufficient_scope' });
+    // No tenant: the identity is incomplete, nothing is resolved.
+    await expect(microsoft.businessMailbox('at', { ...principal, tenantId: null }, 'info@contoso.example')).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('Microsoft personal account (outlook.com): the mailbox is the account; no directory lookup', async () => {
+    const principal = { providerAccountId: 'msa-1', address: 'joe@outlook.com', displayName: 'Joe', tenantId: '9188040d-6c67-4c5b-b112-36a304b66dad', hostedDomain: null };
+    const calls = stubFetch(() => json({ id: 'inbox' }));
+    expect(await microsoft.businessMailbox('at', principal, 'joe@outlook.com')).toEqual({
+      mailboxAccountId: 'msa-1', mailboxAddress: 'joe@outlook.com', displayName: 'Joe', organisationDomains: null,
+    });
+    expect(calls.map((c) => c.url)).toEqual(['https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=id']);
   });
 });
 
