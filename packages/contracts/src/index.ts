@@ -18,11 +18,16 @@ export * from './people.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
 export * from './communications.ts';
+export * from './communications-connections.ts';
 export * from './reporting.ts';
 import {
   ConversationResponse, CreateConversationRequest, ImportMessagesRequest, ImportMessagesResponse, ListConversationsQuery, ListConversationsResponse,
   ListMessagesQuery, ListMessagesResponse, MessageResponse, RecordMessageRequest,
 } from './communications.ts';
+import {
+  AuthorizeMailConnectionRequest, AuthorizeMailConnectionResponse, ListMailConnectionsQuery, ListMailConnectionsResponse, ListMailProvidersResponse,
+  ListMailSyncJobsResponse, MailConnectionResponse, MailSyncJobResponse, RequestMailSyncRequest, UpdateMailConnectionRequest,
+} from './communications-connections.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
@@ -115,6 +120,23 @@ export const endpoints = {
   importMessages: {
     method: 'POST', path: '/api/v1/b/:slug/conversations/:conversationId/messages/import', request: ImportMessagesRequest, response: ImportMessagesResponse,
   },
+  // Communications C2-A (docs/communications-c2.md §10): connected mailboxes. The provider redirects
+  // the browser to GET /api/v1/communications/oauth/callback, which answers with an HTML page.
+  listMailProviders: { method: 'GET', path: '/api/v1/b/:slug/communications/providers', response: ListMailProvidersResponse },
+  listMailConnections: { method: 'GET', path: '/api/v1/b/:slug/communications/connections', query: ListMailConnectionsQuery, response: ListMailConnectionsResponse },
+  authorizeMailConnection: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/connections/authorize', request: AuthorizeMailConnectionRequest, response: AuthorizeMailConnectionResponse,
+  },
+  getMailConnection: { method: 'GET', path: '/api/v1/b/:slug/communications/connections/:connectionId', response: MailConnectionResponse },
+  updateMailConnection: {
+    method: 'PATCH', path: '/api/v1/b/:slug/communications/connections/:connectionId', request: UpdateMailConnectionRequest, response: MailConnectionResponse,
+  },
+  disconnectMailConnection: { method: 'POST', path: '/api/v1/b/:slug/communications/connections/:connectionId/disconnect', response: MailConnectionResponse },
+  /** Idempotent: returns the queued or running job if there is one (200), else queues one (201). */
+  requestMailSync: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/connections/:connectionId/sync', request: RequestMailSyncRequest, response: MailSyncJobResponse,
+  },
+  listMailSyncJobs: { method: 'GET', path: '/api/v1/b/:slug/communications/connections/:connectionId/sync-jobs', response: ListMailSyncJobsResponse },
   // Sales Zone (docs/sales-data-model.md)
   listPipelines: { method: 'GET', path: '/api/v1/b/:slug/sales/pipelines', response: ListPipelinesResponse },
   createPipeline: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines', request: CreatePipelineRequest, response: PipelineResponse },

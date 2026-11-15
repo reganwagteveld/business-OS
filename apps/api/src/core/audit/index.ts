@@ -16,3 +16,19 @@ export async function recordAudit(
     data: { id: randomUUID(), actorUserId, action, targetType: target.type, targetId: target.id, metadata } as never,
   });
 }
+
+/**
+ * An event with no acting user (a provider revoked a grant, a mailbox owner left the business).
+ * Allowed by the audit_system_write policy only for `communications.system.*` actions, and only in a
+ * unit of work that has no session user (docs/communications-c2.md §6).
+ */
+export async function recordSystemAudit(
+  db: AppTenantDb,
+  action: `communications.system.${string}`,
+  target: { type: string; id: string },
+  metadata: Record<string, string | string[] | null> = {},
+): Promise<void> {
+  await db.auditEvent.create({
+    data: { id: randomUUID(), actorUserId: null, action, targetType: target.type, targetId: target.id, metadata } as never,
+  });
+}

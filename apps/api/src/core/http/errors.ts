@@ -26,6 +26,8 @@ export type StateConflictCode =
   | 'start_date_locked'
   // Scheduling S1: the default calendar cannot be archived; cancelled events are read-only.
   | 'default_calendar' | 'not_scheduled'
+  // Communications C2-A (docs/communications-c2.md §10): mailbox connections and sync jobs.
+  | 'provider_not_configured' | 'already_connected' | 'account_mismatch' | 'disconnected' | 'not_active' | 'sync_disabled'
   // Reporting R1: per-owner saved-view cap; a stored view whose config this version cannot read.
   | 'too_many_views' | 'view_config_invalid';
 
