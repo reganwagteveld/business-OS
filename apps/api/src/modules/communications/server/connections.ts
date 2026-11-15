@@ -13,7 +13,7 @@ import type { AppTenantDb } from '@/core/db';
 import { recordAudit } from '@/core/audit';
 import { RecordNotFoundError, StateConflictError } from '@/core/http/errors';
 import { ForbiddenError } from '@/modules/access';
-import { openVerifier, readRefreshToken, sealVerifier, storeCredentials } from './credentials';
+import { openVerifier, sealVerifier, storeCredentials } from './credentials';
 import { MAIL_PROVIDERS, oauthRedirectUri, providerAdapter, type MailProvider, type ProviderAccount, type TokenSet } from './providers';
 import { enqueueSyncJob, toJob, jobSelect, type JobRow } from './sync-jobs';
 
@@ -70,7 +70,8 @@ function requireOwnerOrManager(row: Row, viewer: ConnectionViewer): void {
 export function listProviders() {
   return MAIL_PROVIDERS.map((provider) => {
     const adapter = providerAdapter(provider);
-    return { provider, configured: Boolean(adapter), revokesOnDisconnect: provider === 'GOOGLE' };
+    // C2A-03: no automatic provider revocation (a Google revocation is grant-wide, see disconnectConnection).
+    return { provider, configured: Boolean(adapter), revokesOnDisconnect: false };
   });
 }
 
@@ -272,21 +273,16 @@ export async function updateConnection(
 
 /**
  * Disconnects: final status, pending jobs cancelled, credentials deleted by the status trigger in the
- * same transaction. The returned `revoke` runs after commit (Google revokes the grant; Microsoft has
- * no per-app revocation, the stored tokens are simply gone).
+ * same transaction, so Business OS can never use the grant again. The provider grant itself is NOT
+ * revoked automatically (C2A-03): Google revokes per account and app, not per token, so revoking would
+ * also cut off any other live connection of the same mailbox (another business, or a reconnect).
+ * Microsoft has no per-app revocation at all. The user removes the app in their Google or Microsoft
+ * account if they want the grant gone; the API tells them so (revokesOnDisconnect: false).
  */
-export async function disconnectConnection(
-  db: AppTenantDb,
-  viewer: ConnectionViewer,
-  id: string,
-): Promise<{ connection: ConnectionDto; revoke: () => Promise<void> }> {
+export async function disconnectConnection(db: AppTenantDb, viewer: ConnectionViewer, id: string): Promise<ConnectionDto> {
   const row = await visibleRow(db, viewer, id);
   requireOwnerOrManager(row, viewer);
   if (row.status === 'DISCONNECTED') throw new StateConflictError('disconnected');
-  const provider = row.provider as MailProvider;
-  const adapter = providerAdapter(provider);
-  // Read before the status change deletes it; held only in memory until the revocation call.
-  const refreshToken = adapter?.capabilities.tokenRevocation && row.status === 'ACTIVE' ? await readRefreshToken(db, row) : null;
   const now = new Date();
   await db.mailSyncJob.updateMany({
     where: { connectionId: id, status: { in: ['QUEUED', 'RUNNING'] } },
@@ -298,16 +294,9 @@ export async function disconnectConnection(
   });
   if (changed.count !== 1) throw new StateConflictError('stale');
   await recordAudit(db, viewer.userId, 'communications.connection.disconnected', { type: 'mail_connection', id }, {
-    provider, revocation: refreshToken ? 'requested' : 'unsupported',
+    provider: row.provider, revocation: 'not_requested',
   });
-  return {
-    connection: toConnection({ ...row, status: 'DISCONNECTED', disconnectedAt: now, syncEnabled: false, version: row.version + 1 }, viewer),
-    revoke: async () => {
-      if (!refreshToken || !adapter) return;
-      // Best effort: the grant is already unusable here (tokens deleted); a failure is not retried.
-      await adapter.revoke(refreshToken).catch(() => undefined);
-    },
-  };
+  return toConnection({ ...row, status: 'DISCONNECTED', disconnectedAt: now, syncEnabled: false, version: row.version + 1 }, viewer);
 }
 
 export async function requestSync(

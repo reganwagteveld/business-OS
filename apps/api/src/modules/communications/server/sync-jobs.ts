@@ -112,39 +112,51 @@ export async function claimSyncJob(db: AppTenantDb, opts: { leaseSeconds?: numbe
   }
 }
 
-/** Extends the lease of a running job; false if the caller no longer holds it. */
+// C2A-02: every transition after the claim is ONE conditional statement on database time. The
+// caller must hold the lease (same lease id) AND the lease must still be valid (lease_expires_at >
+// now()). An expired lease authorises nothing, even before another worker reclaims the job. The row
+// lock taken by the UPDATE serialises it with cancellation (disconnect, pause, reauth) and with a
+// reclaim, so an obsolete worker can never move a job or write a cursor.
+
+/** Extends a valid lease of a running job; false if the caller no longer holds a valid lease. */
 export async function heartbeatSyncJob(db: AppTenantDb, jobId: string, leaseId: string, leaseSeconds = 120): Promise<boolean> {
   const rows = await db.$queryRaw<{ id: string }[]>`
     UPDATE "mail_sync_jobs" SET "lease_expires_at" = now() + make_interval(secs => ${Math.min(Math.max(leaseSeconds, 10), 900)}::int), "updated_at" = now()
-    WHERE "id" = ${jobId}::uuid AND "lease_id" = ${leaseId}::uuid AND "status" = 'RUNNING'
+    WHERE "id" = ${jobId}::uuid AND "lease_id" = ${leaseId}::uuid AND "status" = 'RUNNING' AND "lease_expires_at" > now()
     RETURNING "id"`;
   return rows.length === 1;
 }
 
-/** Marks a job done and records the connection's new cursor. False if the lease was lost. */
+/**
+ * Marks a job done and records the connection's new cursor, in one statement: the cursor is written
+ * only if this caller still holds a valid lease on a RUNNING job and the connection is still ACTIVE
+ * with sync enabled. False if the lease was lost, expired or the job was cancelled.
+ */
 export async function completeSyncJob(db: AppTenantDb, jobId: string, leaseId: string, result: { cursor?: string | null } = {}): Promise<boolean> {
-  const job = (await db.mailSyncJob.findFirst({ where: { id: jobId, leaseId, status: 'RUNNING' }, select: { connectionId: true } })) as { connectionId: string } | null;
-  if (!job) return false;
-  const now = new Date();
-  const done = await db.mailSyncJob.updateMany({
-    where: { id: jobId, leaseId, status: 'RUNNING' },
-    data: { status: 'SUCCEEDED', leaseId: null, leaseExpiresAt: null, finishedAt: now, lastErrorCode: null, updatedAt: now },
-  });
-  if (done.count !== 1) return false;
-  await db.mailConnection.updateMany({
-    where: { id: job.connectionId, status: 'ACTIVE' },
-    data: { lastSyncedAt: now, lastErrorCode: null, updatedAt: now, ...(result.cursor !== undefined ? { syncCursor: result.cursor } : {}) },
-  });
-  return true;
+  const writeCursor = result.cursor !== undefined;
+  const rows = await db.$queryRaw<{ id: string }[]>`
+    WITH done AS (
+      UPDATE "mail_sync_jobs" SET "status" = 'SUCCEEDED', "lease_id" = NULL, "lease_expires_at" = NULL, "finished_at" = now(),
+        "last_error_code" = NULL, "updated_at" = now()
+      WHERE "id" = ${jobId}::uuid AND "lease_id" = ${leaseId}::uuid AND "status" = 'RUNNING' AND "lease_expires_at" > now()
+      RETURNING "business_id", "connection_id", "id"
+    ), synced AS (
+      UPDATE "mail_connections" c SET "last_synced_at" = now(), "last_error_code" = NULL, "updated_at" = now(),
+        "sync_cursor" = CASE WHEN ${writeCursor} THEN ${result.cursor ?? null}::text ELSE c."sync_cursor" END
+      FROM done WHERE c."business_id" = done."business_id" AND c."id" = done."connection_id" AND c."status" = 'ACTIVE' AND c."sync_enabled"
+      RETURNING c."id"
+    )
+    SELECT done."id"::text FROM done`;
+  return rows.length === 1;
 }
 
 export type SyncFailureCode = 'rate_limited' | 'unavailable' | 'busy' | 'reauth_required' | 'insufficient_scope' | 'invalid_response' | 'cursor_expired' | 'internal_error';
 const RETRYABLE = new Set<SyncFailureCode>(['rate_limited', 'unavailable', 'busy', 'internal_error']);
 
 /**
- * Records a failure. Retryable failures with attempts left go back to QUEUED with backoff; anything
- * else is FAILED. reauth_required also stops the connection. Returns the new status, or null if the
- * caller no longer holds the lease.
+ * Records a failure. Retryable failures with attempts left go back to QUEUED with backoff (database
+ * time); anything else is FAILED. reauth_required also stops the connection. Returns the new status,
+ * or null if the caller no longer holds a valid lease (nothing changes then).
  */
 export async function failSyncJob(
   db: AppTenantDb,
@@ -152,24 +164,25 @@ export async function failSyncJob(
   leaseId: string,
   failure: { code: SyncFailureCode; retryAfterMs?: number },
 ): Promise<'QUEUED' | 'FAILED' | null> {
-  const job = (await db.mailSyncJob.findFirst({
-    where: { id: jobId, leaseId, status: 'RUNNING' }, select: { attempts: true, maxAttempts: true, connectionId: true },
-  })) as { attempts: number; maxAttempts: number; connectionId: string } | null;
-  if (!job) return null;
-  const now = new Date();
-  const retry = RETRYABLE.has(failure.code) && job.attempts < job.maxAttempts;
-  const changed = await db.mailSyncJob.updateMany({
-    where: { id: jobId, leaseId, status: 'RUNNING' },
-    data: retry
-      ? { status: 'QUEUED', leaseId: null, leaseExpiresAt: null, runAfter: new Date(now.getTime() + backoffMs(job.attempts, failure.retryAfterMs)), lastErrorCode: failure.code, updatedAt: now }
-      : { status: 'FAILED', leaseId: null, leaseExpiresAt: null, finishedAt: now, lastErrorCode: failure.code, updatedAt: now },
-  });
-  if (changed.count !== 1) return null;
+  const retryable = RETRYABLE.has(failure.code);
+  // The backoff depends on the attempt count, which the same statement reads under its row lock.
+  const rows = await db.$queryRaw<{ status: 'QUEUED' | 'FAILED'; connection_id: string }[]>`
+    UPDATE "mail_sync_jobs" j SET
+      "status" = CASE WHEN ${retryable} AND j."attempts" < j."max_attempts" THEN 'QUEUED' ELSE 'FAILED' END,
+      "run_after" = CASE WHEN ${retryable} AND j."attempts" < j."max_attempts"
+        THEN now() + make_interval(secs => GREATEST(LEAST(30 * power(2, GREATEST(j."attempts" - 1, 0)), 3600), LEAST(${Math.ceil((failure.retryAfterMs ?? 0) / 1000)}::int, 3600)))
+        ELSE j."run_after" END,
+      "finished_at" = CASE WHEN ${retryable} AND j."attempts" < j."max_attempts" THEN NULL ELSE now() END,
+      "lease_id" = NULL, "lease_expires_at" = NULL, "last_error_code" = ${failure.code}, "updated_at" = now()
+    WHERE j."id" = ${jobId}::uuid AND j."lease_id" = ${leaseId}::uuid AND j."status" = 'RUNNING' AND j."lease_expires_at" > now()
+    RETURNING j."status", j."connection_id"::text AS connection_id`;
+  const row = rows[0];
+  if (!row) return null;
   if (failure.code === 'reauth_required') {
-    const connection = (await db.mailConnection.findFirst({ where: { id: job.connectionId }, select: { provider: true } })) as { provider: string } | null;
-    if (connection) await markReauthRequired(db, job.connectionId, connection.provider, 'reauth_required');
+    const connection = (await db.mailConnection.findFirst({ where: { id: row.connection_id }, select: { provider: true } })) as { provider: string } | null;
+    if (connection) await markReauthRequired(db, row.connection_id, connection.provider, 'reauth_required');
   } else {
-    await db.mailConnection.updateMany({ where: { id: job.connectionId, status: 'ACTIVE' }, data: { lastErrorCode: failure.code, updatedAt: now } });
+    await db.mailConnection.updateMany({ where: { id: row.connection_id, status: 'ACTIVE' }, data: { lastErrorCode: failure.code, updatedAt: new Date() } });
   }
-  return retry ? 'QUEUED' : 'FAILED';
+  return row.status;
 }

@@ -59,20 +59,18 @@ export const GET = browserRoute(async ({ request, user, memberships }) => {
     return failed('provider_error');
   }
   const code = url.searchParams.get('code')!.slice(0, 4096);
-  let issued: Awaited<ReturnType<typeof adapter.exchangeCode>> | undefined;
-  // The grant is useless to us if we cannot keep it; Google can revoke it, Microsoft cannot.
-  const revokeIssued = async () => {
-    if (issued && adapter.capabilities.tokenRevocation) await adapter.revoke(issued.refreshToken ?? issued.accessToken).catch(() => undefined);
-  };
+  // C2A-03: tokens issued for a refused connection are DISCARDED, never revoked. A Google revocation
+  // removes the whole grant of that account to this app, which would also break a legitimate
+  // connection of the same mailbox (another member's, or in another business). Nothing is stored,
+  // so the discarded tokens are unreachable; the user can remove the grant in their account.
   try {
-    issued = await adapter.exchangeCode({ code, codeVerifier: pending.codeVerifier, redirectUri: oauthRedirectUri() });
+    const issued = await adapter.exchangeCode({ code, codeVerifier: pending.codeVerifier, redirectUri: oauthRedirectUri() });
     if (!adapter.hasScopes(issued.scopes, 'read')) {
-      await revokeIssued();
       await audit(pending, 'insufficient_scope');
       return failed('insufficient_scope');
     }
     const account = await adapter.account(issued.accessToken);
-    const result = await run((db) => completeAuthorization(db, viewer, pending, issued!, account));
+    const result = await run((db) => completeAuthorization(db, viewer, pending, issued, account));
     return {
       status: 200,
       title: result.outcome === 'connected' ? 'Mailbox connected' : 'Mailbox reconnected',
@@ -82,7 +80,6 @@ export const GET = browserRoute(async ({ request, user, memberships }) => {
     const reason: CallbackFailure | null = error instanceof AuthorizationFailure ? error.reason
       : isUniqueViolation(error, 'mail_connections_live_account_key') ? 'already_connected'
       : error instanceof ProviderError ? 'provider_error' : null;
-    await revokeIssued();
     if (!reason) throw error;
     await audit(pending, reason);
     return failed(reason);

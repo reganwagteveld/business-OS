@@ -33,6 +33,8 @@ import { withTenant } from '@/core/db';
 import { devOutbox } from '@/core/email';
 import { claimSyncJob, completeSyncJob, failSyncJob, heartbeatSyncJob, obtainAccessToken, type TenantRun } from '@/modules/communications';
 import { credentialAad, credentialBox } from '@/modules/communications/server/credentials';
+import { microsoftAdapter } from '@/modules/communications/server/providers/microsoft';
+import { ProviderError, type MailProviderAdapter } from '@/modules/communications/server/providers/types';
 import {
   AuthorizeMailConnectionResponse, ListMailConnectionsResponse, ListMailProvidersResponse, ListMailSyncJobsResponse, MailConnectionResponse, MailSyncJobResponse,
 } from '@business-os/contracts';
@@ -102,8 +104,10 @@ async function fakeFetch(input: string | URL | Request, init: RequestInit = {}):
     });
   }
   if (url === 'https://oauth2.googleapis.com/revoke') {
+    // Like Google: revoking any token revokes the account's whole grant to this app.
     fake.revoked.push(form.token!);
-    fake.refresh.delete(form.token!);
+    const who = fake.refresh.get(form.token!) ?? fake.access.get(form.token!);
+    for (const map of [fake.refresh, fake.access]) for (const [t, a] of map) if (a === who) map.delete(t);
     return reply({});
   }
   const account = fake.access.get(bearer);
@@ -255,7 +259,7 @@ describe('providers and the connect flow', () => {
     const res = await api(A.people.MANAGER!, A.slug).providers();
     expect(res.status).toBe(200);
     expect(ListMailProvidersResponse.parse(res.body).providers).toEqual([
-      { provider: 'GOOGLE', configured: true, revokesOnDisconnect: true },
+      { provider: 'GOOGLE', configured: true, revokesOnDisconnect: false },
       { provider: 'MICROSOFT', configured: true, revokesOnDisconnect: false },
     ]);
     expect((await api(A.people.MEMBER!, A.slug).providers()).status).toBe(403);
@@ -390,13 +394,13 @@ describe('OAuth state and callback protections', () => {
     expect(reasons).toContain('declined');
   });
 
-  it('refuses a consent that left out Gmail access and revokes the grant it was given', async () => {
+  it('refuses a consent that left out Gmail access, storing and revoking nothing', async () => {
     const owner = A.people.OWNER!;
     const acct = account('GOOGLE', 'partial');
     const res = await callback(consent(await started(owner), acct, { scopes: 'openid https://www.googleapis.com/auth/userinfo.email' }), owner);
     expect(res.status).toBe(400);
     expect(res.html).toContain('(insufficient_scope)');
-    expect(fake.revoked).toHaveLength(1);
+    expect(fake.revoked).toEqual([]);
     expect(await count('SELECT count(*) AS n FROM mail_connections WHERE provider_account_id = $1', [acct.id])).toBe(0);
   });
 
@@ -523,17 +527,19 @@ describe('credential refresh, revocation and reconnection', () => {
     expect(await count("SELECT count(*) AS n FROM audit_events WHERE target_id = $1 AND action = 'communications.connection.reconnected'", [id])).toBe(1);
   });
 
-  it('disconnect: final, tokens deleted in the same transaction, jobs cancelled, Google revoked after commit', async () => {
+  it('disconnect: final, tokens deleted in the same transaction, jobs cancelled, no grant-wide revocation (C2A-03)', async () => {
     const owner = A.people.OWNER!;
     const acct = account('GOOGLE', 'leaving');
     const id = await connect(owner, A.slug, acct);
-    const sealed = (await admin.query('SELECT refresh_token_enc FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0].refresh_token_enc;
-    const refreshToken = credentialBox().open(sealed, credentialAad(A.businessId, id, 'refresh'));
+    // The same mailbox is also connected in business B; disconnecting in A must not cut it off.
+    const elsewhere = await connect(B.people.OWNER!, B.slug, acct);
     fake.reset();
     const res = await api(A.people.ADMIN!, A.slug).disconnect(id);
     expect(res.status).toBe(200);
     expect(MailConnectionResponse.parse(res.body).connection).toMatchObject({ status: 'DISCONNECTED', syncEnabled: false });
-    expect(fake.revoked).toEqual([refreshToken]);
+    expect(fake.revoked).toEqual([]);
+    await admin.query('UPDATE mail_connection_credentials SET access_token_expires_at = now() WHERE connection_id = $1', [elsewhere]);
+    expect(await obtainAccessToken(runAs(B.businessId, B.people.OWNER!.id), elsewhere)).toMatch(/^at-/);
     expect(await count('SELECT count(*) AS n FROM mail_connection_credentials WHERE connection_id = $1', [id])).toBe(0);
     expect(await count("SELECT count(*) AS n FROM mail_sync_jobs WHERE connection_id = $1 AND status IN ('QUEUED','RUNNING')", [id])).toBe(0);
     expect((await api(owner, A.slug).disconnect(id)).body).toEqual({ error: 'disconnected' });
@@ -541,7 +547,7 @@ describe('credential refresh, revocation and reconnection', () => {
     expect((await api(owner, A.slug).list()).body.connections.map((c: { id: string }) => c.id)).not.toContain(id);
     expect((await api(owner, A.slug).list('?includeDisconnected=true')).body.connections.map((c: { id: string }) => c.id)).toContain(id);
     const audit = (await admin.query("SELECT actor_user_id, metadata FROM audit_events WHERE target_id = $1 AND action = 'communications.connection.disconnected'", [id])).rows[0];
-    expect(audit).toEqual({ actor_user_id: A.people.ADMIN!.id, metadata: { provider: 'GOOGLE', revocation: 'requested' } });
+    expect(audit).toEqual({ actor_user_id: A.people.ADMIN!.id, metadata: { provider: 'GOOGLE', revocation: 'not_requested' } });
     // Connecting the mailbox again makes a new connection; the old row stays as the record.
     const again = await connect(owner, A.slug, acct);
     expect(again).not.toBe(id);
@@ -553,7 +559,114 @@ describe('credential refresh, revocation and reconnection', () => {
     expect((await api(A.people.ADMIN!, A.slug).disconnect(id)).status).toBe(200);
     expect(fake.calls).toEqual([]);
     expect(await count('SELECT count(*) AS n FROM mail_connection_credentials WHERE connection_id = $1', [id])).toBe(0);
-    expect((await admin.query("SELECT metadata->>'revocation' AS r FROM audit_events WHERE target_id = $1 AND action = 'communications.connection.disconnected'", [id])).rows[0].r).toBe('unsupported');
+    expect((await admin.query("SELECT metadata->>'revocation' AS r FROM audit_events WHERE target_id = $1 AND action = 'communications.connection.disconnected'", [id])).rows[0].r).toBe('not_requested');
+  });
+
+  it('C2A-03: a refused second connection of a mailbox never revokes the legitimate one', async () => {
+    const acct = account('GOOGLE', 'contested');
+    const legit = await connect(A.people.OWNER!, A.slug, acct);
+    fake.reset();
+    const url = (await api(A.people.ADMIN!, A.slug).authorize({ provider: 'GOOGLE' })).body.authorizationUrl;
+    const refused = await callback(consent(url, acct), A.people.ADMIN!);
+    expect(refused.status).toBe(409);
+    expect(refused.html).toContain('(already_connected)');
+    expect(fake.revoked).toEqual([]);
+    expect(fake.calls.map((c) => c.url)).not.toContain('https://oauth2.googleapis.com/revoke');
+    // The legitimate connection keeps working: active, credentials intact, refresh succeeds.
+    expect((await api(A.people.OWNER!, A.slug).get(legit)).body.connection).toMatchObject({ status: 'ACTIVE', lastErrorCode: null });
+    await admin.query('UPDATE mail_connection_credentials SET access_token_expires_at = now() WHERE connection_id = $1', [legit]);
+    expect(await obtainAccessToken(runAs(A.businessId, A.people.OWNER!.id), legit)).toMatch(/^at-/);
+    // The refusal is audited with a stable reason and nothing about the mailbox.
+    const failure = (await admin.query("SELECT metadata FROM audit_events WHERE business_id = $1 AND actor_user_id = $2 AND action = 'communications.connection.authorization_failed' ORDER BY created_at DESC LIMIT 1", [A.businessId, A.people.ADMIN!.id])).rows[0];
+    expect(failure.metadata).toEqual({ provider: 'GOOGLE', reason: 'already_connected' });
+  });
+
+  describe('C2A-01: refresh outcomes are fenced by the credential version', () => {
+    /** An adapter whose refresh waits for `release` and then answers `outcome`. */
+    function delayed(outcome: 'invalid_grant' | 'success') {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      let entered!: () => void;
+      const started = new Promise<void>((r) => { entered = r; });
+      const base = microsoftAdapter({ clientId: 'fake-microsoft-client', clientSecret: 'fake-microsoft-secret' });
+      const adapter: MailProviderAdapter = {
+        ...base,
+        async refresh() {
+          entered();
+          await gate;
+          if (outcome === 'invalid_grant') throw new ProviderError('invalid_grant');
+          return { accessToken: 'at-obsolete-attempt', refreshToken: 'rt-obsolete-attempt', expiresAt: new Date(Date.now() + 3_600_000), scopes: [] };
+        },
+      };
+      return { adapter, release, started };
+    }
+
+    async function expiringConnection() {
+      const owner = A.people.OWNER!;
+      const id = await connect(owner, A.slug, account('MICROSOFT', 'fenced'));
+      await admin.query('UPDATE mail_connection_credentials SET access_token_expires_at = now() WHERE connection_id = $1', [id]);
+      return { owner, id, run: runAs(A.businessId, owner.id) };
+    }
+
+    it('a delayed invalid_grant after its lease expired and a replacement refresh succeeded changes nothing', async () => {
+      const { owner, id, run } = await expiringConnection();
+      const slow = delayed('invalid_grant');
+      const obsolete = obtainAccessToken(run, id, { adapter: slow.adapter }).catch((e: unknown) => e);
+      await slow.started;
+      // The first lease expires before its provider call returns; a second caller takes over and succeeds.
+      await admin.query("UPDATE mail_connection_credentials SET refresh_lease_until = now() - interval '1 second' WHERE connection_id = $1", [id]);
+      const replacement = await obtainAccessToken(run, id);
+      expect(replacement).toMatch(/^at-/);
+      slow.release();
+      expect(await obsolete).toMatchObject({ code: 'busy' });
+      // Still connected, the replacement's credentials intact and usable, no reauth audit.
+      expect((await api(owner, A.slug).get(id)).body.connection).toMatchObject({ status: 'ACTIVE', lastErrorCode: null });
+      expect(await obtainAccessToken(run, id)).toBe(replacement);
+      expect(await count("SELECT count(*) AS n FROM audit_events WHERE target_id = $1 AND action = 'communications.system.reauth_required'", [id])).toBe(0);
+      // And the rotated refresh token the replacement stored still refreshes.
+      await admin.query('UPDATE mail_connection_credentials SET access_token_expires_at = now() WHERE connection_id = $1', [id]);
+      expect(await obtainAccessToken(run, id)).not.toBe(replacement);
+    });
+
+    it('a delayed success of an obsolete attempt cannot overwrite the replacement credentials', async () => {
+      const { id, run } = await expiringConnection();
+      const slow = delayed('success');
+      const obsolete = obtainAccessToken(run, id, { adapter: slow.adapter }).catch((e: unknown) => e);
+      await slow.started;
+      await admin.query("UPDATE mail_connection_credentials SET refresh_lease_until = now() - interval '1 second' WHERE connection_id = $1", [id]);
+      const replacement = await obtainAccessToken(run, id);
+      slow.release();
+      expect(await obsolete).toMatchObject({ code: 'busy' });
+      expect(await obtainAccessToken(run, id)).toBe(replacement);
+      const sealed = (await admin.query('SELECT refresh_token_enc FROM mail_connection_credentials WHERE connection_id = $1', [id])).rows[0].refresh_token_enc;
+      expect(credentialBox().open(sealed, credentialAad(A.businessId, id, 'refresh'))).not.toBe('rt-obsolete-attempt');
+    });
+
+    it('an invalid_grant for the current credentials still requires reauthorisation (and only once)', async () => {
+      const { owner, id, run } = await expiringConnection();
+      const slow = delayed('invalid_grant');
+      const attempt = obtainAccessToken(run, id, { adapter: slow.adapter }).catch((e: unknown) => e);
+      await slow.started;
+      // Expired lease, but nobody replaced the credentials: the refusal is about the current token.
+      await admin.query("UPDATE mail_connection_credentials SET refresh_lease_until = now() - interval '1 second' WHERE connection_id = $1", [id]);
+      slow.release();
+      expect(await attempt).toMatchObject({ code: 'invalid_grant' });
+      expect((await api(owner, A.slug).get(id)).body.connection).toMatchObject({ status: 'NEEDS_REAUTH', lastErrorCode: 'reauth_required' });
+      expect(await count("SELECT count(*) AS n FROM audit_events WHERE target_id = $1 AND action = 'communications.system.reauth_required'", [id])).toBe(1);
+    });
+
+    it('a reconnect in between fences out the older refresh too', async () => {
+      const { owner, id, run } = await expiringConnection();
+      const acctEmail = (await api(owner, A.slug).get(id)).body.connection.mailboxAddress;
+      const accountRow = [...fake.refresh.values()].find((a) => a.email.toLowerCase() === acctEmail)!;
+      const slow = delayed('invalid_grant');
+      const attempt = obtainAccessToken(run, id, { adapter: slow.adapter }).catch((e: unknown) => e);
+      await slow.started;
+      expect(await connect(owner, A.slug, accountRow, { connectionId: id })).toBe(id);
+      slow.release();
+      expect(await attempt).toMatchObject({ code: 'busy' });
+      expect((await api(owner, A.slug).get(id)).body.connection.status).toBe('ACTIVE');
+    });
   });
 });
 
@@ -646,6 +759,60 @@ describe('sync-job foundation', () => {
     } finally {
       await admin.query("UPDATE memberships SET status = 'ACTIVE' WHERE business_id = $1 AND user_id = $2", [B.businessId, owner.id]);
     }
+  });
+  describe('C2A-02: an expired lease authorises nothing, even before it is reclaimed', () => {
+    // Claim the queued job of one connection, completing whatever else is due first.
+    async function claimFor(connectionId: string) {
+      for (let c = await system(B.businessId, (db) => claimSyncJob(db)); c; c = await system(B.businessId, (db) => claimSyncJob(db))) {
+        if (c.connection.id === connectionId) return c;
+        await system(B.businessId, (db) => completeSyncJob(db, c!.job.id, c!.leaseId));
+      }
+      throw new Error('no job for ' + connectionId);
+    }
+    const state = async (jobId: string) =>
+      (await admin.query('SELECT j.status, j.attempts, j.lease_id::text AS lease, c.sync_cursor FROM mail_sync_jobs j JOIN mail_connections c ON c.id = j.connection_id WHERE j.id = $1', [jobId])).rows[0];
+
+    it('heartbeat, complete and fail are refused on database time once the lease ran out', async () => {
+      const id = await connect(B.people.MANAGER!, B.slug, account('GOOGLE', 'lease-expired'));
+      const claimed = await claimFor(id);
+      await admin.query("UPDATE mail_sync_jobs SET lease_expires_at = now() - interval '1 millisecond' WHERE id = $1", [claimed.job.id]);
+      expect(await system(B.businessId, (db) => heartbeatSyncJob(db, claimed.job.id, claimed.leaseId))).toBe(false);
+      expect(await system(B.businessId, (db) => completeSyncJob(db, claimed.job.id, claimed.leaseId, { cursor: 'stale-cursor' }))).toBe(false);
+      expect(await system(B.businessId, (db) => failSyncJob(db, claimed.job.id, claimed.leaseId, { code: 'rate_limited' }))).toBeNull();
+      expect(await system(B.businessId, (db) => failSyncJob(db, claimed.job.id, claimed.leaseId, { code: 'reauth_required' }))).toBeNull();
+      // Nothing moved: still RUNNING under the same lease, no cursor, the mailbox untouched.
+      expect(await state(claimed.job.id)).toEqual({ status: 'RUNNING', attempts: 1, lease: claimed.leaseId, sync_cursor: null });
+      const conn = (await admin.query('SELECT status, last_error_code, last_synced_at FROM mail_connections WHERE id = $1', [id])).rows[0];
+      expect(conn).toEqual({ status: 'ACTIVE', last_error_code: null, last_synced_at: null });
+      // The next claim reclaims it under a new lease; only that lease can finish it.
+      const reclaimed = await claimFor(id);
+      expect(reclaimed.job.id).toBe(claimed.job.id);
+      expect(await system(B.businessId, (db) => completeSyncJob(db, claimed.job.id, claimed.leaseId, { cursor: 'stale-cursor' }))).toBe(false);
+      expect(await system(B.businessId, (db) => completeSyncJob(db, reclaimed.job.id, reclaimed.leaseId, { cursor: 'fresh-cursor' }))).toBe(true);
+      expect(await state(claimed.job.id)).toMatchObject({ status: 'SUCCEEDED', sync_cursor: 'fresh-cursor' });
+    });
+
+    it('a cancelled job cannot write its cursor, even with an unexpired lease', async () => {
+      const owner = B.people.MANAGER!;
+      const id = await connect(owner, B.slug, account('GOOGLE', 'lease-cancelled'));
+      const claimed = await claimFor(id);
+      expect((await api(owner, B.slug).disconnect(id)).status).toBe(200);
+      expect((await state(claimed.job.id)).status).toBe('CANCELLED');
+      expect(await system(B.businessId, (db) => heartbeatSyncJob(db, claimed.job.id, claimed.leaseId))).toBe(false);
+      expect(await system(B.businessId, (db) => completeSyncJob(db, claimed.job.id, claimed.leaseId, { cursor: 'after-cancel' }))).toBe(false);
+      expect(await system(B.businessId, (db) => failSyncJob(db, claimed.job.id, claimed.leaseId, { code: 'rate_limited' }))).toBeNull();
+      expect(await state(claimed.job.id)).toMatchObject({ status: 'CANCELLED', sync_cursor: null });
+    });
+
+    it('a paused mailbox keeps its cursor when a still-leased job completes', async () => {
+      const owner = B.people.MANAGER!;
+      const id = await connect(owner, B.slug, account('GOOGLE', 'lease-paused'));
+      const claimed = await claimFor(id);
+      await admin.query('UPDATE mail_connections SET sync_enabled = false WHERE id = $1', [id]);
+      // The job itself may finish, but a paused mailbox takes no new cursor.
+      await system(B.businessId, (db) => completeSyncJob(db, claimed.job.id, claimed.leaseId, { cursor: 'while-paused' }));
+      expect((await admin.query('SELECT sync_cursor FROM mail_connections WHERE id = $1', [id])).rows[0].sync_cursor).toBeNull();
+    });
   });
 });
 

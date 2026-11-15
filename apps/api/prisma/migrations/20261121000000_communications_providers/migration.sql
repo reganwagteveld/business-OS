@@ -39,6 +39,7 @@ CREATE TABLE "mail_connection_credentials" (
     "business_id" UUID NOT NULL,
     "connection_id" UUID NOT NULL,
     "key_id" TEXT NOT NULL,
+    "credential_version" UUID NOT NULL,
     "refresh_token_enc" TEXT NOT NULL,
     "access_token_enc" TEXT,
     "access_token_expires_at" TIMESTAMPTZ,
@@ -265,7 +266,7 @@ GRANT DELETE ON "mail_oauth_states" TO bos_app;
 GRANT UPDATE ("mailbox_address", "display_name", "status", "sharing", "granted_scopes", "sync_enabled", "sync_cursor", "last_synced_at",
               "last_error_code", "connected_at", "status_changed_at", "disconnected_at", "disconnected_by_id", "version", "updated_at")
   ON "mail_connections" TO bos_app;
-GRANT UPDATE ("key_id", "refresh_token_enc", "access_token_enc", "access_token_expires_at", "refresh_lease_id", "refresh_lease_until", "updated_at")
+GRANT UPDATE ("key_id", "credential_version", "refresh_token_enc", "access_token_enc", "access_token_expires_at", "refresh_lease_id", "refresh_lease_until", "updated_at")
   ON "mail_connection_credentials" TO bos_app;
 GRANT UPDATE ("consumed_at") ON "mail_oauth_states" TO bos_app;
 GRANT UPDATE ("status", "attempts", "run_after", "lease_id", "lease_expires_at", "started_at", "finished_at", "last_error_code", "updated_at")

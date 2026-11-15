@@ -43,6 +43,8 @@ model MailConnectionCredential {
   businessId           String    @map("business_id") @db.Uuid
   connectionId         String    @map("connection_id") @db.Uuid
   keyId                String    @map("key_id")
+  /// Replaced on every write of the tokens; a refresh may store or invalidate only the version it read (C2A-01 fence).
+  credentialVersion    String    @map("credential_version") @db.Uuid
   refreshTokenEnc      String    @map("refresh_token_enc")
   accessTokenEnc       String?   @map("access_token_enc")
   accessTokenExpiresAt DateTime? @map("access_token_expires_at") @db.Timestamptz

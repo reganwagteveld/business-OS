@@ -135,7 +135,8 @@ revoked grant even if service code forgets.
 | `refresh_token_enc`, `access_token_enc` | Envelope `v1.<keyId>.<iv>.<ciphertext+tag>` (base64url), AES-256-GCM. CHECK on the format, so plaintext cannot be stored by mistake. |
 | `access_token_expires_at` | Refresh when less than 5 minutes remain. |
 | `key_id` | Key that encrypted the row (rotation). |
-| `refresh_lease_id`, `refresh_lease_until` | Single-flight refresh (§7.3). |
+| `credential_version` | Random uuid replaced on every write of the tokens (connect, reconnect, refresh). A refresh may store, or invalidate, only the version it read (§7.3, audit finding C2A-01). |
+| `refresh_lease_id`, `refresh_lease_until` | Single-flight refresh (§7.3), on database time. |
 
 Only the credentials service (`modules/communications/server/credentials.ts`) may reference this model
 (new boundary rule). No API response type has a field for it.
@@ -253,8 +254,10 @@ recorded on the job row itself, not in the audit log.
 5. In a second unit of work it creates the connection (or reactivates the owner's `NEEDS_REAUTH`
    connection for the same account), stores the encrypted tokens, queues the `INITIAL` sync job and
    audits. Another member's live connection of the same mailbox → `already_connected`; reconnecting
-   with a different account → `account_mismatch`. If this step fails after tokens were issued, the new
-   grant is revoked (Google) after the rollback.
+   with a different account → `account_mismatch`. If this step fails after tokens were issued, the
+   new tokens are discarded, never revoked: Google revocation is grant-wide (it ends every token of
+   that account for this app, in every business), so revoking here would break the legitimate
+   existing connection (audit finding C2A-03). The failure is audited with its stable reason.
 6. The callback answers with a minimal static HTML page (no-store, `default-src 'none'`) saying
    connected or not, with a stable reason code and no echo of any input. C2-D replaces it with a
    redirect into the app.
@@ -276,25 +279,40 @@ or put in error messages (tests scan responses, audit rows and console output).
 
 1. Unit of work: read the credential; if the access token has more than 5 minutes left, decrypt and
    return it.
-2. Otherwise take a 30-second refresh lease with one conditional UPDATE (`lease is null or expired`).
-3. The lease holder refreshes over the network (no transaction or lock held), then stores the new
-   tokens only if it still holds the lease. Microsoft rotates the refresh token on every use, so two
-   concurrent refreshes would invalidate each other; the lease makes refresh single-flight. Google
-   usually returns no new refresh token; the old one is kept.
-4. Others poll briefly for the fresh token, then give up with a retryable `busy` error.
-5. `invalid_grant` (user revoked access, password change, admin policy, Google's 7-day expiry for apps
-   in testing mode): the connection becomes `NEEDS_REAUTH` with `reauth_required`, credentials are
-   deleted, pending jobs are cancelled, a system audit event is written. Only the owner can reconnect.
+2. Otherwise take a 30-second refresh lease with one conditional UPDATE on database time
+   (`lease_until is null or < now()`, set to `now() + 30 s`). It returns the refresh token and the
+   current `credential_version`.
+3. The lease holder refreshes over the network (no transaction or lock held). Microsoft rotates the
+   refresh token on every use, so two concurrent refreshes would invalidate each other; the lease makes
+   refresh single-flight. Google usually returns no new refresh token; the old one is kept.
+4. **Fencing (C2A-01).** The lease alone is not enough: it can expire while a slow attempt is still
+   waiting on the provider, and a second attempt can take over and succeed. Every outcome is therefore
+   written with a check of the `credential_version` that the attempt read, in the same statement:
+   - success: `UPDATE … SET tokens, credential_version = new uuid, lease cleared WHERE
+     credential_version = read version`; zero rows means the attempt is obsolete, its tokens are
+     dropped and the caller gets a retryable `busy`.
+   - `invalid_grant`: in one transaction, `UPDATE … WHERE credential_version = read version` and,
+     only if that matched, `NEEDS_REAUTH` with `reauth_required`, credentials deleted, pending jobs
+     cancelled and a system audit event. If the version changed (a replacement refresh or a reconnect
+     wrote new tokens), nothing changes and the caller gets `busy`. The check and the invalidation are
+     atomic.
+5. Others poll briefly for the fresh token, then give up with a retryable `busy` error.
+6. `invalid_grant` for the current credentials (user revoked access, password change, admin policy,
+   Google's 7-day expiry for apps in testing mode) requires reauthorisation. Only the owner can
+   reconnect.
 
 ### 7.4 Revocation, disconnection, reconnection
 
 - **Disconnect** (owner or `manage_connections`): status `DISCONNECTED` (final), queued/running jobs
-  `CANCELLED`, credentials deleted by the trigger in the same transaction; after commit the server
-  asks the provider to revoke the grant. Google: `POST oauth2.googleapis.com/revoke`. Microsoft has
-  **no per-application token revocation endpoint** (`revokeSignInSessions` would sign the user out of
-  everything, so it is not used): the stored tokens are deleted and the user is told to remove the app
-  under My Apps / tenant admin if they want the grant itself gone. The audit event records
-  `requested` or `unsupported`.
+  `CANCELLED`, credentials deleted by the trigger in the same transaction. C2-A makes **no revocation
+  call** to either provider (C2A-03). Google's revoke endpoint ends the whole grant for that Google
+  account and this app, which would also break the same mailbox connected in another business or by
+  a later reconnect. Microsoft has no per-application revocation endpoint (`revokeSignInSessions`
+  would sign the user out of everything). Deleting the stored tokens is what disconnects; users who
+  want the grant itself gone remove the app in their Google account or My Apps. The audit event
+  records `revocation: not_requested`, and `revokesOnDisconnect` is `false` for both providers. A
+  safe, explicit "also revoke at Google" option (only when no other live connection uses the account)
+  can come later as an owner decision.
 - **Revoked at the provider:** detected on the next refresh (§7.3).
 - **Reconnect:** a new consent by the owner for the same account reactivates the same connection,
   keeping its id, sharing and history. A different account is refused.
@@ -352,7 +370,13 @@ jobs simply wait.
   handing a job out it checks that the connection is `ACTIVE`, sync is enabled and the owner is still
   an active member with `communications:connect`; otherwise the job is cancelled (and the owner case
   handled as in §5).
-- `completeSyncJob` / `failSyncJob` only act while the caller still holds the lease. Failure with a
+- `heartbeatSyncJob`, `completeSyncJob` and `failSyncJob` only act while the caller holds an
+  **unexpired** lease, checked on database time (`lease_id = caller AND status = RUNNING AND
+  lease_expires_at > now()`) in the same statement as the change (C2A-02). An expired lease authorises
+  nothing, even before another worker reclaims the job. `completeSyncJob` writes the job and the
+  connection's cursor in one statement, and the cursor only if the job update matched and the
+  connection is still `ACTIVE` with sync enabled, so a cancelled, reclaimed or paused job can never
+  leave an obsolete cursor. Failure with a
   retryable code re-queues with exponential backoff (30 s × 2^(attempt-1), capped at 1 h, or the
   provider's `Retry-After`), otherwise `FAILED`. `reauth_required` also moves the connection to
   `NEEDS_REAUTH`.
@@ -407,9 +431,13 @@ The redirect URI is derived: `${APP_BASE_URL}/api/v1/communications/oauth/callba
   connect flow; tokens never in the database in plaintext, never in responses, audit rows or logs;
   state single-use / expired / other user / other business / forged / no session; role matrix;
   visibility and sharing rules; reconnect and account mismatch; another member's mailbox;
-  disconnect (credentials gone by trigger, jobs cancelled, Google revoke called after commit,
-  Microsoft not); refresh single-flight under concurrency and `invalid_grant`; idempotent enqueue under
-  concurrency; claim with `SKIP LOCKED`, lease expiry, backoff and terminal failure; owner removed;
+  disconnect (credentials gone by trigger, jobs cancelled, no revocation call, the same mailbox in
+  another business keeps working); a refused second connection never revokes the legitimate one
+  (C2A-03); refresh single-flight under concurrency and `invalid_grant`; refresh fencing races with a
+  delayed provider (expired lease + replacement success + late `invalid_grant`, late success, reconnect
+  in between) (C2A-01); idempotent enqueue under concurrency; claim with `SKIP LOCKED`, lease expiry,
+  backoff and terminal failure; expired-but-unreclaimed leases refused for heartbeat, complete and fail,
+  no cursor from a cancelled, reclaimed or paused job (C2A-02); owner removed;
   cross-tenant RLS on all four tables; database guards and grants; business purge cascade; system audit
   policy limits.
 
@@ -435,8 +463,11 @@ The redirect URI is derived: `${APP_BASE_URL}/api/v1/communications/oauth/callba
   ```
   Verified locally (2026-11-15): a database with all 12 migrations plus this script has a
   `pg_dump --schema-only` identical to a database with main's 11 migrations. Code
-  rollback is a revert of the PR; once real connections exist, disconnect them first so grants are
-  revoked at Google.
+  rollback is a revert of the PR; once real connections exist, disconnect them first (tokens are
+  deleted; grants stay until users remove the app, §7.4).
+- **Audit remediation (C2A-01):** the only schema change is one added column,
+  `mail_connection_credentials.credential_version uuid NOT NULL`, plus its column grant for `bos_app`.
+  The migration is still additive and has not been applied anywhere except local and CI databases.
 
 ## 13. Security and privacy considerations
 
@@ -500,4 +531,9 @@ The redirect URI is derived: `${APP_BASE_URL}/api/v1/communications/oauth/callba
 - Without a worker, queued jobs accumulate (one per connection at most). Harmless; C2-B drains them.
 - The callback's HTML page is temporary until C2-D.
 - Shared files conflict textually with F5 (additive on both sides).
-- Microsoft grants cannot be revoked by the app; users must remove the app themselves.
+- No grant is revoked by the app (C2A-03): after disconnect the Google or Microsoft grant stays until
+  the user removes the app. The stored tokens are gone, so Business OS can no longer use it.
+- A refresh holder stalled past its 30-second lease while a second attempt refreshes a Microsoft
+  token: both send the same rotating refresh token, so the provider may reject one of them. Fencing
+  keeps the winner's credentials; only if the provider has already invalidated the winner's token too
+  would the next refresh correctly ask for reconnection. Rare, and never silent.

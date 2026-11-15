@@ -20,7 +20,10 @@ export const MailProviderInfo = z
     provider: MailProvider,
     /** False when this deployment has no OAuth client for the provider (connecting is refused). */
     configured: z.boolean(),
-    /** Google can revoke a grant on disconnect; Microsoft cannot (remove the app in My Apps instead). */
+    /**
+     * Whether disconnecting also revokes the grant at the provider. Always false in C2-A: Business OS
+     * deletes its tokens; the user removes the app in their Google or Microsoft account (C2A-03).
+     */
     revokesOnDisconnect: z.boolean(),
   })
   .strict();
