@@ -18,13 +18,15 @@ export async function recordAudit(
 }
 
 /**
- * An event with no acting user (a provider revoked a grant, a mailbox owner left the business).
- * Allowed by the audit_system_write policy only for `communications.system.*` actions, and only in a
- * unit of work that has no session user (docs/communications-c2.md §6).
+ * An event with no acting user (a provider revoked a grant, a mailbox owner left the business; F6:
+ * the billing worker generated or failed a recurring period). Allowed by the audit_system_write and
+ * audit_finance_system_write policies only for `communications.system.*` and `finance.system.*`
+ * actions, and only in a unit of work that has no session user (docs/communications-c2.md §6,
+ * docs/finance-billing-f6.md §5).
  */
 export async function recordSystemAudit(
   db: AppTenantDb,
-  action: `communications.system.${string}`,
+  action: `communications.system.${string}` | `finance.system.${string}`,
   target: { type: string; id: string },
   metadata: Record<string, string | string[] | null> = {},
 ): Promise<void> {

@@ -9,7 +9,7 @@ import 'server-only';
 // totals, transitions and links.
 import { randomUUID } from 'node:crypto';
 import type { FinanceDocument as DocumentDto, FinanceDocumentListItem as ListItemDto } from '@business-os/contracts';
-import { recordAudit } from '@/core/audit';
+import { recordAudit, recordSystemAudit } from '@/core/audit';
 import { Decimal, type AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
@@ -132,7 +132,7 @@ export async function checkCustomer(db: AppTenantDb, customerId: string) {
  * business; these checks give clear errors and the service rules the FKs cannot express: a newly
  * linked record must be active, the contact must be one of the customer's, the opportunity for it.
  */
-async function checkLinks(
+export async function checkLinks(
   db: AppTenantDb,
   next: { customerId: string; contactId: string | null; opportunityId: string | null; projectId: string | null },
   changed: { customer: boolean; contact: boolean; opportunity: boolean; project: boolean },
@@ -168,7 +168,7 @@ export type LineInput = { description: string; quantity: string; unitPrice: stri
  * rate of this business; a newly used rate must be active, while a rate the draft already used stays
  * usable after it is archived. Amounts are computed with exact decimals; the database recomputes them.
  */
-async function priceLines(db: AppTenantDb, lines: LineInput[], currency: string, scale: number, alreadyUsed: Set<string>) {
+export async function priceLines(db: AppTenantDb, lines: LineInput[], currency: string, scale: number, alreadyUsed: Set<string>) {
   const rateIds = [...new Set(lines.map((l) => l.taxRateId).filter((v): v is string => !!v))];
   const rates = rateIds.length
     ? await db.financeTaxRate.findMany({ where: { id: { in: rateIds } }, select: { id: true, ratePercent: true, archivedAt: true } })
@@ -207,7 +207,7 @@ async function replaceLines(db: AppTenantDb, documentId: string, priced: Priced)
   });
 }
 
-function totalsOf(priced: { amounts: LineAmounts }[]) {
+export function totalsOf(priced: { amounts: LineAmounts }[]) {
   return documentTotals(priced.map((p) => p.amounts));
 }
 
@@ -237,7 +237,16 @@ async function replay(db: AppTenantDb, key: string | null, hash: string): Promis
   return { status: 200, document: await dto(db, existing) };
 }
 
-async function insertDraft(db: AppTenantDb, actorUserId: string, d: NewDraft, idem: { key: string | null; hash: string }) {
+/**
+ * The author of a draft: a signed-in member, or (F6, D-F6-2) the billing worker, which has no session
+ * user. A system-created draft has no created_by_id and its audit entry is a finance.system.* event
+ * that names the recurring schedule and period it came from.
+ */
+export type DraftAuthor = { userId: string } | { system: 'recurring'; templateId: string; periodIndex: number };
+
+async function insertDraft(db: AppTenantDb, author: string | DraftAuthor, d: NewDraft, idem: { key: string | null; hash: string }) {
+  const who: DraftAuthor = typeof author === 'string' ? { userId: author } : author;
+  const actorUserId = 'userId' in who ? who.userId : null;
   const currency = checkCurrency(d.currencyCode);
   const scale = currencyScale(currency);
   const priced = await priceLines(db, d.lines, currency, scale, d.alreadyUsedRates ?? new Set());
@@ -256,10 +265,17 @@ async function insertDraft(db: AppTenantDb, actorUserId: string, d: NewDraft, id
   await replaceLines(db, id, priced);
   const row = await load(db, d.kind, id);
   // Structured facts only: never notes, descriptions or addresses.
-  await recordAudit(db, actorUserId, 'finance.document.created', { type: 'finance_document', id }, {
+  const facts = {
     kind: d.kind, currencyCode: currency, customerId: d.customerId, projectId: d.projectId, sourceQuoteId: d.sourceQuoteId ?? null,
     creditedInvoiceId: d.creditedInvoiceId ?? null, lineCount: String(priced.length), total: formatAmount(totals.total, scale),
-  });
+  };
+  if ('system' in who) {
+    await recordSystemAudit(db, 'finance.system.document.created', { type: 'finance_document', id }, {
+      ...facts, recurringTemplateId: who.templateId, periodIndex: String(who.periodIndex),
+    });
+  } else {
+    await recordAudit(db, who.userId, 'finance.document.created', { type: 'finance_document', id }, facts);
+  }
   return { status: 201 as const, document: await dto(db, row) };
 }
 
@@ -277,7 +293,7 @@ export async function createQuote(db: AppTenantDb, actorUserId: string, input: Q
   }, { key, hash });
 }
 
-export async function createInvoice(db: AppTenantDb, actorUserId: string, input: InvoiceInput, key: string | null) {
+export async function createInvoice(db: AppTenantDb, actorUserId: string | DraftAuthor, input: InvoiceInput, key: string | null) {
   const hash = requestHash('invoice.create', input);
   const repeated = await replay(db, key, hash);
   if (repeated) return repeated;

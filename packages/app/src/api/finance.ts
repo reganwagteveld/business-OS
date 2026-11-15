@@ -10,6 +10,9 @@ import {
   UpdateTaxRateRequest, VoidDocumentRequest, VoidExpenseRequest,
   CreateDocumentPdfVersionRequest, DocumentBrandingResponse, DocumentPdfVersionResponse, ListDocumentPdfVersionsResponse, UpdateDocumentBrandingRequest,
   UploadBrandingLogoRequest, type DocumentBranding, type DocumentPdfVersion,
+  CancelRecurringInvoiceRequest, CreateRecurringInvoiceRequest, GenerateRecurringInvoiceResponse, ListRecurringInvoicesResponse, ListRecurringRunsResponse,
+  RecurringInvoiceResponse, RecurringPreviewResponse, RecurringRunActionRequest, RecurringRunResponse, RecurringTransitionRequest, UpdateRecurringInvoiceRequest,
+  type RecurringInvoice, type RecurringRun,
   type CreditNoteCredit, type CustomerBalance, type ExpenseCategory, type ExpensePayment, type FinanceDocument, type FinanceDocumentKind,
   type FinanceDocumentListItem, type FinanceExpense, type FinanceExpenseListItem, type FinancePayment, type InvoiceReceivables, type InvoiceSettlement,
 } from '@business-os/contracts';
@@ -30,6 +33,11 @@ export type NumberSeriesData = z.infer<typeof NumberSeriesResponse>['series'];
 export type TaxRateData = z.infer<typeof TaxRateResponse>['taxRate'];
 export type PaymentListItem = z.infer<typeof ListPaymentsResponse>['payments'][number];
 export type ExpensePaymentListItem = z.infer<typeof ListExpensePaymentsResponse>['payments'][number];
+export type RecurringPreview = z.infer<typeof RecurringPreviewResponse>['preview'];
+export interface RecurringQuery { status: 'active' | 'paused' | 'cancelled' | 'ended' | 'all'; customerId?: string; cursor?: string; limit?: number }
+export interface RecurringPage { recurringInvoices: RecurringInvoice[]; nextCursor: string | null }
+export interface RecurringRunPage { runs: RecurringRun[]; nextCursor: string | null }
+export type { RecurringInvoice, RecurringRun };
 export type { CreditNoteCredit, CustomerBalance, ExpensePayment, FinanceDocument, FinanceDocumentListItem, FinancePayment, InvoiceReceivables, InvoiceSettlement };
 
 /** The three document registers, as they appear in the API's paths. */
@@ -139,6 +147,17 @@ export interface FinanceClient {
   updateBranding(slug: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<DocumentBranding>>;
   uploadLogo(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<DocumentBranding>>;
   logo(slug: string, signal?: AbortSignal): Promise<Outcome<FetchedFile>>;
+  // ---- F6-1: recurring invoices (drafts only; nothing is issued or sent) --------------------------
+  recurringInvoices(slug: string, query: RecurringQuery, signal?: AbortSignal): Promise<Outcome<RecurringPage>>;
+  recurringInvoice(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<RecurringInvoice>>;
+  createRecurringInvoice(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<RecurringInvoice>>;
+  /** `patch` must include the `version` the edit was based on. */
+  updateRecurringInvoice(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<RecurringInvoice>>;
+  recurringTransition(slug: string, id: string, action: 'pause' | 'resume' | 'cancel', input: unknown, signal?: AbortSignal): Promise<Outcome<RecurringInvoice>>;
+  generateRecurringInvoice(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<{ run: RecurringRun; recurringInvoice: RecurringInvoice }>>;
+  recurringPreview(slug: string, id: string, count: number, signal?: AbortSignal): Promise<Outcome<RecurringPreview>>;
+  recurringRuns(slug: string, id: string, query: { status?: string; cursor?: string; limit?: number }, signal?: AbortSignal): Promise<Outcome<RecurringRunPage>>;
+  recurringRunAction(slug: string, id: string, runId: string, action: 'retry' | 'skip', signal?: AbortSignal): Promise<Outcome<RecurringRun>>;
 }
 
 /** The reversal endpoints take an empty, strict body (the same schema for all three). */
@@ -197,6 +216,7 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
   const doc = (slug: string, path: DocumentPath, id: string, tail = '') => `${base(slug)}/${path}/${encodeURIComponent(id)}${tail}`;
   const bool = (v: boolean | undefined) => (v === undefined ? undefined : String(v));
   const exp = (template: string, slug: string, expenseId: string) => p(template, { slug, expenseId });
+  const rec = (slug: string, id: string, tail = '') => `${base(slug)}/recurring-invoices/${encodeURIComponent(id)}${tail}`;
 
   return {
     async expenses(slug, query, signal) {
@@ -384,6 +404,35 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
     },
     async logo(slug, signal) {
       return file(await http.requestFile(`${base(slug)}/document-branding/logo`, 'image/png, image/jpeg', signal), ['image/png', 'image/jpeg']);
+    },
+    async recurringInvoices(slug, query, signal) {
+      return get(`${base(slug)}/recurring-invoices` + qs({ status: query.status, customerId: query.customerId, cursor: query.cursor, limit: query.limit }),
+        ListRecurringInvoicesResponse, (d) => d, signal);
+    },
+    async recurringInvoice(slug, id, signal) {
+      return get(rec(slug, id), RecurringInvoiceResponse, (d) => d.recurringInvoice, signal);
+    },
+    async createRecurringInvoice(slug, input, signal) {
+      return pick(await send('POST', `${base(slug)}/recurring-invoices`, CreateRecurringInvoiceRequest, input, RecurringInvoiceResponse, signal), 'recurringInvoice');
+    },
+    async updateRecurringInvoice(slug, id, patch, signal) {
+      return pick(await send('PATCH', rec(slug, id), UpdateRecurringInvoiceRequest, patch, RecurringInvoiceResponse, signal), 'recurringInvoice');
+    },
+    async recurringTransition(slug, id, action, input, signal) {
+      const schema = action === 'cancel' ? CancelRecurringInvoiceRequest : RecurringTransitionRequest;
+      return pick(await send('POST', rec(slug, id, `/${action}`), schema, input, RecurringInvoiceResponse, signal), 'recurringInvoice');
+    },
+    async generateRecurringInvoice(slug, id, input, signal) {
+      return send('POST', rec(slug, id, '/generate'), RecurringTransitionRequest, input, GenerateRecurringInvoiceResponse, signal);
+    },
+    async recurringPreview(slug, id, count, signal) {
+      return get(rec(slug, id, '/preview') + qs({ count }), RecurringPreviewResponse, (d) => d.preview, signal);
+    },
+    async recurringRuns(slug, id, query, signal) {
+      return get(rec(slug, id, '/runs') + qs({ status: query.status, cursor: query.cursor, limit: query.limit }), ListRecurringRunsResponse, (d) => d, signal);
+    },
+    async recurringRunAction(slug, id, runId, action, signal) {
+      return pick(await send('POST', rec(slug, id, `/runs/${encodeURIComponent(runId)}/${action}`), RecurringRunActionRequest, {}, RecurringRunResponse, signal), 'run');
     },
   };
 }

@@ -27,9 +27,12 @@ export const ZONE_PERMISSIONS = {
   // versions inline; generate = create the original PDF and add new versions; download = save a stored
   // version as a file; branding = logo, colour, footer and template text. Viewing the records and the
   // version history stays finance:read. None of them changes a financial record.
+  // billing (F6, D-F6-3, proposed) = recurring invoice schedules: create, change, pause, resume,
+  // cancel, generate now, retry and skip periods. Reading schedules and their runs is finance:read.
   finance: [
     'finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage',
     'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download', 'finance:documents_branding',
+    'finance:billing',
   ],
   // People (docs/people-data-model.md §5, decision PD-1). Separate from every other Zone. read = the
   // directory (work fields, org, reporting lines, history without reasons); read_sensitive = personal
@@ -65,7 +68,7 @@ const PROJECTS_WORK: Permission[] = ['projects:read', 'projects:create', 'projec
  */
 const FINANCE_DOCUMENTS: Permission[] = ['finance:documents_preview', 'finance:documents_generate', 'finance:documents_download'];
 const FINANCE_WORK: Permission[] = ['finance:read', 'finance:write', 'finance:expenses', ...FINANCE_DOCUMENTS];
-const FINANCE_ALL: Permission[] = [...FINANCE_WORK, 'finance:issue', 'finance:payments', 'finance:manage', 'finance:documents_branding'];
+const FINANCE_ALL: Permission[] = [...FINANCE_WORK, 'finance:issue', 'finance:payments', 'finance:manage', 'finance:documents_branding', 'finance:billing'];
 /** PD-1 defaults: OWNER and ADMIN administer People; MANAGER sees the directory only; MEMBER has no People access. */
 const PEOPLE_ALL: Permission[] = ['people:read', 'people:read_sensitive', 'people:manage', 'people:configure'];
 /** Everyone in the business works with the schedule; configuring calendars is for whoever runs the work. */

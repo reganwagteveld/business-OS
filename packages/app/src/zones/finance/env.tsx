@@ -20,7 +20,12 @@ export type FinanceView =
   | { name: 'expense-payments' }
   | { name: 'expense-payment'; id: string }
   | { name: 'expense-payment-new'; expenseId?: string }
-  | { name: 'settings'; tab?: SettingsTab };
+  | { name: 'settings'; tab?: SettingsTab }
+  // F6-1: recurring invoices live under Invoices.
+  | { name: 'recurring-list' }
+  | { name: 'recurring'; id: string }
+  | { name: 'recurring-new' }
+  | { name: 'recurring-edit'; id: string };
 
 export type SettingsTab = 'business' | 'numbering' | 'tax-rates' | 'categories' | 'documents';
 export interface PaymentPrefill { customerId: string; currencyCode: string; invoiceId?: string; amount?: string }
@@ -35,6 +40,7 @@ export function sectionOf(view: FinanceView): FinanceSection {
     case 'document-new': return view.path;
     case 'payments': case 'payment': case 'payment-new': return 'payments';
     case 'settings': return 'settings';
+    case 'recurring-list': case 'recurring': case 'recurring-new': case 'recurring-edit': return 'invoices';
     default: return 'expenses';
   }
 }
@@ -62,6 +68,8 @@ export interface FinanceCan {
   expenses: boolean;
   /** finance:manage: numbering, tax rates, categories, defaults. */
   manage: boolean;
+  /** finance:billing (F6): create and change recurring invoice schedules. */
+  billing: boolean;
   /** customers:read: search and name customers (held separately from any finance key). */
   readCustomers: boolean;
   /** F5 finance:documents_preview: preview a PDF (a draft's watermarked preview, or a stored version). */

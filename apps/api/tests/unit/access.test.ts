@@ -106,6 +106,7 @@ describe('Finance Zone permissions (docs/finance-data-model.md §7.1, owner deci
   const FINANCE = [
     'finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage',
     'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download', 'finance:documents_branding',
+    'finance:billing',
   ] as const;
 
   it('grants exactly the approved default matrix (F5 document keys provisional, F5-D3)', () => {
