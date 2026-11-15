@@ -144,6 +144,8 @@ let B: Awaited<ReturnType<typeof team>>;
 let acme: string;
 let other: string;
 /** The scenario's records (see beforeAll). */
+/** Each issued document's current version (voiding needs it). */
+const versions = new Map<string, number>();
 const ids = {} as { i1: string; i2: string; eur: string; p1: string; c1: string; p2: string };
 
 async function issuedInvoice(customerId: string, amount: string, issueDate: string, dueDate: string, currencyCode?: string) {
@@ -152,6 +154,7 @@ async function issuedInvoice(customerId: string, amount: string, issueDate: stri
   expect(draft.status).toBe(201);
   const issued = await own.issue(draft.body.document.id, { version: 1, issueDate, dueDate });
   expect(issued.status).toBe(200);
+  versions.set(issued.body.document.id, issued.body.document.version);
   return issued.body.document.id as string;
 }
 
@@ -191,7 +194,7 @@ beforeAll(async () => {
   const p2 = await own.record({ customerId: acme, amount: '30.00', receivedOn: '2026-03-01', method: 'CASH' });
   ids.p2 = p2.body.payment.id;
   expect((await own.reversePayment(ids.p2, { version: 1, reason: 'Bounced' })).status).toBe(200);
-  expect((await own.void(ids.i2, { version: 1, reason: 'Raised in error' })).status).toBe(200);
+  expect((await own.void(ids.i2, { version: versions.get(ids.i2)!, reason: 'Raised in error' })).status).toBe(200);
 }, 180_000);
 
 const q = (o: Record<string, string>) => `?${new URLSearchParams(o).toString()}`;
