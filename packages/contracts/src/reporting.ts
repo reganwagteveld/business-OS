@@ -140,7 +140,7 @@ export const ReportingSeries = z
     /** Change against the comparison period in percent, one decimal; null without comparison or from zero. */
     changePercent: z.string().nullable(),
     points: z.array(ReportingPoint),
-    /** Aligned with `points` by position (bucket n of the previous period). */
+    /** Aligned with `points` by position (bucket n of the previous period); shorter when the previous period has fewer buckets. */
     comparisonPoints: z.array(ReportingPoint).nullable(),
     suppressed: z.boolean(),
   })

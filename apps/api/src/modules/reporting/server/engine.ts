@@ -145,7 +145,9 @@ export function shapeSeries(def: MetricDefinition, args: {
     const total = sum(acc.current);
     const previous = sum(acc.previous);
     const hide = (n: number) => k !== null && n > 0 && n < k;
+    // Any suppressed bucket also hides the totals, or the hidden value could be recovered by subtraction.
     const suppressed = hide(total.n) || [...acc.current.values()].some((c) => hide(c.n));
+    const previousSuppressed = hide(previous.n) || [...acc.previous.values()].some((c) => hide(c.n));
     const point = (m: Map<string, { v: Decimal; n: number }>) => (bucket: string) => {
       const c = m.get(bucket);
       return { bucket, value: c && hide(c.n) ? null : fmt(c?.v ?? new Decimal(0), acc.currencyCode) };
@@ -161,9 +163,9 @@ export function shapeSeries(def: MetricDefinition, args: {
       sortValue: total.v,
       series: {
         key, label, currencyCode: acc.currencyCode, customerId: acc.customerId,
-        total: hide(total.n) ? null : fmt(total.v, acc.currencyCode),
-        comparisonTotal: args.comparisonRange ? (hide(previous.n) ? null : fmt(previous.v, acc.currencyCode)) : null,
-        changePercent: args.comparisonRange && !hide(total.n) && !hide(previous.n) ? percentChange(total.v, previous.v) : null,
+        total: suppressed ? null : fmt(total.v, acc.currencyCode),
+        comparisonTotal: args.comparisonRange ? (previousSuppressed ? null : fmt(previous.v, acc.currencyCode)) : null,
+        changePercent: args.comparisonRange && !suppressed && !previousSuppressed ? percentChange(total.v, previous.v) : null,
         points: currentBuckets.map(point(acc.current)),
         comparisonPoints: args.comparisonRange ? previousBuckets.slice(0, currentBuckets.length).map(point(acc.previous)) : null,
         suppressed,

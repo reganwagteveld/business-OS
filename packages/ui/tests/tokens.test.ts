@@ -78,6 +78,13 @@ const UI_PAIRS: Array<[string, string]> = [
   ['--ring', '--background'],
   ['--ring', '--card'],
   ['--input', '--field'],
+  // Chart marks are graphical objects (WCAG 1.4.11): every series colour and the comparison line on a card.
+  ['--chart-1', '--card'],
+  ['--chart-2', '--card'],
+  ['--chart-3', '--card'],
+  ['--chart-4', '--card'],
+  ['--chart-5', '--card'],
+  ['--chart-comparison', '--card'],
 ];
 
 describe('design tokens', () => {
