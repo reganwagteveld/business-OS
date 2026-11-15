@@ -15,6 +15,8 @@ export * from './projects.ts';
 export * from './finance.ts';
 export * from './finance-expenses.ts';
 export * from './people.ts';
+export * from './scheduling.ts';
+export * from './scheduling-time.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
@@ -34,6 +36,11 @@ import {
   ListExpensesResponse, RecordExpensePaymentRequest, RecordExpenseRequest,
   ReverseExpenseAllocationRequest, ReverseExpensePaymentRequest, UpdateExpenseCategoryRequest, UpdateExpenseRequest, VoidExpenseRequest,
 } from './finance-expenses.ts';
+import {
+  AvailabilityQuery, AvailabilityResponse, CalendarResponse, CalendarTransitionRequest, CreateCalendarRequest, CreateEventRequest, DefaultCalendarResponse,
+  EventResponse, EventTransitionRequest, ListCalendarsQuery, ListCalendarsResponse, ListEventsQuery, ListEventsResponse, UpdateCalendarRequest,
+  UpdateEventRequest,
+} from './scheduling.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
   ListOutcomesResponse, ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, UpdateOpportunityRequest,
@@ -233,6 +240,25 @@ export const endpoints = {
   updateLocation: { method: 'PATCH', path: '/api/v1/b/:slug/people/locations/:locationId', request: UpdateLocationRequest, response: LocationResponse },
   archiveLocation: { method: 'POST', path: '/api/v1/b/:slug/people/locations/:locationId/archive', response: LocationResponse },
   restoreLocation: { method: 'POST', path: '/api/v1/b/:slug/people/locations/:locationId/restore', response: LocationResponse },
+  // Scheduling S1 (docs/scheduling-s1.md). No DELETE: calendars and events are archived, events cancelled.
+  listCalendars: { method: 'GET', path: '/api/v1/b/:slug/scheduling/calendars', query: ListCalendarsQuery, response: ListCalendarsResponse },
+  createCalendar: { method: 'POST', path: '/api/v1/b/:slug/scheduling/calendars', request: CreateCalendarRequest, response: CalendarResponse },
+  /** Idempotent: creates the default calendar in the business's time zone if there is none (201), else returns it (200). */
+  initialiseDefaultCalendar: { method: 'POST', path: '/api/v1/b/:slug/scheduling/calendars/default', response: DefaultCalendarResponse },
+  getCalendar: { method: 'GET', path: '/api/v1/b/:slug/scheduling/calendars/:calendarId', response: CalendarResponse },
+  updateCalendar: { method: 'PATCH', path: '/api/v1/b/:slug/scheduling/calendars/:calendarId', request: UpdateCalendarRequest, response: CalendarResponse },
+  /** 409 default_calendar for the default: make another calendar the default first. Events are kept. */
+  archiveCalendar: { method: 'POST', path: '/api/v1/b/:slug/scheduling/calendars/:calendarId/archive', request: CalendarTransitionRequest, response: CalendarResponse },
+  restoreCalendar: { method: 'POST', path: '/api/v1/b/:slug/scheduling/calendars/:calendarId/restore', request: CalendarTransitionRequest, response: CalendarResponse },
+  listEvents: { method: 'GET', path: '/api/v1/b/:slug/scheduling/events', query: ListEventsQuery, response: ListEventsResponse },
+  /** 409 with SchedulingConflictResponse when an enforced booking overlaps. */
+  createEvent: { method: 'POST', path: '/api/v1/b/:slug/scheduling/events', request: CreateEventRequest, response: EventResponse },
+  getEvent: { method: 'GET', path: '/api/v1/b/:slug/scheduling/events/:eventId', response: EventResponse },
+  /** 409 with SchedulingConflictResponse when an enforced change overlaps. */
+  updateEvent: { method: 'PATCH', path: '/api/v1/b/:slug/scheduling/events/:eventId', request: UpdateEventRequest, response: EventResponse },
+  cancelEvent: { method: 'POST', path: '/api/v1/b/:slug/scheduling/events/:eventId/cancel', request: EventTransitionRequest, response: EventResponse },
+  archiveEvent: { method: 'POST', path: '/api/v1/b/:slug/scheduling/events/:eventId/archive', request: EventTransitionRequest, response: EventResponse },
+  checkAvailability: { method: 'GET', path: '/api/v1/b/:slug/scheduling/availability', query: AvailabilityQuery, response: AvailabilityResponse },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */

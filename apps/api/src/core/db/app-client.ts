@@ -26,6 +26,7 @@ const TENANT_MODELS = {
   financeExpenseCategory: 'businessId', financeExpense: 'businessId',
   peopleDepartment: 'businessId', peopleLocation: 'businessId', peopleEmployee: 'businessId', peopleEmployeePersonalDetails: 'businessId',
   peopleDepartmentAssignment: 'businessId', peopleManagerAssignment: 'businessId', peopleEmploymentStatusHistory: 'businessId',
+  schedulingCalendar: 'businessId', schedulingEvent: 'businessId',
 } as const;
 type AppTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;
 export type AppTenantDb = TenantDb<AppTx, keyof typeof TENANT_MODELS>;

@@ -51,6 +51,7 @@ model Customer {
   financeDocuments FinanceDocument[]
   financePayments  FinancePayment[]
   financeExpenses  FinanceExpense[]
+  schedulingEvents SchedulingEvent[]
 
   @@unique([businessId, id])
   @@index([businessId, ownerUserId])
