@@ -73,6 +73,15 @@
   /* Overlays behind dialogs */
   --overlay: rgb(11 19 56 / 0.4);
 
+  /* Data visualisation: series colours (each at least 3:1 on a card), the comparison series and grid lines */
+  --chart-1: #384eba;
+  --chart-2: #8a3f8f;
+  --chart-3: #1a7354;
+  --chart-4: #a34a00;
+  --chart-5: #1f6fa8;
+  --chart-comparison: #7d73a6;
+  --chart-grid: #e6e0f2;
+
   /* Glass: tint mixed at --glass-alpha, plus an opaque fallback when blur is unavailable */
   --glass-tint: #ffffff;
   --glass-fallback: #fdfcff;
@@ -128,6 +137,13 @@
     --info: #8fb0ff;
     --info-foreground: #071338;
     --overlay: rgb(4 10 32 / 0.6);
+    --chart-1: #8fa0ff;
+    --chart-2: #e3a6dc;
+    --chart-3: #5fd3a6;
+    --chart-4: #f2c46d;
+    --chart-5: #7cc4f5;
+    --chart-comparison: #9d95c4;
+    --chart-grid: rgb(178 143 194 / 0.16);
     --glass-tint: #13235c;
     --glass-fallback: #0f1d4d;
     --glass-border: rgb(208 162 197 / 0.2);
@@ -178,6 +194,13 @@
   --info: #8fb0ff;
   --info-foreground: #071338;
   --overlay: rgb(4 10 32 / 0.6);
+  --chart-1: #8fa0ff;
+  --chart-2: #e3a6dc;
+  --chart-3: #5fd3a6;
+  --chart-4: #f2c46d;
+  --chart-5: #7cc4f5;
+  --chart-comparison: #9d95c4;
+  --chart-grid: rgb(178 143 194 / 0.16);
   --glass-tint: #13235c;
   --glass-fallback: #0f1d4d;
   --glass-border: rgb(208 162 197 / 0.2);
@@ -230,6 +253,13 @@
   --color-field: var(--field);
   --color-ring: var(--ring);
   --color-overlay: var(--overlay);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-comparison: var(--chart-comparison);
+  --color-chart-grid: var(--chart-grid);
   --shadow-card: var(--shadow-card);
 }
 

@@ -29,7 +29,9 @@ export type StateConflictCode =
   // Finance F5 (docs/finance-documents-f5.md §7): generated documents.
   | 'not_eligible' | 'not_draft' | 'no_original' | 'version_limit' | 'document_too_large' | 'branding_logo_invalid'
   // Communications C2-A (docs/communications-c2.md §10): mailbox connections and sync jobs.
-  | 'provider_not_configured' | 'already_connected' | 'account_mismatch' | 'disconnected' | 'not_active' | 'sync_disabled';
+  | 'provider_not_configured' | 'already_connected' | 'account_mismatch' | 'disconnected' | 'not_active' | 'sync_disabled'
+  // Reporting R1: per-owner saved-view cap; a stored view whose config this version cannot read.
+  | 'too_many_views' | 'view_config_invalid';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

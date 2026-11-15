@@ -30,6 +30,7 @@ const TENANT_MODELS = {
   schedulingCalendar: 'businessId', schedulingEvent: 'businessId',
   conversation: 'businessId', message: 'businessId', messageParticipant: 'businessId',
   mailConnection: 'businessId', mailConnectionCredential: 'businessId', mailOAuthState: 'businessId', mailSyncJob: 'businessId',
+  reportingSavedView: 'businessId',
 } as const;
 type AppTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;
 export type AppTenantDb = TenantDb<AppTx, keyof typeof TENANT_MODELS>;
