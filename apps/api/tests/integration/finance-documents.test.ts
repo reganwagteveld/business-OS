@@ -513,8 +513,10 @@ describe('drafts, snapshots and versions', () => {
     // Branding, customer, settings, payment and status changes never touched the original's row.
     expect((await own.original('invoices', inv.id))).toMatchObject({ id: v1.id, fileSha256: v1.fileSha256, documentStatus: 'ISSUED' });
     expect(audit[0]).toMatchObject({ actor_user_id: A.people.OWNER!.id, business_id: A.businessId });
-    expect(audit[0].metadata).toMatchObject({ documentId: inv.id, kind: 'INVOICE', number: inv.number, versionNumber: '2', reason: 'BRANDING_UPDATED', hasNote: 'true', previousVersionId: v1.id, fileSha256: v2.fileSha256 });
+    expect(audit[0].metadata).toMatchObject({ documentId: inv.id, kind: 'INVOICE', versionNumber: '2', reason: 'BRANDING_UPDATED', hasNote: 'true', previousVersionId: v1.id, fileSha256: v2.fileSha256 });
     expect(JSON.stringify(audit[0].metadata)).not.toContain('New title and colours'); // never free text
+    expect(audit[0].metadata).not.toHaveProperty('number');
+    expect(JSON.stringify(audit[0].metadata)).not.toContain(inv.number!);
   });
 
   it('enforces the version rules: original at issue, reasons, latest-version concurrency, and VOID marking', async () => {

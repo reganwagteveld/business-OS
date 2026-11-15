@@ -239,7 +239,7 @@ async function storeVersion(
   });
   const created = await findVersion(db, kind, row.id, versionId);
   await recordAudit(db, actorUserId, 'finance.document_pdf.generated', { type: 'finance_document_pdf', id: versionId }, {
-    documentId: row.id, kind, number: row.number, versionNumber: String(next.versionNumber), reason: next.reason, hasNote: next.note ? 'true' : 'false',
+    documentId: row.id, kind, versionNumber: String(next.versionNumber), reason: next.reason, hasNote: next.note ? 'true' : 'false',
     previousVersionId: next.previousId, documentStatus: row.status, templateId: TEMPLATE_ID, templateVersion: String(TEMPLATE_VERSION),
     fileSha256: created.fileSha256, byteSize: String(created.byteSize), pageCount: String(created.pageCount), logoAssetId: created.logoAssetId,
     unsupportedCharacters: String(created.unsupportedCharacters),
