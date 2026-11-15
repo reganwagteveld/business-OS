@@ -12,18 +12,18 @@ import type { DocumentSnapshot, SnapshotParty } from './snapshot';
 
 export const RENDERER = 'pdfkit@0.20.2';
 
-const REGULAR = Buffer.from(INTER_REGULAR_BASE64, 'base64');
-const SEMIBOLD = Buffer.from(INTER_SEMIBOLD_BASE64, 'base64');
+export const REGULAR = Buffer.from(INTER_REGULAR_BASE64, 'base64');
+export const SEMIBOLD = Buffer.from(INTER_SEMIBOLD_BASE64, 'base64');
 
-const A4 = { width: 595.28, height: 841.89 };
+export const A4 = { width: 595.28, height: 841.89 };
 /** Printed in place of a character the fonts cannot draw. */
 export const MISSING = '\u25A1';
-const M = { top: 48, bottom: 64, left: 48, right: 48 };
-const CONTENT = A4.width - M.left - M.right;
-const FOOTER_Y = A4.height - 40;
-const INK = '#1A1D23';
-const MUTED = '#5B6270';
-const RULE = '#D9DCE1';
+export const M = { top: 48, bottom: 64, left: 48, right: 48 };
+export const CONTENT = A4.width - M.left - M.right;
+export const FOOTER_Y = A4.height - 40;
+export const INK = '#1A1D23';
+export const MUTED = '#5B6270';
+export const RULE = '#D9DCE1';
 
 export interface RenderResult { bytes: Buffer; pageCount: number; unsupportedCharacters: boolean }
 
@@ -43,7 +43,7 @@ export function clean(value: string | null | undefined): string {
   return value.replace(/\r\n?/g, '\n').replace(/\t/g, ' ').replace(/[\u0000-\u0009\u000B-\u001F\u007F-\u009F‎‏‪-‮⁦-⁩]/g, '');
 }
 
-function safeLocale(locale: string): string {
+export function safeLocale(locale: string): string {
   try {
     return Intl.NumberFormat.supportedLocalesOf([locale]).length > 0 ? locale : 'en';
   } catch {
@@ -69,7 +69,7 @@ function formatters(s: DocumentSnapshot) {
   };
 }
 
-function tint(hex: string, amount: number): string {
+export function tint(hex: string, amount: number): string {
   const n = parseInt(hex.slice(1), 16);
   const mix = (c: number) => Math.round(c + (255 - c) * amount).toString(16).padStart(2, '0');
   return `#${mix((n >> 16) & 255)}${mix((n >> 8) & 255)}${mix(n & 255)}`;

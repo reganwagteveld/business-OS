@@ -33890,6 +33890,720 @@
         "additionalProperties": false
       }
     },
+    "getStatement": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/statements",
+      "query": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "currencyCode": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        },
+        "required": [
+          "customerId",
+          "currencyCode",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "statement": {
+            "type": "object",
+            "properties": {
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "currencyScale": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "timeZone": {
+                "type": "string"
+              },
+              "openingBalance": {
+                "type": "string"
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "INVOICE",
+                        "INVOICE_VOID",
+                        "CREDIT_NOTE",
+                        "CREDIT_NOTE_VOID",
+                        "PAYMENT",
+                        "PAYMENT_REVERSAL"
+                      ]
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "reference": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "dueDate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "balance": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "type",
+                    "sourceId",
+                    "reference",
+                    "dueDate",
+                    "amount",
+                    "balance"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "closingBalance": {
+                "type": "string"
+              },
+              "position": {
+                "type": "object",
+                "properties": {
+                  "buckets": {
+                    "type": "object",
+                    "properties": {
+                      "current": {
+                        "type": "string"
+                      },
+                      "days1To30": {
+                        "type": "string"
+                      },
+                      "days31To60": {
+                        "type": "string"
+                      },
+                      "days61To90": {
+                        "type": "string"
+                      },
+                      "days90Plus": {
+                        "type": "string"
+                      },
+                      "noDueDate": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "current",
+                      "days1To30",
+                      "days31To60",
+                      "days61To90",
+                      "days90Plus",
+                      "noDueDate"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "receivable": {
+                    "type": "string"
+                  },
+                  "overdue": {
+                    "type": "string"
+                  },
+                  "unallocatedPayments": {
+                    "type": "string"
+                  },
+                  "unappliedCredit": {
+                    "type": "string"
+                  },
+                  "accountBalance": {
+                    "type": "string"
+                  },
+                  "balanced": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "buckets",
+                  "receivable",
+                  "overdue",
+                  "unallocatedPayments",
+                  "unappliedCredit",
+                  "accountBalance",
+                  "balanced"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "customerId",
+              "currencyCode",
+              "currencyScale",
+              "from",
+              "to",
+              "timeZone",
+              "openingBalance",
+              "entries",
+              "closingBalance",
+              "position"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "statement"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getReceivablesAgeing": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/receivables-ageing",
+      "query": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "currencyCode": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "customerId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 500,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ageing": {
+            "type": "object",
+            "properties": {
+              "asOf": {
+                "type": "string"
+              },
+              "timeZone": {
+                "type": "string"
+              },
+              "totals": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "currencyScale": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "openInvoiceCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "customerCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "buckets": {
+                      "type": "object",
+                      "properties": {
+                        "current": {
+                          "type": "string"
+                        },
+                        "days1To30": {
+                          "type": "string"
+                        },
+                        "days31To60": {
+                          "type": "string"
+                        },
+                        "days61To90": {
+                          "type": "string"
+                        },
+                        "days90Plus": {
+                          "type": "string"
+                        },
+                        "noDueDate": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "current",
+                        "days1To30",
+                        "days31To60",
+                        "days61To90",
+                        "days90Plus",
+                        "noDueDate"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "receivable": {
+                      "type": "string"
+                    },
+                    "overdue": {
+                      "type": "string"
+                    },
+                    "unallocatedPayments": {
+                      "type": "string"
+                    },
+                    "unappliedCredit": {
+                      "type": "string"
+                    },
+                    "accountBalance": {
+                      "type": "string"
+                    },
+                    "balanced": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "currencyCode",
+                    "currencyScale",
+                    "openInvoiceCount",
+                    "customerCount",
+                    "buckets",
+                    "receivable",
+                    "overdue",
+                    "unallocatedPayments",
+                    "unappliedCredit",
+                    "accountBalance",
+                    "balanced"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "customerId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "currencyScale": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "openInvoiceCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "buckets": {
+                      "type": "object",
+                      "properties": {
+                        "current": {
+                          "type": "string"
+                        },
+                        "days1To30": {
+                          "type": "string"
+                        },
+                        "days31To60": {
+                          "type": "string"
+                        },
+                        "days61To90": {
+                          "type": "string"
+                        },
+                        "days90Plus": {
+                          "type": "string"
+                        },
+                        "noDueDate": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "current",
+                        "days1To30",
+                        "days31To60",
+                        "days61To90",
+                        "days90Plus",
+                        "noDueDate"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "receivable": {
+                      "type": "string"
+                    },
+                    "overdue": {
+                      "type": "string"
+                    },
+                    "unallocatedPayments": {
+                      "type": "string"
+                    },
+                    "unappliedCredit": {
+                      "type": "string"
+                    },
+                    "accountBalance": {
+                      "type": "string"
+                    },
+                    "balanced": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "customerId",
+                    "currencyCode",
+                    "currencyScale",
+                    "openInvoiceCount",
+                    "buckets",
+                    "receivable",
+                    "overdue",
+                    "unallocatedPayments",
+                    "unappliedCredit",
+                    "accountBalance",
+                    "balanced"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "asOf",
+              "timeZone",
+              "totals",
+              "rows",
+              "nextCursor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ageing"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getReceivablesAgeingDetail": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/receivables-ageing/detail",
+      "query": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "customerId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "currencyCode": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          }
+        },
+        "required": [
+          "customerId",
+          "currencyCode"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "object",
+            "properties": {
+              "asOf": {
+                "type": "string"
+              },
+              "timeZone": {
+                "type": "string"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "currencyScale": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "position": {
+                "type": "object",
+                "properties": {
+                  "buckets": {
+                    "type": "object",
+                    "properties": {
+                      "current": {
+                        "type": "string"
+                      },
+                      "days1To30": {
+                        "type": "string"
+                      },
+                      "days31To60": {
+                        "type": "string"
+                      },
+                      "days61To90": {
+                        "type": "string"
+                      },
+                      "days90Plus": {
+                        "type": "string"
+                      },
+                      "noDueDate": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "current",
+                      "days1To30",
+                      "days31To60",
+                      "days61To90",
+                      "days90Plus",
+                      "noDueDate"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "receivable": {
+                    "type": "string"
+                  },
+                  "overdue": {
+                    "type": "string"
+                  },
+                  "unallocatedPayments": {
+                    "type": "string"
+                  },
+                  "unappliedCredit": {
+                    "type": "string"
+                  },
+                  "accountBalance": {
+                    "type": "string"
+                  },
+                  "balanced": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "buckets",
+                  "receivable",
+                  "overdue",
+                  "unallocatedPayments",
+                  "unappliedCredit",
+                  "accountBalance",
+                  "balanced"
+                ],
+                "additionalProperties": false
+              },
+              "invoices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "invoiceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "number": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "issueDate": {
+                      "type": "string"
+                    },
+                    "dueDate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "total": {
+                      "type": "string"
+                    },
+                    "paid": {
+                      "type": "string"
+                    },
+                    "credited": {
+                      "type": "string"
+                    },
+                    "outstanding": {
+                      "type": "string"
+                    },
+                    "daysPastDue": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "bucket": {
+                      "type": "string",
+                      "enum": [
+                        "CURRENT",
+                        "DAYS_1_30",
+                        "DAYS_31_60",
+                        "DAYS_61_90",
+                        "DAYS_90_PLUS",
+                        "NO_DUE_DATE"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "invoiceId",
+                    "number",
+                    "issueDate",
+                    "dueDate",
+                    "total",
+                    "paid",
+                    "credited",
+                    "outstanding",
+                    "daysPastDue",
+                    "bucket"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "credits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "PAYMENT",
+                        "CREDIT_NOTE"
+                      ]
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "reference": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "date": {
+                      "type": "string"
+                    },
+                    "available": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "sourceId",
+                    "reference",
+                    "date",
+                    "available"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "asOf",
+              "timeZone",
+              "customerId",
+              "currencyCode",
+              "currencyScale",
+              "position",
+              "invoices",
+              "credits"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "additionalProperties": false
+      }
+    },
     "getReconciliation": {
       "method": "GET",
       "path": "/api/v1/b/:slug/finance/reconciliation",
@@ -53129,6 +53843,12 @@
     "downloadInvoicePdfVersion": {
       "method": "GET",
       "path": "/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId/download",
+      "contentType": "application/pdf",
+      "disposition": "attachment"
+    },
+    "downloadStatementPdf": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/statements/pdf",
       "contentType": "application/pdf",
       "disposition": "attachment"
     }

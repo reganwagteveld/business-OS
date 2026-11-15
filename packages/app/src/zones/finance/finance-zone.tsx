@@ -18,6 +18,7 @@ import { DEFAULT_FILTERS, ExpenseList, type ListFilters } from './expense-list';
 import { ExpensePaymentDetail, ExpensePaymentForm, ExpensePaymentList } from './expense-payments';
 import { FinanceOverview } from './overview';
 import { PaymentDetail, PaymentForm, PaymentList } from './payments';
+import { ReceivablesAgeingPage, StatementPage } from './receivables';
 import { RecurringDetail, RecurringForm, RecurringList } from './recurring';
 import { FinanceSettingsPage } from './settings';
 import { LoadingRows, okData, todayIn } from './shared';
@@ -30,6 +31,11 @@ const EXPENSE_TABS = [{ id: 'expenses', label: 'Expenses' }, { id: 'payments-mad
  */
 export function initialView(section: string | undefined, target: string | undefined, intent: 'new' | undefined, can: FinanceEnv['can']): FinanceView {
   if (target) {
+    // F6-2: `statement:<customerId>` or `statement:<customerId>:<currency>` from a customer's page.
+    if (target.startsWith('statement:')) {
+      const [, customerId, currencyCode] = target.split(':');
+      return { name: 'statement', customerId: customerId || undefined, currencyCode: currencyCode || undefined };
+    }
     const [kind, id] = target.includes(':') ? target.split(':', 2) as [string, string] : ['expense', target];
     if (kind === 'invoice') return { name: 'document', path: 'invoices', id };
     if (kind === 'quote') return { name: 'document', path: 'quotes', id };
@@ -173,6 +179,8 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
       screen = needsLookups(taxRates !== null) ?? <EditRecurring key={view.id} id={view.id} env={env} taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null} />;
       break;
     case 'payments': screen = <PaymentList />; break;
+    case 'receivables': screen = <ReceivablesAgeingPage />; break;
+    case 'statement': screen = <StatementPage key={`${view.customerId ?? ''}|${view.currencyCode ?? ''}`} customerId={view.customerId} currencyCode={view.currencyCode} />; break;
     case 'payment': screen = <PaymentDetail key={view.id} id={view.id} />; break;
     case 'payment-new':
       screen = (

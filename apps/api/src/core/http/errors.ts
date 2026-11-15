@@ -28,6 +28,8 @@ export type StateConflictCode =
   | 'default_calendar' | 'not_scheduled'
   // Finance F5 (docs/finance-documents-f5.md §7): generated documents.
   | 'not_eligible' | 'not_draft' | 'no_original' | 'version_limit' | 'document_too_large' | 'branding_logo_invalid'
+  // Finance F6-2: a statement with more entries than one document holds (narrow the range).
+  | 'statement_too_large'
   // Communications C2-A (docs/communications-c2.md §10): mailbox connections and sync jobs.
   | 'provider_not_configured' | 'already_connected' | 'account_mismatch' | 'disconnected' | 'not_active' | 'sync_disabled'
   // Reporting R1: per-owner saved-view cap; a stored view whose config this version cannot read.

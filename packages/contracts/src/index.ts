@@ -8,6 +8,9 @@ import {
   RecurringTransitionRequest, UpdateRecurringInvoiceRequest,
 } from './finance-billing.ts';
 import {
+  ReceivablesAgeingDetailQuery, ReceivablesAgeingDetailResponse, ReceivablesAgeingQuery, ReceivablesAgeingResponse, StatementQuery, StatementResponse,
+} from './finance-statements.ts';
+import {
   DesktopTokenRequest, DesktopTokenResponse, MeResponse, RequestPasswordResetRequest, ResetPasswordRequest, SignInRequest, SignUpRequest,
 } from './auth.ts';
 
@@ -21,6 +24,7 @@ export * from './finance.ts';
 export * from './finance-expenses.ts';
 export * from './finance-documents.ts';
 export * from './finance-billing.ts';
+export * from './finance-statements.ts';
 export * from './people.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
@@ -277,6 +281,12 @@ export const endpoints = {
   listCustomerBalances: { method: 'GET', path: '/api/v1/b/:slug/finance/customer-balances', query: ListCustomerBalancesQuery, response: ListCustomerBalancesResponse },
   /** F4 (additive, read-only): receivables per currency for the whole business. */
   getReceivables: { method: 'GET', path: '/api/v1/b/:slug/finance/receivables', response: InvoiceReceivablesResponse },
+  // Finance F6-2: customer statements and receivables ageing as of a date (read-only, finance:read).
+  getStatement: { method: 'GET', path: '/api/v1/b/:slug/finance/statements', query: StatementQuery, response: StatementResponse },
+  getReceivablesAgeing: { method: 'GET', path: '/api/v1/b/:slug/finance/receivables-ageing', query: ReceivablesAgeingQuery, response: ReceivablesAgeingResponse },
+  getReceivablesAgeingDetail: {
+    method: 'GET', path: '/api/v1/b/:slug/finance/receivables-ageing/detail', query: ReceivablesAgeingDetailQuery, response: ReceivablesAgeingDetailResponse,
+  },
   /** Internal integrity reconciliation (read-only); not bank-statement reconciliation. */
   getReconciliation: { method: 'GET', path: '/api/v1/b/:slug/finance/reconciliation', response: ReconciliationResponse },
   // Finance F6-1: recurring invoice schedules. Runs only ever create DRAFT invoices; nothing is issued
@@ -429,6 +439,8 @@ export const fileEndpoints = {
   previewInvoiceDraftPdf: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/draft-pdf', contentType: 'application/pdf', disposition: 'inline' },
   previewInvoicePdfVersion: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId/preview', contentType: 'application/pdf', disposition: 'inline' },
   downloadInvoicePdfVersion: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions/:versionId/download', contentType: 'application/pdf', disposition: 'attachment' },
+  /** F6-2: rendered on demand, never stored (D-F6-9); query as getStatement (StatementQuery). finance:documents_download, audited with the content hash. */
+  downloadStatementPdf: { method: 'GET', path: '/api/v1/b/:slug/finance/statements/pdf', contentType: 'application/pdf', disposition: 'attachment' },
 } as const;
 
 /** Fills `:param` segments of an endpoint path; values are URL-encoded. */
