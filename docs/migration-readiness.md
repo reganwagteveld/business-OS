@@ -34,7 +34,8 @@ Prisma applies migrations in folder-name order. Each one depends only on migrati
 Notes:
 
 - C1 is the only migration since F3 that changes an existing table. Its new CHECK constraints are
-  validated against existing rows; the representative upgrade (§3.2) shows they hold for real data.
+  validated against existing rows; the representative upgrade (§3.2) shows they hold for existing
+  rows of synthetic test data.
 - Migrations 9–11 carry **future-dated names** (18–19 November). See §4.
 - `20261119300000` encodes hour 30, which is not a real time. It is harmless (Prisma only sorts the
   names) and cannot be renamed because production records migrations by name. Recorded as STAB-L7.
@@ -53,18 +54,19 @@ new cross-Zone suite), isolation (75), Finance and People suites behind PgBounce
 
 ### 3.2 Representative pre-migration database
 
-This reproduces production as it stood before 06:16 UTC today (migrations 1–8 only), with real data
-in it, and then upgrades it with the code on `main`:
+This reproduces production's schema as it stood before 06:16 UTC today (migrations 1–8 only),
+populated with synthetic, production-schema-compatible test data, and then upgrades it with the code
+on `main`. No production data was copied or used:
 
 1. Checked out c7ce20c (F3, the last commit before People), created `stab_premig`, applied its 8
    migrations and privileged SQL.
-2. Populated it by running F3's own integration suite against it (267 tests): 52 businesses,
-   75 customers, 188 activities, 417 finance documents, 60 expenses, with every role.
+2. Populated it with synthetic data by running F3's own integration suite against it (267 tests):
+   52 businesses, 75 customers, 188 activities, 417 finance documents, 60 expenses, with every role.
 3. On `main`: `prisma migrate status` listed exactly the 3 pending migrations (People, Scheduling,
    C1); `prisma migrate deploy` applied them in 2 s; `migrate status` then reported up to date and
    `prisma migrate diff --from-config-datasource --to-schema prisma/schema` reported no difference.
 4. Ran the verification SQL in §5 (results below), then `main`'s full integration suite against the
-   upgraded, data-bearing database: **389 / 389 passed**.
+   upgraded database holding that test data: **389 / 389 passed**.
 
 Results of §5 on the upgraded database: 11 migrations, none rolled back; only `_prisma_migrations`
 lacks forced RLS; every table owned by `bos_owner`; every RLS table has at least one policy; every
@@ -111,9 +113,15 @@ A migration that does not depend on the newer tables would pass CI and leave pro
 fresh database (CI, restores, a future region) with different histories for the same files.
 
 Fix (STAB-M1): `.github/scripts/check-migration-order.sh`, run on every pull request in the
-"Detect changes" job, fails if an added migration's name does not sort after the newest migration on
-the base branch, or is not `<14 digits>_<snake_case>`. Its self-test
-(`check-migration-order.test.sh`, 8 cases) runs first in the same job.
+"Detect changes" job, fails if:
+
+- any migration folder on the base branch is missing from the pull request (deleted or renamed;
+  production records applied migrations by name, so either breaks the history), or
+- an added migration's name does not sort strictly after the newest migration on the base branch,
+  or is not `<14 digits>_<snake_case>`.
+
+Its self-test (`check-migration-order.test.sh`, 14 cases: 8 for ordering and format, 6 for
+deletion and renaming) runs first in the same job.
 
 Rule for authors until the calendar passes 20 November: create with `--create-only` and rename the
 folder to sort after `20261119300000_communications`, e.g. `20261120000000_<name>`.
@@ -182,7 +190,7 @@ across two releases.
 |---|---|---|---|
 | STAB-H1 | Merges deploy code before migrations run | Open. Next migration blocked until §6 step 3 is chosen. | Regan |
 | STAB-H2 | 6 h PITR (Free plan), backup region unverified (ADR 0002), production branch unprotected | Accepted while production holds no business data; must be resolved before a pilot with real data. | Regan |
-| STAB-M1 | Future-dated migration names reorder new migrations | Fixed: CI check in this PR | Developer |
+| STAB-M1 | Future-dated migration names reorder new migrations; a deleted or renamed migration would break history | Fixed: CI check in this PR (order, format, deletion, rename) | Developer |
 | STAB-M5 | C1 applied to production ~2 min before its PR merged | Recorded exception (approved at the time; files byte-identical). Option B removes the need. | Regan |
 | STAB-M6 | A failed migration leaves a partial schema (no automatic rollback) | Documented procedure (§7); recovery branch before every migration; explicit transactions in new migrations | Developer, Regan |
 | STAB-L1 | Five unindexed composite FKs | Deferred; no impact while parents are archived, not deleted | Developer (next additive migration) |

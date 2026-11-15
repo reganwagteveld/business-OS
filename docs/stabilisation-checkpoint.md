@@ -65,9 +65,10 @@ needs an ICU (or `en_US`) collation; a `C.UTF-8` database fails it. Docker and C
 ### Phase B: database readiness
 
 See [migration-readiness.md](migration-readiness.md). In short: fresh database green; a
-representative pre-migration database (production's state before 06:16 UTC, populated with 52
-businesses of real F3 data) upgraded with People, Scheduling and C1 in 2 s, with no schema
-difference and **389 / 389** integration tests passing on the upgraded data; roles, RLS, policies,
+representative pre-migration database (production's schema before 06:16 UTC, populated with
+synthetic, production-schema-compatible test data: 52 businesses created by the F3 integration
+suite; no production data was used) upgraded with People, Scheduling and C1 in 2 s, with no schema
+difference and **389 / 389** integration tests passing on the upgraded test data; roles, RLS, policies,
 ownership, constraints, privileges and tenant ownership all verified. Two process findings
 (STAB-M1, fixed; STAB-M6, Prisma leaves a partial schema when a migration fails).
 
@@ -137,7 +138,7 @@ client typechecks, lints and passes its 333 tests.
 |---|---|---|---|---|
 | STAB-H1 | High | Every merge to `main` deploys to production at once, before any migration can run (People code was live 51 min before its tables). | **Blocks the next schema change** until Regan picks sequencing A or B (migration-readiness §6; B recommended). No code change. | Regan |
 | STAB-H2 | High | Neon Free plan: 6 h point-in-time history; backup storage region unverified (ADR 0002 stays Proposed); production branch not protected. | Accepted while production holds no business data. **Blocks a pilot with real data.** | Regan |
-| STAB-M1 | Medium | Future-dated migration names (18–19 Nov) make `migrate dev` name new migrations so they sort earlier: production and fresh databases would apply them in different orders. Demonstrated (P3018 on a fresh database). | **Fixed in this PR**: `.github/scripts/check-migration-order.sh` on every PR, with an 8-case self-test. | Developer |
+| STAB-M1 | Medium | Future-dated migration names (18–19 Nov) make `migrate dev` name new migrations so they sort earlier: production and fresh databases would apply them in different orders. Demonstrated (P3018 on a fresh database). | **Fixed in this PR**: `.github/scripts/check-migration-order.sh` on every PR. It also fails when a base migration is deleted or renamed (audit STAB-A01). 14-case self-test. | Developer |
 | STAB-M2 | Medium | Scheduling S1 screen is built but not in the navigation. | Gap by earlier decision. Patch `docs/scheduling-s1-integration.patch` verified to apply and pass. Apply in its own PR when Regan approves. | Regan |
 | STAB-M3 | Medium | People P1 is backend only; no screen. | Feature gap; not built here. | Regan (scope) |
 | STAB-M4 | Medium | The app shell keeps its location in memory: refresh or a shared link returns to Home. | By design today ("future URLs" in the registry). Product decision before pilot. | Regan (scope) |
@@ -161,7 +162,8 @@ cookie-authenticated state changes without the exact app origin"); CI on 0a3610b
 - `apps/api/tests/integration/cross-zone.test.ts`: Phase C suite (45 tests). Runs in the existing
   `test:integration` step; no CI change needed.
 - `.github/scripts/check-migration-order.sh` and `.test.sh`, wired into the "Detect changes" job:
-  regression guard for STAB-M1.
+  regression guard for STAB-M1 (order and format of added migrations; no deleted or renamed base
+  migrations).
 - `docs/stabilisation-checkpoint.md`, `docs/migration-readiness.md`.
 
 No application code, schema, migration, contract, permission or security control changed.
