@@ -72,6 +72,7 @@ CREATE TABLE "finance_document_pdfs" (
     "file_name" TEXT NOT NULL,
     "content_type" TEXT NOT NULL DEFAULT 'application/pdf',
     "page_count" INTEGER NOT NULL,
+    "unsupported_characters" BOOLEAN NOT NULL DEFAULT false,
     "byte_size" INTEGER NOT NULL,
     "file_sha256" CHAR(64) NOT NULL,
     "file_data" BYTEA NOT NULL,
@@ -168,6 +169,8 @@ ALTER TABLE "finance_document_pdfs"
   ADD CONSTRAINT finance_document_pdfs_note CHECK (
     ("reason_note" IS NULL OR char_length(btrim("reason_note")) BETWEEN 1 AND 500) AND ("reason" <> 'OTHER' OR "reason_note" IS NOT NULL)),
   ADD CONSTRAINT finance_document_pdfs_status_values CHECK ("document_status" <> 'DRAFT'),
+  -- F5-D2: the original is the issued representation, made in the issuing transaction (status ISSUED).
+  ADD CONSTRAINT finance_document_pdfs_original_issued CHECK ("version_number" <> 1 OR "document_status" = 'ISSUED'),
   ADD CONSTRAINT finance_document_pdfs_hashes CHECK (
     "document_content_sha256" ~ '^[0-9a-f]{64}$' AND "snapshot_sha256" ~ '^[0-9a-f]{64}$' AND "file_sha256" ~ '^[0-9a-f]{64}$'),
   ADD CONSTRAINT finance_document_pdfs_file CHECK (

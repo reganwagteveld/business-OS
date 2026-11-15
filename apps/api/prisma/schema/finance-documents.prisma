@@ -93,6 +93,8 @@ model FinanceDocumentPdf {
   fileName              String                @map("file_name")
   contentType           String                @default("application/pdf") @map("content_type")
   pageCount             Int                   @map("page_count")
+  /// Some text used characters the template fonts cannot draw; they are printed as a visible box (§6).
+  unsupportedCharacters Boolean               @default(false) @map("unsupported_characters")
   /// Database-owned: octet_length(file_data) and SHA-256 of file_data.
   byteSize              Int                   @map("byte_size")
   fileSha256            String                @map("file_sha256") @db.Char(64)

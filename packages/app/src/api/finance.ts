@@ -58,7 +58,11 @@ type QuoteAction = 'accept' | 'decline' | 'expire';
 export type { DocumentBranding, DocumentPdfVersion };
 export interface PdfVersionList { eligible: boolean; versions: DocumentPdfVersion[] }
 /** A fetched file. `blob` is the exact bytes the server sent; `sha256` is its checksum header. */
-export interface FetchedFile { blob: Blob; contentType: string; sha256: string | null }
+export interface FetchedFile {
+  blob: Blob; contentType: string; sha256: string | null;
+  /** Draft previews only: some text used characters the PDF fonts cannot show (printed as a box). */
+  unsupportedCharacters?: boolean;
+}
 export type PdfMode = 'preview' | 'download';
 
 /**
@@ -125,7 +129,7 @@ export interface FinanceClient {
 
   // ---- F5: generated PDFs and document branding. Nothing here sends a document anywhere. -----------
   pdfVersions(slug: string, path: 'quotes' | 'invoices', id: string, signal?: AbortSignal): Promise<Outcome<PdfVersionList>>;
-  /** `{ mode: 'original' }` returns version 1, creating it on first use. A new version needs a reason. */
+  /** Adds a later version with a reason. The original (version 1) is made when the document is issued. */
   createPdfVersion(slug: string, path: 'quotes' | 'invoices', id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<DocumentPdfVersion>>;
   /** The stored bytes of one version: `preview` for inline viewing, `download` for saving (audited). */
   pdfFile(slug: string, path: 'quotes' | 'invoices', id: string, versionId: string, mode: PdfMode, signal?: AbortSignal): Promise<Outcome<FetchedFile>>;
@@ -186,7 +190,7 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
       return classify(raw.status, raw.json) ?? { kind: 'invalid' };
     }
     if (!expected.includes(raw.contentType)) return { kind: 'invalid' };
-    return { kind: 'ok', data: { blob: raw.blob, contentType: raw.contentType, sha256: raw.sha256 } };
+    return { kind: 'ok', data: { blob: raw.blob, contentType: raw.contentType, sha256: raw.sha256, ...(raw.unsupportedCharacters === null ? {} : { unsupportedCharacters: raw.unsupportedCharacters }) } };
   };
   const pick = <T, K extends string>(out: Outcome<Record<K, T>>, k: K): Outcome<T> => (out.kind === 'ok' ? { kind: 'ok', data: out.data[k] } : out);
   const base = (slug: string) => `/api/v1/b/${encodeURIComponent(slug)}/finance`;

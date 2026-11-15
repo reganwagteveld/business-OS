@@ -43494,7 +43494,8 @@
                 "fileSha256",
                 "generatedById",
                 "createdAt",
-                "reference"
+                "reference",
+                "unsupportedCharacters"
               ],
               "additionalProperties": false
             }
@@ -43512,61 +43513,44 @@
       "path": "/api/v1/b/:slug/finance/quotes/:documentId/pdf-versions",
       "request": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "mode": {
-                "type": "string",
-                "const": "original"
-              }
-            },
-            "required": [
-              "mode"
-            ],
-            "additionalProperties": false
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "new_version"
           },
-          {
-            "type": "object",
-            "properties": {
-              "mode": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "BRANDING_UPDATED",
+              "TEMPLATE_UPDATED",
+              "RENDERING_CORRECTION",
+              "OTHER"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
                 "type": "string",
-                "const": "new_version"
+                "maxLength": 500
               },
-              "reason": {
-                "type": "string",
-                "enum": [
-                  "BRANDING_UPDATED",
-                  "TEMPLATE_UPDATED",
-                  "RENDERING_CORRECTION",
-                  "OTHER"
-                ]
-              },
-              "note": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "maxLength": 500
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "basedOnVersion": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "mode",
-              "reason",
-              "basedOnVersion"
-            ],
-            "additionalProperties": false
+            ]
+          },
+          "basedOnVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           }
-        ]
+        },
+        "required": [
+          "mode",
+          "reason",
+          "basedOnVersion"
+        ],
+        "additionalProperties": false
       },
       "response": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -43742,7 +43726,8 @@
               "fileSha256",
               "generatedById",
               "createdAt",
-              "reference"
+              "reference",
+              "unsupportedCharacters"
             ],
             "additionalProperties": false
           }
@@ -43930,7 +43915,8 @@
               "fileSha256",
               "generatedById",
               "createdAt",
-              "reference"
+              "reference",
+              "unsupportedCharacters"
             ],
             "additionalProperties": false
           }
@@ -44123,7 +44109,8 @@
                 "fileSha256",
                 "generatedById",
                 "createdAt",
-                "reference"
+                "reference",
+                "unsupportedCharacters"
               ],
               "additionalProperties": false
             }
@@ -44141,61 +44128,44 @@
       "path": "/api/v1/b/:slug/finance/invoices/:documentId/pdf-versions",
       "request": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "mode": {
-                "type": "string",
-                "const": "original"
-              }
-            },
-            "required": [
-              "mode"
-            ],
-            "additionalProperties": false
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "new_version"
           },
-          {
-            "type": "object",
-            "properties": {
-              "mode": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "BRANDING_UPDATED",
+              "TEMPLATE_UPDATED",
+              "RENDERING_CORRECTION",
+              "OTHER"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
                 "type": "string",
-                "const": "new_version"
+                "maxLength": 500
               },
-              "reason": {
-                "type": "string",
-                "enum": [
-                  "BRANDING_UPDATED",
-                  "TEMPLATE_UPDATED",
-                  "RENDERING_CORRECTION",
-                  "OTHER"
-                ]
-              },
-              "note": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "maxLength": 500
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "basedOnVersion": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "mode",
-              "reason",
-              "basedOnVersion"
-            ],
-            "additionalProperties": false
+            ]
+          },
+          "basedOnVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           }
-        ]
+        },
+        "required": [
+          "mode",
+          "reason",
+          "basedOnVersion"
+        ],
+        "additionalProperties": false
       },
       "response": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -44371,7 +44341,8 @@
               "fileSha256",
               "generatedById",
               "createdAt",
-              "reference"
+              "reference",
+              "unsupportedCharacters"
             ],
             "additionalProperties": false
           }
@@ -44559,7 +44530,8 @@
               "fileSha256",
               "generatedById",
               "createdAt",
-              "reference"
+              "reference",
+              "unsupportedCharacters"
             ],
             "additionalProperties": false
           }

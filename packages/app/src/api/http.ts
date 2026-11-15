@@ -5,7 +5,7 @@ export type RawResult = { kind: 'response'; status: number; json: unknown } | { 
 
 /** A file response: the bytes on success, otherwise the JSON error body (never a partial file). */
 export type RawFileResult =
-  | { kind: 'file'; status: number; blob: Blob; contentType: string; sha256: string | null }
+  | { kind: 'file'; status: number; blob: Blob; contentType: string; sha256: string | null; unsupportedCharacters: boolean | null }
   | { kind: 'response'; status: number; json: unknown }
   | { kind: 'network' };
 
@@ -48,7 +48,8 @@ export function createRequester(baseUrl: string, transport: AuthTransport, fetch
       }
       try {
         const blob = await res.blob();
-        return { kind: 'file', status: res.status, blob, contentType, sha256: res.headers.get('x-document-sha256') };
+        const flag = res.headers.get('x-unsupported-characters');
+        return { kind: 'file', status: res.status, blob, contentType, sha256: res.headers.get('x-document-sha256'), unsupportedCharacters: flag === null ? null : flag === 'true' };
       } catch {
         return { kind: 'network' };
       }

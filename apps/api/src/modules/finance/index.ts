@@ -25,5 +25,5 @@ export type { ExpenseSettlementItem, ListExpensePaymentsQuery, RecordExpensePaym
 // F5: generated documents (docs/finance-documents-f5.md): document branding, draft previews and immutable PDF versions.
 export { currentLogo, getBranding, updateBranding, uploadLogo } from './server/branding';
 export type { BrandingInput } from './server/branding';
-export { contentDisposition, createPdfVersion, draftPreview, getPdfVersion, listPdfVersions, pdfVersionFile } from './server/document-pdfs';
+export { contentDisposition, createPdfVersion, draftPreview, getPdfVersion, issueWithOriginal, listPdfVersions, pdfVersionFile } from './server/document-pdfs';
 export type { CreateVersionInput, PdfFile, PdfKind, PdfReason } from './server/document-pdfs';

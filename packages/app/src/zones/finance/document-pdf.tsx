@@ -26,6 +26,8 @@ export const REASON_LABEL: Record<DocumentPdfVersion['reason'], string> = {
   OTHER: 'Other',
 };
 
+const UNSUPPORTED = 'Some text uses characters the PDF fonts cannot show (for example Chinese, Japanese, Korean, Arabic or Hebrew script). They are printed as □. Check the PDF before you share it.';
+
 const STATUS_WORD: Record<string, string> = { ISSUED: 'issued', ACCEPTED: 'accepted', DECLINED: 'declined', EXPIRED: 'expired', VOID: 'void' };
 
 /** Failure wording for the file calls: a 503 means rendering failed and nothing was stored. */
@@ -122,7 +124,6 @@ function IssuedPdfCard({ doc, path }: { doc: FinanceDocument; path: PdfPath }) {
   // Newest first, whatever order the server used.
   const versions = [...(shown?.versions ?? [])].sort((a, b) => b.versionNumber - a.versionNumber);
   const latest = versions[0] ?? null;
-  const original = versions.find((v) => v.versionNumber === 1) ?? null;
 
   /** Runs one action at a time; every failure is shown in words, never thrown. */
   async function guarded(key: string, work: () => Promise<void>) {
@@ -141,42 +142,17 @@ function IssuedPdfCard({ doc, path }: { doc: FinanceDocument; path: PdfPath }) {
     }
   }
 
-  /** The original, creating it on first use when the person may generate (idempotent on the server). */
-  async function ensureOriginal(): Promise<DocumentPdfVersion | null> {
-    if (original) return original;
-    if (!can.pdfGenerate) {
-      setError(`No PDF has been kept for this ${label} yet. Someone who can generate documents needs to create it first.`);
-      return null;
-    }
-    const out = await client.createPdfVersion(slug, path, doc.id, { mode: 'original' });
-    if (out.kind !== 'ok') {
-      if (out.kind === 'unauthenticated') env.onSessionEnded();
-      setError(out.kind === 'failed' && out.status === 503 ? fileFailure(out) : describeFailure(out, 'idempotent'));
-      return null;
-    }
-    if (out.data.unsupportedCharacters) {
-      setNotice({ tone: 'warning', text: 'Some text uses characters the PDF font cannot show (for example Chinese, Japanese, Arabic or Hebrew script). Check the PDF before you share it.' });
-    }
-    list.reload();
-    return out.data;
-  }
+  const preview = (v: DocumentPdfVersion) => guarded('preview', async () => setViewing(v));
 
-  const preview = (v?: DocumentPdfVersion) => guarded('preview', async () => {
-    const target = v ?? (await ensureOriginal());
-    if (target) setViewing(target);
-  });
-
-  const download = (v?: DocumentPdfVersion) => guarded(`download:${v?.id ?? 'latest'}`, async () => {
-    const target = v ?? latest ?? (await ensureOriginal());
-    if (!target) return;
-    const out = await client.pdfFile(slug, path, doc.id, target.id, 'download');
+  const download = (v: DocumentPdfVersion, key = v.id) => guarded(`download:${key}`, async () => {
+    const out = await client.pdfFile(slug, path, doc.id, v.id, 'download');
     if (out.kind !== 'ok') {
       if (out.kind === 'unauthenticated') env.onSessionEnded();
       setError(fileFailure(out));
       return;
     }
-    saveFile(out.data, target.fileName);
-    setNotice({ tone: 'success', text: `Downloaded ${target.fileName}.` });
+    saveFile(out.data, v.fileName);
+    setNotice({ tone: 'success', text: `Downloaded ${v.fileName}.` });
   });
 
   const body = () => {
@@ -191,13 +167,8 @@ function IssuedPdfCard({ doc, path }: { doc: FinanceDocument; path: PdfPath }) {
       );
     }
     if (versions.length === 0) {
-      return (
-        <p className="text-sm text-muted-foreground">
-          {can.pdfGenerate
-            ? `No PDF has been kept for this ${label} yet. Previewing or downloading it creates the original, which never changes afterwards.`
-            : `No PDF has been kept for this ${label} yet. Someone who can generate documents needs to create it first.`}
-        </p>
-      );
+      // Every quote or invoice issued since F5 has its original from the moment it was issued.
+      return <p className="text-sm text-muted-foreground">This {label} was issued before PDFs were kept, so it has no original PDF.</p>;
     }
     return (
       <Table aria-label="PDF versions">
@@ -215,7 +186,10 @@ function IssuedPdfCard({ doc, path }: { doc: FinanceDocument; path: PdfPath }) {
               </TableCell>
               <TableCell className="[overflow-wrap:anywhere]">
                 {REASON_LABEL[v.reason]}{v.reasonNote ? <span className="block text-xs text-muted-foreground">{v.reasonNote}</span> : null}
-                <span className="block text-xs text-muted-foreground">Made while {STATUS_WORD[v.documentStatus] ?? v.documentStatus.toLowerCase()}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {v.reason === 'ORIGINAL' ? 'Made when issued' : `Made while ${STATUS_WORD[v.documentStatus] ?? v.documentStatus.toLowerCase()}`}
+                </span>
+                {v.unsupportedCharacters ? <Badge tone="warning" className="mt-1">Some characters shown as □</Badge> : null}
               </TableCell>
               <TableCell className="hidden whitespace-nowrap sm:table-cell">{formatWhen(v.createdAt, timeZone, locale)}</TableCell>
               <TableCell className="hidden md:table-cell">
@@ -241,21 +215,22 @@ function IssuedPdfCard({ doc, path }: { doc: FinanceDocument; path: PdfPath }) {
         <CardTitle>PDF</CardTitle>
         <div className="flex flex-wrap gap-2">
           {latest && can.pdfGenerate ? <Button size="sm" variant="outline" onClick={() => setAdding(true)} disabled={busy !== null}>New version</Button> : null}
-          {can.pdfPreview && shown && (original || can.pdfGenerate) ? (
-            <Button size="sm" variant="outline" onClick={() => void preview(latest ?? undefined)} loading={busy === 'preview'} disabled={busy !== null}>Preview PDF</Button>
+          {can.pdfPreview && latest ? (
+            <Button size="sm" variant="outline" onClick={() => void preview(latest)} loading={busy === 'preview'} disabled={busy !== null}>Preview PDF</Button>
           ) : null}
-          {can.pdfDownload && shown && (original || can.pdfGenerate) ? (
-            <Button size="sm" onClick={() => void download(latest ?? undefined)} loading={busy === 'download:latest'} disabled={busy !== null}>Download PDF</Button>
+          {can.pdfDownload && latest ? (
+            <Button size="sm" onClick={() => void download(latest, 'latest')} loading={busy === 'download:latest'} disabled={busy !== null}>Download PDF</Button>
           ) : null}
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {error ? <Alert tone="danger" role="alert"><AlertDescription>{error}</AlertDescription></Alert> : null}
         {notice ? <Alert tone={notice.tone}><AlertDescription>{notice.text}</AlertDescription></Alert> : null}
+        {latest?.unsupportedCharacters ? <Alert tone="warning"><AlertDescription>{UNSUPPORTED}</AlertDescription></Alert> : null}
         {body()}
         {versions.length ? (
           <p className="text-xs text-muted-foreground">
-            Each version is kept exactly as it was made and never changes. Downloading a PDF does not send it to anyone.
+            The original was made when this {label} was issued. Each version is kept exactly as it was made and never changes. Downloading a PDF does not send it to anyone.
           </p>
         ) : null}
       </CardContent>
@@ -308,6 +283,7 @@ function PdfViewer({ title, fileName, load, onDownload, onClose }: {
       <DialogContent className="flex h-[min(90vh,60rem)] max-w-4xl flex-col">
         <DialogTitle>{title}</DialogTitle>
         <DialogDescription>{fileName ?? 'Draft preview. It is marked DRAFT and is not kept.'}</DialogDescription>
+        {file?.unsupportedCharacters ? <Alert tone="warning" className="mt-3"><AlertDescription>{UNSUPPORTED}</AlertDescription></Alert> : null}
         <div className="mt-4 min-h-0 flex-1 overflow-hidden rounded-lg border bg-muted">
           {failed ? (
             <div className="p-4">

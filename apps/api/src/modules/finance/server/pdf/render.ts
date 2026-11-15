@@ -16,6 +16,8 @@ const REGULAR = Buffer.from(INTER_REGULAR_BASE64, 'base64');
 const SEMIBOLD = Buffer.from(INTER_SEMIBOLD_BASE64, 'base64');
 
 const A4 = { width: 595.28, height: 841.89 };
+/** Printed in place of a character the fonts cannot draw. */
+export const MISSING = '\u25A1';
 const M = { top: 48, bottom: 64, left: 48, right: 48 };
 const CONTENT = A4.width - M.left - M.right;
 const FOOTER_Y = A4.height - 40;
@@ -103,19 +105,29 @@ export async function renderDocument(s: DocumentSnapshot, logo: Buffer | null): 
     doc.on('error', reject);
   });
 
+  // Characters the embedded fonts cannot draw (for example CJK, Arabic, Hebrew or Indic scripts) are
+  // never dropped silently or left as invisible .notdef glyphs: each is printed as a visible box (U+25A1)
+  // and the result is flagged, so the version records it and the interface warns before anyone relies on it.
   let unsupported = false;
-  const glyphs = () => (doc as unknown as { _font?: { font?: { hasGlyphForCodePoint?: (cp: number) => boolean } } })._font?.font;
-  const check = (text: string) => {
-    const font = glyphs();
-    if (!font?.hasGlyphForCodePoint || unsupported) return;
-    for (const ch of text) {
+  doc.font('regular');
+  // Inter Regular and SemiBold cover the same characters.
+  const glyphs = (doc as unknown as { _font?: { font?: { hasGlyphForCodePoint?: (cp: number) => boolean } } })._font?.font;
+  const fit = (value: string): string => {
+    if (!glyphs?.hasGlyphForCodePoint) return value;
+    let out = '';
+    for (const ch of value) {
       const cp = ch.codePointAt(0)!;
-      if (cp > 0x20 && cp !== 0xa0 && !font.hasGlyphForCodePoint(cp)) { unsupported = true; return; }
+      if (cp > 0x20 && cp !== 0xa0 && !glyphs.hasGlyphForCodePoint(cp)) {
+        unsupported = true;
+        out += MISSING;
+      } else {
+        out += ch;
+      }
     }
+    return out;
   };
   const text = (value: string, x: number, y: number, opts: PDFKit.Mixins.TextOptions = {}) => {
-    check(value);
-    doc.text(value, x, y, { lineGap: 1.5, ...opts });
+    doc.text(fit(value), x, y, { lineGap: 1.5, ...opts });
   };
   const accent = s.branding.accentColor;
   const bottom = A4.height - M.bottom;
@@ -224,11 +236,11 @@ export async function renderDocument(s: DocumentSnapshot, logo: Buffer | null): 
   }
   for (const l of s.lines) {
     const cells: Record<string, string> = {
-      description: clean(l.description),
+      description: fit(clean(l.description)),
       quantity: f.qty(l.quantity),
       unitPrice: f.price(l.unitPrice),
       discount: /^0(\.0+)?$/.test(l.discountAmount) ? '—' : f.money(l.discountAmount),
-      tax: l.taxName ? `${clean(l.taxName)} ${f.percent(l.taxRatePercent)}` : 'No tax',
+      tax: l.taxName ? fit(`${clean(l.taxName)} ${f.percent(l.taxRatePercent)}`) : 'No tax',
       amount: f.money(l.lineNet),
     };
     doc.font('regular').fontSize(9);
@@ -277,7 +289,7 @@ export async function renderDocument(s: DocumentSnapshot, logo: Buffer | null): 
 
   // ---- text blocks: payment instructions, terms, notes ----
   const block = (label: string, body: string | null) => {
-    const value = clean(body).trim();
+    const value = fit(clean(body).trim());
     if (!value) return;
     doc.font('regular').fontSize(9);
     const needed = 16 + Math.min(doc.heightOfString(value, { width: CONTENT, lineGap: 1.5 }), 60);

@@ -49,8 +49,11 @@ export const pdfHandlers = (kind: PdfKind) => ({
     const file = await pdfVersionFile(db, actor.userId, kind, documentIdOf(params), versionIdOf(params), 'attachment');
     return { bytes: file.bytes, contentType: 'application/pdf' as const, sha256: file.sha256, disposition: contentDisposition('attachment', file.fileName, file.utf8FileName) };
   },
-  draft: async ({ db, params }: Ctx) => {
-    const file = await draftPreview(db, kind, documentIdOf(params));
-    return { bytes: file.bytes, contentType: 'application/pdf' as const, sha256: file.sha256, disposition: contentDisposition('inline', file.fileName, file.utf8FileName) };
+  draft: async ({ db, actor, params }: Ctx) => {
+    const file = await draftPreview(db, actor.userId, kind, documentIdOf(params));
+    return {
+      bytes: file.bytes, contentType: 'application/pdf' as const, sha256: file.sha256, disposition: contentDisposition('inline', file.fileName, file.utf8FileName),
+      unsupportedCharacters: file.unsupportedCharacters,
+    };
   },
 });

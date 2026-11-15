@@ -25,8 +25,8 @@ const ctx = (permissions: string[]): BusinessContext => ({
   membership: { id: randomUUID(), role: 'OWNER', permissions },
 });
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const pdfResponse = (sha = 'f'.repeat(64)) => new Response(new TextEncoder().encode('%PDF-1.7 test'), {
-  status: 200, headers: { 'content-type': 'application/pdf', 'x-document-sha256': sha },
+const pdfResponse = (sha = 'f'.repeat(64), unsupported?: boolean) => new Response(new TextEncoder().encode('%PDF-1.7 test'), {
+  status: 200, headers: { 'content-type': 'application/pdf', 'x-document-sha256': sha, ...(unsupported === undefined ? {} : { 'x-unsupported-characters': String(unsupported) }) },
 });
 const heading = (name: string | RegExp) => screen.findByRole('heading', { name, level: 1 });
 
@@ -37,7 +37,8 @@ function versionOf(d: FinanceDocument, n: number, over: Partial<DocumentPdfVersi
     id, documentId: d.id, documentKind: d.kind as 'QUOTE' | 'INVOICE', versionNumber: n, reason: n === 1 ? 'ORIGINAL' : 'BRANDING_UPDATED', reasonNote: null,
     previousVersionId: null, documentNumber: d.number!, documentStatus: d.status, documentContentSha256: 'a'.repeat(64), templateId: 'standard', templateVersion: 1,
     renderer: 'pdfkit@0.20.2', snapshotSha256: 'b'.repeat(64), logoAssetId: null, fileName: `${d.number}${n > 1 ? `-v${n}` : ''}.pdf`, contentType: 'application/pdf',
-    pageCount: 1, byteSize: 18_000, fileSha256: sha, generatedById: randomUUID(), createdAt: NOW, reference: { type: 'finance_document_pdf', id, sha256: sha }, ...over,
+    pageCount: 1, byteSize: 18_000, fileSha256: sha, generatedById: randomUUID(), createdAt: NOW, reference: { type: 'finance_document_pdf', id, sha256: sha },
+    unsupportedCharacters: false, ...over,
   };
 }
 
@@ -65,9 +66,6 @@ function setup(o: { data?: FinanceData; permissions?: string[]; section?: string
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     const accept = (init?.headers as Record<string, string> | undefined)?.accept;
     let m: RegExpExecArray | null;
-    const isF5 = /\/(pdf-versions|draft-pdf)/.test(path) || path.startsWith('/document-branding');
-    if (!isF5) return api.fetch(input, init);
-    files.calls.push({ method, path, body, accept });
     for (let i = 0; i < files.next.length; i++) {
       const r = files.next[i]!(method, path);
       if (r) {
@@ -75,18 +73,19 @@ function setup(o: { data?: FinanceData; permissions?: string[]; section?: string
         return r;
       }
     }
-    if ((m = /^\/(quotes|invoices)\/([^/]+)\/draft-pdf$/.exec(path))) return pdfResponse();
+    const isF5 = /\/(pdf-versions|draft-pdf)/.test(path) || path.startsWith('/document-branding');
+    if (!isF5) return api.fetch(input, init);
+    files.calls.push({ method, path, body, accept });
+    if ((m = /^\/(quotes|invoices)\/([^/]+)\/draft-pdf$/.exec(path))) {
+      const d = data.documents.find((x) => x.id === m![2])!;
+      return pdfResponse(undefined, d.lines.some((l) => /[\u3040-\u9fff\u0590-\u05ff]/.test(l.description)));
+    }
     if ((m = /^\/(quotes|invoices)\/([^/]+)\/pdf-versions$/.exec(path))) {
       const d = data.documents.find((x) => x.id === m![2])!;
       const list = files.versions.get(d.id) ?? [];
       if (method === 'GET') return json(200, ListDocumentPdfVersionsResponse.parse({ eligible: d.status !== 'DRAFT' && !!d.number, versions: [...list].reverse() })); // newest first, as the API does
       const input = CreateDocumentPdfVersionRequest.parse(body);
-      if (input.mode === 'original') {
-        if (list[0]) return json(200, { version: list[0] });
-        const v = versionOf(d, 1);
-        files.versions.set(d.id, [v]);
-        return json(201, DocumentPdfVersionResponse.parse({ version: v }));
-      }
+      if (!list.length) return json(409, { error: 'no_original' });
       if (input.basedOnVersion !== list.length) return json(409, { error: 'stale' });
       const v = versionOf(d, list.length + 1, { reason: input.reason, reasonNote: input.note ?? null, previousVersionId: list[list.length - 1]!.id });
       list.push(v);
@@ -177,32 +176,57 @@ describe('F5 finance client files', () => {
 });
 
 describe('PDF card on a quote or invoice', () => {
-  it('an issued invoice: Preview creates the original once, shows it in a frame, and Download saves it under its file name', async () => {
+  it('an issued invoice shows the original made at issue: Preview shows it in a frame, Download saves it under its file name, nothing is generated', async () => {
     const acme = customer({ displayName: 'Acme Pty Ltd' });
     const inv = issued('INVOICE', acme, 'INV-0007', { amount: '100.00' });
-    const { files, user } = setup({ data: financeData({ customers: [acme], documents: [inv] }), section: 'invoices', target: `invoice:${inv.id}` });
+    const files: Partial<Files> = { versions: new Map([[inv.id, [versionOf(inv, 1)]]]) };
+    const { files: f, user } = setup({ data: financeData({ customers: [acme], documents: [inv] }), section: 'invoices', target: `invoice:${inv.id}`, files });
     await heading('INV-0007');
-    expect(await screen.findByText(/No PDF has been kept for this invoice yet/)).toBeTruthy();
+    const table = await screen.findByRole('table', { name: 'PDF versions' });
+    expect(within(table).getByText('Original')).toBeTruthy();
+    expect(within(table).getByText('Made when issued')).toBeTruthy();
+    expect(screen.getByText(/The original was made when this invoice was issued/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Preview PDF' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('INV-0007.pdf')).toBeTruthy();
     await waitFor(() => expect(dialog.querySelector('iframe')?.getAttribute('src')).toMatch(/^blob:/));
-    expect(files.calls.filter((c) => c.method === 'POST')).toEqual([expect.objectContaining({ body: { mode: 'original' } })]);
-    expect(files.calls.some((c) => c.path.endsWith('/preview') && c.accept?.includes('application/pdf'))).toBe(true);
+    expect(f.calls.some((c) => c.path.endsWith('/preview') && c.accept?.includes('application/pdf'))).toBe(true);
     await user.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(URL.revokeObjectURL).toHaveBeenCalled();
-    // The history now lists the original; Download saves the stored bytes.
-    const table = await screen.findByRole('table', { name: 'PDF versions' });
-    expect(within(table).getByText('Original')).toBeTruthy();
-    expect(within(table).getByText(/Made while issued/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Download PDF' }));
     await screen.findByText('Downloaded INV-0007.pdf.');
     expect(clicked).toEqual([{ download: 'INV-0007.pdf', href: expect.stringMatching(/^blob:/) }]);
-    expect(files.calls.filter((c) => c.method === 'POST')).toHaveLength(1); // the original is not made twice
+    expect(f.calls.filter((c) => c.method === 'POST')).toHaveLength(0); // viewing never generates anything
     // Nothing suggests the document went anywhere: the only mention of sending says it did not happen.
     expect(document.body.textContent!.replace('does not send it to anyone', '')).not.toMatch(/\bsent\b|\bsend\b|emailed|delivered/i);
-    expect(screen.getByText(/Downloading a PDF does not send it to anyone/)).toBeTruthy();
+  });
+
+  it('an invoice issued before PDFs were kept says it has no original, and offers no PDF actions', async () => {
+    const acme = customer({ displayName: 'Acme Pty Ltd' });
+    const inv = issued('INVOICE', acme, 'INV-0001');
+    setup({ data: financeData({ customers: [acme], documents: [inv] }), section: 'invoices', target: `invoice:${inv.id}` });
+    await heading('INV-0001');
+    expect(await screen.findByText('This invoice was issued before PDFs were kept, so it has no original PDF.')).toBeTruthy();
+    for (const name of ['Preview PDF', 'Download PDF', 'New version']) expect(screen.queryByRole('button', { name })).toBeNull();
+  });
+
+  it('flags characters the fonts cannot show: on the draft preview before issuing, and on stored versions', async () => {
+    const acme = customer({ displayName: 'Acme Pty Ltd' });
+    const d = doc('INVOICE', { customerId: acme.id });
+    d.lines[0]!.description = 'Translation 翻訳';
+    const inv = issued('INVOICE', acme, 'INV-0021');
+    const files: Partial<Files> = { versions: new Map([[inv.id, [versionOf(inv, 1, { unsupportedCharacters: true })]]]) };
+    const { user } = setup({ data: financeData({ customers: [acme], documents: [d, inv] }), section: 'invoices', target: `invoice:${d.id}`, files });
+    await heading('Draft invoice');
+    await user.click(await screen.findByRole('button', { name: 'Preview draft PDF' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/They are printed as □. Check the PDF before you share it./)).toBeTruthy();
+    cleanup();
+    setup({ data: financeData({ customers: [acme], documents: [inv] }), section: 'invoices', target: `invoice:${inv.id}`, files });
+    await heading('INV-0021');
+    expect(await screen.findByText('Some characters shown as □')).toBeTruthy();
+    expect(screen.getByText(/They are printed as □/)).toBeTruthy();
   });
 
   it('a new version needs a reason (a note for Other), keeps the earlier ones, and a stale base offers a reload', async () => {
@@ -246,20 +270,23 @@ describe('PDF card on a quote or invoice', () => {
     expect(files.calls.map((c) => `${c.method} ${c.path}`)).toEqual([`GET /invoices/${d.id}/draft-pdf`]);
   });
 
-  it('a rendering failure says nothing was stored, and trying again works', async () => {
+  it('issuing says the original PDF is made too, and a failed PDF leaves the draft unissued with a clear message', async () => {
     const acme = customer({ displayName: 'Acme Pty Ltd' });
-    const inv = issued('INVOICE', acme, 'INV-0009');
-    const { files, user } = setup({ data: financeData({ customers: [acme], documents: [inv] }), section: 'invoices', target: `invoice:${inv.id}` });
-    await heading('INV-0009');
-    files.next.push((method) => (method === 'POST' ? json(503, { error: 'generation_failed' }) : undefined));
-    await user.click(await screen.findByRole('button', { name: 'Download PDF' }));
-    expect(await screen.findByText(/could not be made right now. Nothing was stored/)).toBeTruthy();
-    expect(clicked).toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: 'Download PDF' }));
-    await screen.findByText('Downloaded INV-0009.pdf.');
+    const d = doc('INVOICE', { customerId: acme.id, dueDate: '2026-12-15' });
+    const { user } = setup({ data: financeData({ customers: [acme], documents: [d] }), section: 'invoices', target: `invoice:${d.id}`,
+      files: { next: [(method, path) => (method === 'POST' && path.endsWith('/issue') ? json(503, { error: 'generation_failed' }) : undefined)] } });
+    await heading('Draft invoice');
+    await user.click(await screen.findByRole('button', { name: 'Issue invoice' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Its original PDF is made and kept at the same time/)).toBeTruthy();
+    await user.click(within(dialog).getByRole('button', { name: 'Issue invoice' }));
+    expect(await within(dialog).findByText(/could not finish this just now, so nothing was changed/)).toBeTruthy();
+    // A second attempt goes through (the fake issues it).
+    await user.click(within(dialog).getByRole('button', { name: 'Issue invoice' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('permissions: a reader sees no PDF card; preview-only cannot generate or download', async () => {
+  it('permissions: a reader sees no PDF card; preview-only can preview but not generate or download', async () => {
     const acme = customer({ displayName: 'Acme Pty Ltd' });
     const inv = issued('INVOICE', acme, 'INV-0011');
     const data = financeData({ customers: [acme], documents: [inv] });
@@ -268,11 +295,12 @@ describe('PDF card on a quote or invoice', () => {
     expect(screen.queryByRole('heading', { name: 'PDF' })).toBeNull();
     expect(files.calls).toHaveLength(0);
     cleanup();
-    const second = setup({ data, permissions: ['finance:read', 'finance:documents_preview'], section: 'invoices', target: `invoice:${inv.id}` });
+    const second = setup({ data, permissions: ['finance:read', 'finance:documents_preview'], section: 'invoices', target: `invoice:${inv.id}`,
+      files: { versions: new Map([[inv.id, [versionOf(inv, 1)]]]) } });
     await heading('INV-0011');
-    expect(await screen.findByText(/Someone who can generate documents needs to create it first/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Preview PDF' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Preview PDF' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Download PDF' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Download version/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'New version' })).toBeNull();
     expect(second.files.calls.every((c) => c.method === 'GET')).toBe(true);
   });

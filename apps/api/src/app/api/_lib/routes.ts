@@ -228,6 +228,8 @@ export interface FileResult {
   /** A complete Content-Disposition value (see contentDisposition in the finance module), or omitted for images. */
   disposition?: string;
   sha256: string;
+  /** Draft previews: some text used characters the fonts cannot draw (sent as X-Unsupported-Characters: true). */
+  unsupportedCharacters?: boolean;
 }
 
 /**
@@ -255,7 +257,8 @@ export function tenantFileRoute(
         'Cross-Origin-Resource-Policy': 'same-site',
       };
       if (file.disposition) headers['Content-Disposition'] = file.disposition;
-      if (headers['Access-Control-Allow-Origin']) headers['Access-Control-Expose-Headers'] = 'Content-Disposition, X-Document-Sha256';
+      if (file.unsupportedCharacters !== undefined) headers['X-Unsupported-Characters'] = String(file.unsupportedCharacters);
+      if (headers['Access-Control-Allow-Origin']) headers['Access-Control-Expose-Headers'] = 'Content-Disposition, X-Document-Sha256, X-Unsupported-Characters';
       return new Response(file.bytes as unknown as BodyInit, { status: 200, headers });
     } catch (error) {
       return errorResponse(request, error);

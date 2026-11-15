@@ -4,16 +4,17 @@ import 'server-only';
 // comes from F1's stored, sealed amounts and the shared money module (taxBreakdown sums stored line
 // amounts). Nothing here changes a finance document, its status or its settlement.
 //
-// Lifecycle (§3): a DRAFT is previewed on demand and never stored. A numbered document (ISSUED, and the
-// later quote states and VOID) gets version 1, the ORIGINAL, on first request; later versions are added
-// only on purpose, with a reason, and link to the version before. Financial content never differs
-// between versions of one document: it is the content sealed at issue (the guard checks the hash).
+// Lifecycle (§1): a DRAFT is previewed on demand and never stored. Issuing a quote or invoice creates
+// version 1, the ORIGINAL, in the same transaction (owner decision F5-D2): if it cannot be rendered or
+// stored, the issue rolls back. Later versions are added only on purpose, with a reason, and link to the
+// version before. Financial content never differs between versions of one document: it is the content
+// sealed at issue (the guard checks the hash).
 import { createHash, randomUUID } from 'node:crypto';
 import { recordAudit } from '@/core/audit';
 import { type AppTenantDb } from '@/core/db';
 import { RecordNotFoundError, ServiceFailureError, StateConflictError } from '@/core/http/errors';
 import { DEFAULT_TITLES, loadBranding, loadLogoAsset, logoBytes } from './branding';
-import { billToSnapshot, linesOf, load, type Row } from './documents';
+import { billToSnapshot, issueDocument, linesOf, load, type Row } from './documents';
 import { formatAmount, formatPlain, taxBreakdown } from './money';
 import { RENDERER, RenderError, renderDocument } from './pdf/render';
 import { SNAPSHOT_SCHEMA, TEMPLATE_ID, TEMPLATE_VERSION, type DocumentSnapshot, type SnapshotParty } from './pdf/snapshot';
@@ -144,12 +145,16 @@ const utf8Name = (number: string, versionNumber: number) =>
 
 export type PdfFile = { bytes: Buffer; fileName: string; utf8FileName: string; sha256: string };
 
-/** A rendered preview of a draft: watermarked DRAFT, never numbered, never stored. */
-export async function draftPreview(db: AppTenantDb, kind: PdfKind, id: string): Promise<PdfFile & { unsupportedCharacters: boolean }> {
+/**
+ * A rendered preview of a draft: watermarked DRAFT, never numbered, never stored. Audited as a draft
+ * preview (F5-D4), distinct from a stored version's preview; the audit names the document only.
+ */
+export async function draftPreview(db: AppTenantDb, actorUserId: string, kind: PdfKind, id: string): Promise<PdfFile & { unsupportedCharacters: boolean }> {
   const row = await load(db, kind, id);
   if (row.status !== 'DRAFT') throw new StateConflictError('not_draft');
   const { snapshot, logo } = await buildSnapshot(db, kind, row, new Date());
   const result = await render(snapshot, logo);
+  await recordAudit(db, actorUserId, 'finance.document_pdf.draft_previewed', { type: 'finance_document', id }, { kind, documentVersion: String(row.version) });
   const name = `draft-${kind.toLowerCase()}-preview.pdf`;
   return { bytes: result.bytes, fileName: name, utf8FileName: name, sha256: createHash('sha256').update(result.bytes).digest('hex'), unsupportedCharacters: result.unsupportedCharacters };
 }
@@ -159,13 +164,14 @@ export async function draftPreview(db: AppTenantDb, kind: PdfKind, id: string): 
 const versionSelect = {
   id: true, documentId: true, documentKind: true, versionNumber: true, reason: true, reasonNote: true, previousVersionId: true, documentNumber: true,
   documentStatus: true, documentContentSha256: true, templateId: true, templateVersion: true, renderer: true, snapshotSha256: true,
-  logoAssetId: true, fileName: true, contentType: true, pageCount: true, byteSize: true, fileSha256: true, generatedById: true, createdAt: true,
+  logoAssetId: true, fileName: true, contentType: true, pageCount: true, unsupportedCharacters: true, byteSize: true, fileSha256: true,
+  generatedById: true, createdAt: true,
 } as const;
 type VersionRow = {
   id: string; documentId: string; documentKind: PdfKind; versionNumber: number; reason: string; reasonNote: string | null; previousVersionId: string | null;
   documentNumber: string; documentStatus: string; documentContentSha256: string; templateId: string; templateVersion: number; renderer: string;
-  snapshotSha256: string; logoAssetId: string | null; fileName: string; contentType: string; pageCount: number; byteSize: number; fileSha256: string;
-  generatedById: string; createdAt: Date;
+  snapshotSha256: string; logoAssetId: string | null; fileName: string; contentType: string; pageCount: number; unsupportedCharacters: boolean;
+  byteSize: number; fileSha256: string; generatedById: string; createdAt: Date;
 };
 
 /**
@@ -173,14 +179,14 @@ type VersionRow = {
  * link: it names the business-scoped version id and the exact bytes (sha256). Nothing here records or
  * implies that a document was sent.
  */
-const versionDto = (v: VersionRow, unsupportedCharacters?: boolean) => ({
+const versionDto = (v: VersionRow) => ({
   id: v.id, documentId: v.documentId, documentKind: v.documentKind, versionNumber: v.versionNumber, reason: v.reason as 'ORIGINAL' | PdfReason,
   reasonNote: v.reasonNote, previousVersionId: v.previousVersionId, documentNumber: v.documentNumber, documentStatus: v.documentStatus,
   documentContentSha256: v.documentContentSha256, templateId: v.templateId, templateVersion: v.templateVersion, renderer: v.renderer,
   snapshotSha256: v.snapshotSha256, logoAssetId: v.logoAssetId, fileName: v.fileName, contentType: 'application/pdf' as const, pageCount: v.pageCount,
   byteSize: v.byteSize, fileSha256: v.fileSha256, generatedById: v.generatedById, createdAt: v.createdAt.toISOString(),
   reference: { type: 'finance_document_pdf' as const, id: v.id, sha256: v.fileSha256 },
-  ...(unsupportedCharacters === undefined ? {} : { unsupportedCharacters }),
+  unsupportedCharacters: v.unsupportedCharacters,
 });
 
 /** Every version of a document, newest first. A draft or a discarded draft simply has none. */
@@ -209,14 +215,59 @@ async function lockDocumentPdfs(db: AppTenantDb, documentId: string) {
       'finance.pdf:' || current_setting('app.business_id', true) || ':' || ${documentId}::text, 0))) AS l`;
 }
 
-export type CreateVersionInput =
-  | { mode: 'original' }
-  | { mode: 'new_version'; reason: PdfReason; note?: string | null; basedOnVersion: number };
+export type CreateVersionInput = { mode: 'new_version'; reason: PdfReason; note?: string | null; basedOnVersion: number };
+
+/** Renders and stores one version of a numbered document, then audits it. The caller holds the PDF lock. */
+async function storeVersion(
+  db: AppTenantDb, actorUserId: string, kind: PdfKind, row: Row, renderedAt: Date,
+  next: { versionNumber: number; reason: 'ORIGINAL' | PdfReason; note: string | null; previousId: string | null },
+) {
+  const { snapshot, logo } = await buildSnapshot(db, kind, row, renderedAt);
+  const result = await render(snapshot, logo);
+  const fileName = safeFileName(`${row.number}${next.versionNumber > 1 ? `-v${next.versionNumber}` : ''}`);
+  const versionId = randomUUID();
+  await db.financeDocumentPdf.create({
+    data: {
+      id: versionId, documentId: row.id, documentKind: kind, versionNumber: next.versionNumber, reason: next.reason, reasonNote: next.note,
+      previousVersionId: next.previousId, documentNumber: row.number, documentStatus: row.status, documentContentSha256: row.contentSha256,
+      templateId: TEMPLATE_ID, templateVersion: TEMPLATE_VERSION, renderer: RENDERER, snapshot: snapshot as never,
+      logoAssetId: snapshot.branding.logo?.assetId ?? null, fileName, contentType: 'application/pdf', pageCount: result.pageCount,
+      unsupportedCharacters: result.unsupportedCharacters, fileData: result.bytes, generatedById: actorUserId,
+      // Database-owned (the guard recomputes them from the stored bytes and snapshot):
+      byteSize: 0, fileSha256: '0'.repeat(64), snapshotSha256: '0'.repeat(64),
+    } as never,
+  });
+  const created = await findVersion(db, kind, row.id, versionId);
+  await recordAudit(db, actorUserId, 'finance.document_pdf.generated', { type: 'finance_document_pdf', id: versionId }, {
+    documentId: row.id, kind, number: row.number, versionNumber: String(next.versionNumber), reason: next.reason, hasNote: next.note ? 'true' : 'false',
+    previousVersionId: next.previousId, documentStatus: row.status, templateId: TEMPLATE_ID, templateVersion: String(TEMPLATE_VERSION),
+    fileSha256: created.fileSha256, byteSize: String(created.byteSize), pageCount: String(created.pageCount), logoAssetId: created.logoAssetId,
+    unsupportedCharacters: String(created.unsupportedCharacters),
+  });
+  return versionDto(created);
+}
 
 /**
- * Creates the next PDF version. `original` is idempotent: it returns version 1 when it already exists
- * (200) and creates it otherwise (201), so racing first requests yield one original. `new_version`
- * requires an original, a reason, and the latest version number the caller saw (409 stale otherwise).
+ * Issues a quote or invoice and creates its original PDF in the same unit of work (owner decision F5-D2).
+ * The original is rendered from the just-sealed record with the branding in force at issue, and records
+ * status ISSUED. Any failure (rendering, size, logo, storage, audit) throws, so the transaction rolls
+ * back and the document stays a draft: an issued quote or invoice never lacks its original.
+ * This is the only issue path for quotes and invoices; credit notes have no PDF in F5.
+ */
+export async function issueWithOriginal(db: AppTenantDb, actorUserId: string, kind: PdfKind, id: string, input: Parameters<typeof issueDocument>[4]) {
+  await load(db, kind, id); // 404 before anything else
+  await lockDocumentPdfs(db, id);
+  const document = await issueDocument(db, actorUserId, kind, id, input);
+  const row = await load(db, kind, id);
+  if (row.status !== 'ISSUED' || row.number === null || row.contentSha256 === null) throw new StateConflictError('not_eligible'); // unreachable
+  const original = await storeVersion(db, actorUserId, kind, row, row.issuedAt ?? new Date(), { versionNumber: 1, reason: 'ORIGINAL', note: null, previousId: null });
+  return { document, original };
+}
+
+/**
+ * Adds the next PDF version of a numbered document, with a reason and the latest version number the
+ * caller saw (409 stale otherwise). The original is made at issue; a document issued before F5 has none
+ * (409 no_original) and cannot get one afterwards, because an original must show the issued state.
  */
 export async function createPdfVersion(db: AppTenantDb, actorUserId: string, kind: PdfKind, id: string, input: CreateVersionInput) {
   await load(db, kind, id); // 404 first: never reveal anything about another business's or kind's ids
@@ -226,50 +277,19 @@ export async function createPdfVersion(db: AppTenantDb, actorUserId: string, kin
   const latest = (await db.financeDocumentPdf.findFirst({
     where: { documentId: id, documentKind: kind }, select: versionSelect, orderBy: { versionNumber: 'desc' },
   })) as VersionRow | null;
-  let versionNumber = 1;
-  let reason: 'ORIGINAL' | PdfReason = 'ORIGINAL';
-  let note: string | null = null;
-  if (input.mode === 'original') {
-    if (latest) {
-      const original = (await db.financeDocumentPdf.findFirst({ where: { documentId: id, documentKind: kind, versionNumber: 1 }, select: versionSelect })) as VersionRow;
-      return { status: 200 as const, version: versionDto(original) };
-    }
-  } else {
-    if (!latest) throw new StateConflictError('no_original');
-    if (input.basedOnVersion !== latest.versionNumber) throw new StateConflictError('stale');
-    if (latest.versionNumber >= PDF_MAX_VERSIONS) throw new StateConflictError('version_limit');
-    versionNumber = latest.versionNumber + 1;
-    reason = input.reason;
-    note = input.note ?? null;
-  }
-
-  const renderedAt = new Date();
-  const { snapshot, logo } = await buildSnapshot(db, kind, row, renderedAt);
-  const result = await render(snapshot, logo);
-  const fileName = safeFileName(`${row.number}${versionNumber > 1 ? `-v${versionNumber}` : ''}`);
-  const versionId = randomUUID();
-  await db.financeDocumentPdf.create({
-    data: {
-      id: versionId, documentId: id, documentKind: kind, versionNumber, reason, reasonNote: note, previousVersionId: latest?.id ?? null,
-      documentNumber: row.number, documentStatus: row.status, documentContentSha256: row.contentSha256, templateId: TEMPLATE_ID,
-      templateVersion: TEMPLATE_VERSION, renderer: RENDERER, snapshot: snapshot as never, logoAssetId: snapshot.branding.logo?.assetId ?? null,
-      fileName, contentType: 'application/pdf', pageCount: result.pageCount, fileData: result.bytes, generatedById: actorUserId,
-      // Database-owned (the guard recomputes them from the stored bytes and snapshot):
-      byteSize: 0, fileSha256: '0'.repeat(64), snapshotSha256: '0'.repeat(64),
-    } as never,
+  if (!latest) throw new StateConflictError('no_original');
+  if (input.basedOnVersion !== latest.versionNumber) throw new StateConflictError('stale');
+  if (latest.versionNumber >= PDF_MAX_VERSIONS) throw new StateConflictError('version_limit');
+  const version = await storeVersion(db, actorUserId, kind, row, new Date(), {
+    versionNumber: latest.versionNumber + 1, reason: input.reason, note: input.note ?? null, previousId: latest.id,
   });
-  const created = await findVersion(db, kind, id, versionId);
-  await recordAudit(db, actorUserId, 'finance.document_pdf.generated', { type: 'finance_document_pdf', id: versionId }, {
-    documentId: id, kind, number: row.number, versionNumber: String(versionNumber), reason, hasNote: note ? 'true' : 'false',
-    previousVersionId: latest?.id ?? null, documentStatus: row.status, templateId: TEMPLATE_ID, templateVersion: String(TEMPLATE_VERSION),
-    fileSha256: created.fileSha256, byteSize: String(created.byteSize), pageCount: String(created.pageCount), logoAssetId: created.logoAssetId,
-  });
-  return { status: 201 as const, version: versionDto(created, result.unsupportedCharacters) };
+  return { status: 201 as const, version };
 }
 
 /**
- * The stored bytes of a version, verified against the recorded checksum before they are served. An
- * `attachment` (download) is audited; an inline preview is not (no read-audit policy exists yet, §7).
+ * The stored bytes of a version, verified against the recorded checksum before they are served. Both a
+ * preview (inline) and a download (attachment) are audited (owner decision F5-D4): who, which business
+ * (the audit row's tenant), which document and version, which action, when. Never contents or bytes.
  */
 export async function pdfVersionFile(db: AppTenantDb, actorUserId: string, kind: PdfKind, documentId: string, versionId: string, disposition: 'inline' | 'attachment'): Promise<PdfFile> {
   const v = await findVersion(db, kind, documentId, versionId);
@@ -280,11 +300,8 @@ export async function pdfVersionFile(db: AppTenantDb, actorUserId: string, kind:
     console.error('[finance] stored PDF failed its integrity check');
     throw new ServiceFailureError(500, 'integrity_error');
   }
-  if (disposition === 'attachment') {
-    await recordAudit(db, actorUserId, 'finance.document_pdf.downloaded', { type: 'finance_document_pdf', id: v.id }, {
-      documentId, kind, number: v.documentNumber, versionNumber: String(v.versionNumber), fileSha256: v.fileSha256,
-    });
-  }
+  await recordAudit(db, actorUserId, disposition === 'attachment' ? 'finance.document_pdf.downloaded' : 'finance.document_pdf.previewed',
+    { type: 'finance_document_pdf', id: v.id }, { documentId, kind, versionNumber: String(v.versionNumber), fileSha256: v.fileSha256 });
   return { bytes, fileName: v.fileName, utf8FileName: utf8Name(v.documentNumber, v.versionNumber), sha256 };
 }
 

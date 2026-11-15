@@ -96,8 +96,8 @@ export const DocumentPdfVersion = z
     generatedById: Uuid,
     createdAt: z.string(),
     reference: DocumentFileReference,
-    /** Only on the response that created it: some text uses characters the template font cannot show. */
-    unsupportedCharacters: z.boolean().optional(),
+    /** Some text used characters the template fonts cannot draw; each is printed as a visible box. */
+    unsupportedCharacters: z.boolean(),
   })
   .strict();
 export type DocumentPdfVersion = z.infer<typeof DocumentPdfVersion>;
@@ -112,18 +112,16 @@ export const ListDocumentPdfVersionsResponse = z
   .strict();
 
 /**
- * Create a version. `original` returns version 1, creating it on first use (idempotent). `new_version`
- * adds the next version; `basedOnVersion` is the latest version number the caller saw.
+ * Create a later version. The original (version 1) is created when the quote or invoice is issued
+ * (owner decision F5-D2), never through this request. `basedOnVersion` is the latest version number the
+ * caller saw.
  */
-export const CreateDocumentPdfVersionRequest = z.discriminatedUnion('mode', [
-  z.object({ mode: z.literal('original') }).strict(),
-  z
-    .object({
-      mode: z.literal('new_version'),
-      reason: z.enum(['BRANDING_UPDATED', 'TEMPLATE_UPDATED', 'RENDERING_CORRECTION', 'OTHER']),
-      note: nullableText(500),
-      basedOnVersion: z.number().int().min(1),
-    })
-    .strict()
-    .refine((v) => v.reason !== 'OTHER' || !!v.note, { message: 'Describe the reason', path: ['note'] }),
-]);
+export const CreateDocumentPdfVersionRequest = z
+  .object({
+    mode: z.literal('new_version'),
+    reason: z.enum(['BRANDING_UPDATED', 'TEMPLATE_UPDATED', 'RENDERING_CORRECTION', 'OTHER']),
+    note: nullableText(500),
+    basedOnVersion: z.number().int().min(1),
+  })
+  .strict()
+  .refine((v) => v.reason !== 'OTHER' || !!v.note, { message: 'Describe the reason', path: ['note'] });

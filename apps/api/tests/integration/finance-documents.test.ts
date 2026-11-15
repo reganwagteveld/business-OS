@@ -170,7 +170,12 @@ const api = (who: User, slug: string) => {
     uploadLogo: (body: unknown) => post(logoRoute, '/document-branding/logo', ctx({ slug }), body),
     logo: () => logoRoute.GET(req('GET', `${F}/document-branding/logo`, { cookie: who.cookie }), ctx({ slug })).then(file),
     versions: (seg: Seg, id: string) => R[seg].versions.GET(req('GET', `${F}/${seg}/${id}/pdf-versions`, { cookie: who.cookie }), d(id)).then(json),
-    generate: (seg: Seg, id: string, body: unknown = { mode: 'original' }) => post(R[seg].versions, `/${seg}/${id}/pdf-versions`, d(id), body),
+    generate: (seg: Seg, id: string, body: unknown) => post(R[seg].versions, `/${seg}/${id}/pdf-versions`, d(id), body),
+    /** Version 1, made when the document was issued (F5-D2). */
+    original: async (seg: Seg, id: string) => {
+      const list = await R[seg].versions.GET(req('GET', `${F}/${seg}/${id}/pdf-versions`, { cookie: who.cookie }), d(id)).then(json);
+      return list.body.versions.find((v: { versionNumber: number }) => v.versionNumber === 1);
+    },
     version: (id: string, versionId: string) => invVersion.GET(req('GET', `${F}/invoices/${id}/pdf-versions/${versionId}`, { cookie: who.cookie }), d(id, { versionId })).then(json),
     preview: (seg: Seg, id: string, versionId: string) =>
       R[seg].preview.GET(req('GET', `${F}/${seg}/${id}/pdf-versions/${versionId}/preview`, { cookie: who.cookie }), d(id, { versionId })).then(file),
@@ -232,9 +237,8 @@ describe('invoice and quote content', () => {
       line({ description: 'Travel', quantity: '1', unitPrice: '99.99', discountAmount: '9.99' }),
     ]);
     expect(inv).toMatchObject({ subtotal: '490.00', taxTotal: '37.63', total: '527.63' }); // 3 × 33.3333 = 99.9999 → 100.00; 7.625% → 7.625 → 7.63 (half away from zero)
-    const created = await own.generate('invoices', inv.id);
-    expect(created.status).toBe(201);
-    const v = created.body.version;
+    // The original was created by issuing (F5-D2), by the issuer, in the issued state.
+    const v = await own.original('invoices', inv.id);
     expect(v).toMatchObject({
       documentId: inv.id, documentKind: 'INVOICE', versionNumber: 1, reason: 'ORIGINAL', previousVersionId: null, documentNumber: inv.number,
       documentStatus: 'ISSUED', documentContentSha256: inv.contentSha256, templateId: 'standard', templateVersion: 1, contentType: 'application/pdf',
@@ -275,7 +279,7 @@ describe('invoice and quote content', () => {
     await own.patchBranding({ version: (await own.branding()).body.branding.version, quoteTitle: 'Proposal', quoteTerms: 'Valid for 30 days. Prices in AUD.' });
     const q = await own.createQuote({ customerId: custA, lines: [line({ taxRateId: gst })] });
     const issued = await own.issue('quotes', q.body.document.id, { version: 1, issueDate: '2026-11-15', validUntil: '2026-12-31' });
-    const v = (await own.generate('quotes', issued.body.document.id)).body.version;
+    const v = await own.original('quotes', issued.body.document.id);
     const pdf = await readPdf((await own.download('quotes', issued.body.document.id, v.id)).bytes);
     for (const expected of ['Proposal', issued.body.document.number, 'PREPARED FOR', 'VALID UNTIL', '31 Dec 2026', 'TERMS OF THIS QUOTE', 'Valid for 30 days. Prices in AUD.', 'Total AUD', '$330.00']) {
       expect(squash(pdf.text), expected).toContain(squash(expected));
@@ -295,7 +299,7 @@ describe('invoice and quote content', () => {
     ] });
     const inv = (await own.issue('invoices', draft.body.document.id, { version: 1, issueDate: '2026-11-15', dueDate: '2026-11-29' })).body.document;
     expect(inv).toMatchObject({ subtotal: '1996.68', taxTotal: '361.65', total: '2358.33' });
-    const v = (await own.generate('invoices', inv.id)).body.version;
+    const v = await own.original('invoices', inv.id);
     const pdf = await readPdf((await own.download('invoices', inv.id, v.id)).bytes);
     for (const expected of ['1.851,85 €', 'MwSt 19% on 1.851,85 €', '351,85 €', 'MwSt ermäßigt 7% on 139,93 €', '9,80 €', '1.996,68 €', 'Total EUR', '2.358,33 €', '1,5', '1.234,565 €']) {
       expect(squash(pdf.text), expected).toContain(squash(expected));
@@ -309,7 +313,7 @@ describe('pagination, long text and Unicode', () => {
     const lines = Array.from({ length: 200 }, (_, i) => line({ description: `Item ${i + 1}`, quantity: '1', unitPrice: `${i + 1}.01`, taxRateId: i % 2 ? gst : null }));
     const inv = await issuedInvoice(lines);
     const started = Date.now();
-    const v = (await own.generate('invoices', inv.id)).body.version;
+    const v = await own.original('invoices', inv.id);
     const elapsed = Date.now() - started;
     expect(v.pageCount).toBeGreaterThan(3);
     const pdf = await readPdf((await own.download('invoices', inv.id, v.id)).bytes);
@@ -330,9 +334,9 @@ describe('pagination, long text and Unicode', () => {
     const long = `${'Long description with many words to force wrapping across lines. '.repeat(14)}END`.slice(0, 1000);
     const hostile = 'Café Ünïcödé — ÆØÅ ß €; Ελληνικά; Кириллица (paren) \\ backslash ) /JavaScript <script>alert(1)</script> javascript:alert(1)';
     const inv = await issuedInvoice([line({ description: long }), line({ description: hostile })], { notes: 'Merci beaucoup! Žluťoučký kůň.\nSecond line' });
-    const created = await own.generate('invoices', inv.id);
-    expect(created.body.version.unsupportedCharacters).toBe(false);
-    const dl = await own.download('invoices', inv.id, created.body.version.id);
+    const created = await own.original('invoices', inv.id);
+    expect(created.unsupportedCharacters).toBe(false);
+    const dl = await own.download('invoices', inv.id, created.id);
     const pdf = await readPdf(dl.bytes);
     const flat = pdf.text.replace(/\s+/g, ' ');
     expect(flat).toContain('Long description with many words');
@@ -347,12 +351,20 @@ describe('pagination, long text and Unicode', () => {
     expect([...raw.matchAll(/http:\/\/[^"\s]+/g)].map((m) => m[0]).every((u) => /^http:\/\/(www\.w3\.org|ns\.adobe\.com|purl\.org)\//.test(u))).toBe(true);
   });
 
-  it('reports characters the embedded font cannot show (for example CJK) instead of hiding them', async () => {
+  it('prints characters the fonts cannot draw (for example CJK or Hebrew) as visible boxes, flags them, and warns on the draft preview', async () => {
     const own = api(A.people.OWNER!, A.slug);
-    const inv = await issuedInvoice([line({ description: '翻訳サービス' })]);
-    const created = await own.generate('invoices', inv.id);
-    expect(created.status).toBe(201);
-    expect(created.body.version.unsupportedCharacters).toBe(true);
+    const draft = await own.createInvoice({ customerId: custA, lines: [line({ description: 'Translation 翻訳 / שלום done' })] });
+    const preview = await own.draftPdf('invoices', draft.body.document.id);
+    expect(preview.headers.get('x-unsupported-characters')).toBe('true'); // known before anyone issues it
+    const plain = await own.createInvoice({ customerId: custA, lines: [line()] });
+    expect((await own.draftPdf('invoices', plain.body.document.id)).headers.get('x-unsupported-characters')).toBe('false');
+    const inv = (await own.issue('invoices', draft.body.document.id, { version: 1, issueDate: '2026-11-15', dueDate: '2026-12-15' })).body.document;
+    const v = await own.original('invoices', inv.id);
+    expect(v.unsupportedCharacters).toBe(true); // stored with the version, shown in every listing
+    const text = (await readPdf((await own.download('invoices', inv.id, v.id)).bytes)).text;
+    // Never dropped or invisible: one box per character the fonts lack; supported text around it is intact.
+    expect(squash(text)).toContain(squash('Translation □□ / □□□□ done'));
+    expect((await audits(v.id))[0].metadata.unsupportedCharacters).toBe('true');
   });
 });
 
@@ -391,7 +403,7 @@ describe('branding and assets', () => {
     expect(sha(served.bytes)).toBe(logo.sha256);
 
     const inv = await issuedInvoice([line({ taxRateId: gst })]);
-    const v1 = (await own.generate('invoices', inv.id)).body.version;
+    const v1 = await own.original('invoices', inv.id);
     expect(v1.logoAssetId).toBe(logo.id);
     const v1Bytes = (await own.download('invoices', inv.id, v1.id)).bytes;
     expect(v1Bytes.toString('latin1')).toContain('/Subtype /Image');
@@ -436,13 +448,18 @@ describe('drafts, snapshots and versions', () => {
     expect(edge.text).toContain('$0.00');
     expect(edge.text.replace(/\s+/g, '')).toContain('0.000001');
     expect((await own.versions('invoices', empty.body.document.id)).body).toEqual({ eligible: false, versions: [] });
-    expect((await own.generate('invoices', empty.body.document.id)).body.error).toBe('not_eligible');
+    expect((await own.generate('invoices', empty.body.document.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })).body.error).toBe('not_eligible');
+    // Each draft preview is audited as a draft preview of the document (F5-D4): who and which document, no contents.
+    const draftAudit = (await audits(empty.body.document.id)).filter((a) => a.action === 'finance.document_pdf.draft_previewed');
+    expect(draftAudit).toHaveLength(2);
+    expect(draftAudit[0]).toMatchObject({ actor_user_id: A.people.OWNER!.id, business_id: A.businessId, metadata: { kind: 'INVOICE', documentVersion: '1' } });
+    expect(Object.keys(draftAudit[0].metadata).sort()).toEqual(['documentVersion', 'kind']);
     const stored = await admin.query('SELECT count(*)::int AS n FROM finance_document_pdfs WHERE document_id = $1', [empty.body.document.id]);
     expect(stored.rows[0].n).toBe(0);
     // A discarded draft is never eligible; an issued document has no draft preview.
     const discarded = await own.discard(empty.body.document.id, { version: 2 });
     expect(discarded.status).toBe(200);
-    expect((await own.generate('invoices', empty.body.document.id)).body.error).toBe('not_eligible');
+    expect((await own.generate('invoices', empty.body.document.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })).body.error).toBe('not_eligible');
     const inv = await issuedInvoice([line()]);
     expect((await own.draftPdf('invoices', inv.id)).json().error).toBe('not_draft');
   });
@@ -450,7 +467,7 @@ describe('drafts, snapshots and versions', () => {
   it('keeps historical versions unchanged when branding, the customer, seller settings or payments change; a new version says why', async () => {
     const own = api(A.people.OWNER!, A.slug);
     const inv = await issuedInvoice([line({ taxRateId: gst })]);
-    const v1 = (await own.generate('invoices', inv.id)).body.version;
+    const v1 = await own.original('invoices', inv.id);
     const v1Bytes = (await own.download('invoices', inv.id, v1.id)).bytes;
     const v1Snapshot = (await admin.query('SELECT snapshot FROM finance_document_pdfs WHERE id = $1', [v1.id])).rows[0].snapshot as DocumentSnapshot;
 
@@ -468,7 +485,8 @@ describe('drafts, snapshots and versions', () => {
     expect(again.bytes.equals(v1Bytes)).toBe(true);
     const listed = (await own.versions('invoices', inv.id)).body;
     expect(listed).toMatchObject({ eligible: true, versions: [{ id: v1.id, fileSha256: v1.fileSha256, versionNumber: 1 }] });
-    expect((await own.generate('invoices', inv.id)).status).toBe(200); // original again: the same version, not a new one
+    // The original is made only by issuing: there is no request that creates or replaces it.
+    expect((await own.generate('invoices', inv.id, { mode: 'original' })).status).toBe(400);
 
     const v2res = await own.generate('invoices', inv.id, { mode: 'new_version', reason: 'BRANDING_UPDATED', note: 'New title and colours', basedOnVersion: 1 });
     expect(v2res.status).toBe(201);
@@ -492,16 +510,18 @@ describe('drafts, snapshots and versions', () => {
     expect(sha(rerendered.bytes)).toBe(v1.fileSha256);
     const audit = await audits(v2.id);
     expect(audit.map((a) => a.action)).toEqual(['finance.document_pdf.generated', 'finance.document_pdf.downloaded']);
+    // Branding, customer, settings, payment and status changes never touched the original's row.
+    expect((await own.original('invoices', inv.id))).toMatchObject({ id: v1.id, fileSha256: v1.fileSha256, documentStatus: 'ISSUED' });
     expect(audit[0]).toMatchObject({ actor_user_id: A.people.OWNER!.id, business_id: A.businessId });
     expect(audit[0].metadata).toMatchObject({ documentId: inv.id, kind: 'INVOICE', number: inv.number, versionNumber: '2', reason: 'BRANDING_UPDATED', hasNote: 'true', previousVersionId: v1.id, fileSha256: v2.fileSha256 });
     expect(JSON.stringify(audit[0].metadata)).not.toContain('New title and colours'); // never free text
   });
 
-  it('enforces the version rules: original first, reasons, latest-version concurrency, and VOID marking', async () => {
+  it('enforces the version rules: original at issue, reasons, latest-version concurrency, and VOID marking', async () => {
     const own = api(A.people.OWNER!, A.slug);
     const inv = await issuedInvoice([line()]);
-    expect((await own.generate('invoices', inv.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })).body.error).toBe('no_original');
-    const v1 = (await own.generate('invoices', inv.id)).body.version;
+    const v1 = await own.original('invoices', inv.id);
+    expect(v1).toMatchObject({ versionNumber: 1, reason: 'ORIGINAL', documentStatus: 'ISSUED', previousVersionId: null });
     expect((await own.generate('invoices', inv.id, { mode: 'new_version', reason: 'OTHER', basedOnVersion: 1 })).status).toBe(400); // OTHER needs a note
     expect((await own.generate('invoices', inv.id, { mode: 'new_version', reason: 'ORIGINAL', basedOnVersion: 1 })).status).toBe(400);
     expect((await own.generate('invoices', inv.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 2 })).body.error).toBe('stale');
@@ -518,7 +538,7 @@ describe('drafts, snapshots and versions', () => {
   it('holds the rules in the database too: eligibility, sequence, checksums and immutability', async () => {
     const own = api(A.people.OWNER!, A.slug);
     const inv = await issuedInvoice([line()]);
-    const v1 = (await own.generate('invoices', inv.id)).body.version;
+    const v1 = await own.original('invoices', inv.id);
     const app = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await app.connect();
     try {
@@ -549,6 +569,9 @@ describe('drafts, snapshots and versions', () => {
       await expect(insert({ version_number: 3 })).rejects.toMatchObject({ code: expect.stringMatching(/FN020|23514/) });
       await expect(insert({ previous_version_id: null })).rejects.toMatchObject({ code: expect.stringMatching(/FN020|23514/) });
       await expect(insert({ version_number: 1, reason: 'ORIGINAL', previous_version_id: null })).rejects.toMatchObject({ code: 'FN020' });
+      // An original must record the issued state (F5-D2); the CHECK holds even if the guard were bypassed.
+      const check = await admin.query(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'finance_document_pdfs_original_issued'`);
+      expect(check.rows[0].def).toBe(`CHECK (((version_number <> 1) OR (document_status = 'ISSUED'::"FinanceDocumentStatus")))`);
       await expect(insert({ generated_by_id: A.people.ADMIN!.id })).rejects.toThrow(/row-level security/);
       await expect(insert({ business_id: B.businessId })).rejects.toThrow(/row-level security|not eligible|violates/);
       await expect(asApp('UPDATE finance_document_pdfs SET reason_note = $1 WHERE id = $2', ['x', v1.id])).rejects.toThrow(/permission denied/);
@@ -566,7 +589,7 @@ describe('drafts, snapshots and versions', () => {
   it('refuses to serve stored bytes that no longer match their checksum', async () => {
     const own = api(A.people.OWNER!, A.slug);
     const inv = await issuedInvoice([line()]);
-    const v1 = (await own.generate('invoices', inv.id)).body.version;
+    const v1 = await own.original('invoices', inv.id);
     // Simulate storage corruption, bypassing the guards in an administrative session.
     await admin.query('BEGIN');
     await admin.query('SET LOCAL session_replication_role = replica');
@@ -581,10 +604,10 @@ describe('drafts, snapshots and versions', () => {
 describe('permissions, tenancy and identifiers', () => {
   it('applies the default role matrix: MEMBER has no access, MANAGER previews, generates and downloads, branding is OWNER/ADMIN', async () => {
     const inv = await issuedInvoice([line()]);
-    const v = (await api(A.people.ADMIN!, A.slug).generate('invoices', inv.id)).body.version;
+    const v = await api(A.people.ADMIN!, A.slug).original('invoices', inv.id);
     const member = api(A.people.MEMBER!, A.slug);
     expect((await member.versions('invoices', inv.id)).status).toBe(403);
-    expect((await member.generate('invoices', inv.id)).status).toBe(403);
+    expect((await member.generate('invoices', inv.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })).status).toBe(403);
     expect((await member.preview('invoices', inv.id, v.id)).status).toBe(403);
     expect((await member.download('invoices', inv.id, v.id)).status).toBe(403);
     const manager = api(A.people.MANAGER!, A.slug);
@@ -593,18 +616,22 @@ describe('permissions, tenancy and identifiers', () => {
     expect((await manager.download('invoices', inv.id, v.id)).status).toBe(200);
     expect((await manager.generate('invoices', inv.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })).status).toBe(201);
     expect((await manager.patchBranding({ version: 0, footerText: 'x' })).status).toBe(403);
+    // F5-D3: the PDF permissions grant nothing financial. A manager still cannot issue, and so never creates an original.
+    const draft = await api(A.people.OWNER!, A.slug).createInvoice({ customerId: custA, lines: [line()] });
+    expect((await manager.issue('invoices', draft.body.document.id, { version: 1, dueDate: '2026-12-31' })).status).toBe(403);
+    expect((await admin.query('SELECT count(*)::int AS n FROM finance_document_pdfs WHERE document_id = $1', [draft.body.document.id])).rows[0].n).toBe(0);
   });
 
   it('distinguishes viewing records, previewing, generating and downloading', async () => {
     const inv = await issuedInvoice([line()]);
-    const v = (await api(A.people.OWNER!, A.slug).generate('invoices', inv.id)).body.version;
+    const v = await api(A.people.OWNER!, A.slug).original('invoices', inv.id);
     const m = api(A.people.MANAGER!, A.slug);
     custom.MANAGER = ['finance:read'];
     expect((await m.versions('invoices', inv.id)).status).toBe(200);
     expect((await m.version(inv.id, v.id)).status).toBe(200);
     expect((await m.preview('invoices', inv.id, v.id)).status).toBe(403);
     expect((await m.download('invoices', inv.id, v.id)).status).toBe(403);
-    expect((await m.generate('invoices', inv.id)).status).toBe(403);
+    expect((await m.generate('invoices', inv.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })).status).toBe(403);
     custom.MANAGER = ['finance:read', 'finance:documents_preview'];
     const preview = await m.preview('invoices', inv.id, v.id);
     expect(preview.status).toBe(200);
@@ -613,20 +640,24 @@ describe('permissions, tenancy and identifiers', () => {
     custom.MANAGER = ['finance:read', 'finance:documents_download'];
     expect((await m.download('invoices', inv.id, v.id)).status).toBe(200);
     expect((await m.preview('invoices', inv.id, v.id)).status).toBe(403);
-    // Previews are not audited; downloads are.
-    const audit = (await audits(v.id)).map((a) => a.action);
-    expect(audit).toEqual(['finance.document_pdf.generated', 'finance.document_pdf.downloaded']);
+    // F5-D4: previews and downloads are both audited (refused requests are not), with references only.
+    const audit = await audits(v.id);
+    expect(audit.map((a) => a.action)).toEqual(['finance.document_pdf.generated', 'finance.document_pdf.previewed', 'finance.document_pdf.downloaded']);
+    for (const a of audit.slice(1)) {
+      expect(a).toMatchObject({ actor_user_id: A.people.MANAGER!.id, business_id: A.businessId });
+      expect(a.metadata).toEqual({ documentId: inv.id, kind: 'INVOICE', versionNumber: '1', fileSha256: v.fileSha256 });
+    }
   });
 
   it('never crosses businesses: ids from another business, kind or document are 404, also at the database', async () => {
     const own = api(A.people.OWNER!, A.slug);
     const inv = await issuedInvoice([line()]);
-    const v = (await own.generate('invoices', inv.id)).body.version;
+    const v = await own.original('invoices', inv.id);
     const other = await issuedInvoice([line()]);
     const ownB = api(B.people.OWNER!, B.slug);
     // B's member asking under B's slug for A's ids:
     expect((await ownB.versions('invoices', inv.id)).status).toBe(404);
-    expect((await ownB.generate('invoices', inv.id)).status).toBe(404);
+    expect((await ownB.generate('invoices', inv.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })).status).toBe(404);
     expect((await ownB.preview('invoices', inv.id, v.id)).status).toBe(404);
     expect((await ownB.download('invoices', inv.id, v.id)).status).toBe(404);
     expect((await ownB.draftPdf('invoices', inv.id)).status).toBe(404);
@@ -658,45 +689,56 @@ describe('permissions, tenancy and identifiers', () => {
       expect(res.status, `${doc} ${ver}`).toBe(404);
       expect(res.json()).toEqual({ error: 'not_found' });
     }
-    expect((await own.generate('invoices', 'nope')).status).toBe(404);
+    expect((await own.generate('invoices', 'nope', { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })).status).toBe(404);
     expect((await own.draftPdf('invoices', randomUUID())).status).toBe(404);
   });
 
   it('lets the desktop origin read the file name and checksum headers (CORS), and nobody else', async () => {
     const own = api(A.people.OWNER!, A.slug);
     const inv = await issuedInvoice([line()]);
-    const v = (await own.generate('invoices', inv.id)).body.version;
+    const v = await own.original('invoices', inv.id);
     const desktop = await own.download('invoices', inv.id, v.id, 'tauri://localhost');
     expect(desktop.headers.get('access-control-allow-origin')).toBe('tauri://localhost');
-    expect(desktop.headers.get('access-control-expose-headers')).toBe('Content-Disposition, X-Document-Sha256');
+    expect(desktop.headers.get('access-control-expose-headers')).toBe('Content-Disposition, X-Document-Sha256, X-Unsupported-Characters');
   });
 });
 
 describe('concurrency, failure and file names', () => {
-  it('creates exactly one original under concurrent requests, and one next version per base version', async () => {
+  it('issues once under concurrent requests, with exactly one original; and one next version per base version', async () => {
     const own = api(A.people.OWNER!, A.slug);
-    const inv = await issuedInvoice([line()]);
-    const results = await Promise.all(Array.from({ length: 6 }, () => own.generate('invoices', inv.id)));
-    expect(results.map((r) => r.status).sort()).toEqual([200, 200, 200, 200, 200, 201]);
-    expect(new Set(results.map((r) => r.body.version.id)).size).toBe(1);
+    const draft = await own.createInvoice({ customerId: custA, lines: [line()] });
+    const results = await Promise.all(Array.from({ length: 6 }, () => own.issue('invoices', draft.body.document.id, { version: 1, dueDate: '2026-12-31' })));
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409, 409, 409, 409, 409]);
+    const inv = results.find((r) => r.status === 200)!.body.document;
+    const rows = async () => (await admin.query('SELECT version_number, document_status FROM finance_document_pdfs WHERE document_id = $1 ORDER BY version_number', [inv.id])).rows;
+    expect(await rows()).toEqual([{ version_number: 1, document_status: 'ISSUED' }]);
     const next = await Promise.all(Array.from({ length: 4 }, () => own.generate('invoices', inv.id, { mode: 'new_version', reason: 'RENDERING_CORRECTION', basedOnVersion: 1 })));
     expect(next.map((r) => r.status).sort()).toEqual([201, 409, 409, 409]);
-    const rows = await admin.query('SELECT version_number FROM finance_document_pdfs WHERE document_id = $1 ORDER BY version_number', [inv.id]);
-    expect(rows.rows.map((r) => r.version_number)).toEqual([1, 2]);
+    expect((await rows()).map((r) => r.version_number)).toEqual([1, 2]);
   });
 
-  it('stores nothing when rendering fails and succeeds on retry', async () => {
+  it('does not issue when the original cannot be made: the draft, its number and the audit trail roll back, and a retry issues normally', async () => {
     const own = api(A.people.OWNER!, A.slug);
-    const inv = await issuedInvoice([line()]);
+    const nextNumber = async () => {
+      const series = await seriesListRoute.GET(req('GET', `/api/v1/b/${A.slug}/finance/number-series`, { cookie: A.people.OWNER!.cookie }), ctx({ slug: A.slug })).then(json);
+      return series.body.series.find((x: { kind: string }) => x.kind === 'INVOICE').nextNumber as string;
+    };
+    const draft = (await own.createInvoice({ customerId: custA, lines: [line()] })).body.document;
+    const expected = await nextNumber();
     renderFailure.remaining = 1;
-    const failed = await own.generate('invoices', inv.id);
+    const failed = await own.issue('invoices', draft.id, { version: 1, dueDate: '2026-12-31' });
     expect(failed.status).toBe(503);
     expect(failed.body).toEqual({ error: 'generation_failed' });
-    expect((await admin.query('SELECT count(*)::int AS n FROM finance_document_pdfs WHERE document_id = $1', [inv.id])).rows[0].n).toBe(0);
-    expect((await audits(inv.id)).map((a) => a.action)).not.toContain('finance.document_pdf.generated');
-    const retried = await own.generate('invoices', inv.id);
-    expect(retried.status).toBe(201);
-    expect(retried.body.version.versionNumber).toBe(1);
+    const row = (await admin.query('SELECT status, number, version FROM finance_documents WHERE id = $1', [draft.id])).rows[0];
+    expect(row).toEqual({ status: 'DRAFT', number: null, version: 1 }); // nothing issued, no number consumed
+    expect(await nextNumber()).toBe(expected); // numbering stays gapless
+    expect((await admin.query('SELECT count(*)::int AS n FROM finance_document_pdfs WHERE document_id = $1', [draft.id])).rows[0].n).toBe(0);
+    expect((await audits(draft.id)).map((a) => a.action)).not.toContain('finance.document.issued');
+    const retried = await own.issue('invoices', draft.id, { version: 1, dueDate: '2026-12-31' });
+    expect(retried.status).toBe(200);
+    expect(retried.body.document.number).toBe(expected);
+    expect(await own.original('invoices', draft.id)).toMatchObject({ versionNumber: 1, documentNumber: expected, documentStatus: 'ISSUED' });
+    expect((await audits(draft.id)).map((a) => a.action)).toContain('finance.document.issued');
   });
 
   it('builds safe, correctly encoded file names from any number prefix', async () => {
@@ -708,7 +750,7 @@ describe('concurrency, failure and file names', () => {
     const inv = (await own.issue('invoices', draft.body.document.id, { version: 1, dueDate: '2026-12-31' })).body.document;
     expect(inv.number).toMatch(/^Rëch\/nüng "Nr" \d{4}$/);
     const digits = inv.number.slice(-4);
-    const v = (await own.generate('invoices', inv.id)).body.version;
+    const v = await own.original('invoices', inv.id);
     expect(v.fileName).toBe(`Rech_nung_Nr_${digits}.pdf`);
     const dl = await own.download('invoices', inv.id, v.id);
     const header = dl.headers.get('content-disposition')!;
@@ -726,13 +768,13 @@ describe('quote to invoice', () => {
     await own.accept(quote.id, { version: 2 });
     const conv = await own.convert(quote.id, { dueDate: '2026-12-31' });
     const inv = (await own.issue('invoices', conv.body.document.id, { version: 1, issueDate: '2026-11-16' })).body.document;
-    const v = (await own.generate('invoices', inv.id)).body.version;
+    const v = await own.original('invoices', inv.id);
     const text = (await readPdf((await own.download('invoices', inv.id, v.id)).bytes)).text;
     expect(text).toContain('QUOTE REFERENCE');
     expect(text).toContain(quote.number);
-    // The quote's own original stays a quote document.
-    const qv = (await own.generate('quotes', quote.id)).body.version;
-    expect(qv).toMatchObject({ documentKind: 'QUOTE', documentStatus: 'ACCEPTED' });
+    // The quote's original was made at issue and still shows the issued quote, although it is now accepted.
+    const qv = await own.original('quotes', quote.id);
+    expect(qv).toMatchObject({ documentKind: 'QUOTE', documentStatus: 'ISSUED' });
     expect((await own.versions('quotes', quote.id)).body.versions).toHaveLength(1);
   });
 });
