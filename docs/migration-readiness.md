@@ -1,0 +1,189 @@
+# Migration readiness (STAB-01)
+
+Assessed against `main` at **0a3610b** (Communications C1, PR #39) on 2026-11-15. Companion to
+[stabilisation-checkpoint.md](stabilisation-checkpoint.md). Production was **not** written to: no
+migration, deployment or configuration change was made. Production state comes from the read-only
+readiness report of 06:17–06:21 UTC the same day (summarised in §2), plus anonymous read-only HTTP
+checks at the time of this assessment. `main` has not changed since that report.
+
+## 1. Verdict
+
+**GO for controlled migration, with nothing to migrate today.** All 11 migrations on `main` are
+already applied to production with matching checksums. The next schema change is GO only when the
+deployment sequencing in §6 has been chosen (finding STAB-H1), because today every merge deploys code
+to production before anyone can run its migration.
+
+## 2. Inventory, in dependency order
+
+Prisma applies migrations in folder-name order. Each one depends only on migrations above it.
+
+| # | Migration | Creates / changes | Depends on | Destructive steps | Production |
+|---|---|---|---|---|---|
+| 1 | 20261113140000_identity | users, sessions, accounts, verifications, rate limits | — | none | applied 11-13 |
+| 2 | 20261113150000_tenancy | businesses, memberships, invitations, audit; RLS helpers | 1 | replaces one RLS policy on `users` (`DROP POLICY … ; CREATE POLICY`) | applied 11-13 |
+| 3 | 20261114050000_customers | customers, contacts, activities | 2 | none | applied 11-14 |
+| 4 | 20261114090000_sales | pipelines, stages, opportunities, outcomes | 2, 3 | none | applied 11-14 |
+| 5 | 20261114120000_projects | projects, project tasks | 2, 3 | none | applied 11-14 |
+| 6 | 20261115000000_finance | settings, number series, tax rates, documents, lines | 2–5 (customers, contacts, opportunities, projects) | none | applied 11-14 |
+| 7 | 20261116000000_finance_payments | payments, allocations, credit applications | 6 | none | applied 11-14 |
+| 8 | 20261117000000_finance_expenses | expense categories, expenses, expense allocations | 6, 7, 3, 5 | relaxes `finance_payments.customer_id` to NULLable (widening, safe) | applied 11-14 |
+| 9 | 20261118000000_people | departments, locations, employees, assignments, history, personal details | 2 | none | applied 11-15 06:16:45 |
+| 10 | 20261118050000_scheduling | calendars, events | 2, 3 | none | applied 11-15 06:16:54 |
+| 11 | 20261119300000_communications | conversations, messages, participants; **alters `activities`** (4 columns, 2 FKs, 3 CHECKs) | 3 | none (adds only; `visibility` has a constant default) | applied 11-15 06:17:11 |
+
+Notes:
+
+- C1 is the only migration since F3 that changes an existing table. Its new CHECK constraints are
+  validated against existing rows; the representative upgrade (§3.2) shows they hold for real data.
+- Migrations 9–11 carry **future-dated names** (18–19 November). See §4.
+- `20261119300000` encodes hour 30, which is not a real time. It is harmless (Prisma only sorts the
+  names) and cannot be renamed because production records migrations by name. Recorded as STAB-L7.
+
+## 3. Verification performed
+
+All on disposable local PostgreSQL 16.15 databases (ICU `en-US`, as CI), with the same roles,
+grants and privileged SQL as CI and production. PgBouncer 1.22.0 in transaction mode for the pooled
+suites, as CI.
+
+### 3.1 Fresh database
+
+`prisma migrate deploy` (11 migrations) → `db:privileged` → integration (now 389 tests including the
+new cross-Zone suite), isolation (75), Finance and People suites behind PgBouncer (92 + 22), and
+`db:check-migrations` ("No difference detected"). All passed, three times in a row.
+
+### 3.2 Representative pre-migration database
+
+This reproduces production as it stood before 06:16 UTC today (migrations 1–8 only), with real data
+in it, and then upgrades it with the code on `main`:
+
+1. Checked out c7ce20c (F3, the last commit before People), created `stab_premig`, applied its 8
+   migrations and privileged SQL.
+2. Populated it by running F3's own integration suite against it (267 tests): 52 businesses,
+   75 customers, 188 activities, 417 finance documents, 60 expenses, with every role.
+3. On `main`: `prisma migrate status` listed exactly the 3 pending migrations (People, Scheduling,
+   C1); `prisma migrate deploy` applied them in 2 s; `migrate status` then reported up to date and
+   `prisma migrate diff --from-config-datasource --to-schema prisma/schema` reported no difference.
+4. Ran the verification SQL in §5 (results below), then `main`'s full integration suite against the
+   upgraded, data-bearing database: **389 / 389 passed**.
+
+Results of §5 on the upgraded database: 11 migrations, none rolled back; only `_prisma_migrations`
+lacks forced RLS; every table owned by `bos_owner`; every RLS table has at least one policy; every
+tenant table has `business_id`; no single-column FK into a tenant table (all composite with
+`business_id`); no `bos_*` role with SUPERUSER, BYPASSRLS, CREATEROLE or CREATEDB; `bos_app` cannot
+CREATE in `public` and holds no TRUNCATE, REFERENCES or TRIGGER grants; only `plpgsql`; the four
+SECURITY DEFINER functions are in `app_private` and owned by `bos_definer`; no invalid constraint or
+index; all 188 pre-existing activities back-filled to `STANDARD` visibility.
+
+### 3.3 Production (read-only)
+
+From the 06:17–06:21 UTC report (Remote Control session on the Mac, owner role, read-only):
+`_prisma_migrations` has 11 rows, none rolled back, checksums match `main`; `prisma migrate status`
+from a clean clone: up to date; 41 of 42 tables forced RLS (only `_prisma_migrations` not); role
+attributes, ownership, default privileges and `app_private` functions as in §3.2; no
+`MIGRATION_DATABASE_URL` in either Vercel project.
+
+At this assessment (cloud sandbox, anonymous HTTPS only): `/api/v1/health` 200 `ok`; `/api/v1/me`,
+and a Scheduling route both 401 without a session (deployed and enforcing auth). This sandbox cannot
+reach Neon; a fresh production read needs the Mac session (see §6 step 1).
+
+**Drift: none found. Pending migrations: none. Incompatible changes: none.**
+
+### 3.4 Indexes (informational)
+
+Five composite foreign keys have no index that starts with their columns:
+`opportunities (business_id, contact_id)`, `finance_documents (business_id, contact_id)`,
+`activities (business_id, conversation_id)`, `finance_expenses (business_id, tax_rate_id)`,
+`finance_settings (business_id, default_tax_rate_id)`. They matter only when the parent row is
+deleted or its key updated; contacts, conversations and tax rates are archived, never deleted, so
+there is no current impact. Recorded as STAB-L1 for a future additive migration.
+
+## 4. Migration ordering risk (fixed in CI by this PR)
+
+Because migrations 9–11 are named for 18–19 November, `prisma migrate dev` run before then names a
+new migration so that it sorts **before** them. Demonstrated on a disposable database with a probe
+migration `20261115070000_probe` that alters `scheduling_events`:
+
+- On the production-like database (all 11 applied) Prisma simply lists it as pending and would
+  apply it **last**.
+- On a fresh database Prisma applies it **seventh**, before Scheduling exists, and fails (P3018).
+
+A migration that does not depend on the newer tables would pass CI and leave production and every
+fresh database (CI, restores, a future region) with different histories for the same files.
+
+Fix (STAB-M1): `.github/scripts/check-migration-order.sh`, run on every pull request in the
+"Detect changes" job, fails if an added migration's name does not sort after the newest migration on
+the base branch, or is not `<14 digits>_<snake_case>`. Its self-test
+(`check-migration-order.test.sh`, 8 cases) runs first in the same job.
+
+Rule for authors until the calendar passes 20 November: create with `--create-only` and rename the
+folder to sort after `20261119300000_communications`, e.g. `20261120000000_<name>`.
+
+## 5. Post-migration verification SQL
+
+Run as `bos_owner` inside `BEGIN TRANSACTION READ ONLY; … ROLLBACK;`. Expected results in comments.
+
+```sql
+select count(*) filter (where rolled_back_at is null and finished_at is not null) ok, count(*) total
+  from _prisma_migrations;                                                       -- ok = total = 11 (+ new)
+select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+ where n.nspname = 'public' and c.relkind = 'r'
+   and (not c.relrowsecurity or not c.relforcerowsecurity);                      -- only _prisma_migrations
+select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+ where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity
+   and not exists (select 1 from pg_policy p where p.polrelid = c.oid);          -- 0 rows
+select rolname from pg_roles where rolname like 'bos_%'
+   and (rolsuper or rolbypassrls or rolcreaterole or rolcreatedb);               -- 0 rows
+select has_schema_privilege('bos_app', 'public', 'CREATE');                      -- f
+select extname from pg_extension;                                                -- plpgsql
+select conrelid::regclass, conname from pg_constraint
+ where not convalidated and connamespace = 'public'::regnamespace;               -- 0 rows
+```
+
+Then: `curl https://app.pixakova.com/api/v1/health` (200 `ok`), sign in, and open each Zone once.
+
+## 6. Proposed execution sequence for the next migration
+
+There is no migration to run today. For the next one:
+
+1. **Read-only pre-check** (Mac session, owner URL): `prisma migrate status` from a clean checkout of
+   the PR head; expect exactly the new migration(s) pending.
+2. **Recovery point**: create Neon branch `pre-<change>-migration` from `production`; note its LSN
+   and time. (Inside 6 h, point-in-time restore is a second option.)
+3. **Sequencing** (STAB-H1, Regan to choose one, once):
+   - **A. Migrate just before merge** (as done for C1): only for additive migrations, only after CI
+     and the audit pass, and only with the exact files that will merge. Record it in the PR.
+   - **B. Turn off automatic production deploys for `main`** in both Vercel projects, merge, run the
+     migration, then promote the deployment. Safer; one manual step per release.
+   Recommended: **B**, because A still deploys code before migrations for anything not applied in
+   advance, and leaves a window if the merge is delayed.
+4. **Apply** with Regan's written approval in the owning thread:
+   `MIGRATION_DATABASE_URL=<owner direct URL> pnpm --filter @business-os/api exec prisma migrate deploy`.
+   Run `db:privileged` only if the migration notes say so (none of 1–11 after tenancy needed it again).
+5. **Verify** with §5, the health check and a signed-in pass through each Zone.
+6. **Keep** the recovery branch until the next migration has been verified.
+
+## 7. Backup, recovery, rollback and forward-fix
+
+| Situation | Action | Owner |
+|---|---|---|
+| Migration fails part-way | **Prisma does not roll back a failed migration file.** Verified: a probe migration `CREATE TABLE …; SELECT 1/0;` failed with P3018 and left the table behind, with an unfinished row in `_prisma_migrations` (STAB-M6). So: restore from the recovery branch (cleanest), or remove the partial objects by hand, then `prisma migrate resolve --rolled-back <name>`, fix the SQL in a **new** PR and deploy again. Never edit an applied migration. New migrations should wrap their statements in an explicit `BEGIN; … COMMIT;` unless they use a statement that cannot run in a transaction (for example `CREATE INDEX CONCURRENTLY`). | Developer, Regan approves |
+| Migration applied, code faulty, schema fine | **Forward-fix**: revert or fix the code and redeploy. Schema stays. This is the default for additive migrations. | Developer |
+| Migration applied, schema wrong, no new data worth keeping | **Rollback**: stop writes, restore `production` from the `pre-<change>-migration` branch in the Neon console (Neon keeps the current state as a backup branch), check `_prisma_migrations`, redeploy the last commit that matches that schema from Vercel's deployment list. | Regan (destructive) |
+| Data written after the migration must be kept | Export it before restoring, or prefer a forward-fix migration that corrects the schema. | Regan |
+| Need data from more than 6 h ago | Only the named recovery branches exist (Free plan, 6 h history). | Regan |
+
+Writing a down-migration is not part of this project's practice and is not proposed: additive
+migrations are fixed forward, and anything that drops or renames needs an expand-then-contract plan
+across two releases.
+
+## 8. Risks and owners
+
+| ID | Risk | Disposition | Owner |
+|---|---|---|---|
+| STAB-H1 | Merges deploy code before migrations run | Open. Next migration blocked until §6 step 3 is chosen. | Regan |
+| STAB-H2 | 6 h PITR (Free plan), backup region unverified (ADR 0002), production branch unprotected | Accepted while production holds no business data; must be resolved before a pilot with real data. | Regan |
+| STAB-M1 | Future-dated migration names reorder new migrations | Fixed: CI check in this PR | Developer |
+| STAB-M5 | C1 applied to production ~2 min before its PR merged | Recorded exception (approved at the time; files byte-identical). Option B removes the need. | Regan |
+| STAB-M6 | A failed migration leaves a partial schema (no automatic rollback) | Documented procedure (§7); recovery branch before every migration; explicit transactions in new migrations | Developer, Regan |
+| STAB-L1 | Five unindexed composite FKs | Deferred; no impact while parents are archived, not deleted | Developer (next additive migration) |
+| STAB-L7 | `20261119300000` encodes hour 30 | Accepted; cannot rename applied migration | — |
