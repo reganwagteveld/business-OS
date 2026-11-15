@@ -1,8 +1,8 @@
 # Finance F5: generated documents (quote and invoice PDFs)
 
-Status: implemented on branch `claude/project-thread-jtkv3b` (PR #42), owner decisions F5-D1 to F5-D4
-approved by Regan on 2026-11-15 and built in; awaiting re-audit. Not merged. Migration
-`20261122000000_finance_documents` is **not applied to production**.
+Status: merged to `main` on 2026-11-15 (PR #42, `186d53a`), owner decisions F5-D1 to F5-D4
+approved by Regan on 2026-11-15 and built in. Production migration state for
+`20261122000000_finance_documents`: see `migration-readiness.md` §2. The Safari preview fix is PR #47.
 
 F5 turns issued quotes and invoices into A4 PDFs, keeps each PDF as an immutable version, and lets a
 business brand them. It adds no second invoice lifecycle and no sending: generating, previewing or
@@ -353,4 +353,4 @@ Still open:
 - **Native desktop (Tauri) not verified.** WebView2 (Windows) and WKWebView (macOS) blob iframes and
   anchor downloads need a real desktop build; the desktop CSP has the same `frame-src 'self' blob:`. CI
   builds the desktop bundles; a manual check on the Mac is still needed.
-- Production: nothing deployed, no migration applied.
+- Production: code deployed with `main` on 2026-11-15; migration state, see `migration-readiness.md` §2.

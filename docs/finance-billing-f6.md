@@ -1,7 +1,8 @@
 # Finance F6: Automated billing and receivables
 
-Status: **plan and audit (v1, 2026-11-15)**. Built on recommended defaults; none of the owner
-decisions in §6 are approved yet. Nothing here is merged, deployed or applied to production.
+Status: **F6-1 merged** to `main` on 2026-11-15 (PR #45, `5c6ff5a`), with owner decisions in §6
+supported on 2026-11-15. F6-2 (statements) and F6-3 (reminders) are not started. The scheduler stays
+inactive until the §8 activation steps; production migration state: see `migration-readiness.md` §2.
 
 F6 adds recurring invoices (F6A), payment reminders (F6B) and customer statements with receivables
 ageing (F6C) on top of F1-F5, C1 and C2-A. It reuses the existing invoice service, money rules,
@@ -127,7 +128,7 @@ returns counts only (no tenant data). System-made drafts and transitions are aud
   drafts for many businesses at once; drafts are harmless and discardable, which is why D-F6-4 matters.
 - Production auto-deploys main before migrations (production-migrations note); F6 migrations and the
   privileged step must be applied before merge.
-- Migration collision between F5 and R1 (`20261122000000`) must be resolved by whichever merges second.
+- ~~Migration collision between F5 and R1 (`20261122000000`)~~ resolved: R1 was renamed to `20261124000000`.
 - Reminders depend on C2-C, which depends on D-C2-1..14 and Google verification; F6-3 cannot send
   before then.
 

@@ -30,13 +30,24 @@ Prisma applies migrations in folder-name order. Each one depends only on migrati
 | 9 | 20261118000000_people | departments, locations, employees, assignments, history, personal details | 2 | none | applied 11-15 06:16:45 |
 | 10 | 20261118050000_scheduling | calendars, events | 2, 3 | none | applied 11-15 06:16:54 |
 | 11 | 20261119300000_communications | conversations, messages, participants; **alters `activities`** (4 columns, 2 FKs, 3 CHECKs) | 3 | none (adds only; `visibility` has a constant default) | applied 11-15 06:17:11 |
+| 12 | 20261121000000_communications_providers | mail connections, credentials, OAuth states, sync jobs (C2-A, #41) | 2, 11 | none | merged 11-15 (`4f2d437`); production apply not recorded in the repo (see §2 note) |
+| 13 | 20261122000000_finance_documents | branding assets, document branding, PDF versions (F5, #42) | 6 | none | merged 11-15 (`186d53a`); production apply not recorded in the repo (see §2 note) |
+| 14 | 20261124000000_reporting | reporting saved views (R1, #43; renamed from `20261122000000` to avoid F5's name) | 2 | none | merged 11-15 (`5dab37a`); production apply not recorded in the repo (see §2 note) |
+| 15 | 20261125000000_communications_mailbox_identity | business domains and addresses, mailbox members, retention settings; **alters `mail_connections`** (adds `kind`, holder and principal columns with backfill, replaces the sharing CHECK) and `mail_oauth_states` (C2-B1, #46) | 12 | drops and replaces CHECK `mail_connections_sharing_values` (in one transaction) | merged 11-15 (`f498bd7`); production apply not recorded in the repo (see §2 note) |
+| 16 | 20261126000000_finance_billing | recurring templates and runs, `finance.system.*` audit policy (F6-1, #45); also needs `pnpm db:privileged` (`002_finance_billing_due.sql`) | 6 | none | merged 11-15 (`5c6ff5a`); production apply not recorded in the repo (see §2 note) |
 
 Notes:
 
 - C1 is the only migration since F3 that changes an existing table. Its new CHECK constraints are
   validated against existing rows; the representative upgrade (§3.2) shows they hold for existing
   rows of synthetic test data.
-- Migrations 9–11 carry **future-dated names** (18–19 November). See §4.
+- Migrations 9–16 carry **future-dated names** (18–26 November). See §4.
+- Final order of 12–16 checked on 2026-11-15 at `5c6ff5a` with `.github/scripts/check-migration-order.sh`:
+  16 unique, strictly ascending names, no collisions; open PR #47 adds none. `20261123000000` was
+  reserved for F6 during R1 and is unused (F6 took `20261126000000`); the gap is harmless.
+- Migrations 12–16 merged to `main` on 2026-11-15 and `main` auto-deploys. Whether each was applied to
+  production before its code deployed is not recorded here; the owner should confirm with
+  `SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY 1` (read-only) and update this table.
 - `20261119300000` encodes hour 30, which is not a real time. It is harmless (Prisma only sorts the
   names) and cannot be renamed because production records migrations by name. Recorded as STAB-L7.
 

@@ -1,7 +1,7 @@
 # Reporting R1: trusted metrics, query engine and saved reports
 
-Status: implemented on `feature/reporting-r1` for audit. Not merged, not deployed, migration not applied
-anywhere but disposable local databases.
+Status: merged to `main` on 2026-11-15 (PR #43, `5dab37a`). Production migration state: see
+`migration-readiness.md` §2. The sections below describe the branch as audited.
 
 Baseline: branched from `main` at `1b65e74` (STAB-01): Finance F1–F4 (#31, #34, #35, #37), People P1 (#36),
 Scheduling S1 (#38), Communications C1 (#39), STAB-01 (#40), UI phases 1–2 (#32, #33). Communications C2-A (#41,
