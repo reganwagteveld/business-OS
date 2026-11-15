@@ -1,8 +1,9 @@
 import 'server-only';
-// Helpers for the activity and communications routes (docs/communications-c1.md §4–5).
+// Helpers for the activity and communications routes (docs/communications-c1.md §4–5, communications-c2.md §4).
 import { RecordNotFoundError } from '@/core/http/errors';
 import { authorize, can } from '@/modules/access';
 import type { ActivityViewer } from '@/modules/activity';
+import type { ConnectionViewer } from '@/modules/communications';
 import type { Actor } from '@/modules/tenancy';
 import { isUuid } from './routes';
 
@@ -31,4 +32,16 @@ export function activityViewer(actor: Actor): ActivityViewer {
 /** Conversations name customers and contacts too. */
 export function requireCustomerRead(actor: Actor): void {
   authorize(actor, 'customers:read');
+}
+
+export const connectionIdOf = idOf('connectionId');
+
+/** The viewer of mailbox connections, from the verified actor only (docs/communications-c2.md §4). */
+export function connectionViewer(actor: Actor): ConnectionViewer {
+  return {
+    userId: actor.userId,
+    canRead: can(actor, 'communications:read'),
+    canConnect: can(actor, 'communications:connect'),
+    canManage: can(actor, 'communications:manage_connections'),
+  };
 }
