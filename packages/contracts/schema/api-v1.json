@@ -29958,6 +29958,82 @@
         "additionalProperties": false
       }
     },
+    "getReceivables": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/finance/receivables",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "receivables": {
+            "type": "object",
+            "properties": {
+              "asOf": {
+                "type": "string"
+              },
+              "currencies": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "currencyCode": {
+                      "type": "string"
+                    },
+                    "currencyScale": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "outstanding": {
+                      "type": "string"
+                    },
+                    "overdue": {
+                      "type": "string"
+                    },
+                    "openCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "overdueCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "unallocatedPayments": {
+                      "type": "string"
+                    },
+                    "unappliedCredit": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "currencyCode",
+                    "currencyScale",
+                    "outstanding",
+                    "overdue",
+                    "openCount",
+                    "overdueCount",
+                    "unallocatedPayments",
+                    "unappliedCredit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "asOf",
+              "currencies"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "receivables"
+        ],
+        "additionalProperties": false
+      }
+    },
     "getReconciliation": {
       "method": "GET",
       "path": "/api/v1/b/:slug/finance/reconciliation",

@@ -26,6 +26,8 @@ export function Categories({ client, slug, canManage, tabs, onTab, onChanged, on
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: 'error' | 'ok'; text: string } | null>(null);
   const rows = state.status === 'done' && state.outcome.kind === 'ok' ? state.outcome.data : null;
+  // Reordering is among active categories only, so the first and last of those cannot move further.
+  const active = rows?.filter((r) => !r.archivedAt) ?? [];
 
   async function change(call: () => Promise<{ kind: string; code?: string; message?: string }>, ok: string) {
     if (busy) return false;
@@ -81,7 +83,7 @@ export function Categories({ client, slug, canManage, tabs, onTab, onChanged, on
         <Table aria-label="Expense categories">
           <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Type</TableHead>{canManage ? <TableHead className="text-right">Actions</TableHead> : null}</TableRow></TableHeader>
           <TableBody>
-            {rows.map((c, i) => (
+            {rows.map((c) => (
               <TableRow key={c.id}>
                 <TableCell className={WRAP}>
                   {editing?.id === c.id ? (
@@ -103,8 +105,8 @@ export function Categories({ client, slug, canManage, tabs, onTab, onChanged, on
                     <div className="flex flex-wrap justify-end gap-1">
                       {!c.archivedAt ? (
                         <>
-                          <Button size="sm" variant="ghost" aria-label={`Move ${c.name} up`} disabled={busy || i === 0} onClick={() => move(rows.filter((r) => !r.archivedAt), rows.filter((r) => !r.archivedAt).indexOf(c), -1)}>↑</Button>
-                          <Button size="sm" variant="ghost" aria-label={`Move ${c.name} down`} disabled={busy} onClick={() => move(rows.filter((r) => !r.archivedAt), rows.filter((r) => !r.archivedAt).indexOf(c), 1)}>↓</Button>
+                          <Button size="sm" variant="ghost" aria-label={`Move ${c.name} up`} disabled={busy || active.indexOf(c) === 0} onClick={() => move(active, active.indexOf(c), -1)}>↑</Button>
+                          <Button size="sm" variant="ghost" aria-label={`Move ${c.name} down`} disabled={busy || active.indexOf(c) === active.length - 1} onClick={() => move(active, active.indexOf(c), 1)}>↓</Button>
                           <Button size="sm" variant="outline" disabled={busy} onClick={() => setEditing({ id: c.id, name: c.name })}>Rename</Button>
                           <Button size="sm" variant="outline" disabled={busy} onClick={() => void update(c, { archived: true }, `${c.name} archived.`)}>Archive</Button>
                         </>

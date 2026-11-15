@@ -559,6 +559,39 @@ export const ListCustomerBalancesResponse = z
   .object({ balances: z.array(CustomerBalance), asOf: z.string(), nextCursor: z.string().nullable() })
   .strict();
 
+/**
+ * F4 (additive, read-only): receivables of the whole business per currency (no conversion, nothing is
+ * ever added across currencies), from the same counters as customer balances. `outstanding` is what
+ * issued invoices still have open after payments and applied credit; it is not cash and not profit.
+ * Unallocated payments and unapplied credit are shown beside it, never netted against it.
+ */
+export const InvoiceReceivables = z
+  .object({
+    /** The business's date the overdue figures were computed for. */
+    asOf: z.string(),
+    currencies: z.array(
+      z
+        .object({
+          currencyCode: z.string(),
+          currencyScale: z.number().int(),
+          /** Σ (total − allocated − credit applied) of ISSUED invoices with something left open. */
+          outstanding: z.string(),
+          /** The part of `outstanding` on invoices due before `asOf`. */
+          overdue: z.string(),
+          openCount: z.number().int(),
+          overdueCount: z.number().int(),
+          /** Unallocated remainder of RECORDED payments received. */
+          unallocatedPayments: z.string(),
+          /** Unapplied remainder of ISSUED credit notes. */
+          unappliedCredit: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type InvoiceReceivables = z.infer<typeof InvoiceReceivables>;
+export const InvoiceReceivablesResponse = z.object({ receivables: InvoiceReceivables }).strict();
+
 // ---- error codes of the F2 endpoints (documentation and client use) ---------------------------------
 
 /**
