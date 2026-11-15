@@ -252,11 +252,13 @@ describe('employees: create, read, update', () => {
     // A terminated employee still holds their number.
     await a.status(first.id, { status: 'TERMINATED', reason: 'Offer withdrawn' });
     expect((await a.create({ givenName: 'N', familyName: 'Four', employeeNumber: 'EMP-0042' })).status).toBe(409);
-    // Changing a number is audited with the old and new value; blank clears it.
+    // Changing a number is audited as an event only, never with the number values; blank clears it.
     expect((await a.update(second.id, { employeeNumber: 'EMP-0099' })).body.employee.employeeNumber).toBe('EMP-0099');
     expect((await a.update(second.id, { employeeNumber: '' })).body.employee.employeeNumber).toBeNull();
+    expect((await a.update(second.id, { employeeNumber: 'EMP-0100' })).body.employee.employeeNumber).toBe('EMP-0100');
     const numberAudits = (await audits(second.id)).filter((x) => x.action === 'people.employee.number_changed');
-    expect(numberAudits.map((x) => x.metadata)).toEqual([{ from: 'EMP-0043', to: 'EMP-0099' }, { from: 'EMP-0099', to: null }]);
+    expect(numberAudits.map((x) => x.metadata)).toEqual([{ change: 'changed' }, { change: 'cleared' }, { change: 'set' }]);
+    expect(JSON.stringify(await audits(second.id))).not.toMatch(/EMP-0/i);
     // Simultaneous creates with one number: one wins, the rest get the same stable error (index backstop).
     const raced = await Promise.all([1, 2, 3].map((n) => a.create({ givenName: 'Race', familyName: `N${n}`, employeeNumber: 'RACE-1' })));
     expect(raced.filter((r) => r.status === 201)).toHaveLength(1);
@@ -746,5 +748,25 @@ describe('user links', () => {
     const relinked = await a.update(emp.id, { userId: A.people.MANAGER!.id });
     expect(relinked.body.employee.userId).toBe(A.people.MANAGER!.id);
     expect((await audits(emp.id)).filter((x) => x.action === 'people.employee.user_linked')).toHaveLength(1);
+  });
+});
+
+describe('audit log hygiene', () => {
+  // Runs last: every People audit event this suite produced must carry ids, field names, statuses and
+  // dates only, never names, employee numbers, contact details, addresses or status reasons.
+  it('no People audit event holds employee numbers, names, contact details or reasons', async () => {
+    const { rows } = await admin.query("SELECT action, metadata FROM audit_events WHERE action LIKE 'people.%' AND business_id = ANY($1)", [[A.businessId, B.businessId]]);
+    expect(rows.length).toBeGreaterThan(50);
+    const text = JSON.stringify(rows);
+    for (const secret of [
+      'EMP-0', 'RACE-1', 'Priya', 'Ramanathan', 'example.com', 'home.example', 'Hidden Lane', '0400', 'Resigned', 'Medical', 'Offer withdrawn', 'Zq',
+    ]) expect(text, secret).not.toContain(secret);
+    // Every metadata value is an id, a known enum/date token, a field-name list, or null.
+    const allowed = /^([0-9a-f-]{36}|\d{4}-\d{2}-\d{2}|PENDING|ACTIVE|ON_LEAVE|TERMINATED|set|changed|cleared|member_removed|[a-zA-Z]+)$/;
+    for (const row of rows) {
+      for (const value of Object.values(row.metadata as Record<string, unknown>)) {
+        for (const v of Array.isArray(value) ? value : [value]) if (v !== null) expect(String(v), `${row.action}`).toMatch(allowed);
+      }
+    }
   });
 });

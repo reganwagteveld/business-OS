@@ -190,7 +190,9 @@ export async function updateEmployee(db: AppTenantDb, actorUserId: string, id: s
   const target = { type: 'people_employee', id };
   await recordAudit(db, actorUserId, 'people.employee.updated', target, { fields });
   if (fields.includes('employeeNumber')) {
-    await recordAudit(db, actorUserId, 'people.employee.number_changed', target, { from: before.employeeNumber, to: (data.employeeNumber as string | null) ?? null });
+    // The event and its kind only: employee numbers stay out of the generic audit log (§5, audit PR #36).
+    const change = before.employeeNumber === null ? 'set' : data.employeeNumber ? 'changed' : 'cleared';
+    await recordAudit(db, actorUserId, 'people.employee.number_changed', target, { change });
   }
   if (fields.includes('locationId')) {
     await recordAudit(db, actorUserId, 'people.employee.location_changed', target, { from: before.locationId, to: (data.locationId as string | null) ?? null });

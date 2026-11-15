@@ -41,7 +41,8 @@ Migration: `20261118000000_people` (additive; must follow the Finance F1–F3 mi
 
 - `employee_number` — optional, trimmed, 1–30 characters. Unique per business, case-insensitive, across
   **all** employees including terminated ones (records are never deleted, so a number in use is never
-  reused). Editable by administrators (typo fixes); changes are audited with old and new value.
+  reused). Editable by administrators (typo fixes); changes are audited as an event (set, changed or cleared)
+  without the number values.
 - `given_name`, `family_name` (required), `preferred_name`, `job_title`, `employment_type`
   (`FULL_TIME`, `PART_TIME`, `CASUAL`, `CONTRACTOR`, `TEMPORARY`, `OTHER`), `work_email`, `work_phone`.
 - `status` (§3), `start_date` (start of the current period of employment), `end_date` (set exactly while
@@ -130,7 +131,8 @@ line grants nothing (no record-scoped rules in P1).
 **Field-level protection.** Personal details live in their own table, are selected only by the personal
 details service, and only after `people:read_sensitive` is checked. The employee DTO has no personal
 fields at all. History reasons are nulled in the response unless the caller holds `people:read_sensitive`.
-Audit metadata carries field names and ids only, never names, contact details or reasons.
+Audit metadata carries field names, ids, statuses and effective dates only, never names, employee
+numbers, contact details or reasons (regression-tested across every People audit event).
 
 ## 6. API
 
@@ -155,7 +157,7 @@ Each is the conservative default implemented in this PR; changing one is a small
 | # | Decision | Default implemented |
 | --- | --- | --- |
 | PD-1 | Permission keys and role grants | Four keys (§5). OWNER/ADMIN all; MANAGER directory read only; MEMBER nothing. |
-| PD-2 | Employee number | Optional; unique per business case-insensitively across all employees ever (never reused while the record exists); editable by admins, audited. No auto-numbering. |
+| PD-2 | Employee number | Optional; unique per business case-insensitively across all employees ever (never reused while the record exists); editable by admins, audited without values. No auto-numbering. |
 | PD-3 | Lifecycle | Statuses and transitions in §3, including rehire. No future-dated changes. Termination refused while direct reports remain. |
 | PD-4 | Employment history storage | Current values on the employee row + append-only status history + effective-dated assignment rows (closed, never edited). Location changes are audit-only (no location history table). |
 | PD-5 | Sensitive fields | Separate personal-details table behind `people:read_sensitive`. P1 stores personal email, personal phone, home address and one emergency contact. No date of birth, gender, identity documents, bank or tax data. Reads of personal details are not audited (only changes). |
