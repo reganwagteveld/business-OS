@@ -1,10 +1,11 @@
 import { permissionsFor } from '@/modules/access';
 import {
-  AuthorizationFailure, completeAuthorization, consumeAuthorization, oauthRedirectUri, parseState, ProviderError, providerAdapter, recordAuthorizationFailure,
-  type CallbackFailure, type ConnectionViewer, type MailProvider, type PendingAuthorization,
+  AuthorizationFailure, completeAuthorization, consumeAuthorization, oauthRedirectUri, parseState, ProviderError, providerAdapter, purposeOf,
+  recordAuthorizationFailure, type CallbackFailure, type ConnectionViewer, type MailProvider, type PendingAuthorization,
 } from '@/modules/communications';
 import { withTenant } from '@/core/db';
-import { isUniqueViolation } from '@/core/http/errors';
+import type { BusinessMailboxProof } from '@/modules/communications';
+import { isUniqueViolation, sqlState } from '@/core/http/errors';
 import { connectionViewer } from '../../../../_lib/communications';
 import { browserRoute } from '../../../../_lib/routes';
 
@@ -20,6 +21,11 @@ const FAILURES: Record<CallbackFailure, [number, string]> = {
   disconnected: [409, 'This mailbox connection was removed. Connect it again from Business OS.'],
   not_allowed: [403, 'You are not allowed to connect mailboxes in this business.'],
   provider_error: [502, 'The mail provider did not complete the connection. Nothing was connected; please try again later.'],
+  business_address: [409, 'This address is one of the business\'s own mailboxes, so it cannot be connected as a personal mailbox. Ask an owner or admin.'],
+  not_designated: [409, 'This address is no longer set up as a business mailbox. Nothing was connected.'],
+  mailbox_not_found: [409, 'The mail provider has no mailbox with this address that your account can see. Nothing was connected.'],
+  mailbox_access_denied: [403, 'The account you signed in with cannot open this mailbox. Nothing was connected.'],
+  domain_mismatch: [409, 'The account you signed in with does not belong to the organisation that owns this domain. Nothing was connected.'],
 };
 const failed = (reason: CallbackFailure) => ({ status: FAILURES[reason][0], title: 'Mailbox not connected', message: `${FAILURES[reason][1]} (${reason})` });
 
@@ -63,14 +69,28 @@ export const GET = browserRoute(async ({ request, user, memberships }) => {
   // removes the whole grant of that account to this app, which would also break a legitimate
   // connection of the same mailbox (another member's, or in another business). Nothing is stored,
   // so the discarded tokens are unreachable; the user can remove the grant in their account.
+  const purpose = purposeOf(pending.kind);
   try {
-    const issued = await adapter.exchangeCode({ code, codeVerifier: pending.codeVerifier, redirectUri: oauthRedirectUri() });
-    if (!adapter.hasScopes(issued.scopes, 'read')) {
+    const issued = await adapter.exchangeCode({ code, codeVerifier: pending.codeVerifier, redirectUri: oauthRedirectUri(), purpose });
+    if (!adapter.hasScopes(issued.scopes, purpose)) {
       await audit(pending, 'insufficient_scope');
       return failed('insufficient_scope');
     }
-    const account = await adapter.account(issued.accessToken);
-    const result = await run((db) => completeAuthorization(db, viewer, pending, issued, account));
+    const account = await adapter.account(issued.accessToken, issued.idTokenClaims);
+    // C2-B1 (T-C2-1, T-C2-2): for a BUSINESS mailbox the provider must prove, with this new token, which
+    // mailbox the address is and that the signed-in account can open it (metadata calls, no message).
+    let proof: BusinessMailboxProof | undefined;
+    if (pending.kind === 'BUSINESS') {
+      if (!pending.targetAddress) throw new AuthorizationFailure('not_designated');
+      try {
+        proof = await adapter.businessMailbox(issued.accessToken, account, pending.targetAddress);
+      } catch (error) {
+        if (error instanceof ProviderError && error.code === 'not_found') throw new AuthorizationFailure('mailbox_not_found');
+        if (error instanceof ProviderError && (error.code === 'insufficient_scope' || error.code === 'unauthorized')) throw new AuthorizationFailure('mailbox_access_denied');
+        throw error;
+      }
+    }
+    const result = await run((db) => completeAuthorization(db, viewer, pending, issued, account, proof));
     return {
       status: 200,
       title: result.outcome === 'connected' ? 'Mailbox connected' : 'Mailbox reconnected',
@@ -79,6 +99,7 @@ export const GET = browserRoute(async ({ request, user, memberships }) => {
   } catch (error) {
     const reason: CallbackFailure | null = error instanceof AuthorizationFailure ? error.reason
       : isUniqueViolation(error, 'mail_connections_live_account_key') ? 'already_connected'
+      : sqlState(error) === 'CM010' ? 'business_address'
       : error instanceof ProviderError ? 'provider_error' : null;
     if (!reason) throw error;
     await audit(pending, reason);

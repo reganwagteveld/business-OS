@@ -1,9 +1,11 @@
 # Communications C2: Email provider connections, sync, sending and interface
 
-Status: architecture for all of C2, plus the implementation of **C2-A only**, pending audit and owner
-approval.
+Status: architecture for all of C2. **C2-A** (provider foundation) is merged. **C2-B1** (mailbox
+identity, PERSONAL/BUSINESS classification, permissions and lifecycle) is implemented in §16, pending
+audit and owner approval.
 C2-A migration: `20261121000000_communications_providers` (additive, new tables only, plus one new
 audit policy).
+C2-B1 migration: `20261125000000_communications_mailbox_identity` (§16.10).
 
 C2 connects real mailboxes (Google Workspace/Gmail and Microsoft 365/Outlook) to a business, brings
 relevant mail into C1's canonical conversation, message and activity model, sends replies through
@@ -197,6 +199,9 @@ Record rules (service, tested):
 Holding `manage_connections` never grants reading an `OWNER_ONLY` mailbox's content. Someone else's
 connection that the viewer may not see answers 404, exactly like a missing one.
 
+These rules are for PERSONAL mailboxes. BUSINESS mailboxes (C2-B1) follow §16.4. Sharing a PERSONAL
+mailbox (`sharing = BUSINESS`) now also requires the business's retention period (§16.6).
+
 ## 5. Mailbox ownership and sharing
 
 - Every connection belongs to exactly one member (`owner_user_id`), the person who consented at the
@@ -205,8 +210,11 @@ connection that the viewer may not see answers 404, exactly like a missing one.
 - `BUSINESS`: synced mail is visible to every member with `communications:read` (and
   `customers:read` for timeline entries, as in C1). Intended for shared role mailboxes such as
   `sales@`, connected by one member.
-- Per-member grants (share with three people) are deliberately not in C2; they can be added as a
-  `mail_connection_grants` table without changing the predicate's callers.
+- Per-member grants (share with three people) are deliberately not in C2-A. C2-B1 adds them for
+  BUSINESS mailboxes only (`mail_connection_members`, §16.4); a PERSONAL mailbox keeps the two
+  settings above.
+- C2-B1 adds the mailbox **kind** (PERSONAL or BUSINESS, fixed at creation) and a replaceable
+  credential holder for BUSINESS mailboxes (§16). This section describes PERSONAL mailboxes.
 - **Owner leaves or is suspended:** the next sync claim finds no active membership with
   `communications:connect`, cancels the job, sets the connection to `NEEDS_REAUTH` with
   `owner_inactive` (credentials are deleted by the trigger) and writes a `communications.system.*`
@@ -587,3 +595,263 @@ The table above records the defaults C2-A was built on. The final decision regis
   token: both send the same rotating refresh token, so the provider may reject the second. Fencing
   keeps the lease owner in charge and drops the stalled attempt's answer; if the owner's refresh is
   then refused, the mailbox correctly asks for reconnection. Rare, and never silent.
+
+---
+
+## 16. C2-B1: mailbox identity, classification, permissions and lifecycle
+
+Implements the C2-B1 brief from the decision register (approved by Regan 2026-11-15) with his two
+acceptance criteria (§16.6, §16.11). Standalone PR; it stores no mail, syncs nothing, sends nothing
+and adds no real provider connection. The E1 erasure foundation, B2 storage/retention, B3 sync and
+B4 matching/intake are later PRs.
+
+### 16.1 Mailbox kinds and the four identities (T-C2-1)
+
+Every connection has a **kind**, fixed when it is created and never converted:
+
+- **PERSONAL**: a member's own mailbox. Unchanged C2-A rules (§4, §5): `OWNER_ONLY` by default, only
+  the owner may share it `BUSINESS`-wide, only the owner reconnects.
+- **BUSINESS**: one of the business's own mailboxes (`sales@`, `accounts@`, a shared mailbox). It must
+  match a designated business address (§16.3), is visible only to `manage_connections` and its
+  members (§16.4), and its grant can be replaced by another admin (§16.5). `sharing` is `MEMBERS`.
+
+A connection records four separate identities, which C2-A collapsed into one:
+
+| Column | Meaning | PERSONAL | BUSINESS |
+|---|---|---|---|
+| `principal_account_id` | The provider account that signed in and granted access | = target | Any member's own account (Microsoft); = target (Google) |
+| `provider_account_id`, `mailbox_address` | The target mailbox | Member's own | The designated address |
+| `owner_user_id`, `kind` | The controller | The member | The business (`owner_user_id` is who first connected it) |
+| `credential_holder_id` | The member whose grant is stored | Always the owner (CHECK) | Replaceable on reconnect (§16.5) |
+| `provider_tenant_id` | Microsoft directory (tid) | Recorded | Required; a reconnect must stay in it |
+
+PERSONAL and BUSINESS never mix: a designated address cannot be connected personally (refused,
+audited `business_address`); an address with a live personal connection cannot be designated until
+that connection is disconnected, and a later business connection is a new row (the old personal row
+stays `DISCONNECTED` as the record). Nothing is carried across.
+
+### 16.2 Schema (`20261125000000_communications_mailbox_identity`)
+
+- `mail_connections`: `kind`, `credential_holder_id`, `principal_account_id`, `provider_tenant_id`,
+  `business_address_id` (backfilled for C2-A rows as PERSONAL: holder = owner, principal = target).
+  CHECKs pair kind with sharing, address and tenant. Insert guard: the creator holds the grant
+  (CM008), PERSONAL is refused for a designated address and BUSINESS needs a live designation with a
+  verified domain or attestation (CM010). The update guard adds kind and address to the fixed
+  identity (CM005), allows a holder/principal change only on a BUSINESS reconnect to the session user
+  (CM008) and refuses sharing a PERSONAL mailbox before retention is set (CM009).
+- `mail_business_domains`: domain, sha256 of the verification token, verified/removed stamps. Always
+  inserted unverified; verification recorded once; consumer domains refused (CHECK).
+- `mail_business_addresses`: designated address with exactly one basis (verified domain or OWNER
+  attestation with statement version).
+- `mail_connection_members`: per-mailbox `READ` / `SEND` for BUSINESS mailboxes, cascading from the
+  membership.
+- `mail_retention_settings`: one row per business, `ordinary_retention_days` 1 to 36525, no default.
+- `mail_oauth_states.business_address_id` (a business connect) and `mail_sync_jobs` insert guard (CM009).
+- Every new table is RLS-forced with tenant isolation and restrictive "written by the session user"
+  policies. No DELETE grant except on members. Address checks take a transaction advisory lock per
+  business and address, so the personal/business checks cannot race.
+- New SQLSTATEs: CM008 holder change refused, CM009 retention not set, CM010 business mailbox rule.
+
+### 16.3 Business domains and designated addresses (T-C2-2, D-C2-3)
+
+Business OS cannot tell from an address alone whether a mailbox belongs to the business, so an
+address becomes BUSINESS only by explicit designation:
+
+1. **Custom domain** (`manage_connections`): add the domain, publish the TXT record shown once
+   (`_business-os-verification.<domain>` = `business-os-verification=<token>`), then verify. The
+   server does the DNS lookup outside any transaction and stores only the token's hash. A missing
+   record is audited and answers 409 `dns_record_not_found`. Addresses on a verified domain can then
+   be designated.
+2. **Consumer address** (gmail.com, outlook.com and the other domains in `CONSUMER_MAIL_DOMAINS`,
+   mirrored in SQL `mail_is_consumer_domain`): only the OWNER may designate it, by accepting
+   attestation text v1 (`MAIL_BUSINESS_ATTESTATION_V1`). The attestation is stored (who, when,
+   version) and audited. A consumer domain can never be added as a business domain.
+3. **Live access check at connect** (both cases): the signed-in account must actually reach the
+   designated mailbox.
+   - Google: the signed-in account must be the mailbox (Gmail `users/me/profile`), and for a custom
+     domain its Workspace `hd` claim must equal the verified domain.
+   - Microsoft: `tid` from the id_token; the mailbox is looked up in that directory
+     (`/users/{address}`), its inbox must be readable through Full Access (`Mail.Read.Shared`), and the
+     verified domain must be one of the tenant's verified domains (`/organization`). For a personal
+     Microsoft account (consumer tenant) the signed-in account must be the mailbox.
+
+A domain cannot be removed while a designated address is on it; an address cannot be removed while a
+business connection uses it. Removal is final.
+
+### 16.4 Permissions and record rules
+
+No new permission key. `canAttestBusinessMailbox` (OWNER only) is a role rule in the access module.
+
+| Action | PERSONAL owner (`connect`) | `manage_connections` (OWNER, ADMIN) | BUSINESS member (READ/SEND) | Others |
+|---|---|---|---|---|
+| Add, verify, remove a domain; designate, remove a custom-domain address | – | ✓ | – | – |
+| Designate a consumer address (attestation) | – | OWNER only | – | – |
+| Connect, reconnect (take over) a BUSINESS mailbox | – | ✓ | – | – |
+| See a BUSINESS mailbox (metadata) | – | ✓ | ✓ | 404 |
+| Grant or revoke members, pause, disconnect, request sync | – | ✓ | – | – |
+| Set the retention period | – | ✓ | – | – |
+| Read or send business mail (B3, C2-C) | – | through membership, later stages | READ / SEND | – |
+| PERSONAL mailboxes | §4 unchanged | §4 unchanged | – | §4 |
+
+`SEND` is recorded now so the member model does not change in C2-C; nothing sends in C2-B1.
+
+### 16.5 Lifecycle: connect, handover, departure (D-C2-8)
+
+- **Connect**: a `manage_connections` member starts authorization with `businessAddressId`. The
+  callback checks the live access proof (§16.3), creates the BUSINESS row with that member as holder
+  and audits `business_connected` with the basis.
+- **Handover** (no token transfer): another `manage_connections` member reconnects with their own
+  sign-in. In one unit of work the row goes `ACTIVE → NEEDS_REAUTH` (the C2-A trigger deletes the old
+  tokens and open jobs are cancelled), then `NEEDS_REAUTH → ACTIVE` with the new holder and principal,
+  who must be the session user. Target mailbox and Microsoft tenant must not change. Audited
+  `reconnected` and `holder_changed` (previous and new holder ids). The database refuses any other
+  holder change.
+- **Holder departs or loses `manage_connections`** (audit C2B1-01): invalidation is **lazy, not
+  immediate**. `holderActive()` runs only when a sync job is claimed. At that point the job is
+  cancelled, the mailbox goes to `NEEDS_REAUTH` with `holder_inactive`, the trigger deletes the
+  tokens, and `communications.system.holder_inactive` is audited; another admin can then take it
+  over. Until a claim happens, the departed holder's tokens stay stored (encrypted) and the row stays
+  `ACTIVE`. Removing the membership does not by itself delete them.
+  This is not exploitable in C2-B1: nothing uses stored tokens after the connect callback
+  (`obtainAccessToken` has no caller, and there is no worker), and the departed person can no
+  longer reach the business through the API. **C2-B3 must**: check the credential holder's authority
+  at every provider operation (each token use, not only the claim); stop jobs already running when
+  access is revoked (a fresh authority check before each provider call and before writing results,
+  so a running job ends at its next step); and prefer prompt invalidation from membership lifecycle
+  events (removal, suspension, role change) over relying only on the next claim. PERSONAL
+  mailboxes keep the C2-A rule (`owner_inactive`). The 30-day departure grace in the approved
+  register is read here as the grace before unshared personal mail is purged, which belongs to B2
+  (it needs stored mail and E1); the departing member's access ends at once, and their stored grant is
+  invalidated at the next sync claim (above). Confirmed by Regan 2026-11-15.
+
+### 16.6 Retention gate (D-C2-9, Regan's acceptance criterion 1)
+
+There is no product default for ordinary communications retention. Until the business sets one:
+
+- no sync job can be queued for a BUSINESS mailbox (service `retention_not_set` and database CM009),
+  so a business mailbox connects but does not sync;
+- no PERSONAL mailbox can be shared with the business (`sharing = BUSINESS`, same two layers).
+
+The period is set and changed (never unset) by `manage_connections`, with optimistic versioning and
+audit `communications.retention.ordinary_set` (new and previous days). C2-B2 must add the same
+requirement to sharing a single personal thread and to "Keep as record" (promoting personal content
+into an ordinary business record), and applies the period to stored copies (`retain_until`, purge).
+
+### 16.7 Audit events (new)
+
+Metadata is ids, enums and codes only; never an address, domain, token or DNS value.
+
+| Action | Metadata |
+|---|---|
+| `communications.domain.added` / `.verified` / `.verification_failed` / `.removed` | `method: dns_txt`, `reason` |
+| `communications.address.designated` / `.attested` / `.removed` | `basis`, `domainId`; `statement` (attestation version) |
+| `communications.connection.business_connected` | `provider`, `businessAddressId`, `basis`, `syncQueued` |
+| `communications.connection.holder_changed` | `provider`, `previousHolderId`, `newHolderId` |
+| `communications.member.granted` / `.revoked` | `userId`, `access`, `previousAccess` |
+| `communications.retention.ordinary_set` | `ordinaryRetentionDays`, `previousDays` |
+| `communications.system.holder_inactive` | `provider` |
+
+Existing events gain `kind` / `businessAddressId` where relevant. New callback failure reasons:
+`business_address`, `not_designated`, `mailbox_not_found`, `mailbox_access_denied`, `domain_mismatch`.
+
+### 16.8 API
+
+Under `/api/v1/b/{slug}/communications/`: `business-domains` (GET, POST), `business-domains/{id}/verify`
+and `/remove` (POST), `business-addresses` (GET, POST), `business-addresses/{id}/remove`, `retention`
+(GET, PUT), `connections/{id}/members` (GET), `connections/{id}/members/{userId}` (PUT) and `/remove`.
+`connections/authorize` accepts `businessAddressId`. 409 codes: `retention_not_set`, `not_personal`,
+`not_business`, `consumer_domain`, `domain_exists`, `domain_not_verified`, `domain_in_use`,
+`already_verified`, `dns_record_not_found`, `dns_unavailable`, `removed`, `attestation_required`,
+`attestation_not_applicable`, `already_designated`, `personal_connection_exists`, `address_in_use`,
+`holder_change_not_allowed`, `business_mailbox_rule`. The verify route is the only one that uses
+`tenantRunRoute` (two units of work around the DNS lookup); the boundary script allows it there only.
+
+### 16.9 Tests
+
+`tests/integration/communications-business-mailboxes.test.ts` (23 tests, fake Google, Microsoft and
+DNS) covers retention, domains, designation and attestation, the database rules for any caller,
+personal/business separation, business connect for Microsoft shared mailboxes, Google and consumer
+addresses with every refusal, members and visibility, handover, CM008, holder and owner departure,
+RLS across businesses, no secret in any response, and business purge. C2-A suites were updated for
+the retention gate and the new identity columns.
+
+### 16.10 Migration ordering, deploy and rollback
+
+- Name `20261125000000_communications_mailbox_identity` sorts after main's newest (R1
+  `20261124000000_reporting`) and after F6 (`20261123000000_…`, not merged). If this merges before F6,
+  F6 must be renamed to sort after it (CI guard). Whoever merges later sorts last.
+- Depends on C2-A. Backfills existing connections; production had none when this was written. No
+  privileged SQL.
+- Deploy: apply before or with the code (the new code reads the new columns). Take a Neon recovery
+  branch first. Not applied anywhere except local and CI databases; production needs Regan's approval.
+- Rollback (before any BUSINESS mailbox exists):
+  ```sql
+  BEGIN;
+  ALTER TABLE "mail_connections" NO FORCE ROW LEVEL SECURITY;
+  DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM "mail_connections" WHERE "kind" = 'BUSINESS') THEN
+      RAISE EXCEPTION 'business mailboxes exist: disconnect and remove them before rolling back C2-B1';
+    END IF;
+  END $$;
+  ALTER TABLE "mail_connections" FORCE ROW LEVEL SECURITY;
+  DROP TABLE "mail_connection_members", "mail_retention_settings";
+  DROP TRIGGER mail_connections_guard_insert ON "mail_connections";
+  DROP TRIGGER mail_sync_jobs_guard_insert ON "mail_sync_jobs";
+  ALTER TABLE "mail_oauth_states" DROP COLUMN "business_address_id";
+  ALTER TABLE "mail_connections" DROP CONSTRAINT mail_connections_sharing_values,
+    DROP COLUMN "kind", DROP COLUMN "credential_holder_id", DROP COLUMN "principal_account_id",
+    DROP COLUMN "provider_tenant_id", DROP COLUMN "business_address_id";
+  ALTER TABLE "mail_connections" ADD CONSTRAINT mail_connections_sharing_values CHECK ("sharing" IN ('OWNER_ONLY', 'BUSINESS'));
+  DROP TABLE "mail_business_addresses", "mail_business_domains";
+  DROP FUNCTION mail_connections_guard_insert(), mail_sync_jobs_guard_insert(), mail_business_domains_stamp_insert(),
+    mail_business_domains_guard_update(), mail_business_addresses_guard_insert(), mail_business_addresses_guard_update(),
+    mail_connection_members_guard(), mail_address_is_designated(uuid, text), mail_lock_address(uuid, text), mail_is_consumer_domain(text);
+  -- then re-create mail_connections_guard_update() exactly as in 20261121000000_communications_providers
+  DELETE FROM _prisma_migrations WHERE migration_name = '20261125000000_communications_mailbox_identity';
+  COMMIT;
+  ```
+  Verified locally (2026-11-15): all migrations plus this script (with the C2-A function restored)
+  give a `pg_dump --schema-only` identical to the migrations without C2-B1.
+
+### 16.11 C2-C acceptance criterion: outbound correlation (Regan's acceptance criterion 2)
+
+Not built in C2-B1. C2-C must test, per provider, how reliably a sent message can be correlated
+with what the provider later reports: whether our headers (`Message-ID`, `In-Reply-To`, `References`,
+any custom header) are preserved; whether the Sent folder is accessible with the granted scopes; and
+Microsoft shared-mailbox behaviour (Send As / Send on Behalf, which mailbox's Sent folder receives the
+copy). C2-C must **not** assume custom headers are directly searchable, and must **not** treat absence
+from Sent as proof of non-delivery (an `UNKNOWN` send stays `UNKNOWN`, D-C2-13).
+
+### 16.12 Technical disagreements and deviations (challenge protocol)
+
+1. **Attestation lives on the address, not the connection.** The attestation is about whether the
+   address is the business's, and must hold across reconnects and holders.
+2. **No new permission key for attestation.** OWNER-only through a role rule
+   (`canAttestBusinessMailbox`), because a permission key would let a custom role grant it. Reviewer
+   may prefer a key.
+3. **Retention is set with `manage_connections`** (OWNER and ADMIN), not OWNER only. Changeable,
+   never unset, audited with the previous value. Regan may prefer OWNER only.
+4. **Domain verification is one-time.** No periodic re-check in C2-B1; a lapsed domain keeps its
+   designations until removed. A re-check can come with B3's worker.
+5. **Address matching is exact on the primary address.** Aliases and secondary Workspace domains are
+   not recognised (a Google Workspace mailbox on a secondary domain fails the `hd` check).
+6. **Departure is detected lazily** at the next sync claim, not by a membership trigger. Without sync
+   (B3) nothing uses the stale grant; C2-B3 obligations are in §16.5 (audit C2B1-01).
+
+Owner decisions on PR 46 (Regan, 2026-11-15): (3) OWNER and ADMIN set or change retention through
+`manage_connections`; (2) OWNER-only attestation through the role rule is accepted, with no new
+permission; the 30-day departure grace applies to purging unshared personal mail (B2), not to
+continued access.
+
+### 16.13 Known risks and Gate C (provider) items
+
+- Microsoft: `Mail.Read.Shared` and `User.ReadBasic.All` need consent; tenants that block user
+  consent need admin consent first. There is no fallback if `User.ReadBasic.All` is refused (the
+  connect fails with `mailbox_access_denied`). Verify with a real tenant.
+- Microsoft: `tid` comes from the id_token in the token response (received directly from the token
+  endpoint over TLS, OIDC Core §3.1.3.7(6)); it is cross-checked against the signed-in user's id.
+- Google: confirm with a real Workspace account that `hd` appears in userinfo for the scopes used.
+- The consumer domain list is fixed in code and SQL and must be changed in both together (a test
+  checks they match).
+- Legal/privacy readiness (Gate B) and provider verification (Gate C) remain independent launch
+  gates. No production mailbox may be connected without separate authorisation.

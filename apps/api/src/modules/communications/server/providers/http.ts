@@ -36,6 +36,7 @@ function failure(res: Response, body: Record<string, unknown> | undefined): Prov
   if (error === 'invalid_grant') return new ProviderError('invalid_grant');
   if (res.status === 401) return new ProviderError('unauthorized');
   if (res.status === 403) return new ProviderError('insufficient_scope');
+  if (res.status === 404) return new ProviderError('not_found');
   return new ProviderError('invalid_response');
 }
 
@@ -55,7 +56,24 @@ export async function tokenRequest(url: string, form: Record<string, string>, sc
   }
   const refreshToken = typeof body.refresh_token === 'string' && body.refresh_token !== '' ? body.refresh_token : undefined;
   const scopes = typeof body.scope === 'string' ? body.scope.split(scopeSeparator).map((s) => s.trim()).filter(Boolean) : [];
-  return { accessToken, refreshToken, expiresAt: new Date(Date.now() + expiresIn * 1000), scopes };
+  const idTokenClaims = typeof body.id_token === 'string' ? jwtPayload(body.id_token) : undefined;
+  return { accessToken, refreshToken, expiresAt: new Date(Date.now() + expiresIn * 1000), scopes, ...(idTokenClaims ? { idTokenClaims } : {}) };
+}
+
+/**
+ * The payload of a compact JWT, or undefined if it is not one. Used only for the ID token of a token
+ * response received directly from the provider over TLS (see TokenSet.idTokenClaims); never for a
+ * token that came from a browser or any other party.
+ */
+export function jwtPayload(jwt: string): Record<string, unknown> | undefined {
+  const parts = jwt.split('.');
+  if (parts.length !== 3 || jwt.length > 16_384) return undefined;
+  try {
+    const body: unknown = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'));
+    return body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** GET a JSON resource with a bearer token. */

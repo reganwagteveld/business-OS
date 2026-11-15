@@ -5,7 +5,7 @@ import 'server-only';
 //   QUEUED ──claim──▶ RUNNING ──complete──▶ SUCCEEDED
 //     ▲                 │ fail (retryable, attempts left) → QUEUED with backoff
 //     └─────────────────┤ fail (final) / lease expired with no attempts left → FAILED
-//                       └ connection disconnected, paused or owner gone → CANCELLED
+//                       └ connection disconnected, paused or credential holder gone → CANCELLED
 //
 // At most one QUEUED or RUNNING job per connection (partial unique index), so enqueueing is
 // idempotent. Every transition after the claim requires the caller's lease id, so a worker whose
@@ -56,12 +56,23 @@ export async function enqueueSyncJob(db: AppTenantDb, connectionId: string, kind
   return { job: toJob(row), created: inserted.length === 1 };
 }
 
-export interface ClaimedJob { job: JobDto; leaseId: string; connection: { id: string; provider: string; ownerUserId: string } }
+/**
+ * A claimed job. The worker (C2-B3) acts as `credentialHolderId` for provider calls: the member whose
+ * grant is stored (always the owner of a PERSONAL mailbox).
+ */
+export interface ClaimedJob {
+  job: JobDto; leaseId: string;
+  connection: { id: string; provider: string; kind: 'PERSONAL' | 'BUSINESS'; ownerUserId: string; credentialHolderId: string };
+}
 
-/** Is the mailbox owner still an active member allowed to connect mailboxes? */
-async function ownerActive(db: AppTenantDb, ownerUserId: string): Promise<boolean> {
-  const m = (await db.membership.findFirst({ where: { userId: ownerUserId, status: 'ACTIVE' }, select: { role: true } })) as { role: Role } | null;
-  return Boolean(m && permissionsFor(m.role).includes('communications:connect'));
+/**
+ * Does the credential holder still have the authority the grant was stored under (D-C2-8)? PERSONAL:
+ * an active member with communications:connect. BUSINESS: an active member with
+ * communications:manage_connections (who may connect business mailboxes).
+ */
+async function holderActive(db: AppTenantDb, holderId: string, kind: string): Promise<boolean> {
+  const m = (await db.membership.findFirst({ where: { userId: holderId, status: 'ACTIVE' }, select: { role: true } })) as { role: Role } | null;
+  return Boolean(m && permissionsFor(m.role).includes(kind === 'BUSINESS' ? 'communications:manage_connections' : 'communications:connect'));
 }
 
 /**
@@ -91,19 +102,24 @@ export async function claimSyncJob(db: AppTenantDb, opts: { leaseSeconds?: numbe
     const hit = claimed[0];
     if (!hit) return null;
     const connection = (await db.mailConnection.findFirst({
-      where: { id: hit.connection_id }, select: { id: true, provider: true, ownerUserId: true, status: true, syncEnabled: true },
-    })) as { id: string; provider: string; ownerUserId: string; status: string; syncEnabled: boolean } | null;
+      where: { id: hit.connection_id }, select: { id: true, provider: true, kind: true, ownerUserId: true, credentialHolderId: true, status: true, syncEnabled: true },
+    })) as { id: string; provider: string; kind: 'PERSONAL' | 'BUSINESS'; ownerUserId: string; credentialHolderId: string; status: string; syncEnabled: boolean } | null;
     let refusal: string | null = null;
     if (!connection || connection.status !== 'ACTIVE') refusal = 'not_active';
     else if (!connection.syncEnabled) refusal = 'sync_disabled';
-    else if (!(await ownerActive(db, connection.ownerUserId))) refusal = 'owner_inactive';
+    else if (!(await holderActive(db, connection.credentialHolderId, connection.kind))) refusal = connection.kind === 'BUSINESS' ? 'holder_inactive' : 'owner_inactive';
     if (!refusal) {
+      const c = connection!;
       const job = (await db.mailSyncJob.findFirst({ where: { id: hit.id }, select: jobSelect })) as JobRow;
-      return { job: toJob(job), leaseId, connection: { id: connection!.id, provider: connection!.provider, ownerUserId: connection!.ownerUserId } };
+      return {
+        job: toJob(job), leaseId,
+        connection: { id: c.id, provider: c.provider, kind: c.kind, ownerUserId: c.ownerUserId, credentialHolderId: c.credentialHolderId },
+      };
     }
-    if (refusal === 'owner_inactive') {
-      // Stops the mailbox: credentials are deleted and a system audit event is written.
-      await markReauthRequired(db, connection!.id, connection!.provider, 'owner_inactive');
+    if (refusal === 'owner_inactive' || refusal === 'holder_inactive') {
+      // Stops the mailbox: credentials are deleted and a system audit event is written. A BUSINESS
+      // mailbox then waits for another manage_connections member to reconnect it (a handover).
+      await markReauthRequired(db, connection!.id, connection!.provider, refusal);
     } else {
       await db.mailSyncJob.updateMany({
         where: { id: hit.id, leaseId }, data: { status: 'CANCELLED', leaseId: null, leaseExpiresAt: null, finishedAt: new Date(), lastErrorCode: refusal },

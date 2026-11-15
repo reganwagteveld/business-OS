@@ -31,7 +31,11 @@ export type StateConflictCode =
   // Communications C2-A (docs/communications-c2.md §10): mailbox connections and sync jobs.
   | 'provider_not_configured' | 'already_connected' | 'account_mismatch' | 'disconnected' | 'not_active' | 'sync_disabled'
   // Reporting R1: per-owner saved-view cap; a stored view whose config this version cannot read.
-  | 'too_many_views' | 'view_config_invalid';
+  | 'too_many_views' | 'view_config_invalid'
+  // Communications C2-B1 (docs/communications-c2.md §16): business mailbox identity, members and retention.
+  | 'retention_not_set' | 'not_personal' | 'not_business' | 'consumer_domain' | 'domain_exists' | 'domain_not_verified' | 'domain_in_use'
+  | 'already_verified' | 'dns_record_not_found' | 'dns_unavailable' | 'removed' | 'attestation_required' | 'attestation_not_applicable'
+  | 'already_designated' | 'personal_connection_exists' | 'address_in_use';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

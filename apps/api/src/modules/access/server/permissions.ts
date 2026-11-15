@@ -137,6 +137,16 @@ export class ForbiddenError extends Error {
   }
 }
 
+/**
+ * Communications C2-B1 (owner decision D-C2-3): only an OWNER may attest that the business is
+ * authorised to use a consumer address (gmail.com, outlook.com…) as a business mailbox. The decision
+ * names the role itself, so this is a role rule kept here with the other role rules, not a permission
+ * key that a future custom role could be given.
+ */
+export function canAttestBusinessMailbox(principal: Principal): boolean {
+  return principal.role === 'OWNER';
+}
+
 export function can(principal: Principal, permission: Permission, resource?: ResourceScope): boolean {
   // Phase 1: role-level grants only. Zone- and record-scoped rules will narrow by `resource` here.
   void resource;

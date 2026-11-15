@@ -2,38 +2,58 @@
 // provider credentials, pending OAuth authorizations and durable sync jobs. No mail content is stored
 // here. Value sets are CHECK constraints; guards, partial unique indexes, column grants and RLS live in
 // migration 20261121000000_communications_providers.
+// C2-B1 (docs/communications-c2.md §16): mailbox kind, the four identities (principal, target mailbox,
+// controller, credential holder), verified business domains, designated business addresses, per-mailbox
+// members and the ordinary-communications retention setting. Migration
+// 20261125000000_communications_mailbox_identity.
 
-/// One connected mailbox in one business, owned by the member who consented at the provider.
+/// One connected mailbox in one business. PERSONAL: owned by the member who consented. BUSINESS: controlled
+/// by the business (manage_connections members); owner_user_id is the member who first connected it.
 model MailConnection {
-  id                String    @db.Uuid
-  businessId        String    @map("business_id") @db.Uuid
-  provider          String
-  ownerUserId       String    @map("owner_user_id") @db.Uuid
-  providerAccountId String    @map("provider_account_id")
-  mailboxAddress    String    @map("mailbox_address")
-  displayName       String?   @map("display_name")
-  status            String    @default("ACTIVE")
-  sharing           String    @default("OWNER_ONLY")
-  grantedScopes     String[]  @map("granted_scopes")
-  syncEnabled       Boolean   @default(true) @map("sync_enabled")
-  syncCursor        String?   @map("sync_cursor")
-  lastSyncedAt      DateTime? @map("last_synced_at") @db.Timestamptz
-  lastErrorCode     String?   @map("last_error_code")
-  connectedAt       DateTime  @default(now()) @map("connected_at") @db.Timestamptz
-  statusChangedAt   DateTime  @default(now()) @map("status_changed_at") @db.Timestamptz
-  disconnectedAt    DateTime? @map("disconnected_at") @db.Timestamptz
-  disconnectedById  String?   @map("disconnected_by_id") @db.Uuid
-  version           Int       @default(1)
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                 String    @db.Uuid
+  businessId         String    @map("business_id") @db.Uuid
+  provider           String
+  /// PERSONAL or BUSINESS; fixed for the life of the connection (no conversion, guard CM005).
+  kind               String    @default("PERSONAL")
+  ownerUserId        String    @map("owner_user_id") @db.Uuid
+  /// The member whose provider grant is stored. Always the owner for PERSONAL; changes only by a BUSINESS handover (CM008).
+  credentialHolderId String    @map("credential_holder_id") @db.Uuid
+  /// The TARGET mailbox at the provider (Google sub; Microsoft directory object id of the mailbox). Fixed.
+  providerAccountId  String    @map("provider_account_id")
+  /// The authenticated OAuth principal (Google sub; Microsoft Entra user oid). Differs from the target for a Microsoft shared mailbox.
+  principalAccountId String    @map("principal_account_id")
+  /// Microsoft Entra tenant id (tid) of the principal and target; null for Google.
+  providerTenantId   String?   @map("provider_tenant_id")
+  /// The designated business address a BUSINESS mailbox is connected for; null for PERSONAL.
+  businessAddressId  String?   @map("business_address_id") @db.Uuid
+  mailboxAddress     String    @map("mailbox_address")
+  displayName        String?   @map("display_name")
+  status             String    @default("ACTIVE")
+  sharing            String    @default("OWNER_ONLY")
+  grantedScopes      String[]  @map("granted_scopes")
+  syncEnabled        Boolean   @default(true) @map("sync_enabled")
+  syncCursor         String?   @map("sync_cursor")
+  lastSyncedAt       DateTime? @map("last_synced_at") @db.Timestamptz
+  lastErrorCode      String?   @map("last_error_code")
+  connectedAt        DateTime  @default(now()) @map("connected_at") @db.Timestamptz
+  statusChangedAt    DateTime  @default(now()) @map("status_changed_at") @db.Timestamptz
+  disconnectedAt     DateTime? @map("disconnected_at") @db.Timestamptz
+  disconnectedById   String?   @map("disconnected_by_id") @db.Uuid
+  version            Int       @default(1)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  business    Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_connections_business_fkey")
-  credentials MailConnectionCredential?
-  oauthStates MailOAuthState[]
-  syncJobs    MailSyncJob[]
+  business        Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_connections_business_fkey")
+  businessAddress MailBusinessAddress?      @relation(fields: [businessId, businessAddressId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "mail_connections_business_address_fkey")
+  credentials     MailConnectionCredential?
+  oauthStates     MailOAuthState[]
+  syncJobs        MailSyncJob[]
+  members         MailConnectionMember[]
 
   @@id([businessId, id])
   @@index([businessId, ownerUserId, createdAt(sort: Desc)])
+  @@index([businessId, credentialHolderId])
+  @@index([businessId, businessAddressId])
   @@map("mail_connections")
 }
 
@@ -62,19 +82,22 @@ model MailConnectionCredential {
 
 /// One pending authorization (single use, short-lived). Only the hash of the state nonce is stored.
 model MailOAuthState {
-  id              String    @db.Uuid
-  businessId      String    @map("business_id") @db.Uuid
-  stateHash       String    @unique(map: "mail_oauth_states_state_hash_key") @map("state_hash") @db.Char(64)
-  userId          String    @map("user_id") @db.Uuid
-  provider        String
-  connectionId    String?   @map("connection_id") @db.Uuid
-  codeVerifierEnc String    @map("code_verifier_enc")
-  expiresAt       DateTime  @map("expires_at") @db.Timestamptz
-  consumedAt      DateTime? @map("consumed_at") @db.Timestamptz
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  id                String    @db.Uuid
+  businessId        String    @map("business_id") @db.Uuid
+  stateHash         String    @unique(map: "mail_oauth_states_state_hash_key") @map("state_hash") @db.Char(64)
+  userId            String    @map("user_id") @db.Uuid
+  provider          String
+  connectionId      String?   @map("connection_id") @db.Uuid
+  /// C2-B1: set when this authorization connects a designated business address as a new BUSINESS mailbox.
+  businessAddressId String?   @map("business_address_id") @db.Uuid
+  codeVerifierEnc   String    @map("code_verifier_enc")
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz
+  consumedAt        DateTime? @map("consumed_at") @db.Timestamptz
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
-  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_oauth_states_business_fkey")
-  connection MailConnection? @relation(fields: [businessId, connectionId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "mail_oauth_states_connection_fkey")
+  business        Business             @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_oauth_states_business_fkey")
+  connection      MailConnection?      @relation(fields: [businessId, connectionId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "mail_oauth_states_connection_fkey")
+  businessAddress MailBusinessAddress? @relation(fields: [businessId, businessAddressId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "mail_oauth_states_business_address_fkey")
 
   @@id([businessId, id])
   @@index([businessId, userId, expiresAt])
@@ -107,4 +130,92 @@ model MailSyncJob {
   @@index([businessId, status, runAfter])
   @@index([businessId, connectionId, createdAt(sort: Desc)])
   @@map("mail_sync_jobs")
+}
+
+/// C2-B1: an email domain the business proved it controls with a DNS TXT record. Only the SHA-256 of the
+/// verification token is stored; the token is shown once, when the domain is added.
+model MailBusinessDomain {
+  id                    String    @db.Uuid
+  businessId            String    @map("business_id") @db.Uuid
+  domain                String
+  verificationTokenHash String    @map("verification_token_hash") @db.Char(64)
+  verifiedAt            DateTime? @map("verified_at") @db.Timestamptz
+  verifiedById          String?   @map("verified_by_id") @db.Uuid
+  createdById           String    @map("created_by_id") @db.Uuid
+  removedAt             DateTime? @map("removed_at") @db.Timestamptz
+  removedById           String?   @map("removed_by_id") @db.Uuid
+  version               Int       @default(1)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business  Business              @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_business_domains_business_fkey")
+  addresses MailBusinessAddress[]
+
+  @@id([businessId, id])
+  @@map("mail_business_domains")
+}
+
+/// C2-B1: an address the business designated as a BUSINESS mailbox: on a verified domain, or (consumer
+/// domains such as gmail.com only) attested by an OWNER. An attestation is a recorded claim, not proof of
+/// legal ownership. A designated address can never be connected as a PERSONAL mailbox in this business.
+model MailBusinessAddress {
+  id                 String    @db.Uuid
+  businessId         String    @map("business_id") @db.Uuid
+  address            String
+  domainId           String?   @map("domain_id") @db.Uuid
+  attestedById       String?   @map("attested_by_id") @db.Uuid
+  attestedAt         DateTime? @map("attested_at") @db.Timestamptz
+  attestationVersion String?   @map("attestation_version")
+  createdById        String    @map("created_by_id") @db.Uuid
+  removedAt          DateTime? @map("removed_at") @db.Timestamptz
+  removedById        String?   @map("removed_by_id") @db.Uuid
+  version            Int       @default(1)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_business_addresses_business_fkey")
+  domain      MailBusinessDomain? @relation(fields: [businessId, domainId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "mail_business_addresses_domain_fkey")
+  connections MailConnection[]
+  oauthStates MailOAuthState[]
+
+  @@id([businessId, id])
+  @@index([businessId, domainId])
+  @@map("mail_business_addresses")
+}
+
+/// C2-B1: who may use a BUSINESS mailbox (READ, or SEND which includes READ). Personal mailboxes have no
+/// members; they keep the owner's sharing switch.
+model MailConnectionMember {
+  businessId   String   @map("business_id") @db.Uuid
+  connectionId String   @map("connection_id") @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  access       String
+  grantedById  String   @map("granted_by_id") @db.Uuid
+  grantedAt    DateTime @default(now()) @map("granted_at") @db.Timestamptz
+  version      Int      @default(1)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_connection_members_business_fkey")
+  connection MailConnection @relation(fields: [businessId, connectionId], references: [businessId, id], onDelete: Cascade, onUpdate: NoAction, map: "mail_connection_members_connection_fkey")
+  membership Membership     @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: Cascade, onUpdate: NoAction, map: "mail_connection_members_membership_fkey")
+
+  @@id([businessId, connectionId, userId])
+  @@index([businessId, userId])
+  @@map("mail_connection_members")
+}
+
+/// C2-B1 (D-C2-9, owner clarification 2026-11-15): the business's explicit ordinary-communications retention
+/// period. There is no product default: until a row exists, BUSINESS mailboxes cannot sync and PERSONAL
+/// mailbox content cannot be shared with the business (guard CM009). It can be changed, never removed.
+model MailRetentionSetting {
+  businessId            String   @id @map("business_id") @db.Uuid
+  ordinaryRetentionDays Int      @map("ordinary_retention_days")
+  updatedById           String   @map("updated_by_id") @db.Uuid
+  version               Int      @default(1)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_retention_settings_business_fkey")
+
+  @@map("mail_retention_settings")
 }

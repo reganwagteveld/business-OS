@@ -61,11 +61,11 @@ export async function storeCredentials(db: AppTenantDb, connection: { businessId
 
 /**
  * Runs one unit of work for the business that owns the connection. `system: true` runs it with no
- * session user (system audit events); otherwise it acts as the mailbox owner.
+ * session user (system audit events); otherwise it acts as the mailbox's credential holder.
  */
 export type TenantRun = <T>(work: (db: AppTenantDb) => Promise<T>, opts?: { system?: boolean }) => Promise<T>;
 
-type ConnectionRef = { businessId: string; id: string; provider: MailProvider };
+type ConnectionRef = { businessId: string; id: string; provider: MailProvider; kind: 'PERSONAL' | 'BUSINESS' };
 
 type Step =
   | { kind: 'token'; token: string }
@@ -74,7 +74,7 @@ type Step =
 
 async function step(db: AppTenantDb, connectionId: string, now: Date, tryLease: boolean): Promise<Step> {
   const connection = (await db.mailConnection.findFirst({
-    where: { id: connectionId, status: 'ACTIVE' }, select: { businessId: true, id: true, provider: true },
+    where: { id: connectionId, status: 'ACTIVE' }, select: { businessId: true, id: true, provider: true, kind: true },
   })) as ConnectionRef | null;
   if (!connection) throw new StateConflictError('not_active');
   const row = (await db.mailConnectionCredential.findFirst({
@@ -106,7 +106,9 @@ async function step(db: AppTenantDb, connectionId: string, now: Date, tryLease: 
  * The provider refused the refresh token (revoked, expired, policy): the connection needs the owner
  * to reconnect. Credentials go with the status change (trigger), pending jobs are cancelled.
  */
-export async function markReauthRequired(db: AppTenantDb, connectionId: string, provider: string, code: 'reauth_required' | 'owner_inactive'): Promise<void> {
+export async function markReauthRequired(
+  db: AppTenantDb, connectionId: string, provider: string, code: 'reauth_required' | 'owner_inactive' | 'holder_inactive',
+): Promise<void> {
   const changed = await db.mailConnection.updateMany({
     where: { id: connectionId, status: 'ACTIVE' },
     data: { status: 'NEEDS_REAUTH', lastErrorCode: code, updatedAt: new Date() },
@@ -116,8 +118,7 @@ export async function markReauthRequired(db: AppTenantDb, connectionId: string, 
     data: { status: 'CANCELLED', leaseId: null, leaseExpiresAt: null, finishedAt: new Date(), lastErrorCode: code },
   });
   if (changed.count === 1) {
-    await recordSystemAudit(db, code === 'reauth_required' ? 'communications.system.reauth_required' : 'communications.system.owner_inactive',
-      { type: 'mail_connection', id: connectionId }, { provider });
+    await recordSystemAudit(db, `communications.system.${code}`, { type: 'mail_connection', id: connectionId }, { provider });
   }
 }
 
@@ -168,7 +169,8 @@ export async function obtainAccessToken(
     if (!adapter) throw new StateConflictError('provider_not_configured');
     let tokens: TokenSet;
     try {
-      tokens = await adapter.refresh(s.refreshToken);
+      // Microsoft refreshes per scope set: a BUSINESS connection keeps its shared-mailbox scopes.
+      tokens = await adapter.refresh(s.refreshToken, s.connection.kind === 'BUSINESS' ? 'business_read' : 'read');
     } catch (error) {
       if (error instanceof ProviderError && error.code === 'invalid_grant') {
         const current = await run((db) => invalidateIfCurrent(db, connectionId, s.version, s.lease, s.connection.provider), { system: true });
