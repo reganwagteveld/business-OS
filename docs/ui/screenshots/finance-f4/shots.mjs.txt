@@ -1,0 +1,222 @@
+// Seeds a LOCAL throwaway business through the real F1–F4 API (docker Postgres, bos_f4_shots), then
+// screenshots the Finance Zone from a real web build. Nothing here touches production.
+import { chromium } from 'playwright-core';
+import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import pg from '/Users/Regan/Sites/business-OS-f4/apps/api/node_modules/pg/lib/index.js';
+
+const API = 'http://localhost:3010';
+const WEB = 'http://localhost:5183';
+const OUT = new URL('../shots/', import.meta.url).pathname;
+mkdirSync(OUT, { recursive: true });
+const EMAIL = 'owner@example.com';
+const PASSWORD = 'correct horse battery staple';
+
+let cookie = '';
+let ipn = 1;
+async function call(method, path, body, extra = {}) {
+  const res = await fetch(`${API}${path}`, {
+    method, headers: { origin: WEB, 'content-type': 'application/json', 'x-forwarded-for': `10.9.0.${ipn++ % 250}`, ...(cookie ? { cookie } : {}), ...extra },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const set = res.headers.getSetCookie?.() ?? [];
+  const sess = set.find((c) => /session_token=/.test(c));
+  if (sess) cookie = sess.split(';')[0];
+  const json = await res.json().catch(() => ({}));
+  if (res.status >= 400) throw new Error(`${method} ${path} ${res.status} ${JSON.stringify(json)}`);
+  return json;
+}
+const key = () => ({ 'idempotency-key': randomUUID() });
+const slug = 'harbour-studio';
+const F = `/api/v1/b/${slug}/finance`;
+
+if (!process.env.SKIP_SEED) {
+  await call('POST', '/api/v1/auth/sign-up/email', { email: EMAIL, password: PASSWORD, name: 'Morgan Lee' });
+  const admin = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
+  await admin.connect();
+  await admin.query('UPDATE users SET email_verified = true WHERE email = $1', [EMAIL]);
+  await admin.end();
+}
+await call('POST', '/api/v1/auth/sign-in/email', { email: EMAIL, password: PASSWORD });
+
+if (!process.env.SKIP_SEED) {
+  await call('POST', '/api/v1/businesses', { name: 'Harbour Design Studio', slug, countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' });
+  const cust = async (displayName, o = {}) => (await call('POST', `/api/v1/b/${slug}/customers`, { displayName, ...o })).customer.id;
+  const kelp = await cust('Kelp & Co Seafood', { email: 'accounts@kelpco.example', city: 'Fremantle' });
+  const north = await cust('Northshore Physio', { email: 'admin@northshore.example' });
+  const tide = await cust('Tidewater Brewing', { email: 'hello@tidewater.example' });
+  const pacific = await cust('Pacific Rim Tours', { email: 'billing@pacificrim.example' });
+  const gst = (await call('POST', `${F}/tax-rates`, { name: 'GST', ratePercent: '10' })).taxRate.id;
+  await call('POST', `${F}/tax-rates`, { name: 'GST-free', ratePercent: '0' });
+  await call('PATCH', `${F}/settings`, {
+    version: 0, sellerLegalName: 'Harbour Design Studio Pty Ltd', sellerAddress: '12 Mews Road\nFremantle WA 6160', sellerEmail: 'studio@harbour.example',
+    sellerIdentifiers: [{ label: 'ABN', value: '12 345 678 901' }], paymentInstructions: 'Bank transfer to BSB 000-000, account 12345678. Use the invoice number as the reference.',
+    defaultPaymentTermsDays: 14, defaultQuoteValidityDays: 30, defaultTaxRateId: gst,
+  });
+  const line = (description, unitPrice, quantity = '1') => ({ description, quantity, unitPrice, taxRateId: gst });
+  const draft = async (path, body) => (await call('POST', `${F}/${path}`, body, key())).document;
+  const issue = async (path, d, o = {}) => (await call('POST', `${F}/${path}/${d.id}/issue`, { version: d.version, ...o })).document;
+
+  // Quotes
+  const q1 = await issue('quotes', await draft('quotes', { customerId: tide, lines: [line('Brand identity refresh', '6800'), line('Label design, three SKUs', '450', '3')] }), { issueDate: '2026-10-20' });
+  await call('POST', `${F}/quotes/${q1.id}/accept`, { version: q1.version });
+  await issue('quotes', await draft('quotes', { customerId: north, lines: [line('Website redesign', '9200')] }), { issueDate: '2026-11-10' });
+  await draft('quotes', { customerId: kelp, lines: [line('Menu boards', '1200')] });
+
+  // Invoices: overdue partly paid, paid, open, USD, draft
+  const i1 = await issue('invoices', await draft('invoices', { customerId: kelp, lines: [line('Packaging design', '3200'), line('Print management', '600')] }), { issueDate: '2026-10-01', dueDate: '2026-10-15' });
+  const i2 = await issue('invoices', await draft('invoices', { customerId: north, lines: [line('Logo and stationery', '2400')] }), { issueDate: '2026-10-12', dueDate: '2026-10-26' });
+  const conv = (await call('POST', `${F}/quotes/${q1.id}/convert`, { dueDate: '2026-12-01' }, key())).document;
+  const i3 = await issue('invoices', conv, { issueDate: '2026-11-05' });
+  const i4 = await issue('invoices', await draft('invoices', { customerId: pacific, currencyCode: 'USD', lines: [{ description: 'Tour brochure design', quantity: '1', unitPrice: '1850' }] }), { issueDate: '2026-11-02', dueDate: '2026-11-30' });
+  await draft('invoices', { customerId: north, lines: [line('Monthly retainer, December', '1500')] });
+
+  // Payments: partial on i1, full on i2, one with an unallocated rest
+  await call('POST', `${F}/payments`, { customerId: kelp, amount: '2000', receivedOn: '2026-10-20', method: 'BANK_TRANSFER', reference: 'KELP-1020', allocations: [{ invoiceId: i1.id, amount: '2000' }] }, key());
+  await call('POST', `${F}/payments`, { customerId: north, amount: '2800', receivedOn: '2026-10-25', method: 'BANK_TRANSFER', reference: 'NSP 4471', allocations: [{ invoiceId: i2.id, amount: '2640' }] }, key());
+  await call('POST', `${F}/payments`, { customerId: pacific, currencyCode: 'USD', amount: '500', receivedOn: '2026-11-12', method: 'CARD', allocations: [{ invoiceId: i4.id, amount: '500' }] }, key());
+  const bounced = (await call('POST', `${F}/payments`, { customerId: tide, amount: '1000', receivedOn: '2026-11-08', method: 'CHEQUE', reference: 'Chq 000231', allocations: [{ invoiceId: i3.id, amount: '1000' }] }, key())).payment;
+  await call('POST', `${F}/payments/${bounced.id}/reverse`, { version: bounced.version, reason: 'Cheque returned unpaid by the bank' });
+
+  // Credit note against i1, applied in part
+  const cn = await issue('credit-notes', (await call('POST', `${F}/invoices/${i1.id}/credit-notes`, { lines: [line('Print management not required', '200')] }, key())).document, { issueDate: '2026-10-22' });
+  await call('POST', `${F}/credit-notes/${cn.id}/applications`, { applications: [{ invoiceId: i1.id, amount: '120' }] });
+
+  // Expenses
+  const cats = (await call('GET', `${F}/expense-categories`)).categories;
+  const cat = (k) => cats.find((c) => c.systemKey === k).id;
+  const mk = async (o) => (await call('POST', `${F}/expenses`, { taxTreatment: 'TAX_INCLUSIVE', taxRateId: gst, ...o })).expense;
+  const rec = async (e, paidInFull) => (await call('POST', `${F}/expenses/${e.id}/record`, { version: e.version, ...(paidInFull ? { paidInFull } : {}) })).expense;
+  const rent = await rec(await mk({ categoryId: cat('rent'), description: 'Studio rent, November', supplierName: 'Quayside Properties', incurredOn: '2026-11-01', dueDate: '2026-11-07', amount: '3300.00' }));
+  await call('POST', `${F}/expense-payments`, { payeeName: 'Quayside Properties', amount: '1500', paidOn: '2026-11-06', method: 'BANK_TRANSFER', allocations: [{ expenseId: rent.id, amount: '1500' }] }, key());
+  await rec(await mk({ categoryId: cat('software'), description: 'Design suite, annual', supplierName: 'Pixel Tools', incurredOn: '2026-11-03', amount: '1199.00' }), { paidOn: '2026-11-03', method: 'CARD' });
+  await rec(await mk({ categoryId: cat('subcontractors'), description: 'Illustration for brand refresh', supplierName: 'Nadia Cole Illustration', incurredOn: '2026-11-08', dueDate: '2026-12-08', taxTreatment: 'TAX_EXCLUSIVE', amount: '2400.00' }));
+}
+
+const browser = await chromium.launch({ channel: 'chrome' });
+process.on('unhandledRejection', () => {});
+async function session(viewport, scheme) {
+  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 2, colorScheme: scheme, ...(viewport.width < 500 ? { isMobile: true, hasTouch: true } : {}) });
+  const [name, value] = cookie.split('=');
+  await ctx.addCookies([{ name, value, domain: 'localhost', path: '/', httpOnly: true, sameSite: 'Lax' }]);
+  await ctx.addInitScript(([s]) => localStorage.setItem('bos.workspace', JSON.stringify({ slug: s })), [slug]);
+  await ctx.route('http://localhost:5183/api/**', async (route) => {
+    const r = route.request();
+    const res = await route.fetch({ url: r.url().replace('http://localhost:5183', API), headers: { ...r.headers(), origin: WEB, cookie } });
+    await route.fulfill({ response: res });
+  });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(12000);
+  await page.goto(WEB);
+  await page.getByRole('button', { name: /Open the Finance Zone/ }).first().click();
+  await page.getByText(/Outstanding on invoices \(AUD\)/).waitFor();
+  await page.waitForTimeout(600);
+  return { ctx, page };
+}
+const shot = async (page, name, full = true) => {
+  await page.evaluate(() => { window.scrollTo(0, 0); for (const el of document.querySelectorAll('*')) if (el.scrollTop) el.scrollTop = 0; });
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: `${OUT}${name}.png`, fullPage: full });
+};
+const nav = async (page, label, mobile) => {
+  if (mobile) {
+    const sec = page.getByRole('navigation', { name: /Finance sections|Sections/ });
+    if (await sec.count()) await sec.getByRole('button', { name: label, exact: true }).click();
+    else await page.getByRole('button', { name: label, exact: true }).first().click();
+  } else {
+    await page.getByRole('button', { name: label, exact: true }).first().click();
+  }
+  await page.waitForTimeout(700);
+};
+
+for (const scheme of ['light', 'dark']) {
+  const { ctx, page } = await session({ width: 1440, height: 1000 }, scheme);
+  await shot(page, `desktop-${scheme}-01-overview`);
+  if (scheme === 'dark') { await ctx.close(); continue; }
+  await nav(page, 'Quotes');
+  await page.getByRole('table', { name: 'Quotes' }).waitFor();
+  await shot(page, `desktop-${scheme}-02-quotes`);
+  await nav(page, 'Invoices');
+  await page.getByRole('table', { name: 'Invoices' }).waitFor();
+  await page.waitForTimeout(500);
+  await shot(page, `desktop-${scheme}-03-invoices`);
+  await page.getByRole('button', { name: /INV-0001/ }).click();
+  await page.getByRole('heading', { level: 1, name: 'INV-0001' }).waitFor();
+  await page.getByText('Still open').waitFor();
+  await page.waitForTimeout(500);
+  await shot(page, `desktop-${scheme}-04-invoice-overdue-partly-paid`);
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByRole('heading', { level: 1, name: 'Record payment' }).waitFor();
+  await page.getByRole('table', { name: 'Open invoices' }).waitFor();
+  await page.waitForTimeout(500);
+  await shot(page, `desktop-${scheme}-05-record-payment`);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  const discard = page.getByRole('button', { name: 'Discard changes' });
+  if (await discard.isVisible().catch(() => false)) await discard.click();
+  await page.getByRole('heading', { level: 1, name: 'INV-0001' }).waitFor();
+  await nav(page, 'Invoices');
+    await page.getByRole('button', { name: /Draft.*open invoice/ }).first().click({ timeout: 8000 });
+  await page.getByRole('heading', { level: 1, name: 'Draft invoice' }).waitFor();
+  await page.getByRole('button', { name: 'Issue invoice' }).click();
+  await page.getByRole('dialog').getByText(/INV-0005/).waitFor();
+  await page.waitForTimeout(300);
+  await shot(page, `desktop-${scheme}-06-issue-confirmation`, false);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Edit draft' }).click();
+  await page.getByRole('heading', { level: 1, name: 'Edit draft invoice' }).waitFor();
+  await page.waitForTimeout(400);
+  await shot(page, `desktop-${scheme}-07-invoice-draft-form`);
+  await nav(page, 'Payments');
+  const discard2 = page.getByRole('button', { name: 'Discard changes' });
+  if (await discard2.isVisible().catch(() => false)) await discard2.click();
+  await page.getByRole('table', { name: 'Payments received' }).waitFor();
+  await page.waitForTimeout(400);
+  await shot(page, `desktop-${scheme}-08-payments`);
+  await page.getByRole('button', { name: /25 Oct 2026/ }).click();
+  await page.getByText('Unallocated (customer credit)').waitFor();
+  await page.waitForTimeout(400);
+  await shot(page, `desktop-${scheme}-09-payment-detail`);
+  await page.getByRole('button', { name: 'Reverse payment' }).click();
+  await page.getByRole('dialog').waitFor();
+  await page.waitForTimeout(300);
+  await shot(page, `desktop-${scheme}-10-reverse-payment-confirmation`, false);
+  await page.keyboard.press('Escape');
+  await nav(page, 'Credit notes');
+  await page.getByRole('button', { name: /CN-0001/ }).click();
+  await page.getByText('Still available').waitFor();
+  await page.waitForTimeout(400);
+  await shot(page, `desktop-${scheme}-11-credit-note`);
+  await nav(page, 'Expenses');
+  await page.getByRole('table', { name: 'Expenses' }).waitFor();
+  await page.getByRole('button', { name: 'Payments made' }).click();
+  await page.getByRole('table', { name: 'Payments made' }).waitFor();
+  await page.waitForTimeout(400);
+  await shot(page, `desktop-${scheme}-12-payments-made`);
+  await nav(page, 'Settings');
+  await page.getByLabel('Legal name').waitFor();
+  await page.waitForTimeout(400);
+  await shot(page, `desktop-${scheme}-13-settings-business`);
+  await page.getByRole('button', { name: 'Numbering' }).click();
+  await page.getByText('INV-0005').waitFor();
+  await page.waitForTimeout(300);
+  await shot(page, `desktop-${scheme}-14-settings-numbering`);
+  await ctx.close();
+}
+
+for (const scheme of ['light', 'dark']) {
+  const { ctx, page } = await session({ width: 390, height: 844 }, scheme);
+  await shot(page, `mobile-${scheme}-01-overview`);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  // The shell's secondary navigation (section strip) is under the top bar on small screens.
+  await page.getByRole('button', { name: 'Invoices', exact: true }).first().click();
+  await page.getByRole('table', { name: 'Invoices' }).waitFor();
+  await page.waitForTimeout(500);
+  await shot(page, `mobile-${scheme}-02-invoices`);
+  await page.getByRole('button', { name: /INV-0001/ }).click();
+  await page.getByText('Still open').waitFor();
+  await page.waitForTimeout(500);
+  await shot(page, `mobile-${scheme}-03-invoice-detail`);
+  await ctx.close();
+}
+await browser.close();
+console.log('shots done');
