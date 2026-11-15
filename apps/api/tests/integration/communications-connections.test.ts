@@ -29,6 +29,7 @@ import * as disconnectRoute from '@/app/api/v1/b/[slug]/communications/connectio
 import * as syncRoute from '@/app/api/v1/b/[slug]/communications/connections/[connectionId]/sync/route';
 import * as syncJobsRoute from '@/app/api/v1/b/[slug]/communications/connections/[connectionId]/sync-jobs/route';
 import * as callbackRoute from '@/app/api/v1/communications/oauth/callback/route';
+import * as retentionRoute from '@/app/api/v1/b/[slug]/communications/retention/route';
 import { withTenant } from '@/core/db';
 import { devOutbox } from '@/core/email';
 import { claimSyncJob, completeSyncJob, failSyncJob, heartbeatSyncJob, obtainAccessToken, type TenantRun } from '@/modules/communications';
@@ -441,6 +442,9 @@ describe('ownership, sharing and permissions', () => {
 
   it('only the owner shares BUSINESS-wide; admins may restrict and pause but never expose', async () => {
     expect((await api(A.people.ADMIN!, A.slug).update(id, { sharing: 'BUSINESS', version: 1 })).status).toBe(403);
+    // C2-B1 (owner clarification): not before the business set an ordinary-communications retention period.
+    expect((await api(A.people.MANAGER!, A.slug).update(id, { sharing: 'BUSINESS', version: 1 })).body).toEqual({ error: 'retention_not_set' });
+    await retentionRoute.PUT(req('PUT', `/api/v1/b/${A.slug}/communications/retention`, { cookie: A.people.OWNER!.cookie, body: { ordinaryRetentionDays: 730, version: null } }), ctx({ slug: A.slug }));
     const shared = await api(A.people.MANAGER!, A.slug).update(id, { sharing: 'BUSINESS', version: 1 });
     expect(shared.status).toBe(200);
     expect(shared.body.connection).toMatchObject({ sharing: 'BUSINESS', version: 2 });
@@ -912,8 +916,8 @@ describe('tenant isolation and database guarantees', () => {
     expect(await asAdmin("UPDATE mail_connections SET provider_account_id = 'other' WHERE id = $1", [aId])).toBe('CM005');
     expect(await asAdmin('UPDATE mail_connections SET owner_user_id = $1 WHERE id = $2', [A.people.ADMIN!.id, aId])).toBe('CM005');
     // Insert a connection for someone else, or an authorization for someone else: refused by RLS.
-    expect(await run(`INSERT INTO mail_connections (id, business_id, provider, owner_user_id, provider_account_id, mailbox_address, granted_scopes)
-      VALUES ($1, $2, 'GOOGLE', $3, 'x', 'x@example.com', ARRAY['openid'])`, [randomUUID(), A.businessId, A.people.ADMIN!.id])).toBe('42501');
+    expect(await run(`INSERT INTO mail_connections (id, business_id, provider, owner_user_id, credential_holder_id, provider_account_id, principal_account_id,
+      mailbox_address, granted_scopes) VALUES ($1, $2, 'GOOGLE', $3, $3, 'x', 'x', 'x@example.com', ARRAY['openid'])`, [randomUUID(), A.businessId, A.people.ADMIN!.id])).toBe('42501');
     const verifier = credentialBox().seal('v', 'x');
     expect(await run(`INSERT INTO mail_oauth_states (id, business_id, state_hash, user_id, provider, code_verifier_enc, expires_at)
       VALUES ($1, $2, $3, $4, 'GOOGLE', $5, now() + interval '1 hour')`, [randomUUID(), A.businessId, 'a'.repeat(64), owner.id, verifier])).toBe('23514');

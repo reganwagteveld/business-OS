@@ -1,9 +1,9 @@
 import 'server-only';
 // Helpers for the activity and communications routes (docs/communications-c1.md §4–5, communications-c2.md §4).
 import { RecordNotFoundError } from '@/core/http/errors';
-import { authorize, can } from '@/modules/access';
+import { authorize, can, canAttestBusinessMailbox } from '@/modules/access';
 import type { ActivityViewer } from '@/modules/activity';
-import type { ConnectionViewer } from '@/modules/communications';
+import type { BusinessMailboxActor, ConnectionViewer } from '@/modules/communications';
 import type { Actor } from '@/modules/tenancy';
 import { isUuid } from './routes';
 
@@ -44,4 +44,13 @@ export function connectionViewer(actor: Actor): ConnectionViewer {
     canConnect: can(actor, 'communications:connect'),
     canManage: can(actor, 'communications:manage_connections'),
   };
+}
+
+export const domainIdOf = idOf('domainId');
+export const addressIdOf = idOf('addressId');
+export const memberUserIdOf = idOf('userId');
+
+/** The actor for business domains and addresses (C2-B1): a connection viewer that may also attest (OWNER). */
+export function businessMailboxActor(actor: Actor): BusinessMailboxActor {
+  return { ...connectionViewer(actor), canAttest: canAttestBusinessMailbox(actor) };
 }
