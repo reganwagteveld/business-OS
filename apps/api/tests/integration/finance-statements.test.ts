@@ -144,7 +144,7 @@ let B: Awaited<ReturnType<typeof team>>;
 let acme: string;
 let other: string;
 /** The scenario's records (see beforeAll). */
-const ids: Record<string, string> = {};
+const ids = {} as { i1: string; i2: string; eur: string; p1: string; c1: string; p2: string };
 
 async function issuedInvoice(customerId: string, amount: string, issueDate: string, dueDate: string, currencyCode?: string) {
   const own = api(A.people.OWNER!, A.slug);
