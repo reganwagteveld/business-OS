@@ -84,7 +84,7 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, c
 }
 
 export interface ProjectsLink { client: ProjectsClient; onOpen: (projectId: string) => void }
-/** The customer's finance panel, passed only to people who hold finance:read. `onOpen` takes `invoice:<id>` or `quote:<id>`. */
+/** The customer's finance panel, passed only to people who hold finance:read. `onOpen` takes `invoice:<id>`, `quote:<id>` or `payment:<id>`. */
 export interface FinanceLink { client: FinanceClient; onOpen: (target: string) => void }
 
 function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, names, projects, finance, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {

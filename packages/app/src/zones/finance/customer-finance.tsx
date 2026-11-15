@@ -15,25 +15,27 @@ const SHOWN = 5;
  */
 export function CustomerFinance({ client, slug, customerId, locale, timeZone, onOpen, onSessionEnded }: {
   client: FinanceClient; slug: string; customerId: string; locale?: string; timeZone: string;
-  /** Opens a document in the Finance Zone (`invoice:<id>` or `quote:<id>`). */
+  /** Opens a record in the Finance Zone (`invoice:<id>`, `quote:<id>` or `payment:<id>`). */
   onOpen: (target: string) => void; onSessionEnded: () => void;
 }) {
   const balances = useLoad(`cust-fin-bal|${slug}|${customerId}`, (signal) => client.balances(slug, { customerId, limit: 25 }, signal));
   const invoices = useLoad(`cust-fin-inv|${slug}|${customerId}`, (signal) => client.documents(slug, 'invoices', { status: 'all', customerId, limit: SHOWN }, signal));
   const quotes = useLoad(`cust-fin-q|${slug}|${customerId}`, (signal) => client.documents(slug, 'quotes', { status: 'all', customerId, limit: 3 }, signal));
+  const payments = useLoad(`cust-fin-pay|${slug}|${customerId}`, (signal) => client.payments(slug, { status: 'all', customerId, limit: 3 }, signal));
   const today = todayIn(timeZone);
-  const failed = [balances, invoices, quotes].find((x) => x.state.status === 'done' && x.state.outcome.kind !== 'ok');
-  const loading = [balances, invoices, quotes].some((x) => x.state.status === 'loading');
+  const failed = [balances, invoices, quotes, payments].find((x) => x.state.status === 'done' && x.state.outcome.kind !== 'ok');
+  const loading = [balances, invoices, quotes, payments].some((x) => x.state.status === 'loading');
   const bal = balances.state.status === 'done' && balances.state.outcome.kind === 'ok' ? balances.state.outcome.data.balances : [];
   const inv = invoices.state.status === 'done' && invoices.state.outcome.kind === 'ok' ? invoices.state.outcome.data : null;
   const qs = quotes.state.status === 'done' && quotes.state.outcome.kind === 'ok' ? quotes.state.outcome.data : null;
+  const pays = payments.state.status === 'done' && payments.state.outcome.kind === 'ok' ? payments.state.outcome.data : null;
   const money = (v: string, c: string) => formatMoney(v, c, locale);
 
   return (
     <section aria-label="Finance" className="rounded-2xl border border-border bg-card p-6">
       <h2 className="mb-4 text-sm font-semibold tracking-tight">Finance</h2>
       {loading ? <Skeleton rows={2} label="Loading finance…" /> : failed && failed.state.status === 'done' ? (
-        <Problem outcome={failed.state.outcome} what="Finance for this customer" onRetry={() => [balances, invoices, quotes].forEach((x) => x.reload())} onSessionEnded={onSessionEnded} />
+        <Problem outcome={failed.state.outcome} what="Finance for this customer" onRetry={() => [balances, invoices, quotes, payments].forEach((x) => x.reload())} onSessionEnded={onSessionEnded} />
       ) : (
         <div className="space-y-5">
           {bal.length === 0 ? <p className="text-sm text-muted-foreground">Nothing owed and no credit on account.</p> : (
@@ -68,6 +70,21 @@ export function CustomerFinance({ client, slug, customerId, locale, timeZone, on
             ) : null}
             {inv?.nextCursor ? <p className="mt-2 text-xs text-muted-foreground">Showing the {SHOWN} most recent. See the Finance Zone for the rest.</p> : null}
           </div>
+          {pays && pays.payments.length > 0 ? (
+            <div>
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Payments received</h3>
+              <ul className="mt-1 divide-y">
+                {pays.payments.map((p) => (
+                  <li key={p.id} className="py-2">
+                    <button type="button" onClick={() => onOpen(`payment:${p.id}`)} className="flex w-full items-start justify-between gap-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring">
+                      <span className="hover:underline">{formatDate(p.receivedOn, locale)}{p.status === 'REVERSED' ? ' · reversed' : ''}</span>
+                      <span className={p.status === 'REVERSED' ? 'tabular-nums text-muted-foreground line-through' : 'tabular-nums'}>{money(p.amount, p.currencyCode)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {qs && qs.documents.length > 0 ? (
             <div>
               <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Quotes</h3>

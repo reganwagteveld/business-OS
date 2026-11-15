@@ -3,7 +3,7 @@
 // the customer's finance panel) against an in-memory Finance API. The real Finance and Customers clients
 // and the shared contracts sit in front of it: every request body is contract-checked (strict) and every
 // response is parsed with the contract, so a mismatch fails here.
-import type { Customer } from '@business-os/contracts';
+import type { Customer, FinanceExpense } from '@business-os/contracts';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { randomUUID } from 'node:crypto';
@@ -377,6 +377,47 @@ describe('payments', () => {
     await user.type(box, '30');
     expect(screen.getByText(/\$10\.00 more than is available/)).toBeTruthy();
     expect((screen.getByRole('button', { name: /^Record \$20\.00/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('expenses integration and submission safety', () => {
+  it('a recorded, unpaid expense opens a supplier payment prefilled and matched, sent once with an Idempotency-Key', async () => {
+    const e: FinanceExpense = {
+      id: randomUUID(), status: 'RECORDED', categoryId: randomUUID(), categoryName: 'Rent', projectId: null, customerId: null, description: 'Studio rent', supplierName: 'Quayside',
+      referenceNumber: null, notes: null, incurredOn: '2026-11-01', dueDate: '2026-11-07', currencyCode: 'AUD', currencyScale: 2, subtotal: '300.00', taxAmount: '30.00',
+      total: '330.00', taxTreatment: 'TAX_INCLUSIVE', taxRateId: null, taxName: 'GST', taxRatePercent: '10', paidTotal: '0.00', outstanding: '330.00', paymentState: 'UNPAID',
+      overdue: true, recordedAt: '2026-11-01T00:00:00.000Z', voidedAt: null, voidReason: null, version: 2, createdById: null, updatedById: null, recordedById: null,
+      voidedById: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', allocations: [],
+    };
+    const data = financeData({ expenses: [e] });
+    const { api, user } = setup({ data, target: e.id });
+    await heading('Quayside');
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+    await heading('Record supplier payment');
+    expect((screen.getByLabelText('Amount') as HTMLInputElement).value).toBe('330.00');
+    expect((await screen.findByLabelText('Amount for Quayside') as HTMLInputElement).value).toBe('330.00');
+    const submit = screen.getByRole('button', { name: /^Record \$330\.00/ });
+    await user.dblClick(submit); // a double click records once
+    await heading(/\$330\.00 to Quayside/);
+    const posts = api.calls.filter((c) => c.method === 'POST' && c.path === '/finance/expense-payments');
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.headers['idempotency-key']).toMatch(/.+/);
+    expect(posts[0]!.body).toMatchObject({ amount: '330.00', allocations: [{ expenseId: e.id, amount: '330.00' }] });
+    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(0); // still no receipt uploads
+  });
+
+  it('every control in the finance forms has an accessible name, and dialogs are labelled', async () => {
+    const { acme } = people();
+    const { user } = setup({ data: financeData({ customers: [acme] }), section: 'invoices', intent: 'new' });
+    await heading('New invoice');
+    for (const el of document.querySelectorAll('main input, main select, main textarea, input, select, textarea')) {
+      const id = el.getAttribute('id');
+      const named = el.getAttribute('aria-label') || (id && document.querySelector(`label[for="${id}"]`)) || el.closest('label');
+      expect(named, el.outerHTML.slice(0, 80)).toBeTruthy();
+    }
+    await user.type(screen.getByLabelText('Description'), 'x');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
   });
 });
 

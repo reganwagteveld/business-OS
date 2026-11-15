@@ -6,9 +6,9 @@
  */
 import {
   AllocatePaymentRequest, ApplyCreditRequest, ConvertQuoteRequest, CreateCreditNoteRequest, CreateInvoiceRequest, CreateQuoteRequest, CreateTaxRateRequest,
-  DiscardDraftRequest, IssueDocumentRequest, QuoteTransitionRequest, RecordPaymentRequest, ReverseAllocationRequest, ReversePaymentRequest, UpdateCreditNoteRequest,
+  DiscardDraftRequest, IssueDocumentRequest, QuoteTransitionRequest, RecordExpensePaymentRequest, RecordPaymentRequest, ReverseAllocationRequest, ReversePaymentRequest, UpdateCreditNoteRequest,
   UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdatePaymentRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
-  type CreditApplication, type Customer, type FinanceDocument, type FinanceDocumentKind, type FinancePayment, type PaymentAllocation,
+  type CreditApplication, type Customer, type ExpensePayment, type FinanceExpense, type FinanceDocument, type FinanceDocumentKind, type FinancePayment, type PaymentAllocation,
 } from '@business-os/contracts';
 import { randomUUID } from 'node:crypto';
 import { fromUnits, toUnits } from '../../src/zones/finance/decimal';
@@ -29,13 +29,15 @@ export interface FinanceData {
   rates: { id: string; name: string; ratePercent: string; createdAt: string; updatedAt: string; archivedAt: string | null }[];
   series: Series[];
   settings: Record<string, unknown> & { version: number };
+  expenses: FinanceExpense[];
+  expensePayments: ExpensePayment[];
   payables: { currencyCode: string; currencyScale: number; outstanding: string; overdue: string; openCount: number; overdueCount: number }[];
 }
 export interface FinanceCall { method: string; slug: string; path: string; query: Record<string, string>; body: unknown; headers: Record<string, string> }
 
 export function financeData(over: Partial<FinanceData> = {}): FinanceData {
   return {
-    customers: [], documents: [], payments: [], applications: [], payables: [],
+    customers: [], documents: [], payments: [], applications: [], payables: [], expenses: [], expensePayments: [],
     rates: [{ id: randomUUID(), name: 'GST', ratePercent: '10', createdAt: NOW, updatedAt: NOW, archivedAt: null }],
     series: (['QUOTE', 'INVOICE', 'CREDIT_NOTE'] as const).map((kind) => ({ kind, prefix: { QUOTE: 'QUO-', INVOICE: 'INV-', CREDIT_NOTE: 'CN-' }[kind], minDigits: 4, startingValue: 1, nextValue: 1, version: 0 })),
     settings: {
@@ -159,7 +161,44 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
       return json(200, { balances, asOf: TODAY, nextCursor: null });
     }
     if (p === '/expense-payables') return json(200, { payables: { asOf: TODAY, currencies: b.payables } });
-    if (p === '/expenses' && method === 'GET') return json(200, { expenses: [], nextCursor: null });
+    const expenseItem = (e: FinanceExpense) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== 'allocations'));
+    if (p === '/expenses' && method === 'GET') {
+      let list = b.expenses;
+      if (query.status && query.status !== 'all') list = list.filter((e) => e.status === query.status!.toUpperCase());
+      if (query.payment === 'open') list = list.filter((e) => e.status === 'RECORDED' && e.paymentState !== 'PAID');
+      if (query.payment === 'overdue') list = list.filter((e) => e.overdue);
+      return json(200, { expenses: list.map(expenseItem), nextCursor: null });
+    }
+    if ((m = /^\/expenses\/([^/]+)$/.exec(p)) && method === 'GET') {
+      const e = b.expenses.find((x) => x.id === m![1]);
+      return e ? json(200, { expense: e }) : json(404, { error: 'not_found' });
+    }
+    if (p === '/expense-payments' && method === 'POST') {
+      const key = call.headers['idempotency-key'];
+      if (!key) return json(400, { error: 'idempotency_key_required', message: 'An Idempotency-Key header is required.' });
+      const input = RecordExpensePaymentRequest.parse(body);
+      if (keys.has(key)) return keys.get(key)!.body === JSON.stringify(input) ? json(200, keys.get(key)!.result) : json(409, { error: 'idempotency_conflict' });
+      const id = randomUUID();
+      const allocations = (input.allocations ?? []).map((a) => {
+        const e = b.expenses.find((x) => x.id === a.expenseId)!;
+        e.paidTotal = f(u(e.paidTotal) + u(a.amount));
+        e.outstanding = f(u(e.total) - u(e.paidTotal));
+        e.paymentState = e.outstanding === '0.00' ? 'PAID' : 'PARTIALLY_PAID';
+        return { id: randomUUID(), paymentId: id, expenseId: e.id, currencyCode: e.currencyCode, amount: f(u(a.amount)), paidOn: input.paidOn, method: input.method,
+          createdAt: NOW, createdById: null, reversedAt: null, reversedById: null };
+      });
+      const allocated = allocations.reduce((t, a) => t + u(a.amount), 0n);
+      const pay: ExpensePayment = { id, payeeName: input.payeeName ?? null, currencyCode: input.currencyCode ?? 'AUD', currencyScale: 2, amount: f(u(input.amount)),
+        allocatedTotal: f(allocated), unallocatedAmount: f(u(input.amount) - allocated), paidOn: input.paidOn, method: input.method, reference: input.reference ?? null,
+        status: 'RECORDED', reversedAt: null, reversalReason: null, version: 1, recordedById: null, reversedById: null, createdAt: NOW, updatedAt: NOW, allocations };
+      b.expensePayments.unshift(pay);
+      keys.set(key, { body: JSON.stringify(input), result: { payment: pay } });
+      return json(201, { payment: pay });
+    }
+    if ((m = /^\/expense-payments\/([^/]+)$/.exec(p)) && method === 'GET') {
+      const x = b.expensePayments.find((y) => y.id === m![1]);
+      return x ? json(200, { payment: x }) : json(404, { error: 'not_found' });
+    }
     if (p === '/expense-categories') return json(200, { categories: [] });
     if (p === '/settings' && method === 'GET') return json(200, { settings: b.settings });
     if (p === '/settings' && method === 'PATCH') {

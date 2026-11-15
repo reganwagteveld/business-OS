@@ -187,7 +187,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
         client={customers} context={active} userLabel={userLabel} initialCustomerId={target} initialAction={intent}
         projects={canReadProjects ? { client: projects, onOpen: (id) => open({ zone: 'projects', target: id }) } : undefined}
-        finance={canReadFinance ? { client: finance, onOpen: (target) => open({ zone: 'finance', child: target.startsWith('quote:') ? 'quotes' : 'invoices', target }) } : undefined}
+        finance={canReadFinance ? { client: finance, onOpen: (target) => open({ zone: 'finance', child: target.startsWith('quote:') ? 'quotes' : target.startsWith('payment:') ? 'payments' : 'invoices', target }) } : undefined}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );

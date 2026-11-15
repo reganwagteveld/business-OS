@@ -1064,7 +1064,7 @@ F4 is the client for F1–F3. It changes no table, migration, guard, permission 
 - **Payments received.** Register (status, customer, unallocated, dates), record with an `Idempotency-Key` (retries reuse it) and optional allocation in the same step, allocate the unallocated rest later, reverse an allocation (the payment stays), reverse a payment with a required reason, edit the reference. Wording is "a record of money received outside Business OS"; nothing mentions bank reconciliation.
 - **Expenses.** F3's screens, now a section with two tabs (Expenses, Payments made). Added: "Record payment" on a recorded, unpaid expense; payments made (register, record with `Idempotency-Key` and matching to expenses, match later, reverse a link, reverse a payment). Still no receipt upload or download (F3-D2).
 - **Settings.** Seller details and identifiers, payment instructions, document defaults (payment terms, quote validity, default tax rate), numbering series (prefix, digits, starting number with the lock-after-first-use explained), tax rates (add, rename, archive, restore; the percentage never changes) and expense categories (F3 screen). Retention and legal hold are shown read-only, not editable here. Read-only without `finance:manage`.
-- **Customer finance panel.** On a customer's page (Customers Zone), only when the person holds `finance:read`: open and overdue amounts and credit per currency (`/customer-balances`), the latest invoices and quotes, opening them in the Finance Zone. The retired "Sales and Finance — coming soon" placeholder is gone. Within Finance, customer names and the customer picker need `customers:read`; without it, issued documents still show their bill-to snapshot and drafts show "Customer".
+- **Customer finance panel.** On a customer's page (Customers Zone), only when the person holds `finance:read`: open and overdue amounts and credit per currency (`/customer-balances`), the latest invoices, payments received and quotes, opening them in the Finance Zone. The retired "Sales and Finance — coming soon" placeholder is gone. Within Finance, customer names and the customer picker need `customers:read`; without it, issued documents still show their bill-to snapshot and drafts show "Customer".
 
 ### 20.2 Client rules
 
@@ -1079,8 +1079,8 @@ F4 is the client for F1–F3. It changes no table, migration, guard, permission 
 
 | Check | Result |
 |---|---|
-| `packages/app/tests/finance-f4.test.tsx` (23: decimals, client strictness and Idempotency-Key, navigation, overview, quotes, invoices, payments incl. lost-response retry, reversals, credit notes, settings, business switch, customer permissions, customer panel) | pass |
-| F3 UI tests (`finance-zone.test.tsx`, now opening the Expenses or Settings section) and all other app tests | 303/303 |
+| `packages/app/tests/finance-f4.test.tsx` (25: expense-payment integration, double-submit prevention, accessible names; decimals, client strictness and Idempotency-Key, navigation, overview, quotes, invoices, payments incl. lost-response retry, reversals, credit notes, settings, business switch, customer permissions, customer panel) | pass |
+| F3 UI tests (`finance-zone.test.tsx`, now opening the Expenses or Settings section) and all other app tests | 305/305 |
 | `finance-payments.test.ts` › F4 receivables (equals the per-customer balances per currency; tenant-scoped; `finance:read`) | pass; whole integration suite 268/268 on a fresh local database, finance suites again on the same database 115/115 |
 | typecheck, lint, boundaries, contracts snapshot, unit tests, api/web/desktop builds | pass |
 
