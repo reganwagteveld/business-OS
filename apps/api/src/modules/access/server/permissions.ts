@@ -48,6 +48,11 @@ export const ZONE_PERMISSIONS = {
   // YOUR OWN mailbox; manage_connections = see every mailbox's metadata, restrict, pause, disconnect
   // and request a sync for any of them. Neither grants reading an OWNER_ONLY mailbox's mail.
   communications: ['communications:read', 'communications:record', 'communications:connect', 'communications:manage_connections'],
+  // Reporting R1 (docs/reporting-r1.md §6). read = open Reporting, run trusted metrics and open saved views
+  // visible to you; save = create, edit and delete your own saved views; share = make a view visible to the
+  // whole business; manage = delete other people's shared views. None of these grants any source data:
+  // every metric also requires its source Zone's own read key, checked on every execution.
+  reporting: ['reporting:read', 'reporting:save', 'reporting:share', 'reporting:manage'],
 } as const;
 
 export type Zone = keyof typeof ZONE_PERMISSIONS;
@@ -78,6 +83,8 @@ const SCHEDULING_WORK: Permission[] = ['scheduling:read', 'scheduling:create', '
  * C2-A defaults (D-C2-2): OWNER, ADMIN and MANAGER may connect their own mailbox; OWNER and ADMIN manage connections.
  */
 const COMMUNICATIONS: Permission[] = ['communications:read', 'communications:record'];
+/** Reporting R1 defaults: everyone may run reports (source keys still apply) and keep private views; sharing is for whoever runs the work. */
+const REPORTING_WORK: Permission[] = ['reporting:read', 'reporting:save'];
 const DATA: Permission[] = [
   'customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK, 'projects:archive',
   ...SCHEDULING_WORK, 'scheduling:manage_calendars',
@@ -91,10 +98,13 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   // Manages members below owner and the business settings; full data access.
   ADMIN: new Set<Permission>([
     'business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read', 'sales:manage', ...DATA, ...FINANCE_ALL, ...PEOPLE_ALL,
-    'activity:read_restricted', 'communications:connect', 'communications:manage_connections',
+    'activity:read_restricted', 'communications:connect', 'communications:manage_connections', ...REPORTING_WORK, 'reporting:share', 'reporting:manage',
   ]),
   // Runs day-to-day work; can invite and manage MEMBERs only; no settings or audit log.
-  MANAGER: new Set<Permission>(['business:read', 'members:read', 'members:invite', 'members:manage', ...DATA, ...FINANCE_WORK, 'people:read', 'communications:connect']),
+  MANAGER: new Set<Permission>([
+    'business:read', 'members:read', 'members:invite', 'members:manage', ...DATA, ...FINANCE_WORK, 'people:read', 'communications:connect', ...REPORTING_WORK,
+    'reporting:share',
+  ]),
   // Reads and writes business data; no member or settings management. Works on projects and their
   // tasks but cannot archive or restore a project (a decision for whoever runs the work). No finance
   // access (FD-P1) and no People access (PD-1).
@@ -102,6 +112,7 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
     'business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK,
     ...SCHEDULING_WORK,
     ...COMMUNICATIONS,
+    ...REPORTING_WORK,
   ]),
 };
 

@@ -46961,6 +46961,3060 @@
         "additionalProperties": false
       }
     },
+    "reportingCatalog": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/reporting/metrics",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "timeZone": {
+            "type": "string"
+          },
+          "today": {
+            "type": "string",
+            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 80,
+                  "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "zone": {
+                  "type": "string",
+                  "enum": [
+                    "finance",
+                    "sales",
+                    "customers",
+                    "projects",
+                    "scheduling",
+                    "people",
+                    "communications"
+                  ]
+                },
+                "valueType": {
+                  "type": "string",
+                  "enum": [
+                    "money",
+                    "count"
+                  ]
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "temporal": {
+                  "type": "string",
+                  "enum": [
+                    "period",
+                    "snapshot"
+                  ]
+                },
+                "semantics": {
+                  "type": "string"
+                },
+                "dateField": {
+                  "type": "string"
+                },
+                "timeZone": {
+                  "type": "string"
+                },
+                "statusTreatment": {
+                  "type": "string"
+                },
+                "granularities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "day",
+                      "week",
+                      "month",
+                      "none"
+                    ]
+                  }
+                },
+                "dimensions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "currency",
+                      "customer"
+                    ]
+                  }
+                },
+                "filters": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "currencyCode",
+                      "customerId"
+                    ]
+                  }
+                },
+                "requires": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "dimensionRequires": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "tenantScope": {
+                  "type": "string",
+                  "const": "business"
+                },
+                "availability": {
+                  "type": "string",
+                  "enum": [
+                    "available",
+                    "planned"
+                  ]
+                },
+                "plannedNote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "accessible": {
+                  "type": "boolean"
+                },
+                "hasDetail": {
+                  "type": "boolean"
+                },
+                "defaultChart": {
+                  "type": "string",
+                  "enum": [
+                    "line",
+                    "bar",
+                    "kpi"
+                  ]
+                },
+                "minimumGroupSize": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "name",
+                "description",
+                "zone",
+                "valueType",
+                "unit",
+                "temporal",
+                "semantics",
+                "dateField",
+                "timeZone",
+                "statusTreatment",
+                "granularities",
+                "dimensions",
+                "filters",
+                "requires",
+                "dimensionRequires",
+                "tenantScope",
+                "availability",
+                "plannedNote",
+                "accessible",
+                "hasDetail",
+                "defaultChart",
+                "minimumGroupSize"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "maxMetrics": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "maxRangeDays": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "maxBuckets": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "maxSeries": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "maxDetailRows": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "maxMetrics",
+              "maxRangeDays",
+              "maxBuckets",
+              "maxSeries",
+              "maxDetailRows"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "timeZone",
+          "today",
+          "metrics",
+          "limits"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "runReport": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/reporting/query",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "metrics": {
+            "minItems": 1,
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 80,
+                  "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 999
+                }
+              },
+              "required": [
+                "id",
+                "version"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "fixed"
+                  },
+                  "from": {
+                    "type": "string",
+                    "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "relative"
+                  },
+                  "preset": {
+                    "type": "string",
+                    "enum": [
+                      "last_7_days",
+                      "last_30_days",
+                      "last_90_days",
+                      "this_month",
+                      "last_month",
+                      "last_3_months",
+                      "last_12_months",
+                      "year_to_date"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "preset"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "granularity": {
+            "default": "month",
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "none"
+            ]
+          },
+          "groupBy": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "currency",
+                  "customer"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filters": {
+            "default": {},
+            "type": "object",
+            "properties": {
+              "currencyCode": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "comparison": {
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "previous_period"
+            ]
+          }
+        },
+        "required": [
+          "metrics",
+          "date"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "timeZone": {
+            "type": "string"
+          },
+          "range": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+              },
+              "to": {
+                "type": "string",
+                "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          "comparisonRange": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "ok"
+                    },
+                    "metric": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "valueType": {
+                      "type": "string",
+                      "enum": [
+                        "money",
+                        "count"
+                      ]
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "temporal": {
+                      "type": "string",
+                      "enum": [
+                        "period",
+                        "snapshot"
+                      ]
+                    },
+                    "granularity": {
+                      "type": "string",
+                      "enum": [
+                        "day",
+                        "week",
+                        "month",
+                        "none"
+                      ]
+                    },
+                    "groupBy": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "currency",
+                            "customer"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "buckets": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                      }
+                    },
+                    "series": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "currencyCode": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "customerId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "total": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "comparisonTotal": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "changePercent": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "points": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "bucket": {
+                                  "type": "string",
+                                  "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                                },
+                                "value": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "bucket",
+                                "value"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "comparisonPoints": {
+                            "anyOf": [
+                              {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "bucket": {
+                                      "type": "string",
+                                      "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                                    },
+                                    "value": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "bucket",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "suppressed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "currencyCode",
+                          "customerId",
+                          "total",
+                          "comparisonTotal",
+                          "changePercent",
+                          "points",
+                          "comparisonPoints",
+                          "suppressed"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hiddenSeries": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "asOf": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "notes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "metric",
+                    "name",
+                    "valueType",
+                    "unit",
+                    "temporal",
+                    "granularity",
+                    "groupBy",
+                    "buckets",
+                    "series",
+                    "hiddenSeries",
+                    "asOf",
+                    "notes"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "error"
+                    },
+                    "metric": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "metric",
+                    "name",
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "timeZone",
+          "range",
+          "comparisonRange",
+          "results"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reportDetails": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/reporting/details",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "metric": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 999
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ],
+            "additionalProperties": false
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "fixed"
+                  },
+                  "from": {
+                    "type": "string",
+                    "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "relative"
+                  },
+                  "preset": {
+                    "type": "string",
+                    "enum": [
+                      "last_7_days",
+                      "last_30_days",
+                      "last_90_days",
+                      "this_month",
+                      "last_month",
+                      "last_3_months",
+                      "last_12_months",
+                      "year_to_date"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "preset"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "filters": {
+            "default": {},
+            "type": "object",
+            "properties": {
+              "currencyCode": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "customerId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "limit": {
+            "default": 25,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "metric",
+          "date"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "metric": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 999
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ],
+            "additionalProperties": false
+          },
+          "range": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+              },
+              "to": {
+                "type": "string",
+                "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "date",
+                    "datetime",
+                    "money",
+                    "status"
+                  ]
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "type"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "currencyCode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "cells": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "currencyCode",
+                "cells"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "metric",
+          "range",
+          "columns",
+          "rows",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "listSavedViews": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/reporting/views",
+      "query": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "scope": {
+            "default": "all",
+            "type": "string",
+            "enum": [
+              "all",
+              "mine",
+              "shared"
+            ]
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "views": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reportType": {
+                  "type": "string",
+                  "enum": [
+                    "metrics"
+                  ]
+                },
+                "configVersion": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "visibility": {
+                  "type": "string",
+                  "enum": [
+                    "PRIVATE",
+                    "BUSINESS"
+                  ]
+                },
+                "ownerUserId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "isOwner": {
+                  "type": "boolean"
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "metrics": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "maxLength": 80,
+                        "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 999
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "description",
+                "reportType",
+                "configVersion",
+                "visibility",
+                "ownerUserId",
+                "isOwner",
+                "version",
+                "createdAt",
+                "updatedAt",
+                "metrics",
+                "issues"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "views",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "createSavedView": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/reporting/views",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reportType": {
+            "default": "metrics",
+            "type": "string",
+            "enum": [
+              "metrics"
+            ]
+          },
+          "visibility": {
+            "default": "PRIVATE",
+            "type": "string",
+            "enum": [
+              "PRIVATE",
+              "BUSINESS"
+            ]
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "metrics": {
+                "minItems": 1,
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 999
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "date": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "fixed"
+                      },
+                      "from": {
+                        "type": "string",
+                        "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                      },
+                      "to": {
+                        "type": "string",
+                        "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "relative"
+                      },
+                      "preset": {
+                        "type": "string",
+                        "enum": [
+                          "last_7_days",
+                          "last_30_days",
+                          "last_90_days",
+                          "this_month",
+                          "last_month",
+                          "last_3_months",
+                          "last_12_months",
+                          "year_to_date"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "preset"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "granularity": {
+                "type": "string",
+                "enum": [
+                  "day",
+                  "week",
+                  "month",
+                  "none"
+                ]
+              },
+              "groupBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "currency",
+                      "customer"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "filters": {
+                "type": "object",
+                "properties": {
+                  "currencyCode": {
+                    "type": "string",
+                    "pattern": "^[A-Z]{3}$"
+                  },
+                  "customerId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "comparison": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "previous_period"
+                ]
+              },
+              "sort": {
+                "type": "object",
+                "properties": {
+                  "by": {
+                    "type": "string",
+                    "enum": [
+                      "bucket",
+                      "value"
+                    ]
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "asc",
+                      "desc"
+                    ]
+                  }
+                },
+                "required": [
+                  "by",
+                  "direction"
+                ],
+                "additionalProperties": false
+              },
+              "visualization": {
+                "type": "object",
+                "properties": {
+                  "chart": {
+                    "type": "string",
+                    "enum": [
+                      "line",
+                      "bar",
+                      "table"
+                    ]
+                  },
+                  "showComparison": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "chart",
+                  "showComparison"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "metrics",
+              "date",
+              "granularity",
+              "groupBy",
+              "filters",
+              "comparison",
+              "sort",
+              "visualization"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "title",
+          "config"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reportType": {
+                "type": "string",
+                "enum": [
+                  "metrics"
+                ]
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "metrics": {
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "date": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "fixed"
+                          },
+                          "from": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          },
+                          "to": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "from",
+                          "to"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "relative"
+                          },
+                          "preset": {
+                            "type": "string",
+                            "enum": [
+                              "last_7_days",
+                              "last_30_days",
+                              "last_90_days",
+                              "this_month",
+                              "last_month",
+                              "last_3_months",
+                              "last_12_months",
+                              "year_to_date"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "preset"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "granularity": {
+                    "type": "string",
+                    "enum": [
+                      "day",
+                      "week",
+                      "month",
+                      "none"
+                    ]
+                  },
+                  "groupBy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "currency",
+                          "customer"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "properties": {
+                      "currencyCode": {
+                        "type": "string",
+                        "pattern": "^[A-Z]{3}$"
+                      },
+                      "customerId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "comparison": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "previous_period"
+                    ]
+                  },
+                  "sort": {
+                    "type": "object",
+                    "properties": {
+                      "by": {
+                        "type": "string",
+                        "enum": [
+                          "bucket",
+                          "value"
+                        ]
+                      },
+                      "direction": {
+                        "type": "string",
+                        "enum": [
+                          "asc",
+                          "desc"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "by",
+                      "direction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "visualization": {
+                    "type": "object",
+                    "properties": {
+                      "chart": {
+                        "type": "string",
+                        "enum": [
+                          "line",
+                          "bar",
+                          "table"
+                        ]
+                      },
+                      "showComparison": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "chart",
+                      "showComparison"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "metrics",
+                  "date",
+                  "granularity",
+                  "groupBy",
+                  "filters",
+                  "comparison",
+                  "sort",
+                  "visualization"
+                ],
+                "additionalProperties": false
+              },
+              "configVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "visibility": {
+                "type": "string",
+                "enum": [
+                  "PRIVATE",
+                  "BUSINESS"
+                ]
+              },
+              "ownerUserId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "isOwner": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "description",
+              "reportType",
+              "config",
+              "configVersion",
+              "visibility",
+              "ownerUserId",
+              "isOwner",
+              "version",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "view"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "getSavedView": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/reporting/views/:viewId",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reportType": {
+                "type": "string",
+                "enum": [
+                  "metrics"
+                ]
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "metrics": {
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "date": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "fixed"
+                          },
+                          "from": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          },
+                          "to": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "from",
+                          "to"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "relative"
+                          },
+                          "preset": {
+                            "type": "string",
+                            "enum": [
+                              "last_7_days",
+                              "last_30_days",
+                              "last_90_days",
+                              "this_month",
+                              "last_month",
+                              "last_3_months",
+                              "last_12_months",
+                              "year_to_date"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "preset"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "granularity": {
+                    "type": "string",
+                    "enum": [
+                      "day",
+                      "week",
+                      "month",
+                      "none"
+                    ]
+                  },
+                  "groupBy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "currency",
+                          "customer"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "properties": {
+                      "currencyCode": {
+                        "type": "string",
+                        "pattern": "^[A-Z]{3}$"
+                      },
+                      "customerId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "comparison": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "previous_period"
+                    ]
+                  },
+                  "sort": {
+                    "type": "object",
+                    "properties": {
+                      "by": {
+                        "type": "string",
+                        "enum": [
+                          "bucket",
+                          "value"
+                        ]
+                      },
+                      "direction": {
+                        "type": "string",
+                        "enum": [
+                          "asc",
+                          "desc"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "by",
+                      "direction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "visualization": {
+                    "type": "object",
+                    "properties": {
+                      "chart": {
+                        "type": "string",
+                        "enum": [
+                          "line",
+                          "bar",
+                          "table"
+                        ]
+                      },
+                      "showComparison": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "chart",
+                      "showComparison"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "metrics",
+                  "date",
+                  "granularity",
+                  "groupBy",
+                  "filters",
+                  "comparison",
+                  "sort",
+                  "visualization"
+                ],
+                "additionalProperties": false
+              },
+              "configVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "visibility": {
+                "type": "string",
+                "enum": [
+                  "PRIVATE",
+                  "BUSINESS"
+                ]
+              },
+              "ownerUserId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "isOwner": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "description",
+              "reportType",
+              "config",
+              "configVersion",
+              "visibility",
+              "ownerUserId",
+              "isOwner",
+              "version",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "view"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "updateSavedView": {
+      "method": "PATCH",
+      "path": "/api/v1/b/:slug/reporting/views/:viewId",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "PRIVATE",
+              "BUSINESS"
+            ]
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "metrics": {
+                "minItems": 1,
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 999
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "date": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "fixed"
+                      },
+                      "from": {
+                        "type": "string",
+                        "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                      },
+                      "to": {
+                        "type": "string",
+                        "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "relative"
+                      },
+                      "preset": {
+                        "type": "string",
+                        "enum": [
+                          "last_7_days",
+                          "last_30_days",
+                          "last_90_days",
+                          "this_month",
+                          "last_month",
+                          "last_3_months",
+                          "last_12_months",
+                          "year_to_date"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "preset"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "granularity": {
+                "type": "string",
+                "enum": [
+                  "day",
+                  "week",
+                  "month",
+                  "none"
+                ]
+              },
+              "groupBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "currency",
+                      "customer"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "filters": {
+                "type": "object",
+                "properties": {
+                  "currencyCode": {
+                    "type": "string",
+                    "pattern": "^[A-Z]{3}$"
+                  },
+                  "customerId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "comparison": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "previous_period"
+                ]
+              },
+              "sort": {
+                "type": "object",
+                "properties": {
+                  "by": {
+                    "type": "string",
+                    "enum": [
+                      "bucket",
+                      "value"
+                    ]
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "asc",
+                      "desc"
+                    ]
+                  }
+                },
+                "required": [
+                  "by",
+                  "direction"
+                ],
+                "additionalProperties": false
+              },
+              "visualization": {
+                "type": "object",
+                "properties": {
+                  "chart": {
+                    "type": "string",
+                    "enum": [
+                      "line",
+                      "bar",
+                      "table"
+                    ]
+                  },
+                  "showComparison": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "chart",
+                  "showComparison"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "metrics",
+              "date",
+              "granularity",
+              "groupBy",
+              "filters",
+              "comparison",
+              "sort",
+              "visualization"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reportType": {
+                "type": "string",
+                "enum": [
+                  "metrics"
+                ]
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "metrics": {
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "date": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "fixed"
+                          },
+                          "from": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          },
+                          "to": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "from",
+                          "to"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "relative"
+                          },
+                          "preset": {
+                            "type": "string",
+                            "enum": [
+                              "last_7_days",
+                              "last_30_days",
+                              "last_90_days",
+                              "this_month",
+                              "last_month",
+                              "last_3_months",
+                              "last_12_months",
+                              "year_to_date"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "preset"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "granularity": {
+                    "type": "string",
+                    "enum": [
+                      "day",
+                      "week",
+                      "month",
+                      "none"
+                    ]
+                  },
+                  "groupBy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "currency",
+                          "customer"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "properties": {
+                      "currencyCode": {
+                        "type": "string",
+                        "pattern": "^[A-Z]{3}$"
+                      },
+                      "customerId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "comparison": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "previous_period"
+                    ]
+                  },
+                  "sort": {
+                    "type": "object",
+                    "properties": {
+                      "by": {
+                        "type": "string",
+                        "enum": [
+                          "bucket",
+                          "value"
+                        ]
+                      },
+                      "direction": {
+                        "type": "string",
+                        "enum": [
+                          "asc",
+                          "desc"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "by",
+                      "direction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "visualization": {
+                    "type": "object",
+                    "properties": {
+                      "chart": {
+                        "type": "string",
+                        "enum": [
+                          "line",
+                          "bar",
+                          "table"
+                        ]
+                      },
+                      "showComparison": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "chart",
+                      "showComparison"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "metrics",
+                  "date",
+                  "granularity",
+                  "groupBy",
+                  "filters",
+                  "comparison",
+                  "sort",
+                  "visualization"
+                ],
+                "additionalProperties": false
+              },
+              "configVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "visibility": {
+                "type": "string",
+                "enum": [
+                  "PRIVATE",
+                  "BUSINESS"
+                ]
+              },
+              "ownerUserId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "isOwner": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "description",
+              "reportType",
+              "config",
+              "configVersion",
+              "visibility",
+              "ownerUserId",
+              "isOwner",
+              "version",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "view"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "deleteSavedView": {
+      "method": "DELETE",
+      "path": "/api/v1/b/:slug/reporting/views/:viewId",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "runSavedView": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/reporting/views/:viewId/run",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reportType": {
+                "type": "string",
+                "enum": [
+                  "metrics"
+                ]
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "metrics": {
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "date": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "fixed"
+                          },
+                          "from": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          },
+                          "to": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "from",
+                          "to"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "relative"
+                          },
+                          "preset": {
+                            "type": "string",
+                            "enum": [
+                              "last_7_days",
+                              "last_30_days",
+                              "last_90_days",
+                              "this_month",
+                              "last_month",
+                              "last_3_months",
+                              "last_12_months",
+                              "year_to_date"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "preset"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "granularity": {
+                    "type": "string",
+                    "enum": [
+                      "day",
+                      "week",
+                      "month",
+                      "none"
+                    ]
+                  },
+                  "groupBy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "currency",
+                          "customer"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "properties": {
+                      "currencyCode": {
+                        "type": "string",
+                        "pattern": "^[A-Z]{3}$"
+                      },
+                      "customerId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "comparison": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "previous_period"
+                    ]
+                  },
+                  "sort": {
+                    "type": "object",
+                    "properties": {
+                      "by": {
+                        "type": "string",
+                        "enum": [
+                          "bucket",
+                          "value"
+                        ]
+                      },
+                      "direction": {
+                        "type": "string",
+                        "enum": [
+                          "asc",
+                          "desc"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "by",
+                      "direction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "visualization": {
+                    "type": "object",
+                    "properties": {
+                      "chart": {
+                        "type": "string",
+                        "enum": [
+                          "line",
+                          "bar",
+                          "table"
+                        ]
+                      },
+                      "showComparison": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "chart",
+                      "showComparison"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "metrics",
+                  "date",
+                  "granularity",
+                  "groupBy",
+                  "filters",
+                  "comparison",
+                  "sort",
+                  "visualization"
+                ],
+                "additionalProperties": false
+              },
+              "configVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "visibility": {
+                "type": "string",
+                "enum": [
+                  "PRIVATE",
+                  "BUSINESS"
+                ]
+              },
+              "ownerUserId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "isOwner": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "description",
+              "reportType",
+              "config",
+              "configVersion",
+              "visibility",
+              "ownerUserId",
+              "isOwner",
+              "version",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "timeZone": {
+                "type": "string"
+              },
+              "range": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              "comparisonRange": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string",
+                        "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                      },
+                      "to": {
+                        "type": "string",
+                        "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "const": "ok"
+                        },
+                        "metric": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 999
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "version"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "valueType": {
+                          "type": "string",
+                          "enum": [
+                            "money",
+                            "count"
+                          ]
+                        },
+                        "unit": {
+                          "type": "string"
+                        },
+                        "temporal": {
+                          "type": "string",
+                          "enum": [
+                            "period",
+                            "snapshot"
+                          ]
+                        },
+                        "granularity": {
+                          "type": "string",
+                          "enum": [
+                            "day",
+                            "week",
+                            "month",
+                            "none"
+                          ]
+                        },
+                        "groupBy": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "currency",
+                                "customer"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "buckets": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                          }
+                        },
+                        "series": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "currencyCode": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "customerId": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "total": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "comparisonTotal": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "changePercent": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "points": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "bucket": {
+                                      "type": "string",
+                                      "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                                    },
+                                    "value": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "bucket",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "comparisonPoints": {
+                                "anyOf": [
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "bucket": {
+                                          "type": "string",
+                                          "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                                        },
+                                        "value": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "bucket",
+                                        "value"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "suppressed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "currencyCode",
+                              "customerId",
+                              "total",
+                              "comparisonTotal",
+                              "changePercent",
+                              "points",
+                              "comparisonPoints",
+                              "suppressed"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "hiddenSeries": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "asOf": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "notes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "metric",
+                        "name",
+                        "valueType",
+                        "unit",
+                        "temporal",
+                        "granularity",
+                        "groupBy",
+                        "buckets",
+                        "series",
+                        "hiddenSeries",
+                        "asOf",
+                        "notes"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "const": "error"
+                        },
+                        "metric": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 999
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "version"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "name": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "metric",
+                        "name",
+                        "code",
+                        "message"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "timeZone",
+              "range",
+              "comparisonRange",
+              "results"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "view",
+          "result"
+        ],
+        "additionalProperties": false
+      }
+    },
     "getDocumentBranding": {
       "method": "GET",
       "path": "/api/v1/b/:slug/finance/document-branding",

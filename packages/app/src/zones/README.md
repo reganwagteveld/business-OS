@@ -11,6 +11,8 @@ Zones get their data only from the cloud API through the typed clients in `src/a
 - **Projects** (`projects/`): project list, project workspace with tasks and board.
 - **Finance** (`finance/`, F3): expenses (list with server-side search, filters and paging; draft form; detail with record, pay-in-full and void; no receipt attachments, FD-P6) and expense categories. The first Zone laid out with `ZonePage` and the `@business-os/ui` components. Quotes, invoices and payments screens come later.
 
+- **Reporting** (`reporting/`, R1): headline KPIs, one chart with its period table and records, date range, Zone filter and saved reports (docs/reporting-r1.md). Figures come from the API's registered metrics; the screen never calculates. Shared `KpiCard`, `LineChart` and `BarChart` live in `@business-os/ui` for other Zones.
+
 ## Conventions for a new Zone
 
 - Register it in `src/shell/registry.ts` and render inside `ZoneFrame`, passing the Zone's unsaved-changes `leave` guard. The application shell supplies the sidebar, breadcrumbs, business switcher and account menu (see `docs/ui/app-shell.md`); a Zone never draws its own header.

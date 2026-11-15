@@ -74,6 +74,7 @@ model Business {
   mailCredentials           MailConnectionCredential[]
   mailOAuthStates           MailOAuthState[]
   mailSyncJobs              MailSyncJob[]
+  reportingSavedViews       ReportingSavedView[]
 
   @@map("businesses")
 }
