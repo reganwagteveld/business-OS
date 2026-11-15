@@ -53,6 +53,13 @@ model Business {
   financeExpenseCategories  FinanceExpenseCategory[]
   financeExpenses           FinanceExpense[]
   financeExpenseAllocations FinanceExpenseAllocation[]
+  peopleDepartments         PeopleDepartment[]
+  peopleLocations           PeopleLocation[]
+  peopleEmployees           PeopleEmployee[]
+  peoplePersonalDetails     PeopleEmployeePersonalDetails[]
+  peopleDeptAssignments     PeopleDepartmentAssignment[]
+  peopleManagerAssignments  PeopleManagerAssignment[]
+  peopleStatusHistory       PeopleEmploymentStatusHistory[]
 
   @@map("businesses")
 }
@@ -73,6 +80,7 @@ model Membership {
   ownedOpportunities Opportunity[]
   ownedProjects      Project[]
   assignedTasks      ProjectTask[]
+  linkedEmployees    PeopleEmployee[]
 
   @@unique([businessId, userId])
   @@unique([businessId, id])

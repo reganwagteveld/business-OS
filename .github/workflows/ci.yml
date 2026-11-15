@@ -168,6 +168,13 @@ jobs:
           DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
           FINANCE_TEST_IP_BLOCK: '82'
           FINANCE_TEST_IP_BLOCK_F3: '84'
+      # People P1 (docs/people-data-model.md §2.2): reporting-line and termination races rely on a
+      # transaction-scoped advisory lock, so the suite runs again behind the transaction-mode pooler.
+      - name: People suite behind the pooler
+        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/people.test.ts
+        env:
+          DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
+          PEOPLE_TEST_IP_BLOCK: '94'
       - name: Migrations match schema
         run: pnpm db:check-migrations
 
