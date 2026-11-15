@@ -196,6 +196,11 @@ BEGIN
       OLD.external_thread_id, OLD.created_by_id, OLD.created_at) THEN
     RAISE EXCEPTION 'conversation identity is fixed' USING ERRCODE = 'CM001';
   END IF;
+  -- last_message_at only moves forward (C1-01): an older or null value never replaces a newer one,
+  -- whatever order concurrent writers commit in.
+  IF OLD.last_message_at IS NOT NULL AND (NEW.last_message_at IS NULL OR NEW.last_message_at < OLD.last_message_at) THEN
+    NEW.last_message_at := OLD.last_message_at;
+  END IF;
   RETURN NEW;
 END $$;
 CREATE TRIGGER conversations_guard_update BEFORE UPDATE ON "conversations" FOR EACH ROW EXECUTE FUNCTION conversations_guard_update();

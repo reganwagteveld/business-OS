@@ -203,9 +203,17 @@ async function insertMessage(
   return id;
 }
 
-async function touchConversation(db: AppTenantDb, conversation: ConversationRow, latest: Date) {
-  if (conversation.lastMessageAt && conversation.lastMessageAt >= latest) return;
-  await db.conversation.updateMany({ where: { id: conversation.id }, data: { lastMessageAt: latest } });
+/**
+ * Advances the conversation's last_message_at to `latest`, never backwards. One conditional UPDATE:
+ * PostgreSQL re-checks the WHERE clause against the row version it locks, so concurrent recordings
+ * cannot move the value back whatever order they commit in (C1-01). The conversations_guard_update
+ * trigger enforces the same for every writer.
+ */
+async function touchConversation(db: AppTenantDb, conversationId: string, latest: Date) {
+  await db.conversation.updateMany({
+    where: { id: conversationId, OR: [{ lastMessageAt: null }, { lastMessageAt: { lt: latest } }] },
+    data: { lastMessageAt: latest },
+  });
 }
 
 function occurredAtOf(input: MessageInput): Date {
@@ -222,7 +230,7 @@ export async function recordMessage(db: AppTenantDb, actorUserId: string, conver
   const participants = normaliseParticipants(input.participants);
   await checkParticipants(db, participants);
   const id = await insertMessage(db, actorUserId, conversation, link, input, occurredAt, participants, contentHash(input, occurredAt, participants), null);
-  await touchConversation(db, conversation, occurredAt);
+  await touchConversation(db, conversation.id, occurredAt);
   await recordAudit(db, actorUserId, 'message.recorded', { type: 'message', id }, { conversationId, direction: input.direction, source: 'MANUAL' });
   return toMessage((await db.message.findFirst({ where: { id }, select: messageSelect })) as MessageRow);
 }
@@ -262,7 +270,7 @@ export async function importMessages(
     if (!latest || occurredAt > latest) latest = occurredAt;
   }
   const created = results.filter((r) => r.status === 'created').length;
-  if (latest) await touchConversation(db, conversation, latest);
+  if (latest) await touchConversation(db, conversation.id, latest);
   await recordAudit(db, actorUserId, 'messages.imported', { type: 'conversation', id: conversationId }, {
     created: String(created), duplicates: String(results.length - created),
   });

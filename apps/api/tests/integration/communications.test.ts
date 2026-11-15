@@ -24,6 +24,7 @@ import * as conversationRoute from '@/app/api/v1/b/[slug]/conversations/[convers
 import * as messagesRoute from '@/app/api/v1/b/[slug]/conversations/[conversationId]/messages/route';
 import * as importRoute from '@/app/api/v1/b/[slug]/conversations/[conversationId]/messages/import/route';
 import { withTenant } from '@/core/db';
+import { backendPid, waitUntilBlocked } from './support/locks';
 import { devOutbox } from '@/core/email';
 import { listActivities } from '@/modules/activity';
 import { checkActivityData } from '@/modules/activity/server/activities';
@@ -166,6 +167,63 @@ describe('restricted notes', () => {
     const { rows } = await admin.query("SELECT metadata FROM audit_events WHERE target_id = $1 AND action = 'activity.created'", [secret.body.activity.id]);
     expect(rows[0].metadata).toMatchObject({ visibility: 'RESTRICTED' });
     expect(JSON.stringify(rows[0].metadata)).not.toContain('dispute');
+  });
+
+  it('restricted entries leak through no read path: lists, filters, paging, direct reads, edits, removal or errors (audit C1-02)', async () => {
+    const author = api(A.people.MEMBER!, A.slug);
+    const manager = api(A.people.MANAGER!, A.slug);
+    const admin_ = api(A.people.ADMIN!, A.slug);
+    const cust = (await author.createCustomer({ displayName: 'Leak Check Ltd' })).body.customer;
+    const pat = (await author.createContact({ firstName: 'Leak', customerId: cust.id })).body.contact;
+    // Three restricted notes newest, two standard notes oldest, so pages end on hidden rows.
+    const standard = [];
+    for (const h of ['01', '02']) standard.push((await author.createActivity({ type: 'note', contactId: pat.id, body: `open ${h}`, occurredAt: `2026-09-${h}T00:00:00Z` })).body.activity.id);
+    const hidden = [];
+    for (const h of ['03', '04', '05']) hidden.push((await author.createActivity({ type: 'note', contactId: pat.id, body: `secret ${h}`, visibility: 'RESTRICTED', occurredAt: `2026-09-${h}T00:00:00Z` })).body.activity.id);
+    const all = async (who: ReturnType<typeof api>, qs: string) => {
+      const ids: string[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const res = await who.listActivities(`${qs}&limit=1${cursor ? `&cursor=${cursor}` : ''}`);
+        expect(res.status).toBe(200);
+        ids.push(...res.body.activities.map((a: { id: string }) => a.id));
+        cursor = res.body.nextCursor;
+        pages++;
+      } while (cursor);
+      return { ids, pages };
+    };
+    const filters = [`?customerId=${cust.id}&types=note`, `?contactId=${pat.id}&types=note`, '?types=note', `?customerId=${cust.id}&types=note&visibility=all`];
+    for (const qs of filters) {
+      const seen = await all(manager, qs);
+      for (const id of hidden) expect(seen.ids, qs).not.toContain(id);
+      if (qs.includes(cust.id) || qs.includes(pat.id)) {
+        // exactly the standard notes, and no extra (empty) page that would hint at hidden rows
+        expect(seen.ids, qs).toEqual([...standard].reverse());
+        expect(seen.pages, qs).toBe(2);
+      }
+    }
+    expect((await manager.listActivities(`?customerId=${cust.id}&visibility=restricted`)).body).toEqual({ activities: [], nextCursor: null });
+    // a cursor pointing at a hidden row reveals nothing more than its position
+    const authorPage = (await author.listActivities(`?customerId=${cust.id}&types=note&limit=1`)).body;
+    expect(authorPage.activities[0].id).toBe(hidden[2]);
+    const viaHiddenCursor = (await manager.listActivities(`?customerId=${cust.id}&types=note&limit=10&cursor=${authorPage.nextCursor}`)).body;
+    expect(viaHiddenCursor.activities.map((a: { id: string }) => a.id)).toEqual([...standard].reverse());
+    // direct read, edit and removal of a hidden note answer exactly like a note that does not exist
+    const missing = randomUUID();
+    for (const id of hidden) {
+      expect(await manager.getActivity(id)).toEqual(await manager.getActivity(missing));
+      expect(await manager.updateNote(id, { body: 'x' })).toEqual(await manager.updateNote(missing, { body: 'x' }));
+      expect(await manager.removeActivity(id)).toEqual(await manager.removeActivity(missing));
+    }
+    expect(await manager.getActivity(missing)).toEqual({ status: 404, body: { error: 'not_found' } });
+    // ADMIN may read it (read_restricted) but, not being the author, may not change it
+    expect((await admin_.getActivity(hidden[0]!)).status).toBe(200);
+    expect((await admin_.updateNote(hidden[0]!, { body: 'x' })).status).toBe(403);
+    // the hidden notes are untouched, and nothing about them reached the audit log as content
+    for (const id of hidden) expect((await author.getActivity(id)).body.activity.body).toMatch(/^secret/);
+    const audits = await admin.query("SELECT metadata FROM audit_events WHERE target_id = ANY($1::uuid[])", [hidden]);
+    expect(JSON.stringify(audits.rows)).not.toContain('secret');
   });
 
   it('only notes can be restricted (contract and database)', async () => {
@@ -411,6 +469,61 @@ describe('conversations and messages', () => {
     expect([...first.conversations, ...second.conversations].map((c) => c.id)).toEqual([...made].reverse());
     expect((await member.listConversations(`?contactId=${contact.id}`)).body.conversations.map((c: { id: string }) => c.id)).toEqual([made[3]]);
     expect((await member.listConversations(`?customerId=${cust.id}&contactId=${contact.id}`)).status).toBe(400);
+  });
+});
+
+describe('conversation last_message_at under concurrency (audit C1-01)', () => {
+  /**
+   * Two recordings race on one conversation. A superuser holds the conversation row lock, so both
+   * requests have read the conversation (last_message_at still null) and queue on the update; the
+   * holder then releases and they commit in queue order. The maximum message time must win whichever
+   * order they commit in.
+   */
+  async function race(first: string, second: string) {
+    const owner = api(A.people.OWNER!, A.slug);
+    const cust = (await owner.createCustomer({ displayName: `Race ${first} ${second}` })).body.customer;
+    const conv = (await owner.createConversation({ channel: 'EMAIL', customerId: cust.id })).body.conversation;
+    const holder = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM conversations WHERE id = $1 FOR UPDATE', [conv.id]);
+      const pid = await backendPid(holder);
+      const a = owner.recordMessage(conv.id, email({ occurredAt: first, body: 'first writer' }));
+      await waitUntilBlocked(admin, pid, { count: 1 });
+      const b = owner.recordMessage(conv.id, email({ occurredAt: second, body: 'second writer' }));
+      await waitUntilBlocked(admin, pid, { count: 2 });
+      await holder.query('COMMIT');
+      expect((await a).status).toBe(201);
+      expect((await b).status).toBe(201);
+    } finally {
+      await holder.end();
+    }
+    return (await owner.getConversation(conv.id)).body.conversation.lastMessageAt as string;
+  }
+
+  it('newer first, older second: the older commit does not move it backwards', async () => {
+    expect(await race('2026-10-05T09:00:00Z', '2026-10-01T09:00:00Z')).toBe('2026-10-05T09:00:00.000Z');
+  });
+
+  it('older first, newer second: it advances to the newer time', async () => {
+    expect(await race('2026-10-01T09:00:00Z', '2026-10-05T09:00:00Z')).toBe('2026-10-05T09:00:00.000Z');
+  });
+
+  it('the database keeps the maximum for every writer, including a null or older value', async () => {
+    const owner = api(A.people.OWNER!, A.slug);
+    const cust = (await owner.createCustomer({ displayName: 'Monotonic Mail' })).body.customer;
+    const conv = (await owner.createConversation({ channel: 'EMAIL', customerId: cust.id })).body.conversation;
+    await owner.recordMessage(conv.id, email({ occurredAt: '2026-10-03T09:00:00Z' }));
+    const at = async () => (await admin.query('SELECT last_message_at FROM conversations WHERE id = $1', [conv.id])).rows[0].last_message_at.toISOString();
+    await asApp(A.businessId, A.people.OWNER!.id, 'UPDATE conversations SET last_message_at = NULL WHERE id = $1', [conv.id]);
+    expect(await at()).toBe('2026-10-03T09:00:00.000Z');
+    await asApp(A.businessId, A.people.OWNER!.id, "UPDATE conversations SET last_message_at = '2020-01-01' WHERE id = $1", [conv.id]);
+    expect(await at()).toBe('2026-10-03T09:00:00.000Z');
+    await admin.query("UPDATE conversations SET last_message_at = '2020-01-01' WHERE id = $1", [conv.id]);
+    expect(await at()).toBe('2026-10-03T09:00:00.000Z');
+    await owner.recordMessage(conv.id, email({ occurredAt: '2026-10-04T09:00:00Z' }));
+    expect(await at()).toBe('2026-10-04T09:00:00.000Z');
   });
 });
 

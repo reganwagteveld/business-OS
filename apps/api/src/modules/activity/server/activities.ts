@@ -222,6 +222,14 @@ export async function createActivity(
   return toActivity(row);
 }
 
+/**
+ * Re-reads an entry this unit of work has just changed, after visibleRow already proved the viewer may
+ * see it (a removed entry is no longer visible, so it cannot go through visibleTo). Never a first read.
+ */
+async function reread(db: AppTenantDb, id: string): Promise<Row> {
+  return (await db.activity.findFirst({ where: { id }, select })) as Row; // visibility: checked by visibleRow before the write
+}
+
 /** One entry the viewer may see; anything else (another business, removed, restricted, message without access) is 404. */
 async function visibleRow(db: AppTenantDb, viewer: ActivityViewer, id: string): Promise<Row> {
   const row = (await db.activity.findFirst({ where: { id, AND: visibleTo(viewer) }, select })) as Row | null;
@@ -254,7 +262,7 @@ export async function updateNote(
   const fields = (['subject', 'body'] as const).filter((k) => patch[k] !== undefined && patch[k] !== row[k]);
   if (fields.length === 0) return toActivity(row);
   await db.activity.updateMany({ where: { id, deletedAt: null }, data: { subject, body } });
-  const updated = (await db.activity.findFirst({ where: { id }, select })) as Row;
+  const updated = await reread(db, id);
   await recordAudit(db, viewer.userId, 'activity.updated', { type: 'activity', id }, { activityType: row.type, fields: [...fields] });
   return toActivity(updated);
 }
@@ -269,7 +277,7 @@ export async function removeActivity(db: AppTenantDb, viewer: ActivityViewer, id
   if (row.actorUserId !== viewer.userId) throw new ForbiddenError();
   await assertSubjectsActive(db, row);
   await db.activity.updateMany({ where: { id, deletedAt: null }, data: { deletedAt: new Date() } });
-  const updated = (await db.activity.findFirst({ where: { id }, select })) as Row;
+  const updated = await reread(db, id);
   await recordAudit(db, viewer.userId, 'activity.removed', { type: 'activity', id }, { activityType: row.type });
   return toActivity(updated);
 }
@@ -285,7 +293,7 @@ export async function listActivities(
   query: { customerId?: string; contactId?: string; types?: string[]; visibility?: 'all' | 'standard' | 'restricted'; cursor?: string; limit: number },
 ): Promise<{ activities: ActivityDto[]; nextCursor: string | null }> {
   const after = decodeCursor(query.cursor, 'activities', ['t', 'i'] as const);
-  const and: Record<string, unknown>[] = visibleTo(viewer);
+  const and: Record<string, unknown>[] = [];
   if (query.customerId) and.push({ customerId: query.customerId });
   if (query.contactId) and.push({ contactId: query.contactId });
   if (query.types) {
@@ -301,7 +309,7 @@ export async function listActivities(
     and.push({ OR: [{ occurredAt: { lt: t } }, { occurredAt: t, id: { lt: after.i } }] });
   }
   const rows = (await db.activity.findMany({
-    where: { AND: and }, select, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: query.limit + 1,
+    where: { AND: [...visibleTo(viewer), ...and] }, select, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: query.limit + 1,
   })) as Row[];
   const page = rows.slice(0, query.limit);
   const last = page[page.length - 1];

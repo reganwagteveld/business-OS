@@ -63,6 +63,10 @@ validated by a registry in code: `call`/`email`/`interaction` carry `direction` 
 
 ### 2.2 `conversations`
 
+`last_message_at` only moves forward: the service uses one conditional UPDATE
+(`WHERE last_message_at IS NULL OR last_message_at < $new`), and `conversations_guard_update` keeps
+the old value if any writer tries to set an older value or null (audit C1-01).
+
 `channel` (`EMAIL, PHONE, SMS, CHAT, SOCIAL, IN_PERSON, OTHER`), `subject`, `customer_id`,
 `contact_id` (at least one), `created_by_id` (verified user), `source` (`MANUAL`/`IMPORT`),
 `external_source` + `external_thread_id` (optional, unique per business), `last_message_at`.
@@ -119,7 +123,10 @@ race on the unique index also gets 409; retrying it reports `duplicate`.
 | `communications:read` (new) | ✓ | ✓ | ✓ | ✓ |
 | `communications:record` (new) | ✓ | ✓ | ✓ | ✓ |
 
-A restricted note is visible to its author and to holders of `activity:read_restricted`; to anyone
+Every read of `activities` (list, filters, paging and direct get, plus the reads behind edit and remove)
+applies the single predicate `visibleTo`; a unit test fails if any read path skips it. A hidden note
+answers exactly like a missing one (same 404 body), is never counted or paged over in a way that leaves an
+extra empty page, and a cursor positioned on one reveals nothing (audit C1-02). A restricted note is visible to its author and to holders of `activity:read_restricted`; to anyone
 else it does not exist (404 on direct access, absent from lists and counts). Timeline entries linked
 to a message are shown only with `communications:read`. Customer/contact-filtered reads also need
 `customers:read`. Editing and removing are author-only with `activity:write`.
@@ -155,15 +162,36 @@ objects, so it can be applied before or after `20261118000000_people` (merged in
 every branch, worktree and open PR on 2026-11-15. Precondition: none (existing
 activity rows get `visibility = 'STANDARD'` by default and satisfy every new CHECK).
 
-## 7. Retention and erasure
+## 7. Retention and erasure — C1 is not privacy-complete
 
-- Business purge: `ON DELETE CASCADE` from `businesses` on all new tables.
-- Contact erasure (deferred, data-model §7): the erasure service will (a) null `message_participants.contact_id`
-  and scrub `display_name`/`address` for that contact, (b) scrub `messages.subject/body` where the
-  contact is a participant if required, and (c) handle `conversations.contact_id`. Because messages are
-  immutable to the app, that service needs its own privileged path; the immutability triggers will be
-  amended by that migration, deliberately and reviewed.
-- No message content is written to audit metadata or logs.
+**C1 does not support erasure of customer or contact data.** Erasure stays deferred, as agreed. Before
+any customer-data erasure (for example a GDPR-style request for a contact) can be supported, all of
+the following are required, each as reviewed work:
+
+1. **A privileged erasure pathway**, for example a SECURITY DEFINER function or a dedicated role
+   (`bos_maint`/`bos_definer`, data-model §5.1). It must verify the requesting OWNER/ADMIN from the raw
+   session token in the database, as the scheduling erasure design does, never from `app.user_id`.
+   Tenant code (`bos_app`) has no DELETE on any C1 table and no UPDATE on message history, and must not
+   be given them.
+2. **Trigger changes.** These triggers currently refuse every change that erasure needs:
+   `messages_read_only` and `message_participants_read_only` (CM002) refuse scrubbing message
+   `subject`/`body` and participant `display_name`/`address`. `activities_guard_update` (CM001)
+   refuses scrubbing `subject`/`body` of calls, meetings, emails and interactions and refuses clearing
+   `contact_id`. `conversations_guard_update` (CM001) refuses clearing `contact_id` or `subject`.
+   The erasure migration must allow those changes only on the privileged path.
+3. **Grant and FK changes.** `contact_id` FKs on `activities`, `conversations` and
+   `message_participants` are `NO ACTION`, so a contact cannot be hard-deleted while referenced. The
+   erasure design must pick `SET NULL (contact_id)` or explicit nulling in the privileged function,
+   and grant only that path the required DELETE/UPDATE.
+4. **Scope rules**, decided by the owner: what is scrubbed when a contact is one participant among
+   several, how imported messages are handled (`external_message_id` is kept or not), and how the
+   erasure itself is audited without the erased PII.
+
+What C1 already does to make that later work possible (prepared for erasure, but no erasure exists):
+every contact link is nullable, personal content sits in known columns (`messages.subject/body`,
+`message_participants.display_name/address`, `conversations.subject`, `activities.subject/body`), no
+message content enters audit metadata or logs, and business purge cascades through every C1 table
+(`ON DELETE CASCADE` from `businesses`, tested). Retention periods for communications are not defined.
 
 ## 8. UI (`packages/app/src/zones/activity`)
 
@@ -185,9 +213,12 @@ the Customer Zone's `ActivityComposer` is now an alias of `LogInteractionForm`.
   know the signed-in user's id yet, which "edit your own" needs).
 - Sales/Projects/Finance/People timeline links (one composite FK column per subject, option A), via
   `recordSystemActivity` with registered types.
-- Contact erasure (§7), conversation archiving, full-text search, restricted visibility in RLS.
+- Contact erasure (§7: needs a privileged pathway plus trigger, grant and FK changes), conversation
+  archiving, full-text search, restricted visibility in RLS.
 
-## 10. Decisions requiring owner approval (provisional, implemented conservatively)
+## 10. Owner decisions
+
+D-C1 to D-C7 were approved as proposed on 2026-11-15 (preliminary audit of PR #39).
 
 | # | Decision | Implemented |
 |---|---|---|
@@ -206,5 +237,5 @@ the Customer Zone's `ActivityComposer` is now an alias of `LogInteractionForm`.
   Contact and Activity blocks in `customers.prisma` (whitespace only).
 - Restricted notes rely on the service filter (`visibleTo`), not RLS; every read goes through it and
   integration tests cover list, get, edit and remove.
-- Erasure will need a privileged path that the C1 immutability guards currently refuse (by design).
+- **Not privacy-complete:** contact/customer erasure is unsupported until the privileged pathway and the trigger, grant and FK changes in §7 exist.
 - Message bodies are stored as plain text up to 100,000 characters; there is no content scanning.
