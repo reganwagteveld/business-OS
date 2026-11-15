@@ -116,7 +116,9 @@ function Frame({ kind, props, children }: { kind: 'line' | 'bar'; props: ChartPr
           ))}
         </ul>
       ) : null}
-      <table className="sr-only">
+      {/* Wrapped: a table sizes to its content and would ignore sr-only's 1px width, widening the page. */}
+      <div className="sr-only">
+      <table>
         <caption>{summary}</caption>
         <thead>
           <tr><th scope="col">Period</th>{series.map((s) => <th key={s.key} scope="col">{s.label}</th>)}</tr>
@@ -130,6 +132,7 @@ function Frame({ kind, props, children }: { kind: 'line' | 'bar'; props: ChartPr
           ))}
         </tbody>
       </table>
+      </div>
     </figure>
   );
 }

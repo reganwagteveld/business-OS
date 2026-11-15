@@ -289,7 +289,11 @@ function Kpis({ client, slug, settings, catalog, locale, onSessionEnded, onPick 
           const change = single ? changeText(single.changePercent) : null;
           return (
             <KpiCard key={m.id} label={m.name}
-              values={r.series.map((s) => ({ key: s.key, text: formatValue(s.total, r.valueType, s.currencyCode, locale), caption: r.valueType === 'money' ? s.currencyCode : undefined }))}
+              values={r.series.map((s) => {
+                const text = formatValue(s.total, r.valueType, s.currencyCode, locale);
+                // Name the currency once: only when the locale's format does not already show its code.
+                return { key: s.key, text, caption: r.valueType === 'money' && s.currencyCode && !text.includes(s.currencyCode) ? s.currencyCode : undefined };
+              })}
               change={change?.text} trend={change?.trend}
               note={r.temporal === 'snapshot' ? `As of ${formatDate(r.asOf, locale)}` : m.dateField}
               action={<Button size="sm" variant="ghost" onClick={() => onPick(m.id)} aria-label={`Show ${m.name} in the chart`}>Show in chart</Button>}
