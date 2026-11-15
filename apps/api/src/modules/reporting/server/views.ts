@@ -4,11 +4,12 @@ import 'server-only';
 // as the person running it. PRIVATE views are visible to their owner only; BUSINESS views to anyone in
 // the business who holds reporting:read and can read every source the view uses (otherwise the view is
 // left out of lists and answers 404, so its title and filters reveal nothing). Only the owner edits.
-// The database backs each rule with restrictive RLS policies (migration 20261122000000_reporting).
+// The database backs each rule with restrictive RLS policies (migration 20261124000000_reporting).
 import { randomUUID } from 'node:crypto';
 import { SavedViewConfig, SAVED_VIEW_CONFIG_VERSION, type SavedView, type SavedViewListItem } from '@business-os/contracts';
 import { recordAudit } from '@/core/audit';
 import type { AppTenantDb } from '@/core/db';
+import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
 import { can, ForbiddenError, type Principal } from '@/modules/access';
 import { checkAccess, checkShape, resolveMetric, runQuery } from './engine';
@@ -95,24 +96,67 @@ function validateForSave(actor: ReportingActor, config: SavedViewConfig): void {
   if (config.date.kind === 'fixed') checkRange(resolveDate(config.date, config.date.to), config.granularity);
 }
 
-export async function listViews(db: AppTenantDb, actor: ReportingActor, scope: 'all' | 'mine' | 'shared'): Promise<SavedViewListItem[]> {
-  const where = scope === 'mine' ? { ownerUserId: actor.userId }
-    : scope === 'shared' ? { visibility: 'BUSINESS' }
-    : { OR: [{ ownerUserId: actor.userId }, { visibility: 'BUSINESS' }] };
-  const rows = (await db.reportingSavedView.findMany({ where, select, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], take: 500 })) as Row[];
+/** Rows read per round trip, and at most per request, while filling one page of views this actor may see. */
+const LIST_BATCH = 200;
+const LIST_SCAN_LIMIT = 1000;
+const EXACT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Views this actor may see, most recently updated first, keyset-paginated on (updated_at, id) with the
+ * timestamp kept to the microsecond. Nothing is silently left out: rows the actor may not see (another
+ * person's shared view over a source they cannot read) are skipped while the page is filled, and when a
+ * request has scanned LIST_SCAN_LIMIT rows it returns what it found with a cursor to continue, so every
+ * view is reached by following `nextCursor` until it is null.
+ */
+export async function listViews(db: AppTenantDb, actor: ReportingActor, query: { scope: 'all' | 'mine' | 'shared'; cursor?: string; limit: number }) {
+  const list = `reporting:views:${query.scope}`;
+  let after = decodeCursor(query.cursor, list, ['t', 'i'] as const);
+  if (after && (!EXACT.test(after.t) || !UUID.test(after.i))) invalidCursor();
+  const mine = query.scope !== 'shared';
+  const shared = query.scope !== 'mine';
   const out: SavedViewListItem[] = [];
-  for (const row of rows) {
-    const config = readConfig(row);
-    if (row.ownerUserId !== actor.userId && !visibleToOthers(actor, row, config)) continue;
-    out.push({
-      id: row.id, title: row.title, description: row.description, reportType: 'metrics', configVersion: row.configVersion,
-      visibility: row.visibility as SavedView['visibility'], ownerUserId: row.ownerUserId, isOwner: row.ownerUserId === actor.userId, version: row.version,
-      createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
-      metrics: config?.metrics ?? [],
-      issues: config ? issuesOf(actor, config) : [UNREADABLE],
-    });
+  let scanned = 0;
+  let last: { t: string; i: string } | null = null;
+  let exhausted = false;
+  while (out.length < query.limit && scanned < LIST_SCAN_LIMIT) {
+    const keys = await db.$queryRaw<{ id: string; at: string }[]>`
+      SELECT v.id::text, to_char(v.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
+        FROM reporting_saved_views v
+       WHERE v.business_id = nullif(current_setting('app.business_id', true), '')::uuid
+         AND ((${mine}::boolean AND v.owner_user_id = ${actor.userId}::uuid)
+           OR (${shared}::boolean AND v.visibility = 'BUSINESS' AND (${query.scope === 'shared'}::boolean OR v.owner_user_id <> ${actor.userId}::uuid)))
+         AND (${after?.t ?? null}::timestamptz IS NULL OR (v.updated_at, v.id) < (${after?.t ?? null}::timestamptz, ${after?.i ?? null}::uuid))
+       ORDER BY v.updated_at DESC, v.id DESC
+       LIMIT ${LIST_BATCH}`;
+    if (keys.length === 0) {
+      exhausted = true;
+      break;
+    }
+    const rows = new Map(((await db.reportingSavedView.findMany({ where: { id: { in: keys.map((k) => k.id) } }, select })) as Row[]).map((r) => [r.id, r]));
+    for (const key of keys) {
+      scanned++;
+      last = { t: key.at, i: key.id };
+      const row = rows.get(key.id);
+      if (row) {
+        const config = readConfig(row);
+        if (row.ownerUserId === actor.userId || visibleToOthers(actor, row, config)) {
+          out.push({
+            id: row.id, title: row.title, description: row.description, reportType: 'metrics', configVersion: row.configVersion,
+            visibility: row.visibility as SavedView['visibility'], ownerUserId: row.ownerUserId, isOwner: row.ownerUserId === actor.userId, version: row.version,
+            createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+            metrics: config?.metrics ?? [],
+            issues: config ? issuesOf(actor, config) : [UNREADABLE],
+          });
+        }
+      }
+      if (out.length >= query.limit) break;
+    }
+    if (keys.length < LIST_BATCH && last?.i === keys[keys.length - 1]!.id) exhausted = true;
+    if (exhausted) break;
+    after = last;
   }
-  return out;
+  return { views: out, nextCursor: !exhausted && last ? encodeCursor(list, last) : null };
 }
 
 export async function getView(db: AppTenantDb, actor: ReportingActor, id: string): Promise<SavedView> {

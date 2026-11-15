@@ -6,9 +6,9 @@ import { tenantRoute } from '@/app/api/_lib/routes';
 
 export const dynamic = 'force-dynamic';
 
-/** Your own views and the shared views whose every source you can read. reporting:read. */
+/** Your own views and the shared views whose every source you can read, a page at a time (follow nextCursor). reporting:read. */
 export const GET = tenantRoute({ permission: 'reporting:read', query: ListSavedViewsQuery, response: ListSavedViewsResponse }, async ({ db, actor, query }) => ({
-  body: { views: await listViews(db, reportingActor(actor), query.scope) },
+  body: await listViews(db, reportingActor(actor), query),
 }));
 
 /** Saves a configuration (never results). Private by default; sharing needs reporting:share. reporting:save. */

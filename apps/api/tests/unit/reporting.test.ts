@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { ReportingQueryRequest, SavedViewConfig } from '@business-os/contracts';
 import { ForbiddenError, permissionsFor, type Role } from '@/modules/access';
-import { buckets, checkRange, previousPeriod, resolveDate, todayIn, LIMITS } from '@/modules/reporting/server/periods';
+import { addDays, buckets, checkRange, daysBetween, previousPeriod, resolveDate, todayIn, LIMITS } from '@/modules/reporting/server/periods';
 import { METRICS, metricById, type MetricDefinition } from '@/modules/reporting/server/registry';
 import { checkAccess, checkShape, resolveMetric, shapeSeries } from '@/modules/reporting/server/engine';
 import { DETAIL_SOURCES, PERIOD_SOURCES, SNAPSHOT_SOURCES } from '@/modules/reporting/server/sources';
@@ -53,18 +53,34 @@ describe('calendar periods', () => {
     expect(resolveDate({ kind: 'relative', preset: 'last_month' }, '2027-01-10')).toEqual({ from: '2026-12-01', to: '2026-12-31' });
   });
 
-  it('compares with the period of equal length immediately before', () => {
-    // Whole calendar months shift by months, keeping month ends.
-    expect(previousPeriod({ from: '2026-11-01', to: '2026-11-30' })).toEqual({ from: '2026-10-01', to: '2026-10-31' });
-    expect(previousPeriod({ from: '2026-03-01', to: '2026-03-31' })).toEqual({ from: '2026-02-01', to: '2026-02-28' });
-    expect(previousPeriod({ from: '2026-07-01', to: '2026-09-30' })).toEqual({ from: '2026-04-01', to: '2026-06-30' });
-    // Month to date compares with the same days of the previous month (clamped to its length).
-    expect(previousPeriod({ from: '2026-11-01', to: '2026-11-15' })).toEqual({ from: '2026-10-01', to: '2026-10-15' });
-    expect(previousPeriod({ from: '2026-03-01', to: '2026-03-30' })).toEqual({ from: '2026-02-01', to: '2026-02-28' });
-    expect(previousPeriod({ from: '2027-01-01', to: '2027-01-31' })).toEqual({ from: '2026-12-01', to: '2026-12-31' });
-    // Any other range shifts by its length in days.
-    expect(previousPeriod({ from: '2026-11-10', to: '2026-11-16' })).toEqual({ from: '2026-11-03', to: '2026-11-09' });
+  it('compares with the immediately preceding period of the same number of days (R-D5)', () => {
+    // Partial month: 15 days back, not the same dates of the previous month.
+    expect(previousPeriod({ from: '2026-11-01', to: '2026-11-15' })).toEqual({ from: '2026-10-17', to: '2026-10-31' });
+    // Whole months of different lengths are compared day for day, never month for month.
+    expect(previousPeriod({ from: '2026-11-01', to: '2026-11-30' })).toEqual({ from: '2026-10-02', to: '2026-10-31' }); // 30 days
+    expect(previousPeriod({ from: '2026-10-01', to: '2026-10-31' })).toEqual({ from: '2026-08-31', to: '2026-09-30' }); // 31 days
+    expect(previousPeriod({ from: '2026-03-01', to: '2026-03-31' })).toEqual({ from: '2026-01-29', to: '2026-02-28' }); // across a 28-day February
+    expect(previousPeriod({ from: '2028-03-01', to: '2028-03-31' })).toEqual({ from: '2028-01-30', to: '2028-02-29' }); // leap year
+    expect(previousPeriod({ from: '2026-02-01', to: '2026-02-28' })).toEqual({ from: '2026-01-04', to: '2026-01-31' }); // 28 days
+    // Quarters and year ends: the same rule.
+    expect(previousPeriod({ from: '2026-07-01', to: '2026-09-30' })).toEqual({ from: '2026-03-31', to: '2026-06-30' }); // 92 days
+    expect(previousPeriod({ from: '2027-01-01', to: '2027-01-07' })).toEqual({ from: '2026-12-25', to: '2026-12-31' });
     expect(previousPeriod({ from: '2026-03-02', to: '2026-03-02' })).toEqual({ from: '2026-03-01', to: '2026-03-01' });
+    // Always contiguous and the same length.
+    for (const [from, to] of [['2026-01-15', '2026-04-03'], ['2026-11-01', '2026-11-15'], ['2028-02-01', '2028-02-29']] as const) {
+      const prev = previousPeriod({ from, to });
+      expect(addDays(prev.to, 1)).toBe(from);
+      expect(daysBetween(prev.from, prev.to)).toBe(daysBetween(from, to));
+    }
+  });
+
+  it('aligns comparison buckets by position over the preceding days', () => {
+    // 1–15 Nov by week has three Monday weeks (26 Oct, 2 Nov, 9 Nov); 17–31 Oct has three as well.
+    const range = { from: '2026-11-01', to: '2026-11-15' };
+    expect(buckets(range, 'week')).toEqual(['2026-10-26', '2026-11-02', '2026-11-09']);
+    expect(buckets(previousPeriod(range), 'week')).toEqual(['2026-10-12', '2026-10-19', '2026-10-26']);
+    // Days compare day n with day n.
+    expect(buckets(previousPeriod(range), 'day')).toHaveLength(buckets(range, 'day').length);
   });
 
   it('bounds ranges and bucket counts with actionable codes', () => {

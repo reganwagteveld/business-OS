@@ -316,11 +316,12 @@ describe('financial metrics match Finance', () => {
       metrics: [M('finance.invoiced_amount')], date: fixed('2026-11-01', '2026-11-30'), granularity: 'week', comparison: 'previous_period', filters: { currencyCode: 'AUD' },
     }));
     const res = ok(await query(A.people.OWNER!, A.slug, { metrics: [M('finance.invoiced_amount')], date: fixed('2026-11-01', '2026-11-30'), comparison: 'previous_period' }));
-    expect(res.comparisonRange).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+    // The 30 days immediately before 1–30 November: 2–31 October (both October invoices fall inside it).
+    expect(res.comparisonRange).toEqual({ from: '2026-10-02', to: '2026-10-31' });
     const s = r.series[0]!;
     expect(s.total).toBe(sum2(a.invoicedNov));
     expect(s.comparisonTotal).toBe(sum2(a.invoicedOct));
-    // November has six Monday weeks in range, October five: aligned by position, the shorter side simply ends.
+    // November has six Monday weeks in range, 2–31 October five: aligned by position, the shorter side simply ends.
     expect(s.points).toHaveLength(6);
     expect(s.comparisonPoints).toHaveLength(5);
     expect(s.changePercent).not.toBeNull();
@@ -585,5 +586,70 @@ describe('saved views', () => {
     await app.query('ROLLBACK');
     const policies = await admin.query("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'reporting_saved_views'");
     expect(policies.rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
+  });
+});
+
+describe('saved-view list pagination (audit R1-2)', () => {
+  type Page = { views: { id: string; isOwner: boolean }[]; nextCursor: string | null };
+  const page = async (who: User, qs: string): Promise<{ status: number; body: Page }> =>
+    call(who, A.slug, viewsRoute.GET, 'GET', `/reporting/views?${qs}`);
+  async function all(who: User, scope: string, limit: number) {
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 100; i++) {
+      const res = await page(who, `scope=${scope}&limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      const parsed = ListSavedViewsResponse.parse(res.body);
+      expect(parsed.views.length).toBeLessThanOrEqual(limit);
+      ids.push(...parsed.views.map((v) => v.id));
+      cursor = parsed.nextCursor;
+      if (!cursor) return ids;
+    }
+    throw new Error('did not finish');
+  }
+  /** Inserts shared views owned by `owner` directly (bulk), each newer than everything already there. */
+  async function bulk(owner: User, n: number, metric: string): Promise<string[]> {
+    const cfg = JSON.stringify(config({ metrics: [M(metric)] }));
+    const { rows } = await admin.query(
+      `INSERT INTO reporting_saved_views (id, business_id, owner_user_id, updated_by_id, title, config, visibility, updated_at)
+       SELECT gen_random_uuid(), $1, $2, $2, 'Bulk ' || g, $3::jsonb, 'BUSINESS', now() + g * interval '1 millisecond'
+         FROM generate_series(1, $4::int) AS g RETURNING id::text`, [A.businessId, owner.id, cfg, n]);
+    return rows.map((r) => r.id);
+  }
+
+  it('never hides a caller\'s own views behind more than 500 newer views from others, visible or not', async () => {
+    const mem = A.people.MEMBER!;
+    const mgr = A.people.MANAGER!;
+    const own = (await call(mem, A.slug, viewsRoute.POST, 'POST', '/reporting/views', {}, { title: 'Member own', config: config({ metrics: [M('sales.won_count')] }) })).body.view;
+    await admin.query("UPDATE reporting_saved_views SET updated_at = now() - interval '1 day' WHERE id = $1", [own.id]);
+    const hidden = await bulk(mgr, 520, 'finance.invoiced_amount'); // MEMBER cannot read Finance: skipped
+    const visible = await bulk(mgr, 30, 'sales.won_count'); // shared and readable by MEMBER
+    // Interleave so filtering happens inside pages, not only at the edges.
+    await admin.query("UPDATE reporting_saved_views SET updated_at = updated_at + interval '1 second' WHERE id = ANY($1::uuid[])", [visible.filter((_, i) => i % 2 === 0)]);
+
+    const seen = await all(mem, 'all', 25);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen).toContain(own.id);
+    for (const id of visible) expect(seen).toContain(id);
+    for (const id of hidden) expect(seen).not.toContain(id);
+
+    // Their own views are also complete under scope=mine, on the first page.
+    expect((await page(mem, 'scope=mine&limit=100')).body.views.map((v) => v.id)).toContain(own.id);
+
+    // The owner of 550+ views reaches every one of them, newest first, without repeats.
+    const mgrSeen = await all(mgr, 'mine', 100);
+    expect(new Set(mgrSeen).size).toBe(mgrSeen.length);
+    for (const id of [...hidden, ...visible]) expect(mgrSeen).toContain(id);
+    const { rows } = await admin.query('SELECT count(*)::int AS n FROM reporting_saved_views WHERE business_id = $1 AND owner_user_id = $2', [A.businessId, mgr.id]);
+    expect(mgrSeen).toHaveLength(rows[0].n);
+  });
+
+  it('refuses tampered cursors and cursors from another scope', async () => {
+    const mgr = A.people.MANAGER!;
+    const first = await page(mgr, 'scope=mine&limit=1');
+    expect(first.body.nextCursor).toBeTruthy();
+    expect(await page(mgr, `scope=all&limit=1&cursor=${first.body.nextCursor}`)).toMatchObject({ status: 400, body: { error: 'invalid_cursor' } });
+    expect((await page(mgr, 'scope=mine&limit=1&cursor=bm90LWEtY3Vyc29y')).status).toBe(400);
+    expect((await page(mgr, 'scope=mine&limit=101')).status).toBe(400);
   });
 });

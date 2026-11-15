@@ -53,7 +53,7 @@ describe('Reporting Zone', () => {
     expect(within(invoiced).queryByText(/vs previous period/)).toBeNull();
     const won = within(region).getByText('Won opportunity value').closest('section')!;
     expect(within(won).getByText('-20.0% vs previous period')).toBeTruthy();
-    expect(within(region).getByText(/As of/)).toBeTruthy(); // receivables are a current balance
+    expect(within(region).getByText(/Current balance as of .*Not affected by the date range/)).toBeTruthy(); // receivables are a current balance
     const kpiQuery = queries(api)[0]!;
     expect(kpiQuery.metrics.map((m) => m.id)).toEqual(['finance.invoiced_amount', 'finance.payments_received', 'finance.receivables_outstanding', 'sales.won_value', 'customers.new_customers']);
     expect(kpiQuery).toMatchObject({ granularity: 'none', comparison: 'previous_period', date: { kind: 'relative', preset: 'last_3_months' } });
@@ -176,7 +176,9 @@ describe('Reporting Zone', () => {
         comparison: 'none', sort: { by: 'bucket', direction: 'asc' }, visualization: { chart: 'bar', showComparison: false },
       },
     };
-    const { user } = setup({ permissions: MEMBER, views: [view] });
+    // Two pages of saved views: the client follows the cursor, so the second page's view is offered too.
+    const filler = Array.from({ length: 3 }, (_, i) => ({ ...view, id: randomUUID(), title: `Other ${i}` }));
+    const { user } = setup({ permissions: MEMBER, views: [...filler, view], pageSize: 2 });
     await kpis();
     await user.selectOptions(await screen.findByLabelText('Saved reports'), view.id);
     expect(await screen.findByRole('heading', { level: 1, name: 'Team finance' })).toBeTruthy();

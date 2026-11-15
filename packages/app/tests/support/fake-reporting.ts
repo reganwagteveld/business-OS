@@ -63,7 +63,7 @@ export const FIGURES: Record<string, { currency: string | null; total: string; p
 
 export interface ReportingCall { method: string; path: string; body: unknown }
 
-export function createFakeReporting(o: { permissions: string[]; empty?: string[]; failQuery?: boolean; catalogStatus?: number; views?: SavedView[] }) {
+export function createFakeReporting(o: { permissions: string[]; empty?: string[]; failQuery?: boolean; catalogStatus?: number; views?: SavedView[]; pageSize?: number }) {
   const held = new Set(o.permissions);
   const calls: ReportingCall[] = [];
   const views: SavedView[] = [...(o.views ?? [])];
@@ -134,7 +134,11 @@ export function createFakeReporting(o: { permissions: string[]; empty?: string[]
       });
     }
     if (method === 'GET' && path === '/views') {
-      return json(200, { views: views.map(({ config, ...v }) => ({ ...v, metrics: config.metrics, issues: config.metrics.every((m) => can(m.id)) ? [] : ['You do not have access to the data Amount invoiced uses.'] })) });
+      const all = views.map(({ config, ...v }) => ({ ...v, metrics: config.metrics, issues: config.metrics.every((m) => can(m.id)) ? [] : ['You do not have access to the data Amount invoiced uses.'] }));
+      // Pages of `pageSize` (default: everything), so the client's cursor loop is exercised.
+      const size = o.pageSize ?? 100;
+      const start = Number(url.searchParams.get('cursor') ?? 0);
+      return json(200, { views: all.slice(start, start + size), nextCursor: start + size < all.length ? String(start + size) : null });
     }
     if (method === 'POST' && path === '/views') {
       const input = CreateSavedViewRequest.parse(body);

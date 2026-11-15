@@ -44637,6 +44637,18 @@
               "mine",
               "shared"
             ]
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
           }
         },
         "additionalProperties": false
@@ -44752,10 +44764,17 @@
               ],
               "additionalProperties": false
             }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "views"
+          "views",
+          "nextCursor"
         ],
         "additionalProperties": false
       }

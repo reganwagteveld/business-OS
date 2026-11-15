@@ -42,7 +42,6 @@ export const endOfMonth = (day: string) => {
   const { y, m } = parts(day);
   return ymd(y, m, daysInMonth(y, m));
 };
-const isEndOfMonth = (day: string) => day === endOfMonth(day);
 
 /** Start of the bucket that contains `day`. */
 export function bucketStart(day: string, unit: 'day' | 'week' | 'month'): string {
@@ -102,22 +101,14 @@ export function resolveDate(config: ReportingDateConfig, today: string): Reporti
 }
 
 /**
- * The comparison period: the period of equal length immediately before. When the range starts on the
- * first of a month it is shifted by whole calendar months (1–15 Nov → 1–15 Oct; Q3 → Q2; a whole month →
- * the whole previous month), otherwise by its length in days (10–16 Nov → 3–9 Nov).
+ * The comparison period (owner decision R-D5): the IMMEDIATELY preceding period with the same number of
+ * days, ending the day before the range starts. 1–15 Nov (15 days) → 17–31 Oct; 1–30 Nov (30 days) →
+ * 2–31 Oct; 1–31 Mar (31 days) → 29 Jan–28 Feb (non-leap year). Calendar-aligned comparisons (previous
+ * calendar month, same period last year) are not R1 semantics.
  */
 export function previousPeriod(range: ReportingRange): ReportingRange {
-  const { from, to } = range;
-  if (from.endsWith('-01')) {
-    const span = (parts(to).y - parts(from).y) * 12 + (parts(to).m - parts(from).m) + 1;
-    const start = shiftMonth(from, -span);
-    const endMonth = shiftMonth(to, -span);
-    const lastDay = daysInMonth(endMonth.y, endMonth.m);
-    const day = isEndOfMonth(to) ? lastDay : Math.min(parts(to).d, lastDay);
-    return { from: ymd(start.y, start.m, 1), to: ymd(endMonth.y, endMonth.m, day) };
-  }
-  const length = daysBetween(from, to) + 1;
-  return { from: addDays(from, -length), to: addDays(from, -1) };
+  const length = daysBetween(range.from, range.to) + 1;
+  return { from: addDays(range.from, -length), to: addDays(range.from, -1) };
 }
 
 /** Refuses a range or granularity outside the limits, with a message that says what to change. */

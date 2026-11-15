@@ -6,8 +6,10 @@ anywhere but disposable local databases.
 Baseline: branched from `main` at `1b65e74` (STAB-01): Finance F1–F4 (#31, #34, #35, #37), People P1 (#36),
 Scheduling S1 (#38), Communications C1 (#39), STAB-01 (#40), UI phases 1–2 (#32, #33). Communications C2-A (#41,
 migration `20261121000000_communications_providers`) merged to `main` as `4f2d437` during this work and is merged into
-this branch; Reporting does not depend on it. Still open and **not** depended on: #42 (Finance F5, migration
-`20261120000000_finance_documents`).
+this branch; Reporting does not depend on it. Still open and **not** depended on: #42 (Finance F5, now migration
+`20261122000000_finance_documents`); Finance F6 has reserved `20261123000000`. The Reporting migration was therefore
+renamed from `20261122000000_reporting` to **`20261124000000_reporting`** (contents unchanged; it had not been
+applied anywhere but disposable local databases).
 
 ## 1. What R1 is
 
@@ -102,17 +104,23 @@ to re-select it. Saved configs also carry `config_version` (1); an unreadable fo
   (`closed_at`, `created_at`) are compared with `[from 00:00, to+1 00:00)` in the business zone and bucketed
   by their business-local date (DST-safe: PostgreSQL converts each boundary).
 - Weeks start on Monday (ISO). The first bucket may start before the range but holds only in-range records.
-- **Previous period** = the period of equal length immediately before. A range starting on the 1st shifts
-  by whole months (1–15 Nov → 1–15 Oct; a quarter → the previous quarter; month ends kept); any other
-  range shifts by its length in days. Comparison points are aligned by position and may be shorter.
-  Year-over-year is not in R1 (see decisions).
+- **Previous period** (R-D5) = the **immediately preceding period with the same number of days**, ending the
+  day before the range starts: 1–15 Nov → 17–31 Oct; 1–30 Nov (30 days) → 2–31 Oct; 1–31 Mar → 29 Jan–28 Feb.
+  There is no calendar-month alignment. Comparison buckets are aligned by position (bucket n with bucket n)
+  and may be one shorter when week or month boundaries fall differently. Year-over-year is not in R1. The UI
+  says "the same number of days immediately before" under the toggle. (Audit round 1 corrected an earlier
+  month-shifting rule.)
 
 ## 5. Limits
 
 At most 6 metrics per query or view; ranges up to 1,827 days; at most 400 buckets per series (so daily
 ≤ ~13 months); at most 12 series per metric (the rest counted in `hiddenSeries`, largest kept,
 deterministic order); drill-down pages ≤ 100 rows; 100 saved views per person per business; stored config
-≤ 16 KB (CHECK). Drill-down uses keyset cursors bound to their list (`invalid_cursor` otherwise) with
+≤ 16 KB (CHECK). The saved-view list is keyset-paginated (≤ 100 per page, `updated_at` desc then id, timestamps
+to the microsecond): rows the caller may not see are skipped while a page is filled, a request scans at most
+1,000 rows and then returns a cursor to continue, and following `nextCursor` to null reaches every visible view.
+Nothing is truncated (audit round 1 fixed an earlier fixed 500-row read). The client follows the cursor.
+Drill-down uses keyset cursors bound to their list (`invalid_cursor` otherwise) with
 stable order (date desc, id desc; timestamps keep PostgreSQL microseconds in the cursor).
 
 ## 6. Authorisation and tenancy
@@ -148,7 +156,7 @@ the hidden value cannot be recovered by subtraction.
 
 ## 7. Database: one configuration table
 
-Migration **`20261122000000_reporting`** (additive, one transaction, `BEGIN … COMMIT` per STAB-M6):
+Migration **`20261124000000_reporting`** (additive, one transaction, `BEGIN … COMMIT` per STAB-M6):
 
 - `reporting_saved_views` (id, business_id, owner_user_id, title, description, report_type, config jsonb,
   config_version, visibility, version, updated_by_id, created_at, updated_at), FK to `businesses` ON DELETE
@@ -160,8 +168,11 @@ Migration **`20261122000000_reporting`** (additive, one transaction, `BEGIN … 
 - RLS enabled and **forced**: `tenant_isolation` plus RESTRICTIVE policies — private rows visible only to
   their owner, inserts/updates only by the owner (as `app.user_id`), deletes by the owner or of shared rows.
 - Depends only on the tenancy migration; touches no other Zone's objects. Sorts after main's newest
-  (`20261119300000`) and after #42 and #41, so fresh databases and production apply the same order whichever
-  merges first (checked with `.github/scripts/check-migration-order.sh` against main, and against main + #41 + #42).
+  (`20261121000000`, C2-A), after #42 (`20261122000000_finance_documents`) and after F6's reserved
+  `20261123000000`, so fresh databases and production apply the same order whichever merges first (checked with
+  `.github/scripts/check-migration-order.sh` against main, and against main + #42 + a 20261123 F6 placeholder).
+  The file's header comment still names the older F5/C2-A timestamps: the contents were deliberately left
+  byte-identical through the rename.
 - No privileged SQL step.
 
 Shared-file overlap with open PRs (trivial rebases, no semantic conflict): `access/server/permissions.ts`
@@ -175,7 +186,7 @@ Shared-file overlap with open PRs (trivial rebases, no semantic conflict): `acce
    with deploys paused, sequencing B) the merge. Until it is, `/reporting/views*` would 500; the metric
    endpoints need no new table and would work.
 2. Recovery branch `pre-reporting-migration` first; `prisma migrate deploy` applies exactly
-   `20261122000000_reporting` (plus #41/#42's if they merged first; independent of them).
+   `20261124000000_reporting` (plus F5's and F6's if they merged first; independent of them).
 3. Verify: table exists with RLS + FORCE, the five policies, grants as above, `prisma migrate status` clean.
 4. Rollback: code revert is safe (table unused); dropping the table loses only saved configurations.
 
@@ -186,7 +197,7 @@ Shared-file overlap with open PRs (trivial rebases, no semantic conflict): `acce
 | `GET /reporting/metrics` | `reporting:read` | Registry + `accessible`, business time zone, today, limits |
 | `POST /reporting/query` | `reporting:read` + sources | Strict: 400 with actionable code, 403 for a source you cannot read |
 | `POST /reporting/details` | `reporting:read` + source | One page of the records behind a metric |
-| `GET/POST /reporting/views` | read / save | List visible views (with `issues` against the current registry); create (private by default) |
+| `GET/POST /reporting/views` | read / save | List visible views, paginated (`scope`, `limit` ≤ 100, `cursor`; `nextCursor`), with `issues` against the current registry; create (private by default) |
 | `GET/PATCH/DELETE /reporting/views/:id` | read / save / save | PATCH owner-only with `version` (409 `stale`); DELETE owner, or `reporting:manage` for shared |
 | `POST /reporting/views/:id/run` | `reporting:read` | Runs the stored config as the caller; per-metric errors, no data for failing metrics |
 
@@ -213,44 +224,47 @@ themes (token test). Screenshots: `docs/ui/screenshots/reporting-r1`.
 
 ## 11. Tests (local, Node 22, PostgreSQL 16 ICU en-US on docker)
 
-- `apps/api/tests/unit/reporting.test.ts` (24): buckets, presets in the business zone, previous period, limits,
+- `apps/api/tests/unit/reporting.test.ts` (25): buckets, presets in the business zone, previous period, limits,
   registry invariants (sources bound, no sensitive People, invoiced ≠ received ≠ outstanding, no "revenue"),
   validation and malicious wire input, access intersection and role defaults, series shaping (no cross-currency
   sums, exact decimals, zero fill, comparison, top-N determinism, suppression without subtraction leaks).
-- `apps/api/tests/integration/reporting.test.ts` (39): real routes and PostgreSQL. Figures equal Finance's own
+- `apps/api/tests/integration/reporting.test.ts` (41): real routes and PostgreSQL. Figures equal Finance's own
   document totals and the Finance overview's receivables; void/draft/reversed/reopened/lost/archived handling;
   Perth day boundaries; empty business; source-permission 403s; no `reporting:read` → 403; customer names need
   `customers:read`; cross-tenant isolation through query, details, filters and slug; pagination without repeats
   and foreign/tampered cursors; limit and injection inputs; saved-view CRUD, privacy, sharing, owner-only edit,
   manage delete, stale version, audit; access lost after save; retired versions and unreadable configs; RLS
-  backstops tested directly as `bos_app`.
+  backstops tested directly as `bos_app`; saved-view list pagination behind 550 newer views from another owner
+  (520 the caller cannot see), complete for the caller and for the owner, tampered and cross-scope cursors refused.
 - `packages/app/tests/reporting-zone.test.tsx` (12) and `packages/ui/tests/charts.test.tsx` (5); three shell
   tests updated for Insights → Reporting; token contrast pairs added.
 
 ## 12. Divergences from the brief
 
-- **One chart metric per saved view in the UI.** The API and config accept up to six metrics; the R1 screen
-  saves the selected chart metric (KPI cards are always the headline set). Multi-metric layouts can follow
-  without a schema change.
-- **Snapshot metrics** (receivables) have no history: past balances would need snapshots, which the brief
-  excludes. They ignore the interval and comparison, and say so.
+- **One chart metric per saved view in the UI** (accepted R1 limitation). The API and config accept up to six
+  metrics; the R1 screen saves the selected chart metric and says so under the Chart control (KPI cards are always
+  the headline set). Multi-metric layouts can follow without a schema change.
+- **Snapshot metrics** (receivables) are present-day balances with no history (accepted R1 limitation): past
+  balances would need snapshots, which the brief excludes. Their cards read "Current balance as of <date>. Not
+  affected by the date range."; they ignore the interval and comparison, and say so.
 - **Delete is a hard delete** of the configuration (audited), not an archive: it is personal config, not a
   business record.
 - **Insights → Reporting** in the navigation registry (one entry, same icon).
 
-## 13. Decisions for the owner (recommended defaults in bold)
+## 13. Owner decisions (audit round 1, 2026-11-15)
 
-1. **R-D1 Role defaults**: all roles read and save private views; OWNER/ADMIN/MANAGER share; OWNER/ADMIN
-   delete others' shared views. **Approve as implemented.**
-2. **R-D2 Invoiced = tax-inclusive total**, not net of tax. **Keep inclusive**, add a net-of-tax metric later if wanted.
-3. **R-D3 Voids, reversals, reopenings and archiving restate history** (removed from every period, including
-   the original one). **Keep** (matches Finance's own lists); an "as originally reported" view would need snapshots.
-4. **R-D4 Archived customers and archived won opportunities are excluded.** **Keep.**
-5. **R-D5 Previous period = immediately preceding period of equal length** (months shift by months). **Keep**;
-   year-over-year as a later option.
-6. **R-D6 Insights card replaced by Reporting.** **Approve.**
-7. **R-D7 Hard delete of saved views** with audit. **Approve.**
-8. **R-D8 Migration sequencing**: depends on STAB-H1 (A or B). **B** (pause auto-deploy, migrate, promote).
+1. **R-D1 Role defaults** (all roles read and save private views; OWNER/ADMIN/MANAGER share; OWNER/ADMIN delete
+   others' shared views): **approved.**
+2. **R-D2 Invoiced = tax-inclusive total:** **retained.**
+3. **R-D3 Present-state restatement** (voids, reversals, reopenings and archiving remove records from every
+   period; not historical events): **retained.**
+4. **R-D4 Archived customers and archived won opportunities excluded:** **retained.**
+5. **R-D5 Previous period = immediately preceding period of equal length:** approved in principle subject to
+   correction. **Corrected** to the equal-day-length rule in §4.
+6. **R-D6 Reporting replaces Insights:** **approved.**
+7. **R-D7 Audit-logged hard deletion of saved views:** **approved.**
+8. **R-D8 Rollout sequencing B** (pause automatic deploys, migrate, promote): **approved conditionally** after CI,
+   migration and deploy-gate review. No merge, migration or deployment approval has been given yet.
 
 ## 14. Unresolved / not verified
 

@@ -140,7 +140,7 @@ export const ReportingSeries = z
     /** Change against the comparison period in percent, one decimal; null without comparison or from zero. */
     changePercent: z.string().nullable(),
     points: z.array(ReportingPoint),
-    /** Aligned with `points` by position (bucket n of the previous period); shorter when the previous period has fewer buckets. */
+    /** Aligned with `points` by position (bucket n of the previous period, the same number of days immediately before); shorter when it has fewer buckets. */
     comparisonPoints: z.array(ReportingPoint).nullable(),
     suppressed: z.boolean(),
   })
@@ -300,12 +300,17 @@ export const UpdateSavedViewRequest = z
   .strict();
 export type UpdateSavedViewRequest = z.input<typeof UpdateSavedViewRequest>;
 
+/** Most recently updated first. Follow `nextCursor` until it is null to reach every view; no view is left out. */
 export const ListSavedViewsQuery = z
-  .object({ scope: z.enum(['all', 'mine', 'shared']).default('all') })
+  .object({
+    scope: z.enum(['all', 'mine', 'shared']).default('all'),
+    cursor: z.string().min(1).max(600).regex(/^[A-Za-z0-9_-]+$/).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  })
   .strict();
 
 export const SavedViewResponse = z.object({ view: SavedView }).strict();
-export const ListSavedViewsResponse = z.object({ views: z.array(SavedViewListItem) }).strict();
+export const ListSavedViewsResponse = z.object({ views: z.array(SavedViewListItem), nextCursor: z.string().nullable() }).strict();
 export const DeleteSavedViewResponse = z.object({ ok: z.literal(true) }).strict();
 
 /** Running a saved view: its stored configuration, validated against the current registry, as the caller. */

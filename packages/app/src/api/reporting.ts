@@ -60,7 +60,18 @@ export function createReportingClient(baseUrl: string, transport: AuthTransport,
       return settle(await http.request('POST', p(endpoints.reportDetails.path, { slug }), checked.data, signal), ReportingDetailsResponse, (d) => d);
     },
     async views(slug, signal) {
-      return settle(await http.request('GET', p(endpoints.listSavedViews.path, { slug }), undefined, signal), ListSavedViewsResponse, (d) => d.views);
+      // Follows the cursor so no view is left out (the API pages; owners keep at most 100 views each).
+      const views: SavedViewListItem[] = [];
+      let cursor: string | null = null;
+      for (let i = 0; i < 50; i++) {
+        const qs: string = `?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+        const out = settle(await http.request('GET', p(endpoints.listSavedViews.path, { slug }) + qs, undefined, signal), ListSavedViewsResponse, (d) => d);
+        if (out.kind !== 'ok') return out;
+        views.push(...out.data.views);
+        cursor = out.data.nextCursor;
+        if (!cursor) break;
+      }
+      return { kind: 'ok', data: views };
     },
     async view(slug, id, signal) {
       return settle(await http.request('GET', p(endpoints.getSavedView.path, { slug, viewId: id }), undefined, signal), SavedViewResponse, (d) => d.view);

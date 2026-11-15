@@ -237,7 +237,7 @@ function Toolbar({ settings, update, zones, metrics, saved, openId, onOpen, toda
           <Field label="To">{(c) => <Input {...c} type="date" value={to} min={from} onChange={(e) => { setTo(e.target.value); applyCustom(from, e.target.value); }} />}</Field>
         </div>
       ) : null}
-      <Field label="Chart">
+      <Field label="Chart" hint="A saved report keeps this one figure; the headline figures are always shown.">
         {(c) => (
           <Select {...c} value={metrics.some((m) => m.id === settings.metricId) ? settings.metricId : ''} onChange={(e) => update({ metricId: e.target.value })}>
             {metrics.some((m) => m.id === settings.metricId) ? null : <option value="">Choose a figure</option>}
@@ -254,10 +254,14 @@ function Toolbar({ settings, update, zones, metrics, saved, openId, onOpen, toda
           </Select>
         )}
       </Field>
-      <label className="flex min-h-10 items-center gap-2 self-end text-sm">
-        <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={settings.comparison} onChange={(e) => update({ comparison: e.target.checked })} />
-        Compare with previous period
-      </label>
+      <div className="self-end">
+        <label className="flex min-h-10 items-center gap-2 text-sm">
+          <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={settings.comparison} aria-describedby="reporting-compare-hint"
+            onChange={(e) => update({ comparison: e.target.checked })} />
+          Compare with previous period
+        </label>
+        <p id="reporting-compare-hint" className="text-xs text-muted-foreground">The same number of days immediately before.</p>
+      </div>
     </section>
   );
 }
@@ -295,7 +299,7 @@ function Kpis({ client, slug, settings, catalog, locale, onSessionEnded, onPick 
                 return { key: s.key, text, caption: r.valueType === 'money' && s.currencyCode && !text.includes(s.currencyCode) ? s.currencyCode : undefined };
               })}
               change={change?.text} trend={change?.trend}
-              note={r.temporal === 'snapshot' ? `As of ${formatDate(r.asOf, locale)}` : m.dateField}
+              note={r.temporal === 'snapshot' ? `Current balance as of ${formatDate(r.asOf, locale)}. Not affected by the date range.` : m.dateField}
               action={<Button size="sm" variant="ghost" onClick={() => onPick(m.id)} aria-label={`Show ${m.name} in the chart`}>Show in chart</Button>}
             />
           );
@@ -377,7 +381,7 @@ function ResultView({ result: r, data, settings, locale, currency, setCurrency, 
       <div className="space-y-2">
         {r.series.length === 0 ? <EmptyState title="Nothing outstanding" description={`As of ${formatDate(r.asOf, locale)}.`} /> : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {r.series.map((s) => <KpiCard key={s.key} label={`${r.name} (${s.currencyCode})`} values={[{ key: s.key, text: fmt(s.total, s.currencyCode) }]} note={`As of ${formatDate(r.asOf, locale)}`} />)}
+            {r.series.map((s) => <KpiCard key={s.key} label={`${r.name} (${s.currencyCode})`} values={[{ key: s.key, text: fmt(s.total, s.currencyCode) }]} note={`Current balance as of ${formatDate(r.asOf, locale)}. Past balances are not available.`} />)}
           </div>
         )}
         {notes.map((n) => <p key={n} className="text-xs text-muted-foreground">{n}</p>)}
