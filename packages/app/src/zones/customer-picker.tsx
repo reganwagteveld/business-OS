@@ -9,9 +9,13 @@ import { useLoad } from './use-load';
 // and chosen here, never created or copied: the other Zone stores the customer's id.
 
 /** Search the Customer Zone's active customers and pick one; no customers are created here. */
-export function CustomerPicker({ id, customers, slug, selectedId, selectedName, error, onPick, onSessionEnded }: {
+export function CustomerPicker({ id, customers, slug, selectedId, selectedName, error, onPick, onSessionEnded, hint = 'Optional. Customers come from the Customers Zone.', locked }: {
   id: string; customers: CustomersClient; slug: string; selectedId: string; selectedName: string | null; error?: string; onPick: (c: Customer | null) => void;
   onSessionEnded: () => void;
+  /** The line under the search box. */
+  hint?: string;
+  /** Show the chosen customer without the "Change customer" control. */
+  locked?: boolean;
 }) {
   const [text, setText] = useState('');
   const [q, setQ] = useState('');
@@ -26,9 +30,9 @@ export function CustomerPicker({ id, customers, slug, selectedId, selectedName, 
         <p id={id} className="mb-1.5 text-sm font-medium">Customer</p>
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border px-4 py-3" aria-labelledby={id}>
           <span className="text-sm font-medium">{selectedName ?? 'Selected customer'}</span>
-          <button type="button" onClick={() => onPick(null)} className="rounded-md text-xs font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+          {locked ? null : <button type="button" onClick={() => onPick(null)} className="rounded-md text-xs font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
             Change customer
-          </button>
+          </button>}
         </div>
         {error ? <p className="mt-1 text-xs font-medium text-destructive">{error}</p> : null}
       </div>
@@ -41,7 +45,8 @@ export function CustomerPicker({ id, customers, slug, selectedId, selectedName, 
       <label htmlFor={id} className="mb-1.5 block text-sm font-medium">Customer</label>
       <input id={id} type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="Search your customers by name, email or phone" className={inputClass}
         aria-describedby={`${id}-hint`} autoComplete="off" maxLength={100} />
-      <p id={`${id}-hint`} className="mt-1 text-xs text-muted-foreground">Optional. Customers come from the Customers Zone.</p>
+      <p id={`${id}-hint`} className="mt-1 text-xs text-muted-foreground">{hint}</p>
+      {error ? <p className="mt-1 text-xs font-medium text-destructive">{error}</p> : null}
       {q ? (
         <div aria-live="polite">
           {results.state.status === 'loading' ? <p className="mt-2 text-xs text-muted-foreground">Searching…</p> : failure ? (

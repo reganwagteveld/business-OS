@@ -174,6 +174,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const current = route.slug === phase.context.business.slug && canOpen(route.route, navigation) ? route.route : HOME;
   const canReadProjects = navigation.available.some((z) => z.id === 'projects');
   const canReadCustomers = navigation.available.some((z) => z.id === 'customers');
+  const canReadFinance = navigation.available.some((z) => z.id === 'finance');
   const userLabel = phase.user.name || phase.user.email;
   const target = current.zone === 'home' ? undefined : current.target;
   const intent = current.zone === 'home' ? undefined : current.intent;
@@ -186,6 +187,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
         client={customers} context={active} userLabel={userLabel} initialCustomerId={target} initialAction={intent}
         projects={canReadProjects ? { client: projects, onOpen: (id) => open({ zone: 'projects', target: id }) } : undefined}
+        finance={canReadFinance ? { client: finance, onOpen: (target) => open({ zone: 'finance', child: target.startsWith('quote:') ? 'quotes' : target.startsWith('payment:') ? 'payments' : 'invoices', target }) } : undefined}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
@@ -210,7 +212,12 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     screen = (
       <FinanceZone
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
-        client={finance} context={active} userLabel={userLabel} initialExpenseId={target} initialAction={intent}
+        client={finance} customers={canReadCustomers ? customers : undefined} context={active} userLabel={userLabel}
+        section={current.child} navigation={current} initialTarget={target} initialAction={intent}
+        // Inside the Zone, moving between sections keeps the target and intent the Zone was opened with,
+        // so the shell's highlight follows without remounting the Zone (and losing its screen).
+        onSection={(child) => setRoute({ ...current, child })}
+        onOpenCustomer={canReadCustomers ? (id) => open({ zone: 'customers', target: id }) : undefined}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
