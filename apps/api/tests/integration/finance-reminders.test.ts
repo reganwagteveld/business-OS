@@ -663,6 +663,136 @@ describe('concurrency and leases', () => {
   });
 });
 
+describe('lock order: holds and policy changes never deadlock with a dispatch (§10.6)', () => {
+  /** Waits (database-observed, not a timer) until at least `n` lock requests of `locktype` are waiting. */
+  async function waitingOn(locktype: 'advisory' | 'transactionid' | 'tuple', n = 1) {
+    for (let i = 0; i < 200; i++) {
+      const { rows } = await admin.query(`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND locktype = $1`, [locktype]);
+      if (rows[0].n >= n) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`no transaction is waiting on a ${locktype} lock`);
+  }
+  /** True when nobody holds the reminder row: proves a waiting dispatch has not locked it yet (level 4 comes last). */
+  async function reminderRowFree(id: string) {
+    await admin.query('BEGIN');
+    try {
+      await admin.query(`SELECT 1 FROM finance_reminders WHERE id = $1 FOR UPDATE NOWAIT`, [id]);
+      return true;
+    } catch (e) {
+      if ((e as { code?: string }).code === '55P03') return false;
+      throw e;
+    } finally {
+      await admin.query('ROLLBACK');
+    }
+  }
+  /** An outbox whose enqueue waits for `open()`: the dispatch then holds every lock it takes, at its widest point. */
+  function gatedOutbox() {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => { entered = r; });
+    const fake = fakeOutbox();
+    const outbox: ReminderOutbox = { enqueue: async (db, request) => { entered(); await gate; return fake.outbox.enqueue(db, request); } };
+    return { outbox, open, inside };
+  }
+  async function setup(label: string) {
+    const T = await team(label, []);
+    const p = (await api(T.people.OWNER!, T.slug).createPolicy({ name: 'Std', stages: STAGES, isDefault: true })).body.policy;
+    const c = await customer(T, `Lock${label}`);
+    const inv = await openInvoice(T, c, '64.00', day(-7));
+    await plan(T);
+    const claimed = (await withTenant(sys(T.businessId), (db) => claimReminder(db, { leaseSeconds: 60 })))!;
+    expect(claimed).not.toBeNull();
+    return { T, p, c, inv, claimed, own: api(T.people.OWNER!, T.slug) };
+  }
+
+  it('hold first: a dispatch waits for the hold without locking the reminder, then skips it (on_hold); neither aborts', async () => {
+    const { T, c, inv, claimed, own } = await setup('dh1');
+    // Pause the real hold path inside its customer lock: it waits for this invoice row (lockDocuments).
+    await admin.query('BEGIN');
+    await admin.query(`SELECT 1 FROM finance_documents WHERE id = $1 FOR NO KEY UPDATE`, [inv.id]);
+    const hold = own.hold({ customerId: c, invoiceId: inv.id, reason: 'DISPUTE' });
+    await waitingOn('transactionid');
+    const dispatch = withTenant(sys(T.businessId), (db) => executeReminder(db, claimed, fakeOutbox().outbox));
+    await waitingOn('advisory'); // the dispatch waits for the hold's customer lock …
+    expect(await reminderRowFree(claimed.reminderId)).toBe(true); // … holding no reminder row
+    await admin.query('COMMIT');
+    const [h, outcome] = await Promise.all([hold, dispatch]);
+    expect(h.status).toBe(201);
+    expect(outcome).toBe('skipped');
+    expect((await rowsOf(inv.id))[0]).toMatchObject({ status: 'SKIPPED', outcome_code: 'on_hold', outbound_id: null });
+  });
+
+  it('dispatch first: the hold waits for the hand-over, then C2-C\'s pre-send check refuses to send (on_hold); neither aborts', async () => {
+    const { T, c, inv, claimed, own } = await setup('dh2');
+    const g = gatedOutbox();
+    const dispatch = withTenant(sys(T.businessId), (db) => executeReminder(db, claimed, g.outbox));
+    await g.inside; // config, customer and invoice locked, and the reminder row too
+    const hold = own.hold({ customerId: c, reason: 'DISPUTE' });
+    await waitingOn('advisory');
+    g.open();
+    const [outcome, h] = await Promise.all([dispatch, hold]);
+    expect(outcome).toBe('queued');
+    expect(h.status).toBe(201);
+    const row = (await rowsOf(inv.id))[0];
+    expect(row).toMatchObject({ status: 'QUEUED', outbound_state: 'QUEUED' });
+    expect(await withTenant(sys(T.businessId), (db) => confirmReminderBeforeSend(db, { reminderId: row.id, outboundId: row.outbound_id })))
+      .toEqual({ send: false, reason: 'on_hold' });
+    expect((await rowsOf(inv.id))[0]).toMatchObject({ status: 'SKIPPED', outcome_code: 'on_hold' });
+  });
+
+  it('policy change first: a dispatch waits without locking the reminder, then skips the removed stage; neither aborts', async () => {
+    const { T, p, inv, claimed, own } = await setup('dp1');
+    // Pause the real policy update inside its configuration lock: it waits for the policy row.
+    await admin.query('BEGIN');
+    await admin.query(`SELECT 1 FROM finance_reminder_policies WHERE id = $1 FOR UPDATE`, [p.id]);
+    const patch = own.patchPolicy(p.id, { version: p.version, stages: [{ offsetDays: -3, label: 'Due soon' }, { offsetDays: 21, label: 'Final notice' }] });
+    await waitingOn('transactionid');
+    const dispatch = withTenant(sys(T.businessId), (db) => executeReminder(db, claimed, fakeOutbox().outbox));
+    await waitingOn('advisory');
+    expect(await reminderRowFree(claimed.reminderId)).toBe(true);
+    await admin.query('COMMIT');
+    const [res, outcome] = await Promise.all([patch, dispatch]);
+    expect(res.status).toBe(200);
+    expect(outcome).toBe('skipped');
+    expect((await rowsOf(inv.id))[0]).toMatchObject({ status: 'SKIPPED', outcome_code: 'stage_removed', outbound_id: null });
+  });
+
+  it('dispatch first: the policy change waits for the hand-over, then the pre-send check refuses (stage_removed); neither aborts', async () => {
+    const { T, p, inv, claimed, own } = await setup('dp2');
+    const g = gatedOutbox();
+    const dispatch = withTenant(sys(T.businessId), (db) => executeReminder(db, claimed, g.outbox));
+    await g.inside;
+    const patch = own.patchPolicy(p.id, { version: p.version, stages: [{ offsetDays: -3, label: 'Due soon' }, { offsetDays: 21, label: 'Final notice' }] });
+    await waitingOn('advisory');
+    g.open();
+    const [outcome, res] = await Promise.all([dispatch, patch]);
+    expect(outcome).toBe('queued');
+    expect(res.status).toBe(200);
+    const row = (await rowsOf(inv.id))[0];
+    expect(await withTenant(sys(T.businessId), (db) => confirmReminderBeforeSend(db, { reminderId: row.id, outboundId: row.outbound_id })))
+      .toEqual({ send: false, reason: 'stage_removed' });
+  });
+
+  it('a pre-send check waiting on a hold holds no reminder row either', async () => {
+    const { T, c, inv, claimed, own } = await setup('dh3');
+    expect(await withTenant(sys(T.businessId), (db) => executeReminder(db, claimed, fakeOutbox().outbox))).toBe('queued');
+    const row = (await rowsOf(inv.id))[0];
+    await admin.query('BEGIN');
+    await admin.query(`SELECT 1 FROM finance_documents WHERE id = $1 FOR NO KEY UPDATE`, [inv.id]);
+    const hold = own.hold({ customerId: c, invoiceId: inv.id, reason: 'DISPUTE' });
+    await waitingOn('transactionid');
+    const confirm = withTenant(sys(T.businessId), (db) => confirmReminderBeforeSend(db, { reminderId: row.id, outboundId: row.outbound_id }));
+    await waitingOn('advisory');
+    expect(await reminderRowFree(row.id)).toBe(true);
+    await admin.query('COMMIT');
+    const [h, result] = await Promise.all([hold, confirm]);
+    expect(h.status).toBe(201);
+    expect(result).toEqual({ send: false, reason: 'on_hold' });
+  });
+});
+
 describe('database guards', () => {
   it('no DELETE; identity and final states are fixed; inserts start pending on an issued invoice of the customer', async () => {
     const T = await team('rg', []);

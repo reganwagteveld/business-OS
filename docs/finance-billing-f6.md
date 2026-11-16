@@ -335,12 +335,23 @@ recipient address exists (the invoice's contact, else the customer's primary con
 customer's own email; the address is resolved at each check and never stored on the reminder or in the
 audit log).
 
-Lock order in the check, always: the reminder row (lease), the business's reminder configuration lock
-(shared; policy and assignment changes take it exclusively), the customer's reminder lock (shared;
-placing a hold takes it exclusively), then the invoice row `FOR NO KEY UPDATE` (the F1–F3 document lock,
-so a payment allocation, credit application, reversal or void either commits first and is seen, or
-waits). Nothing that takes those locks takes them in another order, so the check cannot deadlock with
-them. Tested: a check waits for a concurrent hold, policy change and invoice lock, then sees the result.
+One lock order for every path that touches reminders (audit fix on PR 54, 2026-11-16):
+
+1. the business's reminder configuration lock (advisory; policy and assignment changes exclusive, the
+   check shared);
+2. the customer's reminder lock (advisory; placing a hold exclusive, the check shared);
+3. the invoice row `FOR NO KEY UPDATE` (the F1–F3 document lock, so a payment allocation, credit
+   application, reversal or void either commits first and is seen, or waits);
+4. reminder rows (`FOR UPDATE`, or the row locks an UPDATE takes).
+
+A path may skip a level but never takes an earlier level after a later one. The worker's check and
+`confirmReminderBeforeSend` read the reminder's customer and invoice without a lock (both columns are
+immutable for `bos_app`), take levels 1 to 3, and only then lock the reminder row and re-check its lease
+or state; a lease lost while waiting changes nothing. Holds take 2 → 3 → 4, policy and assignment changes
+1 → 4, dismissing and recording a failure 4 only, and claiming (`SKIP LOCKED`) runs in its own
+transaction. C2-C must call `confirmReminderBeforeSend` before it locks any Finance row of its own.
+Tested deterministically in both orders for holds and policy changes (no deadlock, correct suppression,
+and a waiting check holds no reminder row), plus a check waiting on an invoice row lock.
 
 ### 10.5 C2-C boundary (`finance/server/reminder-outbox.ts`)
 

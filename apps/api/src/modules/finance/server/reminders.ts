@@ -48,6 +48,20 @@ const READY_RECHECK_MS = 3_600_000;
 const REFUSED_RECHECK_MS = 6 * 3_600_000;
 
 // ---- locks ---------------------------------------------------------------------------------------
+//
+// One lock order for every path that touches reminders, so no two transactions can wait on each other
+// in a cycle (a deadlock would abort one of them, possibly a person's hold or policy change):
+//
+//   1. the configuration lock (advisory; policy and assignment changes exclusive, checks shared)
+//   2. the customer's reminder lock (advisory; holds exclusive, checks shared)
+//   3. invoice rows (lockDocuments, FOR NO KEY UPDATE; same order as payments and credits)
+//   4. reminder rows (FOR UPDATE, or the row locks an UPDATE takes)
+//
+// A path may skip a level but never takes an earlier level after a later one. The worker and the
+// pre-send check therefore read a reminder's customer and invoice WITHOUT locking it (both columns are
+// immutable: bos_app has no UPDATE on them), take levels 1 to 3, and only then lock the reminder row and
+// re-check its lease or state. Claiming (SKIP LOCKED) and recording a failure run in their own
+// transactions and take level 4 alone.
 
 /**
  * The business's reminder configuration lock. Policy and assignment changes take it exclusively (default
@@ -672,7 +686,12 @@ export async function claimReminder(db: AppTenantDb, opts: { leaseSeconds?: numb
   return hit ? { reminderId: hit.id, leaseId } : null;
 }
 
-/** Locks the reminder if, and only if, the caller still holds an unexpired lease on it (database time). */
+/** The reminder's customer and invoice, read without a lock (both immutable), so the caller can take the advisory and invoice locks first. */
+async function reminderTarget(db: AppTenantDb, reminderId: string): Promise<{ customerId: string; invoiceId: string } | null> {
+  return db.financeReminder.findFirst({ where: { id: reminderId }, select: { customerId: true, invoiceId: true } });
+}
+
+/** Locks the reminder if, and only if, the caller still holds an unexpired lease on it (database time). Level 4 of the lock order. */
 async function holdLease(db: AppTenantDb, c: ClaimedReminder): Promise<ReminderRow | null> {
   const held = await db.$queryRaw<{ id: string }[]>`
     SELECT id::text FROM finance_reminders
@@ -696,9 +715,9 @@ function dispatchRequest(r: ReminderRow, a: Extract<Assessment, { ok: true }>, t
 }
 
 /**
- * Locks what a hand-over decision depends on, always in this order: the configuration lock (shared, vs
- * policy and assignment changes), the customer's reminder lock (shared, vs holds), then the invoice row
- * (vs payments, credit applications and voids).
+ * Locks what a hand-over decision depends on (levels 1 to 3 of the lock order): the configuration lock
+ * (shared, vs policy and assignment changes), the customer's reminder lock (shared, vs holds), then the
+ * invoice row (vs payments, credit applications and voids). Taken BEFORE the reminder row.
  */
 async function lockForCheck(db: AppTenantDb, r: { customerId: string; invoiceId: string }) {
   await lockReminderConfig(db, 'shared');
@@ -717,9 +736,11 @@ export type ReminderOutcome = 'ready' | 'queued' | 'refused' | 'skipped' | 'leas
  * the failure with failReminder in a new transaction.
  */
 export async function executeReminder(db: AppTenantDb, c: ClaimedReminder, outbox: ReminderOutbox | null): Promise<ReminderOutcome> {
+  const target = await reminderTarget(db, c.reminderId);
+  if (!target) return 'lease_lost';
+  await lockForCheck(db, target);
   const r = await holdLease(db, c);
   if (!r) return 'lease_lost';
-  await lockForCheck(db, r);
   const today = await businessToday(db);
   const a = await assess(db, r.invoiceId, today, { policyId: r.policyId, offsetDays: r.offsetDays, dueDate: day(r.dueDate) });
   const checked = { checkedOutstanding: a.outstanding, checkedAt: new Date() };
@@ -797,12 +818,14 @@ export async function failReminder(db: AppTenantDb, c: ClaimedReminder): Promise
  */
 export async function confirmReminderBeforeSend(db: AppTenantDb, input: { reminderId: string; outboundId: string }): Promise<BeforeSendResult> {
   checkId(input.reminderId);
+  const target = await reminderTarget(db, input.reminderId);
+  if (!target) return { send: false, reason: 'not_queued' };
+  await lockForCheck(db, target);
   await db.$queryRaw`
     SELECT 1 FROM finance_reminders WHERE id = ${input.reminderId}::uuid
       AND business_id = nullif(current_setting('app.business_id', true), '')::uuid FOR UPDATE`;
   const r = (await db.financeReminder.findFirst({ where: { id: input.reminderId }, select: reminderSelect })) as ReminderRow | null;
   if (!r || r.status !== 'QUEUED' || r.outboundId !== input.outboundId || r.outboundState !== 'QUEUED') return { send: false, reason: 'not_queued' };
-  await lockForCheck(db, r);
   const today = await businessToday(db);
   const a = await assess(db, r.invoiceId, today, { policyId: r.policyId, offsetDays: r.offsetDays, dueDate: day(r.dueDate) });
   if (!a.ok) {
