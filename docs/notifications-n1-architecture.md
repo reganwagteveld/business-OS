@@ -75,12 +75,12 @@ The two boundaries that make it safe:
 | Outbox precedent | F6-3 `finance/server/reminder-outbox.ts`: transactional enqueue, idempotency key, a pre-dispatch re-check (`confirmReminderBeforeSend`) before contacting a provider, `UNKNOWN` never auto-failed or auto-resent. | N1-D adopts the same contract (§7.3, §12). |
 | Retention/erasure | E1 (dormant): retention rules, erasure semantics, legal holds, a retention worker, all off until `communications-e1.md` §13 legal decisions. `data-model.md` §7: contact erasure scrubs PII from related rows. | Notifications must be covered by erasure and have their own retention (§13). |
 | Permissions | `access/server/permissions.ts`: permission keys per Zone, four roles. Finance, People and Communications are separate from other Zones. Assignments (project owner, task assignee, customer owner) are **not** permissions. | Recipient rules use permission keys, never roles (§5). |
-| Membership | `memberships.status` `ACTIVE`/`SUSPENDED`; no API sets SUSPENDED yet (A2-B, draft PR #76, adds suspend/reactivate). Removal clears owners and assignees. | Inbox reads must require an ACTIVE membership (§5.4). |
+| Membership | `memberships.status` `ACTIVE`/`SUSPENDED`; A2-B (#76, merged; migration `20261205000000_membership_lifecycle`) adds suspend/reactivate, `suspended_at`/`suspended_by` and the owner lock. Removal clears owners and assignees. | Inbox reads must require an ACTIVE membership (§5.4). |
 | Client routing | No URL routing. Zone `route` ids are stable, but syncing to the browser URL is deferred (`app-shell.md`). | Deep links in N1-A are structured targets, not URLs. Email links need web routing first (§14.3). |
 | User-level events | Better Auth emails (verification, reset). No "password changed", "new sign-in" or "email changed" notice exists. | Account security notices are user-level, not tenant-level (§11). |
 
 Related open work checked by title and changed files only (none changes a contract N1 depends on, except
-as noted): #76 A2-B (membership suspend/remove: N1 must react to it, §5.4), #75 GS1 (same "no
+as noted): #76 A2-B, since merged (membership suspend/remove: N1 must react to it, §5.4), #75 GS1 (same "no
 server snippets" stance, §14), #78 agent context pack (read for this task), #77 F8 banking (future
 producer only). People P3-A is merged (#68); P3-B (requests and approvals) is not built.
 
@@ -192,9 +192,9 @@ rules of §5.
 | `people.leave.decided` | people | UPDATE / PEOPLE | approved, rejected, cancelled | The employee's linked user | No (P3-B) | With P3-B |
 | `people.leave.withdrawn` | people | UPDATE / PEOPLE | employee withdraws | The approver who held it | No (P3-B) | With P3-B |
 | `communications.mailbox.reconnect_required` | communications (system) | ACTION / MAILBOX | refresh fails permanently / grant revoked | Mailbox owner | Trigger yes, but runs on a system path (no session user) during refresh/sync, and no sync worker runs | With C2-B3 (sync worker), via the system write path (§18.1) |
-| `communications.mailbox.access_removed` | communications (system) | ACCESS / MAILBOX | A2-B mailbox cutoff on suspend/remove/demote | Mailbox owner (if still a member) and `communications:manage_connections` holders | No (A2-B #76) | With A2-B |
+| `communications.mailbox.access_removed` | communications (system) | ACCESS / MAILBOX | A2-B mailbox cutoff on suspend/remove/demote | Mailbox owner (if still a member) and `communications:manage_connections` holders | No (A2-B #76 merged; no notice yet) | With A2-B |
 | `tenancy.membership.role_changed` | tenancy | ACCESS / SECURITY | role changed | The member, as a **user-level** notice (§11.3), never in the tenant inbox | Yes | N1-U |
-| `tenancy.membership.suspended` / `.removed` | tenancy | ACCESS / SECURITY | A2-B | The member: a `user_notices` row (§11.3); email in N1-D | No (A2-B #76) | N1-U, after A2-B |
+| `tenancy.membership.suspended` / `.removed` | tenancy | ACCESS / SECURITY | A2-B | The member: a `user_notices` row (§11.3); email in N1-D | No (A2-B #76 merged; no notice yet) | N1-U |
 | `tenancy.invitation.accepted` | tenancy | UPDATE / STANDARD | invitee joins | Inviter, if still a member | Yes, but acceptance runs in the pre-tenant `app_private.accept_invitation` SECURITY DEFINER function, outside any tenant unit of work | Later: needs a privileged-SQL change (§18.1) |
 | `tenancy.ownership.changed` | tenancy | ACCESS / SECURITY | a role change to or from OWNER (transfer, step-down, promotion) | The outgoing and incoming owner, as user-level notices (§11.3) | No (A2-B) | N1-U, after A2-B |
 | `account.password.changed` | identity | SECURITY / SECURITY | password changed or reset | The user | Hook not written | N1-U (user-level, §11, §18) |
