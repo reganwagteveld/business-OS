@@ -347,43 +347,37 @@ function PdfViewer({ title, fileName, load, onDownload, onClose }: {
 /** How long drawing may take before the viewer gives up and offers the other ways to open the PDF. */
 const DRAW_TIMEOUT_MS = 20_000;
 
-/** The pages of one PDF, each drawn on its own canvas. Calls onFailed once if any step fails or times out. */
+/**
+ * The pages of one PDF, each drawn on its own canvas. Calls onFailed once if any step fails or takes too long.
+ * Opening and drawing are two effects on purpose: the canvases exist only after React has committed the
+ * page count, so drawing waits for that commit instead of guessing with a timer.
+ */
 function PdfPages({ blob, title, onFailed }: { blob: Blob; title: string; onFailed: (blob: Blob) => void }) {
   const box = useRef<HTMLDivElement | null>(null);
-  const [opened, setOpened] = useState<{ blob: Blob; pageCount: number } | null>(null);
-  const pageCount = opened?.blob === blob ? opened.pageCount : null;
+  const [opened, setOpened] = useState<{ blob: Blob; doc: RenderedPdf } | null>(null);
+  const current = opened?.blob === blob ? opened.doc : null;
+  // Set once every page of these bytes is drawn, so the time limit does not fire afterwards.
+  const drawn = useRef<Blob | null>(null);
+
+  // 1. Load PDF.js and open the bytes. The document is released when the bytes change or the viewer closes.
   useEffect(() => {
     let live = true;
     let doc: RenderedPdf | null = null;
-    const fail = () => {
-      if (live) {
-        live = false;
-        onFailed(blob);
-      }
-    };
-    const timer = setTimeout(fail, DRAW_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      if (live && drawn.current !== blob) onFailed(blob);
+    }, DRAW_TIMEOUT_MS);
     void (async () => {
       try {
         // PDF.js is large, so it is fetched the first time a preview is opened.
         const { openPdf } = await import('./pdf-render');
         const bytes = new Uint8Array(await blob.arrayBuffer());
-        doc = await openPdf(bytes);
-        if (!live) return void doc.destroy();
-        if (doc.pageCount < 1) return fail();
-        setOpened({ blob, pageCount: doc.pageCount });
-        // Wait for React to put the canvases in place, then draw them in order.
-        await new Promise((r) => setTimeout(r, 0));
-        // Fit the panel (less its padding), up to the widest a page is shown (max-w-[52rem] below).
-        const width = Math.min(832, Math.max(320, (box.current?.clientWidth ?? 800) - 32));
-        for (let n = 1; n <= doc.pageCount; n++) {
-          const canvas = box.current?.querySelector<HTMLCanvasElement>(`canvas[data-page="${n}"]`);
-          if (!live) return;
-          if (!canvas) return fail();
-          await doc.drawPage(n, canvas, width);
-        }
-        clearTimeout(timer);
+        const opened = await openPdf(bytes);
+        doc = opened;
+        if (!live) return;
+        if (opened.pageCount < 1) return onFailed(blob);
+        setOpened({ blob, doc: opened });
       } catch {
-        fail();
+        if (live) onFailed(blob);
       }
     })();
     return () => {
@@ -392,6 +386,34 @@ function PdfPages({ blob, title, onFailed }: { blob: Blob; title: string; onFail
       void doc?.destroy();
     };
   }, [blob, onFailed]);
+
+  // 2. Once the canvases are on the page, draw each one in order. A rerun (Strict Mode, a resize) waits
+  // for the previous pass to stop, because PDF.js refuses two drawings on one canvas at the same time.
+  const drawing = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => {
+    if (!current) return;
+    let live = true;
+    drawing.current = drawing.current.then(async () => {
+      try {
+        // Fit the panel (less its padding), up to the widest a page is shown (max-w-[52rem] below).
+        const width = Math.min(832, Math.max(320, (box.current?.clientWidth ?? 800) - 32));
+        for (let n = 1; n <= current.pageCount; n++) {
+          if (!live) return;
+          const canvas = box.current?.querySelector<HTMLCanvasElement>(`canvas[data-page="${n}"]`);
+          if (!canvas) throw new Error(`page ${n} has no canvas`);
+          await current.drawPage(n, canvas, width);
+        }
+        if (live) drawn.current = blob;
+      } catch {
+        if (live) onFailed(blob);
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [current, blob, onFailed]);
+
+  const pageCount = current?.pageCount ?? null;
   return (
     <div ref={box} className="flex flex-col items-center gap-4 p-4" aria-busy={pageCount === null}>
       {pageCount === null ? <div className="w-full"><LoadingRows label="Drawing the PDF…" rows={3} /></div> : null}
