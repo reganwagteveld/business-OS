@@ -8,13 +8,14 @@ export const CurrentUser = z
   .strict();
 export type CurrentUser = z.infer<typeof CurrentUser>;
 
-/** GET /api/v1/me: the signed-in user, or 401. */
+/** GET /api/v1/me: identity only, or 401. This does not imply beta admission or tenant access. */
 export const MeResponse = z.object({ user: CurrentUser }).strict();
 export type MeResponse = z.infer<typeof MeResponse>;
 
 export const Email = z.string().trim().toLowerCase().email().max(254);
 export const Password = z.string().min(12, 'Use at least 12 characters').max(128);
 
+/** Invite-only. Denial may return a synthetic success without creating an account (anti-enumeration). */
 export const SignUpRequest = z.object({ email: Email, password: Password, name: z.string().trim().min(1).max(200) }).strict();
 export const SignInRequest = z.object({ email: Email, password: z.string().min(1).max(128) }).strict();
 export const RequestPasswordResetRequest = z.object({ email: Email, redirectTo: z.string().startsWith('/') }).strict();
@@ -27,5 +28,5 @@ export const DesktopTokenRequest = z
 export const DesktopTokenResponse = z.object({ token: z.string().min(40), expiresAt: z.string().datetime() }).strict();
 export type DesktopTokenResponse = z.infer<typeof DesktopTokenResponse>;
 
-/** Better Auth error body: a stable code and a human message. Never reveals whether an account exists. */
+/** Private beta login denial uses code INVITE_REQUIRED. Better Auth error body: a stable code and a human message. Never reveals whether an account exists. */
 export const AuthError = z.object({ code: z.string().optional(), message: z.string().optional() }).passthrough();

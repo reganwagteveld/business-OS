@@ -17,7 +17,8 @@
     "postinstall": "prisma generate && prisma generate --schema tests/isolation/prisma/schema.prisma && prisma generate --schema tests/isolation/prisma-scheduling/schema.prisma && prisma generate --schema tests/isolation/prisma-finance/schema.prisma",
     "verify:vendor": "node scripts/verify-vendor.mjs",
     "test:isolation": "vitest run --config vitest.isolation.config.ts",
-    "db:privileged": "node scripts/apply-privileged.mjs"
+    "db:privileged": "node scripts/apply-privileged.mjs",
+    "db:beta-admission": "node scripts/beta-admission.mjs"
   },
   "dependencies": {
     "@business-os/contracts": "workspace:*",

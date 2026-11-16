@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { ForbiddenError, authorize, permissionsFor, type Permission } from '@/modules/access';
 import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser } from '@/modules/identity';
 import { NotFoundError, type Actor } from '@/modules/tenancy';
-import { myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
+import { betaSessionAdmitted, myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
 import { apiHeaders } from '@/core/http';
 import { isUniqueViolation, RecordNotFoundError, RuleViolationError, ServiceFailureError, sqlState, StateConflictError } from '@/core/http/errors';
 
@@ -92,7 +92,7 @@ function errorResponse(request: Request, error: unknown): Response {
   if (error instanceof ServiceFailureError) return fail(request, error.status, error.code);
   if (error instanceof RuleViolationError) return json(request, 400, { error: error.code, message: error.detail });
   if (error instanceof TrustedPathError) {
-    const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400 }[error.reason];
+    const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400, business_creation_not_permitted: 403 }[error.reason];
     return fail(request, status, error.reason);
   }
   const state = sqlState(error);
@@ -137,24 +137,25 @@ async function readInput<S extends z.ZodType>(request: Request, schema: S | unde
 }
 
 /** Authentication and CSRF shared by the wrappers. Returns the user, or a response to send. */
-async function authenticate(request: Request): Promise<{ user: CurrentUser; sessionToken: string } | Response> {
+async function authenticate(request: Request, invitationRedemption = false): Promise<{ user: CurrentUser; sessionToken: string } | Response> {
   const mode = classifyAuthRequest(request);
   if (mode.kind === 'reject') return fail(request, mode.status, mode.error);
   const user = await getCurrentUser(request);
   const sessionToken = await getSessionToken(request);
   if (!user || !sessionToken) return fail(request, 401, 'unauthenticated');
   if (!user.emailVerified) return fail(request, 403, 'email_not_verified');
+  if (!invitationRedemption && !await betaSessionAdmitted(sessionToken)) return fail(request, 403, 'invite_required');
   return { user, sessionToken };
 }
 
 /** Signed-in routes that do not belong to one business (list/create businesses, accept invitation). */
 export function publicRoute<S extends z.ZodType | undefined, T>(
-  opts: { input?: S; response: z.ZodType<T> },
+  opts: { input?: S; response: z.ZodType<T>; invitationRedemption?: boolean },
   handler: (args: { request: Request; user: CurrentUser; sessionToken: string; input: S extends z.ZodType ? z.infer<S> : undefined }) => Promise<Result<T>>,
 ) {
   return async (request: Request): Promise<Response> => {
     try {
-      const auth = await authenticate(request);
+      const auth = await authenticate(request, opts.invitationRedemption === true);
       if (auth instanceof Response) return auth;
       const input = await readInput(request, opts.input);
       if (!input.ok) return fail(request, 400, 'invalid_input');

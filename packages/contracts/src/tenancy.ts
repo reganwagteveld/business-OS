@@ -3,7 +3,8 @@ import { Email } from './auth.ts';
 
 // Businesses, memberships and invitations (data-model §4.2–4.4, architecture §7.2). The active
 // business is always the `:slug` path segment, resolved and checked on the server; no request body
-// ever carries a business id.
+// ever carries a business id. App endpoints may return HTTP 403 { error: 'invite_required' }
+// before tenant resolution. Invitation acceptance remains available to verified pending identities.
 
 export const Role = z.enum(['OWNER', 'ADMIN', 'MANAGER', 'MEMBER']);
 export type Role = z.infer<typeof Role>;
@@ -26,6 +27,14 @@ export const CreateBusinessRequest = z
   })
   .strict();
 export const CreateBusinessResponse = z.object({ business: z.object({ slug: Slug }).strict() }).strict();
+
+/**
+ * GET /api/v1/access: platform-level capabilities of the signed-in, admitted user (private beta).
+ * Business creation is an explicit operator grant, separate from admission and from any business role.
+ * POST /api/v1/businesses answers 403 { error: 'business_creation_not_permitted' } without it.
+ */
+export const PlatformAccessResponse = z.object({ canCreateBusiness: z.boolean() }).strict();
+export type PlatformAccessResponse = z.infer<typeof PlatformAccessResponse>;
 
 export const AcceptInvitationRequest = z.object({ token: z.string().min(32).max(128).regex(/^[A-Za-z0-9_-]+$/) }).strict();
 export const AcceptInvitationResponse = z.object({ business: z.object({ slug: Slug, role: Role }).strict() }).strict();

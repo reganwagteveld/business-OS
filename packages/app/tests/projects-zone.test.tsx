@@ -329,6 +329,7 @@ describe('the app: navigation, customers, business switching and desktop', () =>
       listBusinesses: vi.fn(async () => ({ kind: 'ok' as const, data: slugs.map((s) => ({ slug: s, name: ctx(s).business.name, role: 'MANAGER' as const })) })),
       businessContext: vi.fn(async (slug: string) => ({ kind: 'ok' as const, data: ctx(slug, permissions) })),
       createBusiness: vi.fn(),
+      platformAccess: vi.fn(async () => ({ kind: 'ok' as const, data: { canCreateBusiness: true } })),
     };
     render(<App platform="web" apiBaseUrl={BASE} auth={auth} tenancy={tenancy} customers={createCustomersClient(BASE, { kind: 'cookie' }, api.fetch)}
       projects={createProjectsClient(BASE, { kind: 'cookie' }, api.fetch)} storage={memoryStorage({ slug: slugs[0] })} />);

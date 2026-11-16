@@ -21,6 +21,7 @@ function deps(opts: {
     listBusinesses: vi.fn(async () => opts.list ?? ({ kind: 'ok', data: [] } as Outcome<BusinessSummary[]>)),
     businessContext: vi.fn(async (slug: string) => (opts.context ? opts.context(slug) : ({ kind: 'ok', data: ctx(slug) } as Outcome<BusinessContext>))),
     createBusiness: vi.fn(async () => ({ kind: 'failed', status: 500 }) as Outcome<{ slug: string }>),
+    platformAccess: vi.fn(async () => ({ kind: 'ok', data: { canCreateBusiness: true } }) as Outcome<{ canCreateBusiness: boolean }>),
   };
   const storage = opts.storage ?? memoryStorage();
   return { auth, tenancy, storage, preferredSlug: opts.preferredSlug };
@@ -174,5 +175,15 @@ describe('creating the first business', () => {
     expect(await createBusinessFlow(tenancyWith(() => ({ kind: 'invalid_input', message: 'Use a valid currency' })), input)).toEqual({ kind: 'rejected', message: 'Use a valid currency' });
     expect(await createBusinessFlow(tenancyWith(() => ({ kind: 'rate_limited' })), input)).toMatchObject({ kind: 'rejected', message: expect.stringContaining('Too many') });
     expect(await createBusinessFlow(tenancyWith(() => ({ kind: 'failed', status: 500 })), input)).toMatchObject({ kind: 'rejected' });
+  });
+});
+
+describe('private beta admission', () => {
+  it('retains the identity for invitation redemption but never opens onboarding or a saved tenant', async () => {
+    const d = deps({ list: { kind: 'forbidden', code: 'invite_required' }, storage: memoryStorage({ slug: 'saved-tenant' }) });
+    expect(await resolveWorkspace(d)).toEqual({ kind: 'invite-required', user });
+    expect(d.storage.getSlug()).toBeNull();
+    expect(d.tenancy.businessContext).not.toHaveBeenCalled();
+    expect(d.tenancy.createBusiness).not.toHaveBeenCalled();
   });
 });
