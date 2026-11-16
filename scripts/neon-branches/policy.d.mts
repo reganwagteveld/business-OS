@@ -41,6 +41,7 @@ export interface BranchDecision {
 }
 export interface Evaluation {
   evaluatedAt: string;
+  registryHash: string;
   decisions: BranchDecision[];
   warnings: string[];
   verifiedRecoveryPoints: number;
@@ -51,6 +52,9 @@ export type Registry = Record<string, any>;
 export const DEFAULT_POLICY: Policy;
 export const CATEGORY: Record<'PRODUCTION' | 'RECOVERY' | 'DEVELOPMENT' | 'TESTING' | 'UNKNOWN', string>;
 export const DECISION: { PROTECTED: 'protected'; KEEP: 'keep'; ELIGIBLE: 'eligible'; NEEDS_APPROVAL: 'needs-approval' };
+export function validateRegistry<T extends Registry>(registry: T): T;
+export function registryHash(registry: Registry): string;
+export function restoreDrillVerified(entry: unknown): boolean;
 export function fingerprint(branch: NeonBranch): string;
 export function classify(branch: NeonBranch, registry: Registry): { category: string; source: string; note?: string };
 export function evaluate(inventory: Inventory, registry: Registry, now: Date, policy?: Policy): Evaluation;

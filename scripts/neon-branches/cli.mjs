@@ -1,26 +1,25 @@
 #!/usr/bin/env node
-// Usage (from the repo root, on a machine where `neonctl` is signed in):
+// Usage (from the repo root, on a machine where `neonctl` and `gh` are signed in):
 //   node scripts/neon-branches/cli.mjs audit [--report out.md] [--snapshot out.json] [--github-issue N]
-//   node scripts/neon-branches/cli.mjs delete --snapshot out.json --ids br-a,br-b --approval "<link>" [--execute]
-// `audit` is read-only. `delete` refuses unless ops/neon/recovery-points.json has cleanupEnabled: true,
-// and without --execute it is a dry run.
+//   node scripts/neon-branches/cli.mjs check --snapshot out.json --ids br-a,br-b
+// Both commands are read-only. `check` runs the fresh eligibility gate that Phase 2 deletion will use;
+// nothing in this tool deletes a branch.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { loadRegistry, neonctlClient, runAudit, runDeletion } from './run.mjs';
+import { checkDeletion, loadRegistry, neonctlClient, runAudit, snapshotOf } from './run.mjs';
+
+const GITHUB_REPO = 'reganwagteveld/business-OS';
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
     registry: { type: 'string', default: 'ops/neon/recovery-points.json' },
     log: { type: 'string', default: 'ops/neon/audit-log.jsonl' },
-    lock: { type: 'string', default: 'ops/neon/.housekeeping.lock' },
     report: { type: 'string' },
     snapshot: { type: 'string' },
     'github-issue': { type: 'string' },
     ids: { type: 'string' },
-    approval: { type: 'string' },
-    execute: { type: 'boolean', default: false },
   },
 });
 
@@ -30,32 +29,26 @@ const command = positionals[0] ?? 'audit';
 
 if (command === 'audit') {
   const issue = values['github-issue'];
+  if (issue && !/^\d+$/.test(issue)) throw new Error('--github-issue must be an issue number');
   const postComment = issue
-    ? async (body) => execFileSync('gh', ['issue', 'comment', issue, '--body-file', '-'], { input: body, stdio: ['pipe', 'inherit', 'inherit'] })
+    ? async (body) => execFileSync('gh', ['issue', 'comment', issue, '--repo', GITHUB_REPO, '--body-file', '-'], { input: body, stdio: ['pipe', 'inherit', 'pipe'] })
     : null;
-  const { result, report, changed } = await runAudit({ client, registry, now: new Date(), logPath: values.log, postComment });
+  const { result, report, changed, notification } = await runAudit({ client, registry, now: new Date(), logPath: values.log, postComment });
   if (values.report) writeFileSync(values.report, report + '\n');
-  if (values.snapshot) {
-    const snapshot = { evaluatedAt: result.evaluatedAt, fingerprints: Object.fromEntries(result.decisions.map((d) => [d.branchId, d.fingerprint])) };
-    writeFileSync(values.snapshot, JSON.stringify(snapshot, null, 2) + '\n');
-  }
+  if (values.snapshot) writeFileSync(values.snapshot, JSON.stringify(snapshotOf(result), null, 2) + '\n');
   process.stdout.write(report + '\n');
-  process.stdout.write(`\n(decision set ${changed ? 'changed' : 'unchanged'} since the last audit)\n`);
-} else if (command === 'delete') {
+  process.stdout.write(`\n(decision set ${changed ? 'changed' : 'unchanged'} since the last audit; GitHub comment: ${notification})\n`);
+  if (notification === 'failed') process.exitCode = 1; // retried automatically on the next run
+} else if (command === 'check') {
   if (!values.snapshot) throw new Error('--snapshot from the reviewed audit is required');
-  const snap = JSON.parse(readFileSync(values.snapshot, 'utf8'));
-  const outcomes = await runDeletion({
+  const verdicts = await checkDeletion({
     client,
     registry,
-    logPath: values.log,
-    lockPath: values.lock,
     branchIds: (values.ids ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-    approval: values.approval,
-    snapshot: new Map(Object.entries(snap.fingerprints ?? {})),
-    execute: values.execute,
+    snapshot: JSON.parse(readFileSync(values.snapshot, 'utf8')),
   });
-  for (const o of outcomes) process.stdout.write(`${o.branchId} ${o.name ?? ''}: ${o.outcome} (${o.reasons.join('; ')})\n`);
-  if (outcomes.some((o) => o.outcome === 'failed' || o.outcome === 'aborted')) process.exitCode = 1;
+  for (const v of verdicts) process.stdout.write(`${v.branchId} ${v.name ?? ''}: ${v.verdict} (${v.reasons.join('; ')})\n`);
+  if (verdicts.some((v) => v.verdict === 'aborted')) process.exitCode = 1;
 } else {
   throw new Error(`unknown command ${command}`);
 }

@@ -1,14 +1,16 @@
 /**
- * Neon branch housekeeping: retention policy and deletion safeguards.
+ * Neon branch housekeeping: retention policy, audit and the read-only pre-deletion gate.
  * Every test uses an in-memory fake Neon client. No test can reach a real Neon project:
- * the fake's project ID is not a real one and the real neonctl client is never constructed.
+ * the fake's project ID is not a real one, the real neonctl client is never constructed,
+ * and the housekeeping code has no delete path at all (asserted below).
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { evaluate, fingerprint, type NeonBranch, type Registry } from '../../scripts/neon-branches/policy.mjs';
-import { readLog, runAudit, runDeletion, type NeonClient } from '../../scripts/neon-branches/run.mjs';
+import { evaluate, registryHash, validateRegistry, type NeonBranch, type Registry } from '../../scripts/neon-branches/policy.mjs';
+import * as runModule from '../../scripts/neon-branches/run.mjs';
+import { checkDeletion, readLog, runAudit, snapshotOf, type NeonClient } from '../../scripts/neon-branches/run.mjs';
 
 const PROJECT = 'test-project-not-real';
 const NOW = new Date('2026-11-29T08:00:00Z');
@@ -26,7 +28,7 @@ const entry = (b: NeonBranch, o: EntryOpts = {}) => ({
   prs: [1],
   migration: { status: o.migration ?? 'verified' },
   deployment: { status: o.deployment ?? 'verified' },
-  restoreCheck: { status: o.restore === false ? 'not-run' : 'verified' },
+  restoreDrill: o.restore === false ? { status: 'not-run' } : { status: 'verified', at: hoursAgo(1), dataIntegrityChecked: true, evidence: 'restored to temp compute; tenant row counts matched' },
   ...(o.incident ? { incident: o.incident } : {}),
   ...(o.hold ? { hold: o.hold } : {}),
 });
@@ -34,7 +36,7 @@ const entry = (b: NeonBranch, o: EntryOpts = {}) => ({
 function registryFor(pairs: Array<[NeonBranch, EntryOpts?]>, extra: Partial<Registry> = {}): Registry {
   return {
     projectId: PROJECT,
-    cleanupEnabled: true,
+    cleanupEnabled: false,
     billing: { includedBranches: 10, extraBranchMonthUsd: 1.5 },
     incidents: [],
     branches: [{ branchId: 'br-prod', name: 'production', kind: 'production' }, ...pairs.map(([b, o]) => entry(b, o))],
@@ -44,8 +46,8 @@ function registryFor(pairs: Array<[NeonBranch, EntryOpts?]>, extra: Partial<Regi
 
 /** Fake Neon client over a mutable branch list. Hooks let tests simulate concurrent changes and failures. */
 function fakeNeon(branches: NeonBranch[], opts: { endpoints?: { id: string; branch_id: string }[] } = {}) {
-  const state = { branches: [...branches], endpoints: opts.endpoints ?? [{ id: 'ep-prod', branch_id: 'br-prod' }], deleted: [] as string[], listCalls: 0 };
-  const hooks: { beforeList?: (n: number) => void; failList?: (n: number) => boolean; failDelete?: (id: string) => boolean } = {};
+  const state = { branches: [...branches], endpoints: opts.endpoints ?? [{ id: 'ep-prod', branch_id: 'br-prod' }], listCalls: 0 };
+  const hooks: { beforeList?: (n: number) => void; failList?: (n: number) => boolean } = {};
   const client: NeonClient = {
     projectId: PROJECT,
     async listBranches() {
@@ -57,13 +59,6 @@ function fakeNeon(branches: NeonBranch[], opts: { endpoints?: { id: string; bran
     async listEndpoints() {
       return structuredClone(state.endpoints);
     },
-    async deleteBranch(id: string) {
-      if (hooks.failDelete?.(id)) throw new Error('500 internal error');
-      if (state.branches.some((b) => b.parent_id === id)) throw new Error('branch has children');
-      state.branches = state.branches.filter((b) => b.id !== id);
-      state.deleted.push(id);
-      return {};
-    },
   };
   return { client, state, hooks };
 }
@@ -72,11 +67,9 @@ const decisionOf = (r: ReturnType<typeof evaluate>, id: string) => r.decisions.f
 
 let dir: string;
 let logPath: string;
-let lockPath: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'neon-branches-'));
   logPath = join(dir, 'audit-log.jsonl');
-  lockPath = join(dir, '.lock');
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -210,10 +203,49 @@ describe('retention policy', () => {
   });
 });
 
+describe('registry validation and restore drills', () => {
+  it('rejects duplicate branch IDs or names, unknown kinds, bad statuses and the old restoreCheck field', () => {
+    const a = rec('a', 300);
+    expect(() => validateRegistry(registryFor([[a], [a]]))).toThrow(/duplicate branchId/);
+    const sameName = registryFor([[a]]);
+    sameName.branches.push({ ...entry(rec('b', 300)), name: 'pre-a' });
+    expect(() => validateRegistry(sameName)).toThrow(/duplicate name/);
+    expect(() => validateRegistry({ ...registryFor([]), branches: [{ branchId: 'x', name: 'x', kind: 'mystery' }] })).toThrow(/unknown kind/);
+    expect(() => validateRegistry(registryFor([[a, { migration: 'done-ish' }]]))).toThrow(/migration.status/);
+    expect(() => validateRegistry({ ...registryFor([]), branches: [{ ...entry(a), restoreCheck: { status: 'verified' } }] })).toThrow(/restoreCheck/);
+    expect(() => validateRegistry(registryFor([], { incidents: [{ status: 'open' }] }))).toThrow(/incidents/);
+  });
+
+  it('evaluate refuses an invalid registry instead of guessing', () => {
+    const a = rec('a', 300);
+    expect(() => evaluate({ branches: [prod, a], endpoints: [] }, registryFor([[a], [a]]), NOW)).toThrow(/invalid recovery-point registry/);
+  });
+
+  it('counts a recovery point as verified only with an evidenced restore drill that checked data', () => {
+    const [a, b, c] = [rec('a', 300), rec('b', 200), rec('c', 100)];
+    const reg = registryFor([[a], [b], [c]]);
+    // c only shows the branch is reachable: no data-integrity check, so it does not count
+    reg.branches[3].restoreDrill = { status: 'verified', at: hoursAgo(1), evidence: 'connected; _prisma_migrations ok' };
+    // b has no evidence text
+    reg.branches[2].restoreDrill = { status: 'verified', at: hoursAgo(1), dataIntegrityChecked: true, evidence: ' ' };
+    const r = evaluate({ branches: [prod, a, b, c], endpoints: [] }, reg, NOW);
+    expect(r.verifiedRecoveryPoints).toBe(1);
+    expect(r.warnings.join(' ')).toMatch(/Only 1 recovery point/);
+  });
+
+  it('registry hash changes with any decision-relevant edit but not with billing figures', () => {
+    const reg = registryFor([[rec('a', 300)]]);
+    const h = registryHash(reg);
+    expect(registryHash({ ...reg, billing: { includedBranches: 25, extraBranchMonthUsd: 2 } })).toBe(h);
+    expect(registryHash({ ...reg, incidents: [{ id: 'I', status: 'open', branchIds: [] }] })).not.toBe(h);
+    expect(registryHash(JSON.parse(JSON.stringify(reg)))).toBe(h); // key order / copy independent
+  });
+});
+
 describe('audit run (read-only)', () => {
-  it('never calls delete, and logs decisions only when they change across repeated runs', async () => {
+  it('logs decisions only when they change across repeated runs', async () => {
     const [old, n1, n2] = [rec('old', 300), rec('n1', 100), rec('n2', 90)];
-    const { client, state } = fakeNeon([prod, old, n1, n2]);
+    const { client } = fakeNeon([prod, old, n1, n2]);
     const reg = registryFor([[old], [n1], [n2]]);
     const posted: string[] = [];
     const postComment = async (body: string) => posted.push(body);
@@ -223,15 +255,35 @@ describe('audit run (read-only)', () => {
     const second = await runAudit({ client, registry: reg, now: new Date(NOW.getTime() + 60_000), logPath, postComment });
     const afterSecond = readLog(logPath);
 
-    expect(state.deleted).toEqual([]);
-    expect(first.changed).toBe(true);
-    expect(second.changed).toBe(false);
+    expect(first).toMatchObject({ changed: true, notification: 'sent' });
+    expect(second).toMatchObject({ changed: false, notification: 'not-needed' });
     expect(afterFirst.filter((e) => e.action === 'decision')).toHaveLength(4);
     expect(afterSecond.filter((e) => e.action === 'decision')).toHaveLength(4); // nothing new
     expect(afterSecond.filter((e) => e.action === 'audit')).toHaveLength(2);
-    expect(posted).toHaveLength(1); // GitHub comment only when something changed
+    expect(posted).toHaveLength(1);
     expect(first.report).toMatch(/Nothing was deleted/);
-    expect(first.report).toMatch(/pre-old/);
+  });
+
+  it('retries a failed GitHub comment on the next run even though decisions did not change', async () => {
+    const [old, n1, n2] = [rec('old', 300), rec('n1', 100), rec('n2', 90)];
+    const { client } = fakeNeon([prod, old, n1, n2]);
+    const reg = registryFor([[old], [n1], [n2]]);
+    let fail = true;
+    const posted: string[] = [];
+    const postComment = async (body: string) => {
+      if (fail) throw new Error('gh: HTTP 502');
+      posted.push(body);
+    };
+    const first = await runAudit({ client, registry: reg, now: NOW, logPath, postComment });
+    expect(first.notification).toBe('failed');
+    expect(readLog(logPath).at(-1)).toMatchObject({ notification: 'failed', notificationError: 'gh: HTTP 502' });
+
+    fail = false;
+    const second = await runAudit({ client, registry: reg, now: NOW, logPath, postComment });
+    expect(second).toMatchObject({ changed: false, notification: 'sent' });
+    const third = await runAudit({ client, registry: reg, now: NOW, logPath, postComment });
+    expect(third.notification).toBe('not-needed');
+    expect(posted).toHaveLength(1);
   });
 
   it('records a vanished branch as absent', async () => {
@@ -259,114 +311,120 @@ describe('audit run (read-only)', () => {
   });
 });
 
-describe('guarded deletion', () => {
-  const setup = (registryExtra: Partial<Registry> = {}) => {
+describe('no deletion path in Phase 1', () => {
+  it('exports no delete function and the Neon client has no delete method', () => {
+    expect(Object.keys(runModule).filter((k) => /delet/i.test(k) && k !== 'checkDeletion')).toEqual([]);
+    expect(Object.keys(runModule.neonctlClient('test-project-not-real'))).toEqual(['projectId', 'listBranches', 'listEndpoints']);
+  });
+
+  it('the housekeeping sources never issue a DELETE request', () => {
+    for (const f of ['run.mjs', 'cli.mjs', 'policy.mjs']) {
+      const src = readFileSync(join(__dirname, '../../scripts/neon-branches', f), 'utf8');
+      expect(src).not.toMatch(/'-X'|"-X"|DELETE'|method:\s*'DELETE'/);
+    }
+  });
+
+  it('an approval string grants nothing: there is no parameter that turns the check into a deletion', async () => {
+    const [old, n1, n2] = [rec('old', 300), rec('n1', 100), rec('n2', 90)];
+    const { client, state } = fakeNeon([prod, old, n1, n2]);
+    const reg = registryFor([[old], [n1], [n2]]);
+    const snapshot = snapshotOf(evaluate({ branches: state.branches, endpoints: [] }, reg, NOW));
+    // Extra, made-up fields are ignored; the result is only a verdict.
+    const out = await checkDeletion({ client, registry: reg, now: () => NOW, branchIds: ['old'], snapshot, ...({ approval: 'ok', execute: true } as object) });
+    expect(out).toEqual([expect.objectContaining({ branchId: 'old', verdict: 'allowed' })]);
+    expect(state.branches.map((b) => b.id)).toContain('old');
+  });
+});
+
+describe('pre-deletion check (fresh eligibility gate)', () => {
+  const setup = () => {
     const [old, mid, n1, n2] = [rec('old', 24 * 9), rec('mid', 24 * 4), rec('n1', 60), rec('n2', 55)];
     const neon = fakeNeon([prod, old, mid, n1, n2]);
-    const reg = registryFor([[old], [mid], [n1], [n2]], registryExtra);
-    const snap = new Map(evaluate({ branches: neon.state.branches, endpoints: [] }, reg, NOW).decisions.map((d) => [d.branchId, d.fingerprint]));
-    const base = { client: neon.client, registry: reg, now: () => NOW, logPath, lockPath, approval: 'thread message cmsg_test', snapshot: snap };
-    return { ...neon, reg, snap, base };
+    const reg = registryFor([[old], [mid], [n1], [n2]]);
+    const snapshot = snapshotOf(evaluate({ branches: neon.state.branches, endpoints: [] }, reg, NOW));
+    const base = { client: neon.client, registry: reg, now: () => NOW, snapshot };
+    return { ...neon, reg, snapshot, base };
   };
 
-  it('is disabled until the registry enables Phase 2', async () => {
-    const { base, state } = setup({ cleanupEnabled: false });
-    await expect(runDeletion({ ...base, branchIds: ['old'], execute: true })).rejects.toThrow(/not enabled/);
-    expect(state.deleted).toEqual([]);
-  });
-
-  it('requires an approval reference and a reviewed snapshot for every branch', async () => {
-    const { base } = setup();
-    await expect(runDeletion({ ...base, approval: ' ', branchIds: ['old'] })).rejects.toThrow(/approval/);
-    await expect(runDeletion({ ...base, snapshot: new Map(), branchIds: ['old'] })).rejects.toThrow(/fingerprint/);
-  });
-
-  it('dry run by default: reports what would happen and deletes nothing', async () => {
+  it('allows still-eligible, unchanged branches and re-reads the inventory for each one', async () => {
     const { base, state } = setup();
-    const out = await runDeletion({ ...base, branchIds: ['old', 'mid'] });
-    expect(out.map((o) => o.outcome)).toEqual(['would-delete', 'would-delete']);
-    expect(state.deleted).toEqual([]);
-  });
-
-  it('deletes eligible branches with a fresh inventory check before each one', async () => {
-    const { base, state } = setup();
-    const out = await runDeletion({ ...base, branchIds: ['old', 'mid'], execute: true });
-    expect(out.map((o) => o.outcome)).toEqual(['deleted', 'deleted']);
-    expect(state.deleted).toEqual(['old', 'mid']);
+    const out = await checkDeletion({ ...base, branchIds: ['old', 'mid'] });
+    expect(out.map((o) => o.verdict)).toEqual(['allowed', 'allowed']);
     expect(state.listCalls).toBe(2);
-    expect(readLog(logPath).filter((e) => e.action === 'delete').map((e) => e.outcome)).toEqual(['deleted', 'deleted']);
   });
 
   it('refuses production and retained recovery points even if named', async () => {
-    const { base, state, snap } = setup();
-    snap.set('br-prod', fingerprint(prod));
-    const out = await runDeletion({ ...base, snapshot: snap, branchIds: ['br-prod', 'n1', 'n2'], execute: true });
-    expect(out.map((o) => o.outcome)).toEqual(['refused', 'refused', 'refused']);
-    expect(state.deleted).toEqual([]);
+    const { base } = setup();
+    const out = await checkDeletion({ ...base, branchIds: ['br-prod', 'n1', 'n2'] });
+    expect(out.map((o) => o.verdict)).toEqual(['refused', 'refused', 'refused']);
   });
 
-  it('refuses a branch that became protected after the audit (new incident registered)', async () => {
-    const { base, state, reg } = setup();
-    reg.incidents.push({ id: 'INC-9', status: 'open', branchIds: ['old'] });
-    const out = await runDeletion({ ...base, branchIds: ['old'], execute: true });
-    expect(out[0]).toMatchObject({ outcome: 'refused' });
-    expect(out[0]!.reasons!.join(' ')).toMatch(/now protected/);
-    expect(state.deleted).toEqual([]);
+  it('refuses a branch that is not in the reviewed snapshot', async () => {
+    const { base } = setup();
+    const snapshot = { ...base.snapshot, fingerprints: { ...base.snapshot.fingerprints } };
+    delete snapshot.fingerprints.mid;
+    const out = await checkDeletion({ ...base, snapshot, branchIds: ['mid'] });
+    expect(out[0]).toMatchObject({ verdict: 'refused', reasons: ['branch is not in the reviewed snapshot'] });
   });
 
-  it('refuses when the two newest points disappear mid-run, so an old point becomes a required one', async () => {
+  it('refuses when the registry changed after the audit, even if the change looks harmless', async () => {
+    const { base, reg } = setup();
+    reg.branches[1].note = 'edited after review';
+    const out = await checkDeletion({ ...base, branchIds: ['old'] });
+    expect(out[0]!.verdict).toBe('refused');
+    expect(out[0]!.reasons[0]).toMatch(/registry changed since the reviewed audit/);
+  });
+
+  it('refuses a branch that became protected after the audit (incident, hold or verification downgrade)', async () => {
+    for (const mutate of [
+      (r: Registry) => r.incidents.push({ id: 'INC-9', status: 'open', branchIds: ['old'] }),
+      (r: Registry) => (r.branches[1].hold = 'needed for audit'),
+      (r: Registry) => (r.branches[1].deployment = { status: 'pending' }),
+    ]) {
+      const { base, reg } = setup();
+      mutate(reg);
+      // Even with the snapshot re-bound to the new registry, the fresh evaluation refuses it.
+      const snapshot = { ...base.snapshot, registryHash: registryHash(reg) };
+      const out = await checkDeletion({ ...base, snapshot, branchIds: ['old'] });
+      expect(out[0]!.verdict).toBe('refused');
+      expect(out[0]!.reasons[0]).toBe('now protected');
+    }
+  });
+
+  it('refuses when the newest points disappear mid-run, so an old point becomes required', async () => {
     const { base, state, hooks } = setup();
-    // Someone deletes the two newest recovery points between our deletions.
     hooks.beforeList = (n) => {
       if (n === 2) state.branches = state.branches.filter((b) => b.id !== 'n1' && b.id !== 'n2');
     };
-    const out = await runDeletion({ ...base, branchIds: ['old', 'mid'], execute: true });
-    expect(out.map((o) => o.outcome)).toEqual(['deleted', 'refused']);
-    expect(out[1]!.reasons![0]).toBe('now keep');
-    expect(state.deleted).toEqual(['old']);
+    const out = await checkDeletion({ ...base, branchIds: ['old', 'mid'] });
+    expect(out.map((o) => o.verdict)).toEqual(['allowed', 'refused']);
+    expect(out[1]!.reasons[0]).toBe('now keep');
   });
 
-  it('refuses a branch that changed since the reviewed audit (concurrent change)', async () => {
+  it('refuses a branch whose Neon fields changed since the reviewed audit', async () => {
     const { base, state } = setup();
     state.branches = state.branches.map((b) => (b.id === 'old' ? { ...b, updated_at: NOW.toISOString() } : b));
-    const out = await runDeletion({ ...base, branchIds: ['old'], execute: true });
-    expect(out[0]!.outcome).toBe('refused');
-    expect(out[0]!.reasons![0]).toMatch(/changed since the reviewed audit/);
-    expect(state.deleted).toEqual([]);
+    const out = await checkDeletion({ ...base, branchIds: ['old'] });
+    expect(out[0]).toMatchObject({ verdict: 'refused', reasons: ['branch changed since the reviewed audit; re-run the audit'] });
   });
 
-  it('treats an already-deleted branch as done on a repeated run', async () => {
+  it('reports an already-deleted branch as absent (safe to repeat)', async () => {
     const { base, state } = setup();
-    await runDeletion({ ...base, branchIds: ['old'], execute: true });
-    const again = await runDeletion({ ...base, branchIds: ['old'], execute: true });
-    expect(again[0]!.outcome).toBe('already-absent');
-    expect(state.deleted).toEqual(['old']);
+    state.branches = state.branches.filter((b) => b.id !== 'old');
+    const out = await checkDeletion({ ...base, branchIds: ['old'] });
+    expect(out[0]!.verdict).toBe('already-absent');
   });
 
-  it('stops at the first inventory failure and never deletes on stale data', async () => {
-    const { base, state, hooks } = setup();
+  it('stops at the first inventory failure and never decides on stale data', async () => {
+    const { base, hooks } = setup();
     hooks.failList = (n) => n === 2;
-    const out = await runDeletion({ ...base, branchIds: ['old', 'mid'], execute: true });
-    expect(out.map((o) => o.outcome)).toEqual(['deleted', 'aborted']);
-    expect(state.deleted).toEqual(['old']);
+    const out = await checkDeletion({ ...base, branchIds: ['old', 'mid', 'n1'] });
+    expect(out.map((o) => o.verdict)).toEqual(['allowed', 'aborted']);
   });
 
-  it('stops after a failed delete call and logs it', async () => {
-    const { base, state, hooks } = setup();
-    hooks.failDelete = (id) => id === 'old';
-    const out = await runDeletion({ ...base, branchIds: ['old', 'mid'], execute: true });
-    expect(out.map((o) => o.outcome)).toEqual(['failed']);
-    expect(state.deleted).toEqual([]);
-    expect(readLog(logPath).at(-1)).toMatchObject({ outcome: 'failed', branchId: 'old' });
-  });
-
-  it('refuses to start while another run holds the lock, and releases it afterwards', async () => {
-    const { base, state } = setup();
-    writeFileSync(lockPath, '123');
-    await expect(runDeletion({ ...base, branchIds: ['old'], execute: true })).rejects.toThrow(/another housekeeping run/);
-    expect(state.deleted).toEqual([]);
-    rmSync(lockPath);
-    await runDeletion({ ...base, branchIds: ['old'], execute: true });
-    await expect(runDeletion({ ...base, branchIds: ['mid'], execute: true })).resolves.toHaveLength(1);
+  it('requires a reviewed snapshot bound to a registry revision', async () => {
+    const { base } = setup();
+    await expect(checkDeletion({ ...base, snapshot: { evaluatedAt: '', registryHash: '', fingerprints: {} }, branchIds: ['old'] })).rejects.toThrow(/snapshot/);
+    await expect(checkDeletion({ ...base, branchIds: [] })).rejects.toThrow(/no branches/);
   });
 });

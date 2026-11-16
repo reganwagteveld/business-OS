@@ -3,17 +3,17 @@
 Every production migration cuts a Neon recovery branch (`pre-<thing>-migration`) first. They are cheap, but
 they pile up. This is a small, read-only-by-default workflow for deciding which ones can go.
 
-**Status: Phase 1 (audit-only).** Nothing deletes branches automatically, and nothing is scheduled.
+**Status: Phase 1 (audit-only).** The code has no way to delete a branch, and nothing is scheduled.
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `scripts/neon-branches/policy.mjs` | The retention rules. Pure functions, no I/O. |
-| `scripts/neon-branches/run.mjs` | Inventory (via `neonctl api`), audit, report, audit log, guarded deletion. |
+| `scripts/neon-branches/run.mjs` | Read-only inventory (via `neonctl api`), audit, report, audit log, and the read-only pre-deletion check. |
 | `scripts/neon-branches/cli.mjs` | Command line entry point. |
-| `ops/neon/recovery-points.json` | Registry: which branch protects which migration/PR, verification status, incidents, holds, billing figures, and the `cleanupEnabled` switch. |
-| `ops/neon/audit-log.jsonl` | Append-only log of audits, decision changes and deletions. |
+| `ops/neon/recovery-points.json` | Registry: which branch protects which migration/PR, verification status, restore drills, incidents, holds and billing figures. Validated on every run (no duplicates, known kinds and statuses). |
+| `ops/neon/audit-log.jsonl` | Append-only log of audits, decision changes, notification outcomes and (later) deletions. Its integrity rests on Git history and PR review; it is not a tamper-proof ledger. Entries marked `reconstructed: true` were written after the fact from notes. |
 | `tests/ops/neon-branches.test.ts` | Mocked-Neon tests. No test can reach a real Neon project. |
 
 No new dependencies. It reuses the Mac's existing `neonctl` sign-in; no API key is stored.
@@ -31,7 +31,7 @@ Applied in this order; the first rule that matches decides, and every matching r
 6. **Protected:** the production migration or deployment it guards is not recorded as `verified`, or it has a `hold`.
 7. **Needs approval:** unknown, development or testing branches; `pre-*` branches missing from the registry;
    a registry entry whose branch ID no longer matches (branch recreated under the same name).
-8. **Keep:** the two most recent restore-verified recovery points. If fewer than two have a restore check,
+8. **Keep:** the two most recent restore-drilled recovery points (see below). If fewer than two have a drill,
    the newest usable points are kept instead and the report warns. The newest usable point is always kept.
 9. Otherwise **eligible**: `review` between 48 hours and 7 days, `cleanup` after 7 days.
 
@@ -45,8 +45,12 @@ node scripts/neon-branches/cli.mjs audit --report /tmp/neon-report.md --snapshot
 
 - Writes one `audit` line to the log every run, and a `decision` line only for branches whose decision changed,
   so repeated runs do not flood the log.
-- `--github-issue N` posts the report as a comment on the operations issue, **only when the decision set changed**.
+- `--github-issue N` posts the report as a comment on issue N in `reganwagteveld/business-OS` (the repo is named
+  explicitly, not taken from the current checkout). A comment is posted whenever the decision set differs from the
+  last one **successfully delivered**, so a failed post is retried on the next run. Each audit logs
+  `notification: sent | failed | not-needed | not-configured`; a failure also sets a non-zero exit code.
 - If any Neon call fails, the run stops, logs `outcome: failed` and decides nothing.
+- The snapshot binds each branch's Neon fields to the registry revision (`registryHash`) that was reviewed.
 
 ## Keeping the registry current
 
@@ -54,27 +58,25 @@ Whoever cuts a recovery branch adds an entry to `ops/neon/recovery-points.json` 
 branch ID and name, migrations, PRs, `appliedAt`, `migration.status`, `deployment.status`, `restoreCheck.status`.
 Set `deployment.status` to `verified` once the post-deploy check passes. Record an incident in `incidents` to freeze branches.
 
-A **restore check** means: attach a temporary read-only compute to the recovery branch, confirm it connects and
-`_prisma_migrations` shows the expected last migration, then delete that compute. Record it as
-`restoreCheck: { "status": "verified", "at": "...", "evidence": "..." }`. Creating the temporary compute changes
-Neon resources, so it needs Regan's OK.
+A recovery point counts as **independently verified** only after a **restore drill**: restore the recovery branch
+to a temporary branch/compute, run the application-level data checks (expected last migration, per-table row counts
+and key totals matching the values recorded at the branch's LSN), then remove the temporary resources. Being able to
+connect and read `_prisma_migrations` is not enough. Record it as
+`restoreDrill: { "status": "verified", "at": "...", "dataIntegrityChecked": true, "evidence": "..." }`.
+A drill creates Neon resources, so each one needs Regan's OK.
 
-## Phase 2: controlled cleanup (not enabled)
+## Phase 2: controlled cleanup (not built yet)
 
-Enabling Phase 2 is a reviewed commit that sets `cleanupEnabled: true`. After that, each cleanup is:
+Phase 1 ships no deletion code. Phase 2 is a separate, audited change that must add:
 
-1. Run the audit with `--snapshot`, and share the report.
-2. Regan approves specific branch IDs in writing.
-3. Dry run, then execute:
-
-```bash
-node scripts/neon-branches/cli.mjs delete --snapshot /tmp/neon-snapshot.json --ids br-a,br-b --approval "<link to approval>"
-node scripts/neon-branches/cli.mjs delete --snapshot /tmp/neon-snapshot.json --ids br-a,br-b --approval "<link to approval>" --execute
-```
-
-Safeguards: a lock file stops two runs at once; before **each** deletion the full inventory is fetched again and
-re-evaluated; the branch must still be `eligible` and unchanged since the reviewed snapshot; an inventory or delete
-failure stops the run; an already-deleted branch is logged as `already-absent`. Every outcome is logged with the approval reference.
+1. **Trusted, branch-specific approval.** A free-text reference proves nothing. Approval must be a record that
+   names exact branch IDs and the snapshot's `registryHash`, and lands through a reviewed, merged PR (or another
+   channel the tool can verify), not a command-line string.
+2. **The fresh eligibility gate before every deletion.** This already exists and is tested: `checkDeletion` /
+   `node scripts/neon-branches/cli.mjs check --snapshot s.json --ids br-a,br-b`. It re-reads the whole inventory for
+   each branch and refuses anything no longer eligible, changed since the snapshot, missing from it, or evaluated
+   against a different registry revision. It stops on any API failure.
+3. A lock against concurrent runs, one deletion at a time, and a log line per outcome.
 
 ## Proposed schedule
 
@@ -82,3 +84,13 @@ Weekly, Sunday 09:00 (Regan's time), audit-only, on the Mac where `neonctl` is s
 launchd). It posts to a single "Neon branch housekeeping" GitHub issue only when decisions change, and commits the
 audit log when it changed. Not activated; needs Regan's approval. A GitHub Actions schedule would need a Neon API
 key stored as a repository secret, which is avoided for now.
+
+Before activating:
+
+- **Authentication.** Both `neonctl` and `gh` must be signed in on the Mac. If either sign-in has expired, the run
+  fails: a Neon failure logs `outcome: failed`; a GitHub failure logs `notification: failed`. Either way the exit code
+  is non-zero and nothing is decided or deleted.
+- **Missed runs.** If the Mac is asleep or off on Sunday, that week's run is skipped. The next run evaluates the
+  current inventory from scratch, so nothing is lost. A failed comment is re-posted on the next run.
+- **Repeats.** Re-running is safe: decision lines are logged only on change, and comments are posted only for a new,
+  undelivered decision set.

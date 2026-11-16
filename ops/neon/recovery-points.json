@@ -34,7 +34,7 @@
         "status": "verified",
         "evidence": "PR #15 merged; later production deploys healthy (health 200)"
       },
-      "restoreCheck": {
+      "restoreDrill": {
         "status": "not-run"
       }
     },
@@ -57,7 +57,7 @@
         "status": "verified",
         "evidence": "PR #18 merged; later production deploys healthy (health 200)"
       },
-      "restoreCheck": {
+      "restoreDrill": {
         "status": "not-run"
       }
     },
@@ -84,7 +84,7 @@
         "status": "verified",
         "evidence": "PR #35 merged; later production deploys healthy (health 200)"
       },
-      "restoreCheck": {
+      "restoreDrill": {
         "status": "not-run"
       }
     },
@@ -110,7 +110,7 @@
         "status": "verified",
         "evidence": "PR #39 merged; later production deploys healthy (health 200)"
       },
-      "restoreCheck": {
+      "restoreDrill": {
         "status": "not-run"
       }
     },
@@ -134,10 +134,10 @@
         "status": "verified",
         "evidence": "PR #42 merged; later production deploys healthy (health 200)"
       },
-      "restoreCheck": {
+      "note": "C2-A PR number not recorded",
+      "restoreDrill": {
         "status": "not-run"
-      },
-      "note": "C2-A PR number not recorded"
+      }
     },
     {
       "branchId": "br-broad-dawn-bb0uidp7",
@@ -158,7 +158,7 @@
         "status": "verified",
         "evidence": "PR #43 merged; later production deploys healthy (health 200)"
       },
-      "restoreCheck": {
+      "restoreDrill": {
         "status": "not-run"
       }
     },
@@ -179,10 +179,10 @@
         "status": "verified",
         "evidence": "main deploys since then healthy (health 200)"
       },
-      "restoreCheck": {
+      "note": "PR number not recorded",
+      "restoreDrill": {
         "status": "not-run"
-      },
-      "note": "PR number not recorded"
+      }
     },
     {
       "branchId": "br-aged-lake-bbzad79v",
@@ -204,7 +204,7 @@
         "status": "verified",
         "evidence": "PR #45 merged; later production deploys healthy (health 200)"
       },
-      "restoreCheck": {
+      "restoreDrill": {
         "status": "not-run"
       }
     },
@@ -228,7 +228,7 @@
         "status": "verified",
         "evidence": "main 52de37f deployed; docs PR #57 merged"
       },
-      "restoreCheck": {
+      "restoreDrill": {
         "status": "not-run"
       }
     },
@@ -251,7 +251,7 @@
         "status": "pending",
         "evidence": "PR #61 merged 07:47 UTC; post-deploy check not yet recorded"
       },
-      "restoreCheck": {
+      "restoreDrill": {
         "status": "not-run"
       }
     },
@@ -274,10 +274,10 @@
         "status": "pending",
         "evidence": "PR #63 not merged yet"
       },
-      "restoreCheck": {
+      "note": "Cut at 07:45:40 UTC, before S2 was applied at 07:46:23, so restoring it would also undo S2.",
+      "restoreDrill": {
         "status": "not-run"
-      },
-      "note": "Cut at 07:45:40 UTC, before S2 was applied at 07:46:23, so restoring it would also undo S2."
+      }
     }
   ]
 }

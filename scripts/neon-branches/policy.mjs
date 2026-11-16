@@ -1,4 +1,5 @@
 // Neon recovery-branch retention policy. Pure functions: no I/O, no clock, no Neon calls.
+import { createHash } from 'node:crypto';
 // The rules are minimum safeguards. "eligible" means "may be proposed for deletion",
 // never "delete automatically": every deletion still needs Regan's approval and a fresh check.
 
@@ -38,6 +39,62 @@ export function fingerprint(branch) {
     branch.default ? 'default' : '',
     branch.protected ? 'protected' : '',
   ].join('|');
+}
+
+const KINDS = new Set(Object.values(CATEGORY));
+const STATUSES = new Set(['verified', 'pending', 'failed', 'not-run', 'missing']);
+
+/** Reject registries that could make a decision ambiguous. Returns the registry for chaining. */
+export function validateRegistry(registry) {
+  const problems = [];
+  if (!registry || typeof registry !== 'object') throw new Error('registry is not an object');
+  if (typeof registry.projectId !== 'string' || !registry.projectId) problems.push('projectId missing');
+  if (!Array.isArray(registry.branches)) problems.push('branches must be an array');
+  const ids = new Set();
+  const names = new Set();
+  for (const [i, e] of (registry.branches ?? []).entries()) {
+    const at = `branches[${i}]`;
+    if (typeof e?.branchId !== 'string' || !e.branchId) problems.push(`${at}: branchId missing`);
+    else if (ids.has(e.branchId)) problems.push(`${at}: duplicate branchId ${e.branchId}`);
+    if (typeof e?.name !== 'string' || !e.name) problems.push(`${at}: name missing`);
+    else if (names.has(e.name)) problems.push(`${at}: duplicate name ${e.name}`);
+    ids.add(e?.branchId);
+    names.add(e?.name);
+    if (!KINDS.has(e?.kind)) problems.push(`${at}: unknown kind ${e?.kind}`);
+    if (e?.kind === CATEGORY.RECOVERY) {
+      for (const k of ['migration', 'deployment', 'restoreDrill']) {
+        if (e[k] !== undefined && !STATUSES.has(e[k]?.status)) problems.push(`${at}: ${k}.status "${e[k]?.status}" is not one of ${[...STATUSES].join(', ')}`);
+      }
+      if (e.restoreCheck !== undefined) problems.push(`${at}: restoreCheck is no longer used; record a restoreDrill`);
+    }
+  }
+  for (const [i, inc] of (registry.incidents ?? []).entries()) {
+    if (!inc?.id || !Array.isArray(inc.branchIds)) problems.push(`incidents[${i}]: id and branchIds are required`);
+  }
+  if (problems.length) throw new Error(`invalid recovery-point registry:\n- ${problems.join('\n- ')}`);
+  return registry;
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().filter((k) => value[k] !== undefined).map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+/** Hash of every registry field that can change a decision. Any edit means the snapshot must be re-reviewed. */
+export function registryHash(registry) {
+  const relevant = { ...registry };
+  delete relevant.billing; // billing only affects the cost note
+  return createHash('sha256').update(canonical(relevant)).digest('hex').slice(0, 32);
+}
+
+/**
+ * A recovery point counts as independently verified only after an evidenced restore drill:
+ * restored to a temporary compute, and application data checked, not just reachable.
+ */
+export function restoreDrillVerified(entry) {
+  const d = entry?.restoreDrill;
+  return d?.status === 'verified' && d.dataIntegrityChecked === true && typeof d.evidence === 'string' && d.evidence.trim().length > 0 && typeof d.at === 'string';
 }
 
 function registryEntry(branch, registry) {
@@ -90,6 +147,7 @@ function verificationGaps(entry) {
  * @param {Date} now
  */
 export function evaluate(inventory, registry, now, policy = DEFAULT_POLICY) {
+  validateRegistry(registry);
   const branches = inventory.branches ?? [];
   const endpoints = inventory.endpoints ?? [];
   const warnings = [];
@@ -112,18 +170,18 @@ export function evaluate(inventory, registry, now, policy = DEFAULT_POLICY) {
   const usable = rows
     .filter((r) => r.category === CATEGORY.RECOVERY && r.source === 'registry' && r.branch.current_state === 'ready' && r.entry?.migration?.status === 'verified')
     .sort((a, b) => Date.parse(b.branch.created_at) - Date.parse(a.branch.created_at));
-  const verified = usable.filter((r) => r.entry?.restoreCheck?.status === 'verified');
+  const verified = usable.filter((r) => restoreDrillVerified(r.entry));
 
   // Keep the newest independently verified points; top up with the newest usable ones if there are too few.
   const retained = new Map();
-  for (const r of verified.slice(0, policy.minRecoveryPoints)) retained.set(r.branch.id, 'one of the two most recent independently verified recovery points');
+  for (const r of verified.slice(0, policy.minRecoveryPoints)) retained.set(r.branch.id, 'one of the two most recent restore-drilled recovery points');
   for (const r of usable) {
     if (retained.size >= policy.minRecoveryPoints) break;
-    if (!retained.has(r.branch.id)) retained.set(r.branch.id, 'kept to hold the two-recovery-point minimum (not yet restore-verified)');
+    if (!retained.has(r.branch.id)) retained.set(r.branch.id, 'kept to hold the two-recovery-point minimum (no restore drill yet)');
   }
   if (usable[0]) retained.set(usable[0].branch.id, retained.get(usable[0].branch.id) ?? 'last known usable recovery point');
   if (verified.length < policy.minRecoveryPoints) {
-    warnings.push(`Only ${verified.length} recovery point(s) have a recorded restore check; the minimum is ${policy.minRecoveryPoints}. Unverified points are being kept instead.`);
+    warnings.push(`Only ${verified.length} recovery point(s) have an evidenced restore drill; the minimum is ${policy.minRecoveryPoints}. Unverified points are being kept instead.`);
   }
   if (usable.length === 0) warnings.push('No usable recovery point found. Nothing can be deleted until one exists.');
 
@@ -180,7 +238,7 @@ export function evaluate(inventory, registry, now, policy = DEFAULT_POLICY) {
     };
   });
 
-  return { evaluatedAt: now.toISOString(), decisions, warnings, verifiedRecoveryPoints: verified.length, usableRecoveryPoints: usable.length };
+  return { evaluatedAt: now.toISOString(), registryHash: registryHash(registry), decisions, warnings, verifiedRecoveryPoints: verified.length, usableRecoveryPoints: usable.length };
 }
 
 /** Rough monthly cost of branches above the plan allowance. Only as good as the billing figures in the registry. */

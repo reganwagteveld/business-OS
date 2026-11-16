@@ -1,19 +1,19 @@
-// Neon branch housekeeping: inventory, audit report, audit log and guarded deletion.
-// Phase 1 is audit-only. Deletion refuses to run unless the registry sets cleanupEnabled: true
-// (a reviewed commit = Regan's approval of Phase 2) AND the caller passes an approval reference.
+// Neon branch housekeeping: inventory, audit report, audit log and a read-only pre-deletion check.
+// Phase 1 is audit-only. This module contains NO code that deletes a Neon branch: deletion, and the
+// trusted, branch-specific approval it needs, belong to a separate Phase 2 change.
 import { execFile } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import { DECISION, estimateBranchCost, evaluate } from './policy.mjs';
+import { DECISION, estimateBranchCost, evaluate, validateRegistry } from './policy.mjs';
 
 export class NeonApiError extends Error {}
 
-/** Neon client that reuses the Mac's existing `neonctl` sign-in. No API key is read or stored here. */
+/** Read-only Neon client that reuses the Mac's existing `neonctl` sign-in. No API key is read or stored here. */
 export function neonctlClient(projectId, { bin = 'neonctl', timeoutMs = 60_000 } = {}) {
-  const call = (path, extra = []) =>
+  const get = (path) =>
     new Promise((resolve, reject) => {
-      execFile(bin, ['api', path, ...extra], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+      execFile(bin, ['api', path], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (err) return reject(new NeonApiError(`neonctl api ${path} failed: ${(stderr || err.message).trim().slice(0, 300)}`));
         try {
           resolve(JSON.parse(stdout));
@@ -28,7 +28,7 @@ export function neonctlClient(projectId, { bin = 'neonctl', timeoutMs = 60_000 }
       const out = [];
       let cursor = null;
       for (let page = 0; page < 50; page++) {
-        const res = await call(`/projects/${projectId}/branches${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+        const res = await get(`/projects/${projectId}/branches${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
         if (!Array.isArray(res?.branches)) throw new NeonApiError('unexpected branch list response');
         out.push(...res.branches);
         cursor = res.pagination?.next ?? null;
@@ -37,12 +37,9 @@ export function neonctlClient(projectId, { bin = 'neonctl', timeoutMs = 60_000 }
       throw new NeonApiError('branch list pagination did not finish');
     },
     async listEndpoints() {
-      const res = await call(`/projects/${projectId}/endpoints`);
+      const res = await get(`/projects/${projectId}/endpoints`);
       if (!Array.isArray(res?.endpoints)) throw new NeonApiError('unexpected endpoint list response');
       return res.endpoints;
-    },
-    async deleteBranch(branchId) {
-      return call(`/projects/${projectId}/branches/${branchId}`, ['-X', 'DELETE']);
     },
   };
 }
@@ -54,12 +51,10 @@ export async function fetchInventory(client) {
 }
 
 export function loadRegistry(path) {
-  const registry = JSON.parse(readFileSync(path, 'utf8'));
-  if (!registry.projectId) throw new Error('registry has no projectId');
-  return registry;
+  return validateRegistry(JSON.parse(readFileSync(path, 'utf8')));
 }
 
-// ---------- audit log (append-only JSONL) ----------
+// ---------- audit log (append-only JSONL; Git history is the record, not an immutable ledger) ----------
 
 export function readLog(path) {
   if (!existsSync(path)) return [];
@@ -81,7 +76,7 @@ function lastDecisions(log) {
   return last;
 }
 
-/** Digest of the decision set: a new GitHub comment is posted only when this changes. */
+/** Digest of the decision set. A GitHub comment is due whenever this differs from the last one delivered. */
 export function decisionDigest(result) {
   const parts = result.decisions.map((d) => `${d.branchId}:${d.decision}:${d.priority ?? ''}`).sort();
   return createHash('sha256').update(parts.concat(result.warnings).join('\n')).digest('hex').slice(0, 16);
@@ -92,8 +87,13 @@ export function decisionDigest(result) {
 /**
  * Read-only audit. Logs one summary line per run, plus a decision line only for branches whose
  * decision changed since the last run, so weekly runs don't flood the log.
+ *
+ * Notification: a comment is posted when the digest differs from the last *successfully delivered*
+ * one, so a failed post is retried on the next run. The outcome is logged as notification:
+ * "sent" | "failed" | "not-needed" | "not-configured".
  */
 export async function runAudit({ client, registry, now, logPath, postComment = null }) {
+  validateRegistry(registry);
   if (client.projectId !== registry.projectId) throw new Error(`client project ${client.projectId} does not match registry project ${registry.projectId}`);
   const runId = `audit-${now.toISOString()}`;
   let inventory;
@@ -106,8 +106,11 @@ export async function runAudit({ client, registry, now, logPath, postComment = n
   const result = evaluate(inventory, registry, now);
   const log = readLog(logPath);
   const previous = lastDecisions(log);
-  const previousDigest = [...log].reverse().find((e) => e.action === 'audit' && e.outcome === 'ok')?.digest ?? null;
+  const audits = log.filter((e) => e.action === 'audit' && e.outcome === 'ok');
+  const previousDigest = audits.at(-1)?.digest ?? null;
+  const deliveredDigest = [...audits].reverse().find((e) => e.notification === 'sent')?.digest ?? null;
   const digest = decisionDigest(result);
+  const changed = digest !== previousDigest;
 
   const entries = [];
   for (const d of result.decisions) {
@@ -119,20 +122,38 @@ export async function runAudit({ client, registry, now, logPath, postComment = n
   for (const [id, prev] of previous) {
     if (!liveIds.has(id) && prev.decision !== 'absent') entries.push({ at: now.toISOString(), run: runId, action: 'decision', branchId: id, name: prev.name, decision: 'absent', priority: null, reasons: ['no longer in the Neon inventory'] });
   }
-  const changed = digest !== previousDigest;
-  const counts = countBy(result.decisions);
-  entries.push({ at: now.toISOString(), run: runId, action: 'audit', outcome: 'ok', mode: 'read-only', branches: result.decisions.length, counts, warnings: result.warnings, digest, changed });
-  appendLog(logPath, entries);
 
   const report = renderReport(result, registry);
-  if (postComment && changed) await postComment(report);
-  return { result, report, digest, changed };
+  let notification = 'not-configured';
+  let notificationError;
+  if (postComment) {
+    if (digest === deliveredDigest) notification = 'not-needed';
+    else {
+      try {
+        await postComment(report);
+        notification = 'sent';
+      } catch (err) {
+        notification = 'failed';
+        notificationError = String(err.message ?? err).slice(0, 300);
+      }
+    }
+  }
+
+  const counts = countBy(result.decisions);
+  entries.push({ at: now.toISOString(), run: runId, action: 'audit', outcome: 'ok', mode: 'read-only', branches: result.decisions.length, counts, warnings: result.warnings, digest, registryHash: result.registryHash, changed, notification, ...(notificationError ? { notificationError } : {}) });
+  appendLog(logPath, entries);
+  return { result, report, digest, changed, notification };
 }
 
 function countBy(decisions) {
   const counts = {};
   for (const d of decisions) counts[d.decision] = (counts[d.decision] ?? 0) + 1;
   return counts;
+}
+
+/** Snapshot of an audit for later review: binds branch fingerprints to the registry revision. */
+export function snapshotOf(result) {
+  return { evaluatedAt: result.evaluatedAt, registryHash: result.registryHash, fingerprints: Object.fromEntries(result.decisions.map((d) => [d.branchId, d.fingerprint])) };
 }
 
 // ---------- report ----------
@@ -147,9 +168,9 @@ export function renderReport(result, registry) {
     [DECISION.KEEP, 'Kept as required recovery points'],
     [DECISION.PROTECTED, 'Protected'],
   ];
-  const lines = [`## Neon branch review — ${result.evaluatedAt.slice(0, 10)}`, '', `Mode: read-only. Nothing was deleted.`, ''];
+  const lines = [`## Neon branch review — ${result.evaluatedAt.slice(0, 10)}`, '', `Mode: read-only. Nothing was deleted. Registry revision \`${result.registryHash.slice(0, 12)}\`.`, ''];
   const counts = countBy(result.decisions);
-  lines.push(`${result.decisions.length} branches: ${groups.map(([k]) => `${counts[k] ?? 0} ${k}`).join(', ')}. Usable recovery points: ${result.usableRecoveryPoints}; restore-verified: ${result.verifiedRecoveryPoints}.`, '');
+  lines.push(`${result.decisions.length} branches: ${groups.map(([k]) => `${counts[k] ?? 0} ${k}`).join(', ')}. Usable recovery points: ${result.usableRecoveryPoints}; restore-drilled: ${result.verifiedRecoveryPoints}.`, '');
   if (result.warnings.length) lines.push('**Warnings**', '', ...result.warnings.map((w) => `- ${w}`), '');
   for (const [key, title] of groups) {
     const rows = result.decisions.filter((d) => d.decision === key).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
@@ -171,76 +192,38 @@ export function renderReport(result, registry) {
   return lines.join('\n');
 }
 
-// ---------- guarded deletion (Phase 2, not enabled) ----------
-
-function acquireLock(lockPath) {
-  mkdirSync(dirname(lockPath), { recursive: true });
-  try {
-    const fd = openSync(lockPath, 'wx');
-    writeFileSync(fd, String(process.pid));
-    closeSync(fd);
-  } catch {
-    throw new Error(`another housekeeping run holds ${lockPath}; remove it only if no run is active`);
-  }
-  return () => rmSync(lockPath, { force: true });
-}
+// ---------- read-only pre-deletion check (the gate Phase 2 must call before every deletion) ----------
 
 /**
- * Delete approved branches one at a time. Before EACH deletion the full inventory is fetched again and
- * re-evaluated; the branch must still be eligible and unchanged since the audit snapshot.
+ * For each named branch, fetch the full inventory again, re-evaluate it, and say whether deletion
+ * would still be allowed. Deletes nothing. A branch passes only if it is still `eligible`, its Neon
+ * fields are unchanged since the reviewed snapshot, and the registry is the revision that was reviewed.
  *
- * @param {object} opts
- * @param {string[]} opts.branchIds      branches Regan approved
- * @param {string} opts.approval         where the approval was given (message link or id)
- * @param {Map<string,string>} opts.snapshot  branchId -> fingerprint from the audit Regan reviewed
- * @param {boolean} opts.execute         false = dry run (default)
+ * @returns {Promise<Array<{branchId: string, name?: string, verdict: 'allowed'|'refused'|'already-absent'|'aborted', reasons: string[]}>>}
  */
-export async function runDeletion({ client, registry, now = () => new Date(), logPath, lockPath, branchIds, approval, snapshot, execute = false }) {
-  if (registry.cleanupEnabled !== true) throw new Error('cleanup is not enabled in the registry (Phase 2 needs an approved change setting cleanupEnabled: true)');
-  if (!approval || !String(approval).trim()) throw new Error('an approval reference is required');
-  if (!Array.isArray(branchIds) || branchIds.length === 0) throw new Error('no branches were named');
-  if (!(snapshot instanceof Map) || branchIds.some((id) => !snapshot.has(id))) throw new Error('every branch needs a fingerprint from the reviewed audit');
+export async function checkDeletion({ client, registry, now = () => new Date(), branchIds, snapshot }) {
+  validateRegistry(registry);
   if (client.projectId !== registry.projectId) throw new Error('client and registry project differ');
+  if (!Array.isArray(branchIds) || branchIds.length === 0) throw new Error('no branches were named');
+  if (!snapshot?.registryHash || !snapshot.fingerprints) throw new Error('a snapshot from the reviewed audit is required');
 
-  const release = acquireLock(lockPath);
-  const outcomes = [];
-  const runId = `delete-${now().toISOString()}`;
-  try {
-    for (const id of branchIds) {
-      const at = now();
-      const base = { at: at.toISOString(), run: runId, action: 'delete', branchId: id, approval, dryRun: !execute };
-      let inventory;
-      try {
-        inventory = await fetchInventory(client);
-      } catch (err) {
-        const entry = { ...base, outcome: 'aborted', reasons: [`fresh inventory failed: ${err.message}`] };
-        appendLog(logPath, [entry]);
-        outcomes.push(entry);
-        break; // never continue on stale data
-      }
-      const result = evaluate(inventory, registry, at);
-      const d = result.decisions.find((x) => x.branchId === id);
-      let entry;
-      if (!d) entry = { ...base, outcome: 'already-absent', reasons: ['branch no longer exists'] };
-      else if (d.decision !== DECISION.ELIGIBLE) entry = { ...base, name: d.name, outcome: 'refused', reasons: [`now ${d.decision}`, ...d.reasons] };
-      else if (d.fingerprint !== snapshot.get(id)) entry = { ...base, name: d.name, outcome: 'refused', reasons: ['branch changed since the reviewed audit; re-run the audit'] };
-      else if (!execute) entry = { ...base, name: d.name, outcome: 'would-delete', reasons: d.reasons };
-      else {
-        try {
-          await client.deleteBranch(id);
-          entry = { ...base, name: d.name, outcome: 'deleted', reasons: d.reasons };
-        } catch (err) {
-          entry = { ...base, name: d.name, outcome: 'failed', reasons: [String(err.message ?? err)] };
-          appendLog(logPath, [entry]);
-          outcomes.push(entry);
-          break;
-        }
-      }
-      appendLog(logPath, [entry]);
-      outcomes.push(entry);
+  const verdicts = [];
+  for (const id of branchIds) {
+    let inventory;
+    try {
+      inventory = await fetchInventory(client);
+    } catch (err) {
+      verdicts.push({ branchId: id, verdict: 'aborted', reasons: [`fresh inventory failed: ${err.message}`] });
+      break; // never decide on stale data
     }
-  } finally {
-    release();
+    const result = evaluate(inventory, registry, now());
+    const d = result.decisions.find((x) => x.branchId === id);
+    if (result.registryHash !== snapshot.registryHash) verdicts.push({ branchId: id, name: d?.name, verdict: 'refused', reasons: ['registry changed since the reviewed audit; re-run the audit and get it reviewed again'] });
+    else if (!(id in snapshot.fingerprints)) verdicts.push({ branchId: id, name: d?.name, verdict: 'refused', reasons: ['branch is not in the reviewed snapshot'] });
+    else if (!d) verdicts.push({ branchId: id, verdict: 'already-absent', reasons: ['branch no longer exists'] });
+    else if (d.decision !== DECISION.ELIGIBLE) verdicts.push({ branchId: id, name: d.name, verdict: 'refused', reasons: [`now ${d.decision}`, ...d.reasons] });
+    else if (d.fingerprint !== snapshot.fingerprints[id]) verdicts.push({ branchId: id, name: d.name, verdict: 'refused', reasons: ['branch changed since the reviewed audit; re-run the audit'] });
+    else verdicts.push({ branchId: id, name: d.name, verdict: 'allowed', reasons: d.reasons });
   }
-  return outcomes;
+  return verdicts;
 }
