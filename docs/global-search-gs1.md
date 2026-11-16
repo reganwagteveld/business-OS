@@ -168,7 +168,7 @@ The `simple` text-search configuration is used, not `english`: it lowercases and
 
 One request is one `withTenant` transaction and **one SQL statement**: a `UNION ALL` of parenthesised branches, one per permitted provider, built from tagged `Prisma.sql` fragments (no `$queryRawUnsafe`, no string concatenation of input). The statement is preceded only by the tenant context, the timeout (§5.5) and the concurrency slots (§6.9).
 
-Each branch is made of **arms**. An arm is one index-served access path with its own `LIMIT`, so no arm can scan more than its index range or its candidate cap:
+Each branch is made of **arms**. An arm is one index-served access path with its own `LIMIT`. The P and I arms read their B-tree in order and stop at the `LIMIT`. The W arm's `LIMIT` caps candidate rows, but not the GIN work behind them (see below):
 
 | Arm | Used for | Access path | Bound | Query length |
 |---|---|---|---|---|
@@ -227,7 +227,7 @@ Rules this shape guarantees:
 - **Per-branch `LIMIT ${limit} + 1`** decides `hasMore`; the extra row is dropped before the response.
 - **Ordering inside a branch** is `tier`, then live before archived, then the sort key in byte order, then `id`. It is fully deterministic, so the keyset cursor `(tier, archived, sort_key, id)` is stable.
 - **No global SQL ordering across branches.** The outer `UNION ALL` has no `ORDER BY`; groups are ordered in the service (§9.4). Comparing ranks across tables in SQL would be meaningless and would force every branch to be fully evaluated before sorting.
-- **The W arm is bounded by its candidate cap**, not by ranking. A GIN bitmap scan cannot stop early, so its cost is the posting-list size for the query's prefix; the 3-character minimum and the cap keep that bounded, and §11.4 measures it with deliberately common prefixes. Better W matches beyond the cap are only lost when a prefix matches more than 200 records, and in that case the P and I arms already return the strongest (tier 1–2) hits.
+- **The W arm's `LIMIT 200` caps the candidate rows, not the index work.** A GIN bitmap scan cannot stop early: it reads the whole posting list for the query's prefix, **across all tenants**, and intersects it with the tenant through a `BitmapAnd` before the cap applies. So the W arm, and therefore the whole query, is **not** a strictly bounded index scan; its cost grows with how common the prefix is in the whole table. The 3-character minimum keeps the worst cases out, and §11.4 benchmarks extremely common 3-character prefixes with noisy neighbouring tenants. If those exceed the budget, the plan changes before production (for example a longer minimum for the W arm, `btree_gin`, or option G). Better W matches beyond the cap are only lost when a prefix matches more than 200 records, and in that case the P and I arms already return the strongest (tier 1–2) hits.
 - **No join back to the table.** Each arm selects the provider's result fields itself, and duplicates are removed with `DISTINCT ON (id)`. A first draft joined the matched ids back to `customers`. In the spike below, the planner answered that join with a scan of all the tenant's rows: 11.7 ms for a 2-character query that takes 0.09 ms without the join. That run lacked the `(business_id, id)` unique index the real table has, but the rule removes the dependence on the planner either way: arms carry their own fields.
 - **Expression identity.** Each provider declares its index expressions once (a constant shared by the migration test and the SQL builder), so the query expression is textually the same as the index expression. §11.4 checks this with EXPLAIN as a diagnostic.
 
@@ -660,13 +660,18 @@ Design-point tenant: 10k customers, 20k contacts, 10k opportunities, 5k projects
 3. For each: server time p50/p95/p99, per type and for the whole union; `EXPLAIN (ANALYZE, BUFFERS)` per branch saved as JSON.
 4. **Plan diagnostics, not assertions:** a report lists any arm that did not use its intended index (sequential scan, wrong index, expression mismatch), plus buffers read per arm. Each one is investigated and fixed or explained before readiness.
 5. Write overhead: insert and update timings on every indexed table, before and after the indexes.
-6. Re-run on a **temporary Neon branch** in the production region, seeded with the same synthetic data, so latency includes Neon and its pooler. The branch is deleted afterwards. Temporary test branches are allowed under the standing infrastructure policy; no production data is used.
+6. Re-run on a **temporary Neon branch** in the production region, seeded with the same synthetic data, so latency includes Neon and its pooler. No production data is used. Creating, keeping and deleting this branch follows the standing Neon policy and the housekeeping process (recovery-branch registry, the 10-branch limit, any extra branch cost). It is not assumed to be blanket authorisation: if the branch would exceed the limit, add cost or need a deletion the policy does not cover, it waits for Regan's approval.
 
 **Table sizes and index build locks (before the migration is proposed for production):**
 
 - Read-only on production: `SELECT relname, n_live_tup, pg_total_relation_size(oid)` for each table in §9.2. This is a read-only check, so it is allowed without approval.
 - Build every index on a temporary Neon branch seeded at **the larger of production's size and the design point**, and record the time per table. A plain `CREATE INDEX` inside the migration transaction blocks writes to that table for the build time.
-- **Acceptable** if every table builds in under 2 seconds at production size. The migration is then applied in a quiet window under the normal migration approval and recovery-branch process.
+- The 2-second threshold is a **planning threshold**, not a safety guarantee. If every table builds in under 2 s at production size, the plain in-migration build remains the plan, and these steps still come before any production DDL:
+  1. Confirm how the actual migration runner (`prisma migrate deploy` as used in this repo) wraps the migration in a transaction, and what that means for locks held until commit.
+  2. Put an explicit `SET LOCAL lock_timeout` (proposed 3 s) and a controlled `SET LOCAL statement_timeout` at the top of the migration, so a blocked or slow build fails and rolls back instead of queueing writes behind it.
+  3. Write down the rollback and recovery plan: a fresh verified recovery branch first (standing policy), what to do if the migration times out, and the fact that a failed additive index migration leaves nothing to undo.
+  4. Re-measure with realistic concurrent writes on the benchmark branch, not just an idle build.
+  5. Get Regan's separate production-migration approval.
 - **Otherwise** the slow indexes move to `CREATE INDEX CONCURRENTLY`. That cannot run inside a Prisma migration transaction, so it needs a separate non-transactional step (like the privileged scripts) and its own owner decision. GS1-A stops and asks rather than improvising.
 
 ### 11.5 Scaling assumptions
@@ -748,12 +753,12 @@ Recorded from Regan's review on PR #75 (2026-11-16). This review approved the do
 | D-GS1-13 | Rate limiting | **Strengthened beyond (a)** | Server-side per-user (2) and per-business (8) concurrency slots in GS1-A; measured thresholds for a rate limit before public beta (§6.9) |
 | D-GS1-14 | Scope of GS1 | **(a)** §4.1 now, §4.2 in GS1-C; activities, communications and leave excluded | §4 |
 
-New proposals in revision 2, for Regan:
+New proposals in revision 2, for Regan. ChatGPT's re-audit of `3809b1a` (conditional pass) recommended D-15 provisionally, D-16 conditionally (the conditions are now in §11.4), and D-17 and D-18 outright. That is a recommendation only; none of them is approved until Regan says so.
 
 | ID | Proposal | Recommendation |
 |---|---|---|
 | D-GS1-15 | Concurrency limits | 2 in-flight searches per user per business, 8 per business, `429` with `Retry-After: 1` (§6.9). Tune from measurements |
-| D-GS1-16 | Index build lock threshold | Plain `CREATE INDEX` in the migration if every table builds in under 2 s at production size; otherwise stop and decide on a concurrent build step (§11.4) |
+| D-GS1-16 | Index build lock threshold | 2 s is a planning threshold. Under it: plain `CREATE INDEX` with `lock_timeout`, a controlled `statement_timeout`, a recovery plan, a re-measure under writes and separate production approval. Over it: a separately approved `CREATE INDEX CONCURRENTLY` step (§11.4) |
 | D-GS1-17 | Dates for D-GS1-7 | Verify by 2026-11-30; remediate before admission widens and by 2026-12-31 if needed (§6.8) |
 | D-GS1-18 | Phone matching | Not in GS1-A (no index-safe way today); digits-only expression index in GS1-D if wanted (§4.1) |
 
