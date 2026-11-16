@@ -287,7 +287,7 @@ Errors follow the existing mapping: 400 `invalid_input` with field names, 403, 4
 - Newest on `main`: `20261130000000_finance_catalog` (applied to production per the F7-A thread).
 - Open branches: PR 64 (E1) `20261201000000_communications_erasure`; PR 68 (P3-A) was renamed to
   `20261204000000_people_leave_policies` after this audit flagged the collision (both had used `20261201000000`).
-- A2-A uses **`20261202000000_business_profile`**; A2-B reserves `20261203000000_membership_lifecycle` and its
+- A2-A uses **`20261202000000_business_profile`**; A2-B reserved `20261203000000_membership_lifecycle` (re-stamped `20261205000000` in §13.5) and its
   privileged file `005_member_emails.sql` (E1 already takes `004`). Re-check both before each PR leaves draft; rename
   if anything newer lands first.
 - Overlap: E1 rewrites the `Business` relation list in `tenancy.prisma`; P3-A adds to it. A2-A edits the same model
@@ -357,7 +357,7 @@ unchanged unless a separately reviewed change is necessary.
 
 Branch `claude/project-thread-dyn16d`, on `main` after A2-A (#70), E1 (#64) and private-beta admission (#71).
 
-### 13.1 Database: migration `20261203000000_membership_lifecycle` and privileged `005_member_emails.sql`
+### 13.1 Database: migration `20261205000000_membership_lifecycle` and privileged `005_member_emails.sql`
 
 | Change | Detail |
 |---|---|
@@ -430,8 +430,10 @@ test now acts as the remaining owner, which still proves the commit-time last-ow
 ### 13.5 Migration order (verified 2026-11-16 against `main` and open PRs)
 
 `main`: … `20261130000000_finance_catalog`, `20261201000000_communications_erasure` (+ `004`),
-`20261202000000_business_profile`. This PR: `20261203000000_membership_lifecycle` + `005_member_emails.sql`.
-Open: P3-A (PR 68) `20261204000000_people_leave_policies`. F7-B (#69) and #71 added no Prisma migration. If P3-A is
-applied to production first, rename this migration after it before applying. Production apply (needs Regan's
+`20261202000000_business_profile`, then P3-A `20261204000000_people_leave_policies` (applied to production
+2026-11-16 11:21 UTC; PR 68 merging). This PR was re-stamped from `20261203000000` to
+**`20261205000000_membership_lifecycle`** so it sorts after every production-applied migration (no out-of-order
+apply) + `005_member_emails.sql`. F7-B (#69), #71, #66 and #74 added no Prisma migration. Re-read production
+`_prisma_migrations` before the apply; re-stamp again if anything newer lands first. Production apply (needs Regan's
 approval): fresh Neon recovery branch → `prisma migrate deploy` → `pnpm db:privileged` (re-applies 001–005
 idempotently; 001 changes `accept_invitation`) → verify → then merge.

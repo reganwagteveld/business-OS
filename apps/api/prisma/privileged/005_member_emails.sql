@@ -1,6 +1,6 @@
 -- Administration A2-B: member email addresses for the people who invite (docs/administration-a2.md §3.9,
 -- decision D-A2-11). Applied by an ADMINISTRATIVE role with `pnpm db:privileged`, after `prisma migrate
--- deploy` (migration 20261203000000_membership_lifecycle). Idempotent.
+-- deploy` (migration 20261205000000_membership_lifecycle). Idempotent.
 --
 -- bos_app may read users (id, name, image_url) only; email is not granted, and that grant stays as it
 -- is. This SECURITY DEFINER function returns (user_id, email) for the memberships (active or suspended)
