@@ -278,7 +278,7 @@ Target WCAG 2.2 AA (V2-A §12.1).
 
 - **Dialog:** `role="dialog"` `aria-modal="true"` labelled "Search"; focus trapped; `Esc` closes; focus returns to the opener (or the Zone heading after a navigation); background `inert`.
 - **Combobox/listbox:** input `role="combobox"`, `aria-expanded`, `aria-controls`, `aria-activedescendant`, `aria-autocomplete="list"`; groups are `role="group"` labelled by their visible heading; rows are `option`s with `aria-selected`. DOM focus stays in the input; `Tab` moves out of the dialog only to its controls (Include archived, Show more, close), in a logical order, not through rows.
-- **Keys:** `↑/↓` across groups (wraps within the list only, never into the input), `Home/End`, `Enter` opens, `Esc` closes (first `Esc` clears a non-empty query? No: it closes; `Ctrl/⌘+Backspace`/select-all work natively; D-GS2-12), `PageUp/PageDown` jump a group. No single-letter shortcuts (WCAG 2.1.4).
+- **Keys:** `↑/↓` across groups (wraps within the list only, never into the input), `Home/End`, `Enter` opens, `Esc` always closes (D-GS2-12); select-all and word-delete work natively, `PageUp/PageDown` jump a group. No single-letter shortcuts (WCAG 2.1.4).
 - **Live region:** one polite region announces after each **settled** update ("5 results in 2 groups", "No results", "Search didn't finish"). Not per keystroke, not for in-flight changes; messages exclude the term.
 - **Loading:** progress bar has `role="progressbar"` with an accessible name only if longer than 1 s; otherwise the live region is enough.
 - **Target size and zoom:** ≥ 44 px rows on touch, ≥ 24 px minimum elsewhere (2.5.8); reflows at 400 % zoom (1.4.10); text resizes to 200 %.
