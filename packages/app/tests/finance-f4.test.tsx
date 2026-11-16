@@ -142,6 +142,26 @@ describe('overview', () => {
     expect(handlers.onSection).toHaveBeenCalledWith('invoices');
   });
 
+  it('lists overdue invoices oldest due first, not newest created first', async () => {
+    const { acme, zed } = people();
+    const data = financeData({
+      customers: [acme, zed],
+      documents: [
+        // Newest created first, as the server's default order would return them.
+        issued('INVOICE', acme, 'INV-0003', { amount: '30.00', dueDate: '2026-10-20' }),
+        issued('INVOICE', zed, 'INV-0002', { amount: '20.00', dueDate: '2026-09-01' }),
+        issued('INVOICE', acme, 'INV-0001', { amount: '10.00', dueDate: '2026-10-01' }),
+      ],
+    });
+    const { api } = setup({ data });
+    await heading('Finance');
+    const attention = screen.getByText('Needs attention').closest('section, div')!.parentElement!;
+    await within(attention).findByText(/INV-0002 for Zed Co is overdue/);
+    const order = within(attention).getAllByText(/INV-000\d for .* is overdue/).map((n) => /INV-000\d/.exec(n.textContent ?? '')![0]);
+    expect(order).toEqual(['INV-0002', 'INV-0001', 'INV-0003']);
+    expect(api.calls.find((c) => c.query.overdue === 'true')?.query).toMatchObject({ overdue: 'true', sort: 'due_asc', limit: '5' });
+  });
+
   it('quick actions follow the permission keys; a reader gets none', async () => {
     setup({ permissions: READER });
     await heading('Finance');
