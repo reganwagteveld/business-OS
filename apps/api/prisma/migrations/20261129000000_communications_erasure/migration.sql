@@ -245,14 +245,22 @@ END $$;
 -- holds it FOR UPDATE while it works, so a racing insert waits and then sees erased_at (docs/communications-e1.md §9).
 CREATE FUNCTION messages_guard_insert() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public AS $$
+DECLARE
+  v_erased timestamptz;
 BEGIN
   IF NEW.erased_at IS NOT NULL THEN
     RAISE EXCEPTION 'a message cannot be recorded as erased' USING ERRCODE = 'CM011';
   END IF;
-  PERFORM 1 FROM "conversations" c
-   WHERE c."business_id" = NEW.business_id AND c."id" = NEW.conversation_id AND c."erased_at" IS NOT NULL
+  IF NEW.retention_category IS NOT NULL AND current_user = 'bos_app' THEN
+    RAISE EXCEPTION 'retention categories are set by the mailbox sync (C2-B3), not by the application' USING ERRCODE = 'CM011';
+  END IF;
+  -- Lock the conversation row whatever its state: an erasure step holds it FOR UPDATE, so this waits for that
+  -- step and then reads the committed row (READ COMMITTED re-check). Filtering on erased_at before locking
+  -- would skip the row and let a message into a conversation erased a moment later.
+  SELECT c."erased_at" INTO v_erased FROM "conversations" c
+   WHERE c."business_id" = NEW.business_id AND c."id" = NEW.conversation_id
    FOR KEY SHARE;
-  IF FOUND THEN
+  IF v_erased IS NOT NULL THEN
     RAISE EXCEPTION 'this conversation was erased' USING ERRCODE = 'CM011';
   END IF;
   RETURN NEW;
@@ -261,10 +269,21 @@ CREATE TRIGGER messages_guard_insert BEFORE INSERT ON "messages" FOR EACH ROW EX
 
 CREATE FUNCTION message_participants_guard_insert() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public AS $$
+DECLARE
+  v_erased timestamptz;
+  v_same_tx boolean;
 BEGIN
-  IF NEW.erased_at IS NOT NULL OR EXISTS (
-       SELECT 1 FROM "messages" m WHERE m."business_id" = NEW.business_id AND m."id" = NEW.message_id AND m."erased_at" IS NOT NULL) THEN
-    RAISE EXCEPTION 'this message was erased' USING ERRCODE = 'CM011';
+  IF NEW.erased_at IS NOT NULL THEN
+    RAISE EXCEPTION 'a participant cannot be recorded as erased' USING ERRCODE = 'CM011';
+  END IF;
+  -- A participant is written in the same transaction as its message, never later (C1 and every importer do
+  -- this). Enforcing that closes the race with an erasure step without needing a row lock that bos_app has
+  -- no right to take on messages: a message from an earlier transaction, erased or not, takes no new
+  -- participants. A message this tenant cannot see is left to the foreign key (same answer as before).
+  SELECT m."erased_at", m.xmin = pg_catalog.pg_current_xact_id()::xid INTO v_erased, v_same_tx FROM "messages" m
+   WHERE m."business_id" = NEW.business_id AND m."id" = NEW.message_id;
+  IF FOUND AND (v_erased IS NOT NULL OR NOT v_same_tx) THEN
+    RAISE EXCEPTION 'participants are recorded with their message' USING ERRCODE = 'CM011';
   END IF;
   RETURN NEW;
 END $$;
@@ -540,19 +559,25 @@ CREATE POLICY audit_no_app_erasure_events ON "audit_events" AS RESTRICTIVE FOR I
   WITH CHECK ("action" NOT LIKE 'communications.erasure.%');
 
 -- ---- least privilege -----------------------------------------------------------------------------------
--- erased_at (and retention_category, until C2-B2's writer exists) are not insertable by the application, and
--- no new UPDATE or DELETE right is given to bos_app on any C1 table.
-REVOKE INSERT ON "messages", "message_participants", "conversations", "activities" FROM bos_app;
-GRANT INSERT ("id", "business_id", "conversation_id", "direction", "source", "occurred_at", "recorded_at", "recorded_by_id", "subject", "body",
-              "external_source", "external_message_id", "content_hash") ON "messages" TO bos_app;
-GRANT INSERT ("id", "business_id", "message_id", "role", "position", "display_name", "address", "contact_id", "user_id")
-  ON "message_participants" TO bos_app;
-GRANT INSERT ("id", "business_id", "channel", "subject", "customer_id", "contact_id", "source", "external_source", "external_thread_id",
-              "created_by_id", "last_message_at", "created_at", "updated_at") ON "conversations" TO bos_app;
-GRANT INSERT ("id", "business_id", "type", "occurred_at", "actor_type", "actor_user_id", "customer_id", "contact_id", "subject", "body", "data",
-              "schema_version", "created_at", "updated_at", "deleted_at", "visibility", "edited_at", "conversation_id", "message_id")
-  ON "activities" TO bos_app;
+-- The existing table grants of the C1 tables are left exactly as they were (no new UPDATE or DELETE right for
+-- bos_app). What the application may not write on INSERT is refused by triggers instead: erased_at on every
+-- table (an erased row is only ever produced by the bos_maint tombstone), and retention_category, which only the
+-- C2-B3 sync writer will set (its role and rules come with C2-B3; until then no runtime role can categorise).
+CREATE FUNCTION communications_insert_not_erased() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public AS $$
+BEGIN
+  IF NEW.erased_at IS NOT NULL THEN
+    RAISE EXCEPTION 'a row cannot be recorded as erased' USING ERRCODE = 'CM011';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER conversations_insert_not_erased BEFORE INSERT ON "conversations" FOR EACH ROW EXECUTE FUNCTION communications_insert_not_erased();
+CREATE TRIGGER activities_insert_not_erased BEFORE INSERT ON "activities" FOR EACH ROW EXECUTE FUNCTION communications_insert_not_erased();
+REVOKE ALL ON FUNCTION communications_insert_not_erased() FROM PUBLIC;
 
+-- The six new tables: drop the default privileges bos_owner's tables get (docker/init/01-roles.sql grants
+-- SELECT, INSERT, UPDATE, DELETE to bos_app), then grant only what the application needs. Keys, markers and
+-- single-use codes: nothing at all (only the bos_maint functions touch them).
 REVOKE ALL ON "communications_erasures", "communications_erasure_items", "communications_legal_holds", "communications_erasure_keys",
   "communications_erased_references", "communications_privileged_grants" FROM bos_app;
 GRANT SELECT ON "communications_erasures", "communications_erasure_items", "communications_legal_holds" TO bos_app;

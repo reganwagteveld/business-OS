@@ -158,7 +158,7 @@ export async function dueErasureIds(db: AppTenantDb, limit: number): Promise<str
 
 /** Records a failed step (which rolled back whole) for retry with backoff. */
 export async function recordErasureFailure(db: AppTenantDb, id: string, code: string): Promise<void> {
-  await db.$queryRaw`SELECT app_private.communications_erasure_failed(${id}::uuid, ${code})`;
+  await db.$queryRaw`SELECT 1 AS ok FROM app_private.communications_erasure_failed(${id}::uuid, ${code})`;
 }
 
 /** One retention purge batch; null when nothing was due. */

@@ -33,11 +33,13 @@ function inForce(r: Row, now: Date): { days: number; pending: MailRetention['pen
   return { days: r.ordinaryRetentionDays, pending: null };
 }
 
+/** Unset: the C2-B1 shape exactly. Set: plus the period in force and any pending reduction (E1). */
 const toRetention = (r: Row | null): MailRetention => {
-  const current = r ? inForce(r, new Date()) : null;
+  if (!r) return { ordinaryRetentionDays: null, updatedAt: null, version: null };
+  const current = inForce(r, new Date());
   return {
-    ordinaryRetentionDays: r?.ordinaryRetentionDays ?? null, updatedAt: r?.updatedAt.toISOString() ?? null, version: r?.version ?? null,
-    ordinaryRetentionDaysInForce: current?.days ?? null, pendingReduction: current?.pending ?? null,
+    ordinaryRetentionDays: r.ordinaryRetentionDays, updatedAt: r.updatedAt.toISOString(), version: r.version,
+    ordinaryRetentionDaysInForce: current.days, pendingReduction: current.pending,
   };
 };
 
