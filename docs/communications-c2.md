@@ -6,6 +6,9 @@ audit and owner approval.
 C2-A migration: `20261121000000_communications_providers` (additive, new tables only, plus one new
 audit policy).
 C2-B1 migration: `20261125000000_communications_mailbox_identity` (§16.10).
+**E1** (retention, privacy and erasure foundation) is specified in `docs/communications-e1.md`
+(migration `20261129000000_communications_erasure`), pending audit and owner approval. The roadmap
+after E1 is in §17.
 
 C2 connects real mailboxes (Google Workspace/Gmail and Microsoft 365/Outlook) to a business, brings
 relevant mail into C1's canonical conversation, message and activity model, sends replies through
@@ -537,10 +540,12 @@ The table above records the defaults C2-A was built on. The final decision regis
   check and an audit event. Departure gives a 30-day grace before the mailbox stops.
 - **Sync (D-C2-6, D-C2-7):** `BUSINESS` mail is staged in intake for 30 days; `PERSONAL` mail is
   never staged. Backfill defaults to 90 days (30, 90, 180 or 365 selectable).
-- **Retention (D-C2-9):** retention applies per message copy in four categories. Retained AU records
-  are kept 7 years. Ordinary communications have **no default**: each business must set an explicit
-  period. Provider-side deletion is not mirrored. Erasure goes through an erasure ledger with legal
-  hold.
+- **Retention (D-C2-9):** retention applies per message copy in four categories. ~~Retained AU records
+  are kept 7 years.~~ Superseded by D-E1-5 (Regan, 2026-11-16): no blanket 7-year minimum; retention
+  is set per category, obligation and purpose, and an unresolved duration needs an owner or legal
+  decision before automated purge (`communications-e1.md` §13). Ordinary communications have **no
+  default**: each business must set an explicit period. Provider-side deletion is not mirrored.
+  Erasure goes through an erasure ledger with legal hold (E1).
 - **Attachments (D-C2-12):** manual saving first; automatic saving is deferred.
 - **AI processing:** opt-in only.
 - **Sending (D-C2-13):** direct sending with minimal scopes (`gmail.send`, `Mail.Send`); draft-first
@@ -855,3 +860,20 @@ continued access.
   checks they match).
 - Legal/privacy readiness (Gate B) and provider verification (Gate C) remain independent launch
   gates. No production mailbox may be connected without separate authorisation.
+
+---
+
+## 17. Roadmap after E1 (updated 2026-11-16)
+
+Each stage is a separate PR with its own thread, audit and owner approval. Nothing connects a real
+customer mailbox until Gates A, B and C (§14) have passed and the E1 prerequisites below are met.
+
+| Stage | What it delivers | Depends on | Must carry from E1 |
+|---|---|---|---|
+| **E1** Retention, privacy and erasure foundation | Categories per copy, 30-day shortening delay, legal holds, authorised erasure (message, conversation, contact), retention purge, keyed re-import markers, ledger and replay, worker (off) | C2-B1 | Draft PR for audit; see `communications-e1.md` |
+| **C2-B2** Sharing and records | Share a personal thread with the business, "Keep as record" (RETAINED_RECORD), re-classification of copies; retention gate on sharing and records | E1 | Re-classification writes `retention_category` only through the sync/record writer (not bos_app); RETAINED_RECORD durations decided before automated purge (E1 §13.1) |
+| **C2-B3** Inbound sync | Gmail history / Graph delta sync into C1 rows with categories, intake staging (30 days), contact matching, mailbox visibility in every read | E1, C2-B2 | Check `communications_erased_matches` before writing any provider message; record each copy's mailbox so CONNECTION holds narrow from business-wide (E1 §6.2); re-test erasure racing mailbox sharing and revocation (E1 §9); off-database erasure record in place before real mail (D-E1-7) |
+| **C2-B4** Sync operations | Backfill choices (30/90/180/365), reauth and error states, rate limits, operational dashboards | C2-B3 | Marker expiry matches the longest backfill (E1 §6.3) |
+| **C2-C** Outbound sending | Direct send with minimal scopes, outbound state machine (`UNKNOWN` never auto-failed or resent), per-provider correlation tests | C2-B3 | Erased conversations take no new messages (409 `erased`); sent copies get a category |
+| **C2-D** Interface | Mailbox settings, inbox and conversation views, composer, erasure and hold administration screens | C2-B3, C2-C | Show tombstones as erased, never as empty content; eligibility view hides personal volume; erasure UI obtains the single-use code immediately before the request |
+
