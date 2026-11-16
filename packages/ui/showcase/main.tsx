@@ -31,13 +31,31 @@ const PALETTE = [
 ] as const;
 
 const SEMANTIC: Array<[string, string[]]> = [
-  ['Backgrounds', ['--background', '--muted']],
-  ['Text', ['--foreground', '--muted-foreground']],
-  ['Surfaces', ['--card', '--surface-raised', '--popover', '--glass-fallback']],
-  ['Interactive', ['--primary', '--primary-hover', '--secondary', '--accent', '--ring']],
-  ['Lines and fields', ['--border', '--input', '--field']],
-  ['Status', ['--success', '--warning', '--destructive', '--info']],
+  ['Canvas and surfaces', ['--bg-canvas', '--bg-sunken', '--bg-surface', '--bg-raised']],
+  ['States', ['--bg-hover', '--bg-selected', '--disabled-bg', '--focus-ring']],
+  ['Text', ['--fg-default', '--fg-muted', '--fg-subtle', '--fg-accent']],
+  ['Accent', ['--accent-solid', '--accent-hover', '--accent-subtle']],
+  ['Lines and fields', ['--border-default', '--border-strong', '--border-input', '--field']],
+  ['Status (text)', ['--status-success-fg', '--status-warning-fg', '--status-danger-fg', '--status-info-fg']],
 ];
+
+const TYPE_SCALE = [
+  ['display', 'text-display font-semibold', '28 / 36 · Home only'],
+  ['title', 'text-title font-semibold', '22 / 28 · page title'],
+  ['section', 'text-section font-semibold', '18 / 24 · section title'],
+  ['lead', 'text-lead', '16 / 24 · lead'],
+  ['body', 'text-body', '14 / 20 · body (default)'],
+  ['small', 'text-small', '13 / 18 · small and tables'],
+  ['caption', 'text-caption text-fg-subtle', '12 / 16 · caption'],
+] as const;
+
+const STATUS_TONES = ['success', 'warning', 'danger', 'info'] as const;
+const STATUS_CLASS: Record<(typeof STATUS_TONES)[number], string> = {
+  success: 'border-status-success-border bg-status-success-bg text-status-success-fg',
+  warning: 'border-status-warning-border bg-status-warning-bg text-status-warning-fg',
+  danger: 'border-status-danger-border bg-status-danger-bg text-status-danger-fg',
+  info: 'border-status-info-border bg-status-info-bg text-status-info-fg',
+};
 
 const ROWS = [
   { ref: 'INV-1042', customer: 'Harbour & Pine Ltd', zone: 'Finance', owner: 'R. Wagteveld', amount: '£4,820.00', status: ['success', 'Paid'] },
@@ -174,6 +192,56 @@ function DialogDemo() {
   );
 }
 
+function Foundations() {
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      <div className="rounded-panel border border-line bg-surface p-5">
+        <h3 className="text-section font-semibold">Type scale</h3>
+        <p className="mt-1 text-small text-fg-muted">Inter, bundled. Figures are tabular: 1,234.50 · 98,760.00</p>
+        <div className="mt-4 grid gap-3">
+          {TYPE_SCALE.map(([name, cls, note]) => (
+            <div key={name} className="flex items-baseline justify-between gap-4 border-b border-line pb-2 last:border-0">
+              <span className={cls}>The quick brown fox</span>
+              <code className="shrink-0 text-caption text-fg-subtle">{note}</code>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="grid gap-6">
+        <div className="rounded-panel border border-line bg-surface p-5">
+          <h3 className="text-section font-semibold">Controls and rows</h3>
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            {([['sm', 'h-control-sm'], ['md', 'h-control-md'], ['lg', 'h-control-lg']] as const).map(([size, height]) => (
+              <span key={size} className={`${height} inline-flex items-center rounded-control border border-line-strong px-3 text-small`}>{`control ${size}`}</span>
+            ))}
+          </div>
+          <div className="mt-4 overflow-hidden rounded-control border border-line">
+            {([['compact', 'h-row-compact'], ['default', 'h-row-default'], ['comfortable', 'h-row-comfortable']] as const).map(([row, height]) => (
+              <div key={row} className={`${height} flex items-center border-b border-line px-3 text-small last:border-0`}>{`row ${row}`}</div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-panel border border-line bg-surface p-5">
+          <h3 className="text-section font-semibold">State recipes</h3>
+          <p className="mt-1 text-small text-fg-muted">Hover, press, select and Tab through these. In forced colours selection uses Highlight.</p>
+          <div className="mt-4 grid gap-1">
+            <button type="button" className="state-interactive focus-ring rounded-control px-3 py-2 text-left text-small">Hover and pressed</button>
+            <button type="button" aria-pressed="true" className="state-selected focus-ring rounded-control px-3 py-2 text-left text-small">Selected</button>
+            <button type="button" disabled className="state-disabled rounded-control px-3 py-2 text-left text-small">Disabled</button>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {STATUS_TONES.map((tone) => (
+              <span key={tone} className={`inline-flex items-center gap-1.5 rounded-pill border px-2 text-caption font-medium ${STATUS_CLASS[tone]}`}>
+                <span aria-hidden="true" className="size-1.5 rounded-pill bg-current" />{tone}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Showcase() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [atmosphere, setAtmosphere] = useState<AtmosphereVariant>('aurora');
@@ -222,7 +290,11 @@ function Showcase() {
         </div>
       </Atmosphere>
 
-      <Section title="Colour system" description="The Pixakova palette is provisional and only feeds the semantic tokens. Components use semantic tokens, never palette colours.">
+      <Section title="Foundations (V2)" description="Type scale, control and row heights, state recipes and status tones from the V2 tokens (V2-B1). Components adopt them from V2-B3 onwards.">
+        <Foundations />
+      </Section>
+
+      <Section title="Colour system" description="The Pixakova palette only feeds the semantic tokens. Components use semantic tokens, never palette colours. Every V1 name (background, primary, muted-foreground …) is now an alias of a V2 token.">
         <h3 className="text-sm font-semibold text-muted-foreground">Palette</h3>
         <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{PALETTE.map(([l, t]) => <Swatch key={t} label={l} token={t} />)}</div>
         <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
