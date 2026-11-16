@@ -68,6 +68,8 @@ export type TenantModels<Tx> = Partial<Record<keyof Tx & string, string>>;
 export interface WithTenantOptions {
   role?: TenantRole;
   timeoutMs?: number;
+  /** How long to wait for a pooled connection before the unit of work fails to start (Prisma `maxWait`). */
+  maxWaitMs?: number;
 }
 
 export interface TenantRunnerConfig<Tx, M extends keyof Tx & string> {
@@ -107,7 +109,7 @@ export function createWithTenant<Tx extends RawQueryable, M extends keyof Tx & s
         const db = config.disableScopeGuardForIsolationTests ? narrow(tx, config.models) : scopeToTenant(tx, ctx, config.models);
         return work(db as TenantDb<Tx, M>);
       },
-      { timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, isolationLevel: 'ReadCommitted' },
+      { timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, isolationLevel: 'ReadCommitted', ...(opts.maxWaitMs ? { maxWait: opts.maxWaitMs } : {}) },
     );
   };
 }

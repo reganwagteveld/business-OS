@@ -7,3 +7,5 @@ export type { TenantContext, TenantDb, TenantRole } from './with-tenant';
 export { betaCanRegister, betaCanSignIn, betaSessionAdmitted, betaSessionCanCreateBusiness, acceptInvitation, businessesWithDueBilling, businessesWithDueErasure, businessesWithDueReminders, createBusiness, myMemberships, TrustedPathError, withTenant } from './app-client';
 export type { AppTenantDb, MembershipRow, NewBusiness } from './app-client';
 export { Decimal } from './decimal';
+export { emptySql, joinSql, rawSql, sql } from './sql';
+export type { SqlFragment } from './sql';
