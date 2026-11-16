@@ -1,0 +1,10 @@
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
+// UI V2-A screenshot harness: the real shared App, answered by the in-memory test fakes. Local only.
+export default defineConfig({
+  root: import.meta.dirname,
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { 'node:crypto': `${import.meta.dirname}/crypto-shim.ts` } },
+  server: { port: 5299, strictPort: true, fs: { allow: ['../../..'] } },
+});
