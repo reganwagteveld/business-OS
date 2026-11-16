@@ -1,3 +1,4 @@
+import { inviteForSignup, admitFixture } from './support/admission';
 /**
  * Administration A2-A: business profile (docs/administration-a2.md §3.2–3.3, §4, §7). Runs the real
  * route handlers against PostgreSQL with migrations and prisma/privileged applied as in production.
@@ -47,7 +48,9 @@ const ctx = (params: Record<string, string>) => ({ params: Promise.resolve(param
 
 async function newUser(prefix = 'user'): Promise<User> {
   const email = `${prefix}-${randomUUID()}@example.com`;
+  await inviteForSignup(admin, email);
   await authRoute.POST(request('POST', '/api/v1/auth/sign-up/email', { body: { email, password: PASSWORD, name: prefix } }));
+  await admitFixture(admin, email);
   const mail = [...devOutbox].reverse().find((m) => m.to === email)!;
   const link = new URL(/(https?:\/\/\S+)/.exec(mail.text)![1]!);
   await authRoute.GET(request('GET', `${link.pathname}${link.search}`, { origin: null }));

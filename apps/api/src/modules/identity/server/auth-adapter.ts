@@ -7,6 +7,7 @@ import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { getAuthPrisma } from '@/core/db/auth-client';
 import { getEnv } from '@/core/config/env';
 import { sendEmail } from '@/core/email';
+import { admissionHooks } from './admission';
 import { withHashedSecrets } from './hashed-adapter';
 
 export const AUTH_BASE_PATH = '/api/v1/auth';
@@ -23,6 +24,7 @@ function createAuth() {
     secret: env.AUTH_SECRET,
     telemetry: { enabled: false },
     database: ((options: BetterAuthOptions) => withHashedSecrets(inner(options) as never)) as typeof inner,
+    databaseHooks: admissionHooks,
     user: { fields: { image: 'imageUrl' } },
     session: {
       fields: { token: 'tokenHash' },

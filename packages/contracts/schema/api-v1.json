@@ -236,6 +236,23 @@
         "additionalProperties": false
       }
     },
+    "platformAccess": {
+      "method": "GET",
+      "path": "/api/v1/access",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "canCreateBusiness": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "canCreateBusiness"
+        ],
+        "additionalProperties": false
+      }
+    },
     "acceptInvitation": {
       "method": "POST",
       "path": "/api/v1/invitations/accept",

@@ -7,7 +7,8 @@ export const ROLE_LABEL = { OWNER: 'Owner', ADMIN: 'Admin', MANAGER: 'Manager', 
 export function ChooseWorkspace({ businesses, onSelect, onCreate, onSignOut, onBack, revoked }: {
   businesses: BusinessSummary[];
   onSelect: (slug: string) => void;
-  onCreate: () => void;
+  /** Absent when the account may not create businesses (private beta). */
+  onCreate?: () => void;
   onSignOut: () => void;
   /** A business the person just tried to open but no longer belongs to. */
   revoked?: string;
@@ -15,7 +16,7 @@ export function ChooseWorkspace({ businesses, onSelect, onCreate, onSignOut, onB
   onBack?: () => void;
 }) {
   return (
-    <Frame title="Choose your workspace" subtitle="Select a business to continue, or create a new one. Your access is always verified by the server.">
+    <Frame title="Choose your workspace" subtitle={onCreate ? 'Select a business to continue, or create a new one. Your access is always verified by the server.' : 'Select a business to continue. Your access is always verified by the server.'}>
       {revoked ? (
         <p role="alert" className="mb-5 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
           You no longer have access to {revoked}, or to the business you had open. Choose one of the businesses you still belong to.
@@ -37,7 +38,7 @@ export function ChooseWorkspace({ businesses, onSelect, onCreate, onSignOut, onB
       </ul>
       <div className="mt-6 flex flex-wrap gap-3">
         {onBack ? <button type="button" className={secondaryClass} onClick={onBack}>Back</button> : null}
-        <button type="button" className={secondaryClass} onClick={onCreate}>Create another business</button>
+        {onCreate ? <button type="button" className={secondaryClass} onClick={onCreate}>Create another business</button> : null}
         <button type="button" className={secondaryClass} onClick={onSignOut}>Sign out</button>
       </div>
     </Frame>

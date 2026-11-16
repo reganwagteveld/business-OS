@@ -1,3 +1,4 @@
+import { inviteForSignup, admitFixture } from './support/admission';
 /**
  * Phase 1b tenancy and access control (PR 5): businesses, memberships, invitations, role rules,
  * last-owner protection, tenant isolation, trusted paths and schema guards (data-model §4, §5.5,
@@ -45,7 +46,9 @@ const ctx = (params: Record<string, string>) => ({ params: Promise.resolve(param
 
 async function newUser(prefix = 'user'): Promise<User> {
   const email = `${prefix}-${randomUUID()}@example.com`;
+  await inviteForSignup(admin, email);
   await authRoute.POST(request('POST', '/api/v1/auth/sign-up/email', { body: { email, password: PASSWORD, name: prefix } }));
+  await admitFixture(admin, email);
   const mail = [...devOutbox].reverse().find((m) => m.to === email)!;
   const link = new URL(/(https?:\/\/\S+)/.exec(mail.text)![1]!);
   await authRoute.GET(request('GET', `${link.pathname}${link.search}`, { origin: null }));

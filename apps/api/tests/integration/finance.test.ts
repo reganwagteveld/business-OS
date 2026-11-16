@@ -1,3 +1,4 @@
+import { inviteForSignup, admitFixture } from './support/admission';
 /**
  * Finance Zone F1 (docs/finance-data-model.md, ADR 0007): quotes, invoices, credit notes and finance
  * settings through the real route handlers, against PostgreSQL with the migrations and privileged SQL
@@ -93,7 +94,9 @@ const ctx = (params: Record<string, string>) => ({ params: Promise.resolve(param
 
 async function newUser(prefix: string): Promise<User> {
   const email = `${prefix}-${randomUUID()}@example.com`;
+  await inviteForSignup(admin, email);
   await authRoute.POST(req('POST', '/api/v1/auth/sign-up/email', { body: { email, password: PASSWORD, name: prefix } }));
+  await admitFixture(admin, email);
   const mail = [...devOutbox].reverse().find((m) => m.to === email)!;
   const link = new URL(/(https?:\/\/\S+)/.exec(mail.text)![1]!);
   await authRoute.GET(req('GET', `${link.pathname}${link.search}`, { origin: null }));

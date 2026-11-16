@@ -72,6 +72,10 @@ export function createAuthClient(baseUrl: string, transport: AuthTransport, fetc
       return { ok: false, status: 0, message: 'Cannot reach Business OS. Check your connection.' };
     }
     if (res.ok) return { ok: true, data: undefined };
+    const error = await res.json().catch(() => null);
+    if (error?.code === 'INVITE_REQUIRED' || error?.error === 'invite_required') {
+      return { ok: false, status: res.status, message: 'Pixa OS is invite-only. Use the email address on your invitation, then open its link to join.' };
+    }
     return { ok: false, status: res.status, message: GENERIC[res.status] ?? 'Something went wrong. Please try again.' };
   }
   const invalid = (message: string): AuthResult => ({ ok: false, status: 400, message });
