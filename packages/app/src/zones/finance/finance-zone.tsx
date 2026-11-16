@@ -28,7 +28,9 @@ const EXPENSE_TABS = [{ id: 'expenses', label: 'Expenses' }, { id: 'payments-mad
 
 /**
  * Where a shell route's `target` and `intent` land. A target is `kind:id` (invoice, quote, credit-note,
- * payment, expense); a bare id is an expense (F3). `new` opens the section's create form.
+ * payment, expense, catalog); a bare id is an expense (F3). `new` opens the section's create form.
+ * `catalog:<id>` (GS2-A, GS1 §10.6) opens one catalog item; any finance:read member may view it, and
+ * the item page itself shows archived items read-only and the API's not-found state for a missing one.
  */
 export function initialView(section: string | undefined, target: string | undefined, intent: 'new' | undefined, can: FinanceEnv['can']): FinanceView {
   if (target) {
@@ -42,6 +44,7 @@ export function initialView(section: string | undefined, target: string | undefi
     if (kind === 'quote') return { name: 'document', path: 'quotes', id };
     if (kind === 'credit-note') return { name: 'document', path: 'credit-notes', id };
     if (kind === 'payment') return { name: 'payment', id };
+    if (kind === 'catalog') return { name: 'catalog-item', id };
     return { name: 'expense', id };
   }
   if (intent === 'new') {

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFinanceClient, type BusinessContext } from '../src';
 import { ZONES } from '../src/shell/registry';
 import { catalogProblem, formatUnitPrice, taxLabel } from '../src/zones/finance/catalog';
-import { FinanceZone } from '../src/zones/finance/finance-zone';
+import { FinanceZone, initialView } from '../src/zones/finance/finance-zone';
 import { createFakeFinance, financeData } from './support/fake-finance';
 
 afterEach(() => {
@@ -35,7 +35,7 @@ function catalogItem(over: Partial<CatalogItem> = {}): CatalogItem {
   };
 }
 
-function setup(o: { permissions?: string[]; items?: CatalogItem[]; nextCursor?: string | null } = {}) {
+function setup(o: { permissions?: string[]; items?: CatalogItem[]; nextCursor?: string | null; section?: string; initialTarget?: string } = {}) {
   const items = o.items ?? [];
   const data = financeData();
   const api = createFakeFinance({ alpha: data });
@@ -76,7 +76,7 @@ function setup(o: { permissions?: string[]; items?: CatalogItem[]; nextCursor?: 
   }) as typeof globalThis.fetch;
   const finance = createFinanceClient(BASE, { kind: 'cookie' }, fetch);
   const handlers = { onHome: vi.fn(), onSwitch: vi.fn(), onSignOut: vi.fn(), onSessionEnded: vi.fn(), onSection: vi.fn() };
-  render(<FinanceZone key="alpha" client={finance} context={ctx(o.permissions ?? MANAGE)} userLabel="Ada" section="catalog" {...handlers} />);
+  render(<FinanceZone key="alpha" client={finance} context={ctx(o.permissions ?? MANAGE)} userLabel="Ada" section={o.section ?? 'catalog'} initialTarget={o.initialTarget} {...handlers} />);
   return { calls, items, data, user: userEvent.setup(), handlers };
 }
 
@@ -98,6 +98,41 @@ describe('catalog words and formatting', () => {
     const finance = ZONES.find((z) => z.id === 'finance')!;
     expect(finance.children?.map((c) => c.id)).toContain('catalog');
     expect(finance.children?.find((c) => c.id === 'catalog')?.label).toBe('Products & services');
+  });
+});
+
+describe('catalog item target (GS2-A)', () => {
+  const can = { write: false, issue: false, payments: false, expenses: false, manage: false, billing: false, catalog: false, readCustomers: false };
+
+  it('maps catalog:<id> to that item, whatever the section, and leaves the other targets alone', () => {
+    const id = randomUUID();
+    expect(initialView('catalog', `catalog:${id}`, undefined, can)).toEqual({ name: 'catalog-item', id });
+    expect(initialView(undefined, `catalog:${id}`, undefined, can)).toEqual({ name: 'catalog-item', id });
+    expect(initialView('catalog', undefined, undefined, can)).toEqual({ name: 'catalog' });
+    expect(initialView(undefined, id, undefined, can)).toEqual({ name: 'expense', id }); // F3 bare id is still an expense
+  });
+
+  it('opens the item for a reader, read-only, through the item endpoint', async () => {
+    const item = catalogItem({ name: 'Blocked drain', description: 'Up to one hour' });
+    const { calls } = setup({ permissions: READER, items: [item], initialTarget: `catalog:${item.id}` });
+    await heading('Blocked drain');
+    expect(screen.getByText('Up to one hour')).toBeTruthy();
+    for (const name of ['Save changes', 'Archive', 'Mark inactive', 'Restore']) expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(calls).toEqual([{ method: 'GET', path: item.id, query: '', body: undefined }]);
+  });
+
+  it('opens an archived item read-only for a manager', async () => {
+    const item = catalogItem({ name: 'Old service', archivedAt: NOW });
+    setup({ items: [item], initialTarget: `catalog:${item.id}` });
+    await heading('Old service');
+    expect(await screen.findByRole('button', { name: 'Restore' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  });
+
+  it('shows the not-found state for an item that no longer exists, without listing the catalog', async () => {
+    const { calls } = setup({ permissions: READER, items: [], initialTarget: `catalog:${randomUUID()}` });
+    expect(await screen.findByText(/This item/)).toBeTruthy();
+    expect(calls.every((c) => c.path !== '')).toBe(true);
   });
 });
 
