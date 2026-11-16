@@ -1,6 +1,6 @@
 # ADR 0008: Scheduling conflict prevention by globally ordered transaction locks
 
-- Status: **Proposed**, approved in substance. Regan approved this approach as D-S2-5 on 2026-11-16, and ChatGPT's audit of PR #61 (2026-11-16, commit `6b6eefb`) approved it. It becomes **Accepted** when PR #61 merges with Regan's approval.
+- Status: **Accepted** (2026-11-16). Regan approved the approach as D-S2-5, and ChatGPT's re-audit of PR #61 (head `9b16b64`) approved this ADR and allowed it to be marked Accepted on merge. PR #61 merged as `9dc670d`.
 - Date: 2026-11-16
 - Supersedes: [ADR 0006](./0006-scheduling-conflicts-and-privacy.md) **§2** (conflict prevention by exclusion constraint) and **§3** (`btree_gist` privileged step). ADR 0006 §1 (time) is implemented as written. ADR 0006 §4–§7 (privacy, escalation guards, trust model for private details, erasure) are **not** superseded and **not** accepted: they stay future requirements (§6 below).
 - Related: [scheduling-s1.md §4.3](../scheduling-s1.md), [scheduling-s2.md §5](../scheduling-s2.md#5-lock-protocol-extends-s1-43), ADR 0004 (database isolation design).
