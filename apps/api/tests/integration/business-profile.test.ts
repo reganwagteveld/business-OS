@@ -90,12 +90,14 @@ async function profile(by: User, slug: string) {
 describe('business profile: reading', () => {
   it('every member reads the profile; it matches the contract and starts at version 1 with empty contact fields', async () => {
     const t = await team();
+    // The data region comes from the deployment's configuration (different locally and in CI), never a request.
+    const { rows: [config] } = await admin.query('SELECT region FROM app_private.deployment_config');
     for (const role of ['OWNER', 'ADMIN', 'MANAGER', 'MEMBER']) {
       const p = await profile(t.people[role]!, t.slug);
       expect(p).toMatchObject({
         slug: t.slug, name: 'Acme Plumbing', legalName: null, tradingName: null, contactEmail: null, website: null,
         address: { line1: null, line2: null, city: null, region: null, postalCode: null, countryCode: null },
-        countryCode: 'US', timeZone: 'America/Chicago', currency: 'USD', fiscalYearStartMonth: null, homeRegion: 'us-east-1', version: 1,
+        countryCode: 'US', timeZone: 'America/Chicago', currency: 'USD', fiscalYearStartMonth: null, homeRegion: config.region, version: 1,
       });
     }
   });
