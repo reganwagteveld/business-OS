@@ -192,6 +192,13 @@ jobs:
         env:
           DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
           BILLING_TEST_IP_BLOCK: '97'
+      # Finance F6-3 (docs/finance-billing-f6.md §10): reminder claims, leases, the locked pre-dispatch check and
+      # concurrent passes again through the transaction-mode pooler.
+      - name: Finance reminders suite behind the pooler
+        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/finance-reminders.test.ts
+        env:
+          DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
+          REMINDERS_TEST_IP_BLOCK: '131'
       - name: Migrations match schema
         run: pnpm db:check-migrations
 
