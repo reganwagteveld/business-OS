@@ -3,7 +3,7 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { App, createCustomersClient, createProjectsClient, createSalesClient, memoryStorage, type AuthClient, type BusinessContext, type Outcome, type TenancyClient } from '../src';
+import { App, createCustomersClient, createDashboardClient, createProjectsClient, createSalesClient, memoryStorage, type AuthClient, type BusinessContext, type Outcome, type TenancyClient } from '../src';
 import type { SessionCheck } from '../src/api/auth';
 import { AppShell } from '../src/shell/app-shell';
 import { resetPreferenceMemory } from '../src/shell/preferences';
@@ -90,7 +90,7 @@ function mountApp(opts: {
   const listed = new Set(slugs);
   render(<App platform="web" apiBaseUrl={BASE} auth={auth} tenancy={tenancy} storage={storage}
     customers={createCustomersClient(BASE, { kind: 'cookie' }, api.fetch)} sales={createSalesClient(BASE, { kind: 'cookie' }, api.fetch)}
-    projects={createProjectsClient(BASE, { kind: 'cookie' }, api.fetch)} />);
+    projects={createProjectsClient(BASE, { kind: 'cookie' }, api.fetch)} dashboard={createDashboardClient(BASE, { kind: 'cookie' }, api.fetch)} />);
   return { api, auth, tenancy, storage, listed, user: userEvent.setup() };
 }
 

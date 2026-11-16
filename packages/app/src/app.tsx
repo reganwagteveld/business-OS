@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
 import { createCustomersClient, type CustomersClient } from './api/customers';
+import { createDashboardClient, type DashboardClient } from './api/dashboard';
 import { createPeopleClient, type PeopleClient } from './api/people';
 import { createProjectsClient, type ProjectsClient } from './api/projects';
 import { createFinanceClient, type FinanceClient } from './api/finance';
@@ -15,6 +16,8 @@ import { BusinessSetup } from './shell/onboarding';
 import { Failed, SessionExpiredNotice, Unreachable, Unverified } from './shell/states';
 import { AppShell } from './shell/app-shell';
 import { Home, type CustomerMetrics } from './shell/home';
+import { OperationalDashboard, type DashboardClients } from './shell/dashboard/operational-dashboard';
+import { dashboardIdentity } from './shell/dashboard/sources';
 import { canOpen, HOME, resolveNavigation, type ResolvedNavigation, type ShellRoute } from './shell/registry';
 import { useLoad } from './zones/use-load';
 import type { BusinessContext } from './api/tenancy';
@@ -48,6 +51,8 @@ export interface AppProps {
   people?: PeopleClient;
   finance?: FinanceClient;
   reporting?: ReportingClient;
+  /** The operational dashboard's own reads (pipeline summary, business activity, upcoming events). */
+  dashboard?: DashboardClient;
   storage?: WorkspaceStorage;
 }
 
@@ -63,7 +68,7 @@ type Mode = 'default' | 'choose' | 'new';
  * open the right one. Offline, server errors and an ended session each get their own screen, and
  * the active business is only ever one the server lists for you.
  */
-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, storage: storageOverride }: AppProps) {
+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, dashboard: dashboardOverride, storage: storageOverride }: AppProps) {
   const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
   const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
@@ -73,6 +78,8 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const projects = useMemo(() => projectsOverride ?? createProjectsClient(apiBaseUrl, resolvedTransport), [projectsOverride, apiBaseUrl, resolvedTransport]);
   const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
   const reporting = useMemo(() => reportingOverride ?? createReportingClient(apiBaseUrl, resolvedTransport), [reportingOverride, apiBaseUrl, resolvedTransport]);
+  const dashboard = useMemo(() => dashboardOverride ?? createDashboardClient(apiBaseUrl, resolvedTransport), [dashboardOverride, apiBaseUrl, resolvedTransport]);
+  const dashboardClients = useMemo<DashboardClients>(() => ({ reporting, dashboard, projects, finance }), [reporting, dashboard, projects, finance]);
   const storage = useMemo(() => storageOverride ?? browserStorage(), [storageOverride]);
   const workspace = useWorkspace({ auth, tenancy, storage });
   const { phase } = workspace;
@@ -279,7 +286,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       />
     );
   } else if (active) {
-    screen = <HomeWithMetrics key={slug} customers={customers} context={active} user={phase.user} navigation={navigation} onOpen={open} onSessionEnded={workspace.retry} />;
+    screen = <HomeWithMetrics key={dashboardIdentity(active)} customers={customers} dashboard={dashboardClients} context={active} user={phase.user} navigation={navigation} onOpen={open} onSessionEnded={workspace.retry} />;
   }
 
   return (
@@ -310,11 +317,13 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
 }
 
 /**
- * The Zone home with live Customers counts. Mounted per business (key) and each time the person comes
- * back from a Zone, so counts reflect any changes just made, with exactly one request per visit.
+ * Home with live figures: the Customers counts (one request, shared by the Zone card and the dashboard)
+ * and the operational dashboard. Mounted per business, membership and permission set (`dashboardIdentity`),
+ * and each time the person comes back from a Zone, so figures reflect any changes just made and never
+ * outlive the access they were loaded with.
  */
-function HomeWithMetrics({ customers, context, user, navigation, onOpen, onSessionEnded }: {
-  customers: CustomersClient; context: BusinessContext; user: CurrentUser; navigation: ResolvedNavigation; onOpen: (route: ShellRoute) => void; onSessionEnded: () => void;
+function HomeWithMetrics({ customers, dashboard, context, user, navigation, onOpen, onSessionEnded }: {
+  customers: CustomersClient; dashboard: DashboardClients; context: BusinessContext; user: CurrentUser; navigation: ResolvedNavigation; onOpen: (route: ShellRoute) => void; onSessionEnded: () => void;
 }) {
   const slug = context.business.slug;
   const canRead = context.membership.permissions.includes('customers:read');
@@ -332,6 +341,7 @@ function HomeWithMetrics({ customers, context, user, navigation, onOpen, onSessi
   }
   return (
     <Home business={context.business.name} timeZone={context.business.timeZone} role={context.membership.role} user={user}
-      permissions={context.membership.permissions} navigation={navigation} customerMetrics={metrics} onOpen={onOpen} />
+      permissions={context.membership.permissions} navigation={navigation} customerMetrics={metrics} onOpen={onOpen}
+      dashboard={<OperationalDashboard context={context} clients={dashboard} customers={metrics} onOpen={onOpen} onSessionEnded={onSessionEnded} />} />
   );
 }
