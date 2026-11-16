@@ -217,3 +217,20 @@ Approved by Regan in the project thread (subject to preflight). Applied from `ma
 
 Not done, by instruction: no `CRON_SECRET`, no cron entry, the internal finance-reminders job route
 was not called, no email was sent. Keep `pre-f6-3-migration` until the next migration is verified.
+
+### S2 scheduling resources (2026-11-16)
+
+Approved by Regan in the S2 project thread (recovery branch and migration named explicitly). Applied from PR #61's head `1caa429` **before** the merge, so the code never ran without its tables.
+
+| Step | Result (UTC) |
+|---|---|
+| Neon plan | Upgraded by Regan to Launch, so no recovery branch was deleted |
+| Preflight (read-only, `bos_owner`, production direct endpoint) | 17 applied, newest `20261127000000_finance_reminders`, none failed; checksums match; `20261128000000_scheduling_resources` the only pending migration; neither scheduling resource table existed; no new privileged SQL |
+| Recovery branch | `pre-s2-migration` = `br-wild-band-bbsipovj`, from production at 07:45:28 (LSN `0/2993118`), no compute |
+| `prisma migrate deploy` | Applied only `20261128000000_scheduling_resources`: 07:46:23–07:46:32, 1 step, no rollback. 18 applied, up to date |
+| RLS | `scheduling_resources`, `scheduling_event_resources`: `relrowsecurity` and `relforcerowsecurity` true, owner `bos_owner`, `tenant_isolation` policy for `bos_app` |
+| Grants | `bos_app`: SELECT, INSERT, UPDATE on resources; SELECT, INSERT and column UPDATE (`removed_at`, `removed_by_id`) on assignments; no DELETE or TRUNCATE outside `bos_owner`; no other grantees |
+| Health | `GET /api/v1/health` 200 at 07:46:57 |
+| Merge | PR #61 squash-merged as `9dc670d` after CI passed on `1caa429` |
+
+Not done, by instruction: Scheduling navigation not switched on. Keep `pre-s2-migration` until the next migration is verified.

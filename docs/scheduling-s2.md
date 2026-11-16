@@ -1,6 +1,6 @@
 # Scheduling S2: resources, availability and conflict-safe bookings
 
-> Status: **Implemented for audit** (S2, draft PR). Not merged, not deployed. The migration has been applied only to local, disposable databases.
+> Status: **Merged** (PR #61, `9dc670d`, 2026-11-16). Migration applied to production before the merge (see migration-readiness.md §9). Scheduling navigation is still off (D-S2-8).
 > Builds on [scheduling-s1.md](./scheduling-s1.md) (PR #38). Conflict prevention is recorded in [ADR 0008](./adr/0008-scheduling-ordered-lock-conflict-prevention.md), which supersedes [ADR 0006](./adr/0006-scheduling-conflicts-and-privacy.md) §2–§3. ADR 0006's privacy and erasure sections stay future requirements (§10).
 > Every S1 invariant is kept: half-open intervals, `enforceConflicts` per write, the S1 lock steps, optimistic versions, forced RLS, composite tenant keys, no DELETE grant.
 
@@ -204,8 +204,8 @@ D-S2-1 to D-S2-6 were **approved by Regan on 2026-11-16**, with these additions,
 | D-S2-4 | Overrides | **Approved.** One `enforceConflicts` flag covers calendar and resource conflicts; every resource exclusive (capacity 1). |
 | D-S2-5 | Locking | **Approved.** Extended advisory protocol (§5), no `btree_gist`. Recorded in ADR 0008 (supersedes ADR 0006 §2–§3) after the PR #61 audit. |
 | D-S2-6 | Response contract | **Approved.** Conflict entries gain `kind`, `resource`, `blocking`; events gain `resources` (§11.1). |
-| D-S2-7 | Limits | Built as proposed, open to change: ≤ 20 resources per event, ≤ 50 per availability call, ≤ 20 conflicts listed per resource. |
-| D-S2-8 | Navigation | Still deferred. The S1 integration patch was regenerated against current main and covers S2 too. |
+| D-S2-7 | Limits | **Approved** by Regan in the PR #61 re-audit: ≤ 20 resources per event, ≤ 50 per availability call, ≤ 20 conflicts listed per resource. |
+| D-S2-8 | Navigation | **Stays off** pending a separate activation decision (Regan, PR #61 re-audit). The S1 integration patch was regenerated against current main and covers S2 too. |
 
 ### 11.1 Compatibility with S1 clients
 
@@ -284,4 +284,4 @@ One app test (`finance-f5`, PDF card) failed once while the integration suite wa
 - Additive only, one transaction, no extension, no privileged SQL file, no data backfill. Applied cleanly to a fresh database with all 18 migrations.
 - Order: merge, recovery branch (the Neon Free plan's 10-branch limit applies), `prisma migrate deploy`, verify RLS/grants as for F6-3, then deploy. Because the change is additive, the old API keeps working against the new schema, so either order is safe.
 - Rollback: redeploy the previous API; the two tables can stay. Dropping them needs a new forward migration.
-- Not done: no merge, deployment, production migration or navigation change.
+- Done 2026-11-16: recovery branch `pre-s2-migration`, migration applied, RLS and grants verified, then PR #61 merged. Navigation not changed.
