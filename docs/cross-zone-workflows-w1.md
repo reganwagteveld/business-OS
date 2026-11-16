@@ -1,9 +1,11 @@
 # W1: Cross-Zone workflow mapping (enquiry to cash)
 
-> **Status: proposal, documentation only.** Nothing in this document is implemented by this PR. It adds no
-> migration, no route, no contract, no event infrastructure and changes no Zone source file. Every "proposed"
-> endpoint, column, event or rule below is a design for review; every "present" statement is backed by a file
-> on `main` at `b2f308b` (2026-11-16).
+> **Status: architecture approved, documentation only.** Regan approved decisions W1-D1 to W1-D13 and FD-P3 as
+> recommended in §15 on 2026-11-16, with four mandatory implementation gates (§15.1). Nothing in this document is
+> implemented. It adds no migration, no route, no contract, no event infrastructure and changes no Zone source
+> file. Every "proposed" endpoint, column, event or rule below is the approved design for the WF PRs, each of
+> which still needs its own review, tests and approval; every "present" statement is backed by a file on `main`
+> at `b2f308b` (2026-11-16).
 
 > **Revision 2 (2026-11-16)** after the independent architecture audit on #79: customer/project invariants and
 > reassignment policy (§6.1), exact quote billing totals and over-quote confirmation (§8.6), lock order checked
@@ -764,7 +766,11 @@ businesses, roles OWNER / MANAGER / MEMBER).
 
 ## 15. Owner decisions
 
-| Id | Question | Options | Recommendation |
+**Decided (Regan, 2026-11-16):** every recommendation in the table below is accepted as written: W1-D1 to W1-D13
+and FD-P3. FD-P4 is superseded by explicit, confirmed actions (WF-3). This approves the architecture only; it
+does not approve any implementation, migration, privileged SQL or production action.
+
+| Id | Question | Options | Decision (recommendation accepted) |
 |---|---|---|---|
 | **W1-D1** | Where does cross-Zone orchestration code live? | (a) the Zone that starts the action calls the other Zone's public API (Finance calls Sales); (b) a thin `workflows` module that composes Zone public APIs and owns **no business records** | **(b)**: keeps Zone modules free of each other's imports, gives one place for lock order and multi-key checks; it owns routes like `workflows/quotes/:id/accept` and one infrastructure table, `workflow_requests` (W1-D13), which is never a source of truth for business data. |
 | **W1-D2** | Can a job start from an ISSUED (not yet accepted) quote? | ACCEPTED only / ISSUED or ACCEPTED | ACCEPTED only; for urgent work, accept first (one click). |
@@ -781,6 +787,18 @@ businesses, roles OWNER / MANAGER / MEMBER).
 | FD-P3 (existing) | Quote conversion limits | hard cap / warn / no check | No hard cap; over-quote needs an explicit confirmation of the exact current figures at draft and at issue (§8.6). Conversion stays allowed from ISSUED or ACCEPTED quotes. |
 | **W1-D13** | Where idempotency keys of orchestration creates live | columns on the created row / `workflow_requests` table in the orchestration module | **`workflow_requests`**: tenant table with forced RLS; unique `(business_id, operation, idempotency_key)`; `request_hash`; a reference to the result (record type and id) for replay, read back through the owning Zone with the caller's permissions; inserted in the same transaction as the action, so a rolled-back action leaves no key; retained like the audit log (no purge until a retention decision); same key and hash replays, a different hash is `409 idempotency_conflict`; insert-only for `bos_app`. Its migration ships in **WF-2**, the first PR with an orchestration create. |
 | FD-P4 (existing) | Automatic opportunity → document conversion | — | Superseded by WF-3's explicit, confirmed action; nothing automatic. |
+
+### 15.1 Mandatory implementation gates (Regan, 2026-11-16)
+
+These come from the independent architecture audit and are **requirements**, not suggestions. A WF PR that
+touches the area cannot be approved without them.
+
+| Gate | Requirement | Applies to |
+|---|---|---|
+| G-1 Request-key retention | Decide and document the retention and expiry policy of `workflow_requests` **before** the WF-2 migration is applied, including what happens when an expired key is retried (it must not silently create a duplicate job). Replays re-check the caller's current permissions and record access, never reveal another tenant's result, and arbitrate concurrent first requests through the unique key. "No purge until a retention decision" is not an acceptable final policy. | WF-2 |
+| G-2 Real PostgreSQL concurrency tests | Every new lock path in §8.6 and §9.2 (accept+win, project from quote, project customer change, draft linking, visit create/complete, draft create/edit/issue from a quote, voids and credits) is proven in real PostgreSQL integration tests at READ COMMITTED: deterministic wrong-order `40P01` reproduction, a concurrent mix with no deadlock, and the invariants holding. No statement in this document substitutes for those tests. | WF-1 to WF-6 |
+| G-3 Production data preflight | Before any new FK or unique key is added (§6.1, §8.2, WF-4), run a read-only production check for rows that would violate it and stop if any exist; add constraints `NOT VALID` then `VALIDATE`; test the intended `MATCH SIMPLE` behaviour for every nullable customer/project column. Production work follows `docs/agent-task-protocol.md` (Mac session, recovery branch, Regan's approval per migration). | WF-1, WF-2, WF-4 |
+| G-4 No finance leakage | Tests prove that people without `finance:read` get no finance identifiers, numbers, amounts or existence signals through Projects, Sales, Scheduling, customer timeline, search, reporting drill-downs or error responses (§10), plus cross-business isolation and customer-mismatch tests for every new link. | WF-1 to WF-8 |
 
 ---
 
