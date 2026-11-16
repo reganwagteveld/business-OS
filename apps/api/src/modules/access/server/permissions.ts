@@ -27,8 +27,9 @@ export const ZONE_PERMISSIONS = {
   // versions inline; generate = create the original PDF and add new versions; download = save a stored
   // version as a file; branding = logo, colour, footer and template text. Viewing the records and the
   // version history stays finance:read. None of them changes a financial record.
-  // billing (F6, D-F6-3, proposed) = recurring invoice schedules: create, change, pause, resume,
-  // cancel, generate now, retry and skip periods. Reading schedules and their runs is finance:read.
+  // billing (F6, D-F6-3) = recurring invoice schedules: create, change, pause, resume, cancel, generate
+  // now, retry and skip periods; and (F6-3) payment reminders: policies, customer assignments, holds and
+  // dismissing a reminder. Reading schedules, runs, policies, holds and reminders is finance:read.
   finance: [
     'finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage',
     'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download', 'finance:documents_branding',

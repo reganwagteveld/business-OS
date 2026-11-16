@@ -27,3 +27,7 @@ export const expenseIdOf = idOf('expenseId');
 export const categoryIdOf = idOf('categoryId');
 export const recurringIdOf = idOf('recurringId');
 export const runIdOf = idOf('runId');
+export const policyIdOf = idOf('policyId');
+export const holdIdOf = idOf('holdId');
+export const reminderIdOf = idOf('reminderId');
+export const customerIdOf = idOf('customerId');

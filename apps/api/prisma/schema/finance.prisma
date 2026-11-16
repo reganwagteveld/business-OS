@@ -219,6 +219,8 @@ model FinanceDocument {
   creditReceived    FinanceCreditApplication[] @relation("CreditApplicationInvoice")
   pdfs              FinanceDocumentPdf[]
   recurringRuns     FinanceRecurringRun[]
+  reminderHolds     FinanceReminderHold[]
+  reminders         FinanceReminder[]
 
   @@unique([businessId, id])
   @@unique([businessId, id, kind], map: "finance_documents_kind_key")

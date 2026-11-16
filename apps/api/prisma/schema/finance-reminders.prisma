@@ -1,0 +1,144 @@
+// Finance F6-3 (docs/finance-billing-f6.md §10): payment reminder policies, customer assignments,
+// holds (suppression and exclusion) and the reminder record. Tenant tables: forced RLS, composite
+// (business_id, …) foreign keys; CHECKs, guards and grants that Prisma cannot express live in migration
+// 20261127000000_finance_reminders. No DELETE grant on any of them: policies are archived, holds are
+// released, reminders are skipped, and all of them keep their history.
+//
+// Nothing here sends mail. A reminder stops at READY ("ready to send") until Communications C2-C
+// provides an outbox; once handed over it is QUEUED and C2-C owns delivery. No state ever says
+// "delivered" (D-F6-8, D-C2-13).
+
+/// A named set of reminder stages, each a number of days relative to the invoice's due date
+/// (negative = before it). At most one ACTIVE policy per business is the default, used for every
+/// customer without an assignment.
+model FinanceReminderPolicy {
+  id            String    @id @db.Uuid
+  businessId    String    @map("business_id") @db.Uuid
+  name          String
+  /// ACTIVE | ARCHIVED (CHECK, guarded). ARCHIVED is final.
+  status        String    @default("ACTIVE")
+  isDefault     Boolean   @default(false) @map("is_default")
+  /// [{ "offsetDays": int, "label": text }], 1 to 8 stages, offsets strictly increasing (guard).
+  stages        Json
+  /// Database time of the worker's last completed planning pass for this business (scheduling only).
+  lastPlannedAt DateTime? @map("last_planned_at") @db.Timestamptz
+  archivedAt    DateTime? @map("archived_at") @db.Timestamptz
+  version       Int       @default(1)
+  createdById   String?   @map("created_by_id") @db.Uuid
+  updatedById   String?   @map("updated_by_id") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business    Business                        @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_reminder_policies_business_fkey")
+  assignments FinanceReminderCustomerPolicy[]
+  reminders   FinanceReminder[]
+
+  @@unique([businessId, id])
+  @@index([businessId, status, createdAt(sort: Desc), id])
+  @@map("finance_reminder_policies")
+}
+
+/// A customer's reminder policy when it is not the business default. policy_id NULL = the default.
+model FinanceReminderCustomerPolicy {
+  businessId  String   @map("business_id") @db.Uuid
+  customerId  String   @map("customer_id") @db.Uuid
+  policyId    String?  @map("policy_id") @db.Uuid
+  version     Int      @default(1)
+  createdById String?  @map("created_by_id") @db.Uuid
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business               @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_reminder_customer_policies_business_fkey")
+  customer Customer               @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_reminder_customer_policies_customer_fkey")
+  policy   FinanceReminderPolicy? @relation(fields: [businessId, policyId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_reminder_customer_policies_policy_fkey")
+
+  @@id([businessId, customerId])
+  @@index([businessId, policyId])
+  @@map("finance_reminder_customer_policies")
+}
+
+/// Suppression: no reminder is sent for this customer (scope CUSTOMER) or invoice (scope INVOICE)
+/// while the hold is in effect: not released and, when until_date is set, on or before that day in the
+/// business's zone. A customer hold without an end date is an exclusion. Stages that come due during a
+/// hold are skipped, never sent afterwards.
+model FinanceReminderHold {
+  id           String              @id @db.Uuid
+  businessId   String              @map("business_id") @db.Uuid
+  /// CUSTOMER | INVOICE
+  scope        String
+  customerId   String              @map("customer_id") @db.Uuid
+  invoiceId    String?             @map("invoice_id") @db.Uuid
+  invoiceKind  FinanceDocumentKind @default(INVOICE) @map("invoice_kind")
+  /// DISPUTE | PAYMENT_PLAN | CUSTOMER_REQUEST | OTHER
+  reason       String
+  note         String?
+  /// Last day of the hold (inclusive), or NULL for no end.
+  untilDate    DateTime?           @map("until_date") @db.Date
+  releasedAt   DateTime?           @map("released_at") @db.Timestamptz
+  releasedById String?             @map("released_by_id") @db.Uuid
+  createdById  String              @map("created_by_id") @db.Uuid
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business         @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_reminder_holds_business_fkey")
+  customer Customer         @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_reminder_holds_customer_fkey")
+  invoice  FinanceDocument? @relation(fields: [businessId, invoiceId, invoiceKind], references: [businessId, id, kind], onDelete: NoAction, onUpdate: NoAction, map: "finance_reminder_holds_invoice_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, customerId, releasedAt])
+  @@index([businessId, invoiceId])
+  @@index([businessId, createdAt(sort: Desc), id])
+  @@map("finance_reminder_holds")
+}
+
+/// One reminder stage of one invoice: the idempotency record of reminding. UNIQUE (invoice, offset),
+/// so no retry, second worker or policy edit can create a second reminder for the same stage.
+model FinanceReminder {
+  id                 String              @id @db.Uuid
+  businessId         String              @map("business_id") @db.Uuid
+  invoiceId          String              @map("invoice_id") @db.Uuid
+  invoiceKind        FinanceDocumentKind @default(INVOICE) @map("invoice_kind")
+  customerId         String              @map("customer_id") @db.Uuid
+  policyId           String              @map("policy_id") @db.Uuid
+  policyVersion      Int                 @map("policy_version")
+  offsetDays         Int                 @map("offset_days") @db.SmallInt
+  stageLabel         String              @map("stage_label")
+  /// The invoice's due date when the stage was planned, and that date + offset_days.
+  dueDate            DateTime            @map("due_date") @db.Date
+  scheduledOn        DateTime            @map("scheduled_on") @db.Date
+  /// PENDING | RUNNING | READY | QUEUED | SKIPPED | FAILED (CHECK, transitions guarded).
+  status             String              @default("PENDING")
+  attempts           Int                 @default(0) @db.SmallInt
+  maxAttempts        Int                 @default(5) @map("max_attempts") @db.SmallInt
+  runAfter           DateTime            @default(now()) @map("run_after") @db.Timestamptz
+  leaseId            String?             @map("lease_id") @db.Uuid
+  leaseExpiresAt     DateTime?           @map("lease_expires_at") @db.Timestamptz
+  /// Why a reminder was skipped or failed, or why the outbox refused it (stable code, never text).
+  outcomeCode        String?             @map("outcome_code")
+  /// The invoice's outstanding amount at the last pre-dispatch check, and when that check ran.
+  checkedOutstanding Decimal?            @map("checked_outstanding") @db.Decimal(18, 4)
+  checkedAt          DateTime?           @map("checked_at") @db.Timestamptz
+  /// C2-C's outbound message, once handed over, and the last state C2-C reported for it.
+  outboundId         String?             @map("outbound_id") @db.Uuid
+  outboundState      String?             @map("outbound_state")
+  readyAt            DateTime?           @map("ready_at") @db.Timestamptz
+  queuedAt           DateTime?           @map("queued_at") @db.Timestamptz
+  finishedAt         DateTime?           @map("finished_at") @db.Timestamptz
+  dismissedById      String?             @map("dismissed_by_id") @db.Uuid
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_reminders_business_fkey")
+  invoice  FinanceDocument       @relation(fields: [businessId, invoiceId, invoiceKind], references: [businessId, id, kind], onDelete: NoAction, onUpdate: NoAction, map: "finance_reminders_invoice_fkey")
+  customer Customer              @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_reminders_customer_fkey")
+  policy   FinanceReminderPolicy @relation(fields: [businessId, policyId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_reminders_policy_fkey")
+
+  @@unique([businessId, id])
+  @@unique([businessId, invoiceId, offsetDays])
+  @@unique([businessId, outboundId])
+  @@index([businessId, status, runAfter])
+  @@index([businessId, customerId, createdAt(sort: Desc)])
+  @@index([businessId, createdAt(sort: Desc), id])
+  @@map("finance_reminders")
+}
