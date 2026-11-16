@@ -1,6 +1,6 @@
 # ADR 0006: Scheduling conflict prevention, time and privacy
 
-- Status: **Superseded in part by [ADR 0008](./0008-scheduling-ordered-lock-conflict-prevention.md)** (2026-11-16): §2 (exclusion constraint) and §3 (`btree_gist` privileged step) are replaced by globally ordered transaction locks. §1 (time) is implemented as written. §4–§7 (private details, busy-only visibility, escalation guards, trust model, erasure) remain **Proposed future requirements**: not built, not accepted. Originally Proposed (S0); architecture provisionally approved by ChatGPT on 2026-11-14 subject to this ADR.
+- Status: **Superseded in part by [ADR 0008] (Accepted)(./0008-scheduling-ordered-lock-conflict-prevention.md)** (2026-11-16): §2 (exclusion constraint) and §3 (`btree_gist` privileged step) are replaced by globally ordered transaction locks. §1 (time) is implemented as written. §4–§7 (private details, busy-only visibility, escalation guards, trust model, erasure) remain **Proposed future requirements**: not built, not accepted. Originally Proposed (S0); architecture provisionally approved by ChatGPT on 2026-11-14 subject to this ADR.
 - Date: 2026-11-14
 - Related: [scheduling-data-model.md](../scheduling-data-model.md), ADR 0004 (database isolation design), [scheduling-s1.md](../scheduling-s1.md)
 
