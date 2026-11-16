@@ -327,6 +327,8 @@ providers' accounts are the same account.
   - when reconnecting or switching provider, the user confirms "this is your existing account X" before
     history is joined;
   - a conflicting second live account with the same value is refused (`409 account_identity_conflict`).
+- **Testing:** the rekey job and the user's confirm-the-account flow are tested on staging before any
+  live feed (F8-D), including rotation half-way through and a conflicting second account.
 - **No HMAC (card, masked or manual accounts):** identity comes from the user's explicit choice when
   connecting (link to an existing account, or create a new one). It is never inferred from institution,
   last 4 digits or name alone.
@@ -406,8 +408,11 @@ Notes:
 - **What is stored:** pending items are kept only in a **transient** per-account snapshot
   (`bank_pending_snapshot`).
   - The snapshot is replaced whole on each sync.
-  - Rows carry an `expires_at` TTL of 7 days, after which a cleanup deletes them even if no sync
-    happened.
+  - Rows carry an `expires_at` TTL of 7 days.
+  - **Purge without a scheduler:** every read filters `expires_at > now()`, so expired rows are never
+    shown. Expired rows for an account are deleted when that account is next read or synced. Live
+    feeds that would fill the snapshot only exist after a scheduler is approved (G-5). If a periodic
+    sweep is wanted later, it joins that approved scheduler. Nothing here enables one.
   - DELETE is granted on this table only.
 - **What is never done with pending items:**
   - they never become rows in the immutable `bank_transactions` table;
