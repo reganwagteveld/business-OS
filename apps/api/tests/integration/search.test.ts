@@ -390,7 +390,7 @@ describe('bounded discovery (not exhaustive)', () => {
     let cursor: string | null = null;
     let last: { hasMore: boolean } | undefined;
     for (let page = 0; page < 10; page++) {
-      const group = ok(await search(A.people.OWNER!, A.slug, { q: 'de', types: ['customer'], limit: 25, cursor })).groups[0]!;
+      const group: SearchResponse['groups'][number] = ok(await search(A.people.OWNER!, A.slug, { q: 'de', types: ['customer'], limit: 25, cursor })).groups[0]!;
       seen.push(...group.items.map((i) => i.title));
       last = group;
       if (!group.hasMore) break;
