@@ -98,7 +98,7 @@ import {
   UpdateContactRequest, UpdateCustomerRequest,
 } from './customers.ts';
 import {
-  AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, ChangeRoleRequest, CreateBusinessRequest, CreateBusinessResponse, PlatformAccessResponse,
+  AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, BusinessProfileResponse, UpdateBusinessProfileRequest, ChangeRoleRequest, CreateBusinessRequest, CreateBusinessResponse, PlatformAccessResponse,
   CreateInvitationRequest, InvitationResponse, InvitationsResponse, ListBusinessesResponse, MemberResponse, MembersResponse, OkResponse,
 } from './tenancy.ts';
 
@@ -124,6 +124,8 @@ export const endpoints = {
   platformAccess: { method: 'GET', path: '/api/v1/access', response: PlatformAccessResponse },
   acceptInvitation: { method: 'POST', path: '/api/v1/invitations/accept', request: AcceptInvitationRequest, response: AcceptInvitationResponse },
   businessContext: { method: 'GET', path: '/api/v1/b/:slug', response: BusinessContextResponse },
+  getBusinessProfile: { method: 'GET', path: '/api/v1/b/:slug/business', response: BusinessProfileResponse },
+  updateBusinessProfile: { method: 'PATCH', path: '/api/v1/b/:slug/business', request: UpdateBusinessProfileRequest, response: BusinessProfileResponse },
   listMembers: { method: 'GET', path: '/api/v1/b/:slug/members', response: MembersResponse },
   changeMemberRole: { method: 'PATCH', path: '/api/v1/b/:slug/members/:membershipId', request: ChangeRoleRequest, response: MemberResponse },
   removeMember: { method: 'DELETE', path: '/api/v1/b/:slug/members/:membershipId', response: OkResponse },
