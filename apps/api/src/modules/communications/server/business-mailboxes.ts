@@ -313,3 +313,17 @@ export async function removeMember(db: AppTenantDb, actor: ConnectionViewer, con
   await recordAudit(db, actor.userId, 'communications.member.revoked', { type: 'mail_connection', id: connectionId }, { userId });
   return listMembers(db, actor, connectionId);
 }
+
+/**
+ * Administration A2-B (C2 review Q3): a member is leaving the business, and their mail_connection_members
+ * rows will cascade with the membership delete, which writes no audit. Records one
+ * `communications.member.revoked` per grant first, as the acting member. Suspension keeps the rows (a
+ * suspended member opens no tenant request, and reactivation restores access), so it does not call this.
+ */
+export async function recordMailboxAccessEnded(db: AppTenantDb, actorUserId: string, userId: string, cause: 'member_removed' | 'member_left'): Promise<number> {
+  const rows = (await db.mailConnectionMember.findMany({ where: { userId }, select: { connectionId: true, access: true }, orderBy: { connectionId: 'asc' } })) as { connectionId: string; access: string }[];
+  for (const r of rows) {
+    await recordAudit(db, actorUserId, 'communications.member.revoked', { type: 'mail_connection', id: r.connectionId }, { userId, access: r.access, cause });
+  }
+  return rows.length;
+}

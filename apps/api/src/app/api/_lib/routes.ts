@@ -11,7 +11,7 @@ import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser 
 import { NotFoundError, type Actor } from '@/modules/tenancy';
 import { betaSessionAdmitted, myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
 import { apiHeaders } from '@/core/http';
-import { isUniqueViolation, RecordNotFoundError, RuleViolationError, ServiceFailureError, sqlState, StateConflictError } from '@/core/http/errors';
+import { isUniqueViolation, RateLimitedError, RecordNotFoundError, RuleViolationError, ServiceFailureError, sqlState, StateConflictError } from '@/core/http/errors';
 
 type Params = Promise<Record<string, string | string[] | undefined>>;
 type RouteContext = { params: Params };
@@ -94,6 +94,7 @@ function errorResponse(request: Request, error: unknown): Response {
   if (error instanceof NotFoundError || error instanceof RecordNotFoundError) return fail(request, 404, 'not_found');
   if (error instanceof StateConflictError) return fail(request, 409, error.code);
   if (error instanceof ServiceFailureError) return fail(request, error.status, error.code);
+  if (error instanceof RateLimitedError) return fail(request, 429, 'rate_limited');
   if (error instanceof RuleViolationError) return json(request, 400, { error: error.code, message: error.detail });
   if (error instanceof TrustedPathError) {
     const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400, business_creation_not_permitted: 403 }[error.reason];
@@ -103,7 +104,7 @@ function errorResponse(request: Request, error: unknown): Response {
   const finance = state ? FINANCE_SQLSTATES[state] : undefined;
   if (finance) return fail(request, finance[0], finance[1]);
   // Deadlock, serialization failure or lock timeout: the unit of work rolled back whole and may be
-  // retried by the client. The API never retries a mutation itself.
+  // retried by the client. The API retries a mutation itself only where a route opts in (retryOnConflict, A2-B).
   if (state === '40P01' || state === '40001' || state === '55P03') return fail(request, 503, 'retryable');
   if (isUniqueViolation(error, 'finance_documents_business_id_kind_number')) return fail(request, 409, 'number_conflict');
   // A concurrent import of the same external id won the race; retrying reports it as a duplicate.
@@ -128,7 +129,7 @@ function errorResponse(request: Request, error: unknown): Response {
   if (code === 'P2003' || /foreign key constraint/i.test(message)) return fail(request, 400, 'invalid_reference');
   if (code === 'P2025') return fail(request, 404, 'not_found');
   if (/violates check constraint/i.test(message)) return fail(request, 400, 'invalid_input');
-  if (/role change not allowed/.test(message)) return fail(request, 403, 'forbidden');
+  if (/role change not allowed|status change not allowed/.test(message)) return fail(request, 403, 'forbidden');
   console.error('[api] unexpected error', error instanceof Error ? error.name : typeof error);
   return fail(request, 500, 'internal_error');
 }
@@ -201,6 +202,21 @@ async function resolveTenant(request: Request, context: RouteContext, permission
   return { auth, params, membership, actor };
 }
 
+const CONFLICT_RETRY_ATTEMPTS = 3;
+
+/** Runs `attempt` again (short jittered pause) while it fails with 40P01/40001; the last error is thrown. */
+async function withConflictRetry<R>(attempt: () => Promise<R>): Promise<R> {
+  for (let n = 1; ; n++) {
+    try {
+      return await attempt();
+    } catch (error) {
+      const state = sqlState(error);
+      if (n >= CONFLICT_RETRY_ATTEMPTS || (state !== '40P01' && state !== '40001')) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10 + Math.floor(Math.random() * 40) * n));
+    }
+  }
+}
+
 /**
  * Tenant routes: /api/v1/b/{slug}/… The slug is resolved to a business through the caller's own
  * active memberships (in the database, from the verified session token) on every request; an
@@ -215,6 +231,13 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
      * (boundary rule); every other handler never sees the token.
      */
     sessionToken?: true;
+    /**
+     * Administration A2-B (docs/administration-a2.md §3.10): re-run the whole unit of work, up to 3
+     * attempts, when PostgreSQL aborted it with a deadlock (40P01) or serialization failure (40001).
+     * Only for handlers whose work is entirely inside the transaction (it rolled back whole) and whose
+     * after-commit work runs once, after the attempt that committed.
+     */
+    retryOnConflict?: boolean;
   },
   handler: (args: {
     request: Request;
@@ -239,9 +262,10 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
         if (!parsed.success) return fail(request, 400, 'invalid_query');
         query = parsed.data;
       }
-      const result = await withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) =>
+      const attempt = () => withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) =>
         handler({ request, actor, db, params, input: input.data as never, query: query as never, sessionToken: opts.sessionToken ? auth.sessionToken : null }),
       opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
+      const result = opts.retryOnConflict ? await withConflictRetry(attempt) : await attempt();
       await result.afterCommit?.();
       return json(request, result.status ?? 200, opts.response.parse(result.body));
     } catch (error) {

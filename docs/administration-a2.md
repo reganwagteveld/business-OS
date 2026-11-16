@@ -287,7 +287,7 @@ Errors follow the existing mapping: 400 `invalid_input` with field names, 403, 4
 - Newest on `main`: `20261130000000_finance_catalog` (applied to production per the F7-A thread).
 - Open branches: PR 64 (E1) `20261201000000_communications_erasure`; PR 68 (P3-A) was renamed to
   `20261204000000_people_leave_policies` after this audit flagged the collision (both had used `20261201000000`).
-- A2-A uses **`20261202000000_business_profile`**; A2-B reserves `20261203000000_membership_lifecycle` and its
+- A2-A uses **`20261202000000_business_profile`**; A2-B reserved `20261203000000_membership_lifecycle` (re-stamped `20261205000000` in §13.5) and its
   privileged file `005_member_emails.sql` (E1 already takes `004`). Re-check both before each PR leaves draft; rename
   if anything newer lands first.
 - Overlap: E1 rewrites the `Business` relation list in `tenancy.prisma`; P3-A adds to it. A2-A edits the same model
@@ -352,3 +352,88 @@ All approved 2026-11-16.
 
 No merges, production migrations or deployments without separate approval. Existing grants and tenant isolation stay
 unchanged unless a separately reviewed change is necessary.
+
+## 13. A2-B as built (draft PR, 2026-11-16)
+
+Branch `claude/project-thread-dyn16d`, on `main` after A2-A (#70), E1 (#64) and private-beta admission (#71).
+
+### 13.1 Database: migration `20261205000000_membership_lifecycle` and privileged `005_member_emails.sql`
+
+| Change | Detail |
+|---|---|
+| `memberships.suspended_at`, `suspended_by` | nullable; CHECK `memberships_suspension_consistent` (set exactly while SUSPENDED); trigger `memberships_stamp_suspension` stamps `suspended_at` when only the status is set and clears both on ACTIVE (so tooling that sets only the status still satisfies the CHECK); `GRANT UPDATE` on both to `bos_app` |
+| `invitations_open_email_key` | partial unique `(business_id, email) WHERE accepted_at IS NULL AND revoked_at IS NULL` (G3) |
+| `memberships_keep_an_owner` | now takes `pg_advisory_xact_lock(hashtextextended('memberships.owners:' || business_id, 0))` before counting (G1); refuses an owner change under REPEATABLE READ |
+| `memberships_no_self_role_change` | now BEFORE UPDATE **or DELETE**; with a session user: no self status change (G14); only self role change is OWNER → ADMIN while ACTIVE; only an ACTIVE OWNER may promote to OWNER (invariant 2) or change/delete an OWNER row other than their own; without a session user `bos_app` may not touch an owner row |
+| `app_private.member_emails()` (005) | SECURITY DEFINER, no parameters; reads `app.business_id`/`app.user_id`; returns `(user_id, email)` for the business's memberships only if the session user is an ACTIVE OWNER/ADMIN/MANAGER; one added `bos_definer` read policy for the current business's memberships (only active when a business context is set) |
+| `accept_invitation` (001, in place) | the row lookup also states `revoked_at IS NULL AND expires_at > now()` (already enforced by the definer policies; now explicit beside the `FOR UPDATE`) |
+
+RLS on memberships and invitations, and every existing grant, are unchanged. No data backfill (no suspended rows or
+duplicate open invitations exist in production).
+
+**Deviations from §4, for audit:**
+- §4 proposed a row lock on `businesses`; built with a per-business **transaction advisory lock** instead (same
+  pattern as Projects and Scheduling). Reason: a `FOR UPDATE`/`NO KEY UPDATE` on the business row needs an UPDATE
+  grant for whichever role deletes the membership, waits behind every tenant insert's FK `KEY SHARE`, and would
+  serialise with profile edits. The advisory lock is released only after the holder's commit is visible, and the
+  count that follows is a new statement with a new snapshot, so the second commit sees the first.
+- §4 proposed `invitations.last_sent_at`; not added. Resend is revoke-and-reissue, so the open row's `created_at` **is**
+  the last send time; the 60 s throttle reads it under the row lock.
+
+### 13.2 API
+
+| Method and path | Key | Notes |
+|---|---|---|
+| `GET /members` | members:read | adds `suspendedAt`; `email` only for members:invite holders (D-A2-11) |
+| `PATCH /members/{id}` | members:manage | `{ role }` or `{ status: ACTIVE \| SUSPENDED }`; making an OWNER needs an ACTIVE target (409 `member_not_active`) |
+| `DELETE /members/{id}` | members:manage | now also stops held mailboxes and audits lost shared-mailbox access |
+| `POST /members/{id}/transfer-ownership` | members:manage + OWNER | `{ stepDown, confirm: true }`; ACTIVE target, not self, not already OWNER (409 `already_owner`) |
+| `POST /membership/step-down` | business:read + OWNER | `{ confirm: true }`; 409 `last_owner` without another active owner |
+| `POST /membership/leave` | business:read | `{ confirm: true }`; 409 `last_owner` for the last active owner |
+| `POST /invitations` | members:invite | 409 `invitation_exists` / `already_member`; response adds `delivery: sent \| failed` |
+| `POST /invitations/{id}/resend` | members:invite | revoke + reissue; 429 within 60 s; 409 `invitation_closed` if accepted/revoked |
+| `DELETE /invitations/{id}` | members:invite | conditional; 409 `invitation_closed` when acceptance won |
+
+Every membership-changing service locks the actor (`lockActor`, FOR SHARE) and then the target (FOR UPDATE) and uses
+the roles read **after** the locks (requirement 5). These routes opt in to `retryOnConflict` (up to 3 attempts on
+40P01/40001; the whole unit of work rolled back, email is sent once after the committed attempt).
+
+### 13.3 Mailbox credentials (requirement 3, C2 review)
+
+`revokeHeldConnections(db, actorUserId, userId, cause, remainingRole)` in `communications/server/credentials.ts`:
+locks the person's ACTIVE held connections `ORDER BY id FOR UPDATE`, stops each one whose kind they no longer have
+authority for (shared rule `holderKeepsAuthority`, also used by the sync claim) and audits
+`communications.connection.holder_departed` as the acting member. Called on removal, suspension, leaving and every
+role change (demotions that keep authority, such as OWNER → ADMIN, stop nothing). `markReauthRequired` keeps its
+system audit for C2 paths. `mail_connection_members` rows stay on suspension; on removal/leave each is audited as
+`communications.member.revoked` before the cascade. Out of scope (C2-B3): re-checking lease and ACTIVE state before
+every provider call.
+
+### 13.4 Tests (`tests/integration/membership-lifecycle.test.ts`, 29)
+
+- Last owner: demote/demote, remove/remove, suspend/suspend, suspend/remove and self step-down/step-down, each with
+  two connections committing together (exactly one commits); the §6.1 reproduction (second check blocks, then
+  fails); REPEATABLE READ refused; API races (two owners demoting each other; transfer + step-down + suspension).
+- Actor re-check: an admin demoted while their request waits gets 403; a target promoted mid-request is re-read.
+- Database actor rules: invariant 2, owner protection, self status, suspension CHECK, no session user.
+- Invitations: one open per address (sequential and concurrent), `already_member`, expired replaced with history,
+  resend (old link dies, throttle, rank rule, no token in audit), accept-vs-revoke both orders with lock waits, and
+  fired together.
+- Mailbox cutoff: removal, suspension (shared rows kept), reactivation, removal cascade audit, demotion of PERSONAL
+  and BUSINESS holders, OWNER → ADMIN unaffected, and removal racing `failSyncJob` plus an in-flight refresh store
+  (deadlock resolved by retry, no credential survives, a late fenced store writes nothing).
+
+Existing test changed: `tenancy.test.ts` "keeps at least one owner" deleted the remaining owner's row while the
+session user was the former owner (now a MEMBER). The new owner-protection rule refuses that before commit, so the
+test now acts as the remaining owner, which still proves the commit-time last-owner check.
+
+### 13.5 Migration order (verified 2026-11-16 against `main` and open PRs)
+
+`main`: … `20261130000000_finance_catalog`, `20261201000000_communications_erasure` (+ `004`),
+`20261202000000_business_profile`, then P3-A `20261204000000_people_leave_policies` (applied to production
+2026-11-16 11:21 UTC; PR 68 merging). This PR was re-stamped from `20261203000000` to
+**`20261205000000_membership_lifecycle`** so it sorts after every production-applied migration (no out-of-order
+apply) + `005_member_emails.sql`. F7-B (#69), #71, #66 and #74 added no Prisma migration. Re-read production
+`_prisma_migrations` before the apply; re-stamp again if anything newer lands first. Production apply (needs Regan's
+approval): fresh Neon recovery branch → `prisma migrate deploy` → `pnpm db:privileged` (re-applies 001–005
+idempotently; 001 changes `accept_invitation`) → verify → then merge.

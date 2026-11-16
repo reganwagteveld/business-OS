@@ -118,13 +118,16 @@ model Business {
 }
 
 model Membership {
-  id         String           @id @db.Uuid
-  businessId String           @map("business_id") @db.Uuid
-  userId     String           @map("user_id") @db.Uuid
-  role       MembershipRole   @default(MEMBER)
-  status     MembershipStatus @default(ACTIVE)
-  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt  DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id          String           @id @db.Uuid
+  businessId  String           @map("business_id") @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  role        MembershipRole   @default(MEMBER)
+  status      MembershipStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  /// Administration A2-B: set exactly while status = SUSPENDED (CHECK memberships_suspension_consistent).
+  suspendedAt DateTime?        @map("suspended_at") @db.Timestamptz
+  suspendedBy String?          @map("suspended_by") @db.Uuid
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
