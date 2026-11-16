@@ -38,8 +38,14 @@
    - get legal advice and provider quotes while A–C are built (§F).
 5. **Bank data never changes accounting records by itself.** A bank transaction is evidence. A user with
    the right permission confirms a match, and that creates links (and, if they choose, a payment through
-   the existing F2/F3 services). Automatic matching stays opt-in, comes later (F8-E), and only links
-   records. It never issues, voids or reverses anything (§C.7).
+   the existing F2/F3 services). Nothing creates, reverses or allocates a payment automatically. F8-E may
+   only suggest matches and, with a separately approved narrow opt-in, link a bank line to an
+   **existing** recorded payment. It never issues, voids or reverses anything (§C.7).
+
+**Audit status (2026-11-16):** ChatGPT architecture audit gave a conditional pass for documentation only.
+Its five clarifications are resolved in §B.5, §B.2.1, §B.12, §C.1/§C.9 and §C.7. The gates it set are
+listed in §G. Nothing in this document authorises building a stage, signing with a provider, changing
+hosting or enabling a scheduler.
 
 ---
 
@@ -292,6 +298,39 @@ Guards:
 **`integration_webhook_events`** (shared, §B.7) and **`integration_sync_jobs`** (shared, generalising
 `mail_sync_jobs`, §B.6).
 
+### B.2.1 Account identity (`account_number_hmac`)
+
+The HMAC helps us **recognise** an account we have seen before. It is a hint, not proof that two
+providers' accounts are the same account.
+
+- **Canonical input:**
+  `v1|AU|<institution>|<bsb>|<account number>`.
+  - `institution`: our own normalised institution code, taken from the provider's institution id
+    through a mapping table we maintain.
+  - `bsb`: exactly 6 digits, with spaces and hyphens removed.
+  - `account number`: digits only, with spaces and hyphens removed. **Leading zeros are kept.**
+  - Accounts without a BSB and full number get **no HMAC**: credit cards (providers give masked
+    numbers), foreign accounts, and anything where the provider withholds the full number.
+- **Key:**
+  - Per business: `HKDF(master key[version], "bank-account-id" | business_id)`. The same account in two
+    businesses gets unrelated values, so the hash cannot correlate businesses.
+  - The master keys live in environment secrets, like the secret-box keys.
+  - `account_hmac_key_version` is stored with the value.
+- **Rotation and rekey:**
+  - a new key version is added first;
+  - a rekey job recomputes values from the provider's account data at the next sync (we never keep the
+    number to recompute from);
+  - accounts that cannot be recomputed keep their old version until reconnected;
+  - an old version is removed only when no row uses it.
+- **Uniqueness and collisions:** `UNIQUE (business_id, account_number_hmac, account_hmac_key_version)`
+  where not null. A match is treated as **"probably the same account"** and shown to the user:
+  - when reconnecting or switching provider, the user confirms "this is your existing account X" before
+    history is joined;
+  - a conflicting second live account with the same value is refused (`409 account_identity_conflict`).
+- **No HMAC (card, masked or manual accounts):** identity comes from the user's explicit choice when
+  connecting (link to an existing account, or create a new one). It is never inferred from institution,
+  last 4 digits or name alone.
+
 ### B.3 Provider-agnostic interface
 
 ```ts
@@ -364,10 +403,19 @@ Notes:
 ### B.5 Pending transactions
 
 - Basiq deletes and re-issues pending transactions on each refresh **with new ids** [S28].
-- Pending items are therefore **not** written to `bank_transactions`. They are kept in a replaceable
-  per-account snapshot (`bank_pending_snapshot`, deletable, rewritten each sync) and shown as "pending" in
-  the UI only.
-- They cannot be matched. Only posted transactions are reconciled.
+- **What is stored:** pending items are kept only in a **transient** per-account snapshot
+  (`bank_pending_snapshot`).
+  - The snapshot is replaced whole on each sync.
+  - Rows carry an `expires_at` TTL of 7 days, after which a cleanup deletes them even if no sync
+    happened.
+  - DELETE is granted on this table only.
+- **What is never done with pending items:**
+  - they never become rows in the immutable `bank_transactions` table;
+  - they are never matched or used for suggestions;
+  - they never create, link or drive a payment, allocation or any other finance record.
+- **What a user sees:** pending items appear in the UI as "pending", for information only.
+- When an item posts, it arrives as a new posted transaction with its own id, through normal ingestion.
+  It is not linked to its pending predecessor.
 
 ### B.6 Cursors, sync jobs and errors
 
@@ -481,6 +529,29 @@ Error codes follow the F2/F3 style. Examples:
 - `consent_expired` (409);
 - `retryable` (503).
 
+### B.12 Manual import safety gate (F8-B)
+
+Imported statements are **sensitive financial data**, and files are **untrusted input**. Before F8-B is
+released to customers, all of the following must hold:
+
+| Area | Rule |
+|---|---|
+| Size and rate | At most 5 MB and 20,000 rows per file. At most 10 imports per business per hour (proposal; tune with real usage). Refused with a clear error, not truncated. |
+| Parsing | Server-side and in memory, never stored as a file. Strict parsers with no macros, no formula evaluation and no external entity resolution (OFX 2.x is XML: disable DTDs and entities). Time limit per file. One malformed row rejects the whole file at preview, with row numbers. |
+| Encoding | UTF-8 with BOM handling, plus Windows-1252 detection. Control characters stripped. Fields capped in length. |
+| Dates | Per-preset format. If DD/MM vs MM/DD is ambiguous in the file (no day above 12), the user must choose before preview. Dates in the future, or outside the stated period, are flagged. |
+| Amounts | One signed column, or separate debit and credit columns, chosen per preset. Decimal separator per preset, with no locale guessing. Thousands separators removed. Values over the account scale are refused, never rounded. |
+| Preview before commit | Always. It shows inserted, duplicate and possible-duplicate rows. Nothing is written to `bank_transactions` until commit. |
+| Idempotency | File SHA-256 per account (re-upload is a no-op), plus the `Idempotency-Key` on commit. |
+| Duplicates | Within the account (§B.4). **Across accounts:** a file whose rows mostly match another account's rows (same dates and amounts) triggers a "did you pick the right account?" warning. |
+| Provenance | Each transaction keeps `batch_id`. The batch records file name (truncated), SHA-256, uploader, time, format, preset and counts. Audit has counts only. |
+| Exports | Formula-injection safe (§D.3). |
+| Tests | Fixtures are synthetic, or real exports given with consent **and fully anonymised**. Never real customer data. Malformed-file, oversize, encoding and ambiguity cases are all tested. |
+| Privacy and retention | The terms of manual import (what we keep, for how long, and erasure) need review before customer launch. This is gate G-4 (§G). |
+
+Manual import **stays available after live feeds launch**, as the fallback for unsupported banks, older
+history and outages.
+
 ---
 
 ## Part C: Reconciliation engine
@@ -494,6 +565,23 @@ for**. Reconciliation links the two. It never edits either side.
 - **Unreconciled:** there are none.
 
 These states are derived, as invoice settlement is.
+
+**The accounting ledger stays the source of truth.** Payments, allocations, documents and expenses are
+the financial record. Bank transactions and matches are supporting evidence and never replace them.
+
+A bank line's state must also say **how** it was dealt with. "Explained" and "excluded" are not the same
+as "matched to a ledger record", and screens and reports keep them apart:
+
+| Derived state | Meaning | Counts as tied to the ledger? |
+|---|---|---|
+| `MATCHED` | Live lines link to finance payments (or a transfer pair) and sum to the bank amount | Yes |
+| `PARTLY_MATCHED` | Some ledger links, with an unexplained remainder | Partly |
+| `EXPLAINED` | Covered (fully or with matches) by `EXPLAINED` lines: fee, interest, refund pending FD-A2/FD-A8, owner drawing, and so on. No ledger record behind it. | **No** (shown separately, with its category) |
+| `EXCLUDED` | Removed from reconciliation as a duplicate or error, with a reason | **No** (shown separately) |
+| `UNMATCHED` | Nothing yet | No |
+
+Reports and the account's reconciliation summary show totals per state, so a fully "explained" account
+never looks the same as one tied to recorded payments.
 
 ### C.2 Match records
 
@@ -591,23 +679,47 @@ transaction lists them.
 ### C.7 Automation boundary (what bank data may never do)
 
 1. Bank data **never** issues, voids, accepts or edits a document.
-2. It never records, reverses or allocates a payment **without a user's confirmation** (F8-C). In F8-E an
-   owner-enabled rule may confirm a **link** to an *existing* recorded payment, or create a payment and
-   its allocation only when **all** of these hold:
-   - exact amount;
-   - exact invoice number;
-   - single candidate;
-   - same customer;
-   - the rule was created by a user with `finance:payments`.
-   Rule-made matches are marked `RULE`, reversible and audited.
-3. It never creates a customer, supplier or recorded expense. Drafts only.
-4. Webhook bodies are never written to finance tables (§B.7).
+2. Nothing **automatically** creates, reverses or allocates a payment, in any stage. A payment is
+   created from a bank line only when a user with `finance:payments` confirms it (F8-C).
+3. F8-E may:
+   - **suggest** matches;
+   - with a **separately approved, narrow opt-in**, automatically **link** a bank line to an *existing*
+     recorded payment, only when all of these hold: exact amount, same currency and direction, a single
+     candidate, and the rule was created by a user with `finance:payments`.
+
+   Rule-made links are marked `RULE`, are reversible and are audited. They create, change and allocate
+   nothing.
+4. **Auto-posting** (creating or allocating payments without a person) is **not part of F8**. It would
+   need a later explicit owner decision and a separate risk review.
+5. It never creates a customer, supplier or recorded expense. Drafts only, and only on a user's action.
+6. Webhook bodies are never written to finance tables (§B.7).
 
 ### C.8 Statement balance check
 
 For each account and period, compare the opening balance plus the sum of posted transactions with the
 bank's closing balance (from the provider's balance endpoint, or typed in from a statement).
 - A difference means missing or duplicated lines. It is shown, never auto-fixed.
+
+### C.9 Reconciliation tests (required in F8-C)
+
+Database guards and services must be tested at least for:
+- **Transfers:** both sides in Pixa; one side only; amounts that differ; same account (refused);
+  different currencies (refused).
+- **Refunds:** customer and supplier refunds stay `EXPLAINED`, never become opposite-direction payments.
+- **Split receipts:** one bank line across several payments, or a payment plus a fee line. Lines must
+  sum exactly.
+- **Overmatching, under concurrency:**
+  - one bank line matched beyond its amount;
+  - one payment claimed by several bank lines beyond its value (`bank_matched_total`);
+  - concurrent confirmations.
+- **Reversals:**
+  - reversing a match leaves the payment `RECORDED`;
+  - a bounced payment pair nets to zero;
+  - matching a reversed payment is refused.
+- **Currency and direction mismatches:** a credit to a `PAID` payment, or a bank line in another
+  currency, is refused by the composite FK and CHECK, not only by the service.
+- **Explained vs excluded vs matched:** each state is shown and counted separately (§C.1).
+- **Tenant isolation:** T1 to T4 on every table.
 - This is the bank-side counterpart of the internal integrity check (§18.5), and stays a separate
   endpoint.
 
@@ -852,7 +964,7 @@ is 60% of these figures.
 | **F8-C2** Suggestions and balance check | Scoring (§C.4) with measured precision, transfer pairing, statement balance check | F8-C1 | No |
 | **I-1** Integrations foundation (new) | `core/integrations`: generalised sync jobs (out of `mail_sync_jobs`), webhook inbox, due-function pattern, secret-box key lists per integration. Used by F8-D and later by C2-B. | Owner approval to activate a scheduler | Yes |
 | **F8-D** Live connectivity | One provider adapter, consent flow, `bank_connections`, sync, webhooks, reconnect, backfill, `finance:bank_connect`. Shadow-mode tooling. | I-1, **legal advice Q1–Q3**, signed provider agreement, owner decision on scheduler, possibly an AU data region | Yes |
-| **F8-E** Automation and forecasting | Opt-in rules (§C.7), cash-flow forecast from bank balance + receivables (F6-2 ageing) + payables + recurring invoices | F8-C2, F8-D for live balances | Maybe |
+| **F8-E** Automation and forecasting | Suggestions plus separately approved, link-only opt-in rules to existing payments (§C.7; no auto-posting), cash-flow forecast from bank balance + receivables (F6-2 ageing) + payables + recurring invoices | F8-C2, F8-D for live balances | Maybe |
 
 ### F.2 Where we challenge the brief's sequence
 
@@ -881,6 +993,21 @@ is 60% of these figures.
 
 ---
 
+## G. Gates (from the 2026-11-16 audit)
+
+Each gate must be met, and recorded on the PR or in this document, before the stage it guards begins.
+Merging this document passes none of them.
+
+| Gate | Condition | Guards |
+|---|---|---|
+| G-1 | Owner approval of the stage brief (each stage separately) | Every stage |
+| G-2 | Written provider terms: pricing, minimums, transaction and account caps, term, data region, portability and exit. **Quotes only, no sign-up or spending.** | F8-D commercial design |
+| G-3 | Legal advice on Q1–Q8, including whether BCDC is actually available to us. BCDC is a possible path, not a presumed one. | F8-D final design, and receiving any live CDR data |
+| G-4 | Privacy and retention review of manual import (what is kept, how long, erasure, customer terms) | F8-B customer launch (building and testing may proceed) |
+| G-5 | Owner approval to activate a scheduler | I-1 activation, F8-D sync |
+| G-6 | Decision on data region (D-F8-12), after G-3 | F8-D |
+| G-7 | Separate approval for any automatic linking rule (§C.7 item 3). Auto-posting is outside F8. | F8-E |
+
 ## Risks
 
 | Risk | Effect | Mitigation |
@@ -890,7 +1017,7 @@ is 60% of these figures.
 | Provider failure or exit | Feeds stop | Provider-agnostic interface, account HMAC, shadow-mode switching; import remains available |
 | Business delegate set-up friction at banks | Low connection rates, support load | Bank-by-bank guides; import fallback; measure a5 |
 | Unstable ids for pending items | Duplicates | Pending never stored as transactions (§B.5) |
-| Wrong automatic match | Wrong customer balance | Confirmation always in F8-C; rules only in F8-E, opt-in, narrow, reversible |
+| Wrong automatic match | Wrong customer balance | Nothing creates or allocates payments automatically; F8-E rules only link existing payments, opt-in, narrow, reversible (§C.7) |
 | US hosting of CDR data | Not permitted, or conditions | Q3 before F8-D; region option |
 | Sensitive descriptions leak | Privacy harm | Never in audit or logs; strict permissions; erasure |
 | Screen-scraping ban | None for us | We do not use it |
@@ -905,12 +1032,12 @@ is 60% of these figures.
 | D-F8-4 | Get legal advice on Q1–Q8 before F8-D design is final | Yes, start now |
 | D-F8-5 | Ask Basiq, Fiskil and Biza.io (and optionally Redbark and Adatree) for written quotes covering: access model (CDR representative vs BCDC), minimums, per-user vs per-account billing, refresh limits, data location, history depth, and start-up terms. **No sign-up or purchase.** | Yes |
 | D-F8-6 | Permission keys and defaults of §D.2 (connect OWNER only; read and reconcile OWNER and ADMIN) | Yes |
-| D-F8-7 | Bank data never records payments or expenses without confirmation. Automation (F8-E) is opt-in, narrow and link-first (§C.7). | Yes |
-| D-F8-8 | Pending transactions are shown but never stored or matched | Yes |
-| D-F8-9 | Store a keyed HMAC of account numbers, never the full number | Yes |
-| D-F8-10 | Retention of bank content: per access model, durations decided with E1 §13, no blanket period | Yes |
+| D-F8-7 | Nothing automatically creates, reverses or allocates payments. F8-E may suggest, and with a separately approved opt-in may link existing payments only. Auto-posting is outside F8 (§C.7). | Yes (as corrected by audit) |
+| D-F8-8 | Pending items live only in a transient snapshot (7-day TTL). They never become `bank_transactions` and never drive matches or payments (§B.5). | Yes (as clarified by audit) |
+| D-F8-9 | Store a per-business, versioned, keyed HMAC of account numbers, never the full number. A match is a hint the user confirms (§B.2.1). | Yes |
+| D-F8-10 | A retention **framework** for bank content: per access model, durations decided later with E1 §13 and legal advice, no blanket period. No duration is set here. | Yes (framework only) |
 | D-F8-11 | Screen scraping and credential-sharing providers are excluded | Yes |
-| D-F8-12 | Whether an Australian data region is required before F8-D | After Q3 |
+| D-F8-12 | Whether an Australian data region is required before F8-D | Deferred until legal advice (G-3, G-6) |
 
 ## Sources (all accessed 2026-11-16)
 
