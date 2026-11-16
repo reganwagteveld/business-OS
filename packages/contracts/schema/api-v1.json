@@ -23083,6 +23083,13 @@
               "paid",
               "open"
             ]
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "created_desc",
+              "due_asc"
+            ]
           }
         },
         "additionalProperties": false

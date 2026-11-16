@@ -275,6 +275,7 @@ const listFilters = {
   limit: Limit,
 };
 export const ListQuotesQuery = z.object(listFilters).strict();
+export const InvoiceSort = z.enum(['created_desc', 'due_asc']);
 export const ListInvoicesQuery = z
   .object({
     ...listFilters,
@@ -282,6 +283,11 @@ export const ListInvoicesQuery = z
     overdue: z.enum(['true', 'false']).optional(),
     /** Derived settlement of issued invoices (F2). Implies status=issued. */
     settlement: z.enum(['unpaid', 'partially_paid', 'paid', 'open']).optional(),
+    /**
+     * created_desc (default): newest created first. due_asc: oldest due date first, undated last, ties by id.
+     * A cursor belongs to the order that issued it; reusing it with the other order is invalid_cursor.
+     */
+    sort: InvoiceSort.optional(),
   })
   .strict();
 export const ListCreditNotesQuery = z.object({ ...listFilters, invoiceId: Uuid.optional() }).strict();

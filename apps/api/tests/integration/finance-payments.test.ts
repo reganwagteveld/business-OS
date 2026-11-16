@@ -608,6 +608,73 @@ describe('F4 receivables summary (read-only)', () => {
   });
 });
 
+describe('invoice list order (sort=due_asc)', () => {
+  it('oldest due first, undated last, ties by id; keyset pages are complete and stable; cursors belong to one order', async () => {
+    const own = api(A.people.OWNER!, A.slug);
+    const cust = (await own.createCustomer({ displayName: 'Sorted' })).body.customer.id as string;
+    const mar = await issuedInvoice('10', { customerId: cust, due: '2026-03-01' });
+    const janA = await issuedInvoice('10', { customerId: cust, due: '2026-01-10' });
+    const feb = await issuedInvoice('10', { customerId: cust, due: '2026-02-01' });
+    const janB = await issuedInvoice('10', { customerId: cust, due: '2026-01-10' });
+    const future = await issuedInvoice('10', { customerId: cust, due: '2099-12-31' });
+    const paid = await issuedInvoice('10', { customerId: cust, due: '2026-01-01' });
+    expect((await own.record(pay('10', { customerId: cust, allocations: [{ invoiceId: paid, amount: '10' }] }))).status).toBe(201);
+    const draft = (await own.createInvoice({ customerId: cust, lines: [line('10')] })).body.document.id as string;
+
+    type Page = { status: number; body: { documents: { id: string; dueDate: string | null }[]; nextCursor: string | null; error?: string } };
+    const list = (qs: string): Promise<Page> => own.list('invoices', `?customerId=${cust}&${qs}`);
+    const all = async (qs: string, limit: number) => {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const page: Page = await list(`${qs}&limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`);
+        expect(page.status).toBe(200);
+        seen.push(...page.body.documents.map((d) => d.id));
+        cursor = page.body.nextCursor;
+      } while (cursor);
+      return seen;
+    };
+    const jan = [janA, janB].sort();
+
+    // Overdue only (issued, open, due before today): oldest due first, the two same-day invoices by id.
+    const overdue = (await list('overdue=true&sort=due_asc&limit=100')).body.documents;
+    expect(overdue.map((d) => d.id)).toEqual([...jan, feb, mar]);
+    expect(overdue.map((d) => d.dueDate)).toEqual(['2026-01-10', '2026-01-10', '2026-02-01', '2026-03-01']);
+    expect(await all('overdue=true&sort=due_asc', 1)).toEqual([...jan, feb, mar]);
+
+    // Every status: dated invoices by due date, then the undated draft last; pages cross the undated boundary.
+    const expected = [paid, ...jan, feb, mar, future, draft];
+    expect((await list('status=all&sort=due_asc&limit=100')).body.documents.map((d) => d.id)).toEqual(expected);
+    for (const limit of [1, 2, 3, 5]) expect(await all('status=all&sort=due_asc', limit), `limit ${limit}`).toEqual(expected);
+
+    // The default (and explicit created_desc) order is unchanged: newest created first.
+    const newest = [draft, paid, future, janB, feb, janA, mar];
+    expect((await list('status=all&limit=100')).body.documents.map((d) => d.id)).toEqual(newest);
+    expect((await list('status=all&sort=created_desc&limit=100')).body.documents.map((d) => d.id)).toEqual(newest);
+    expect(await all('status=all', 2)).toEqual(newest);
+
+    // A cursor belongs to the order that issued it.
+    const byDue = (await list('status=all&sort=due_asc&limit=2')).body.nextCursor!;
+    const byNew = (await list('status=all&limit=2')).body.nextCursor!;
+    expect((await list(`status=all&limit=2&cursor=${byDue}`)).body.error).toBe('invalid_cursor');
+    expect((await list(`status=all&sort=due_asc&limit=2&cursor=${byNew}`)).body.error).toBe('invalid_cursor');
+    const forged = (v: Record<string, string>) => Buffer.from(JSON.stringify({ k: 'finance:INVOICE:due_asc', ...v }), 'utf8').toString('base64url');
+    for (const bad of [{ d: '2026-13-45', i: randomUUID() }, { d: 'later', i: randomUUID() }, { d: 'none', i: 'not-a-uuid' }]) {
+      const res = await list(`status=all&sort=due_asc&cursor=${forged(bad)}`);
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+      expect(res.body.error).toBe('invalid_cursor');
+    }
+
+    // Unknown orders are refused; quotes and credit notes have no sort parameter.
+    expect((await list('sort=due_desc')).status).toBe(400);
+    expect((await own.list('quotes', '?sort=due_asc')).status).toBe(400);
+    expect((await own.list('credit-notes', '?sort=due_asc')).status).toBe(400);
+    // Another business sees none of these invoices in either order.
+    const b = api(B.people.OWNER!, B.slug);
+    expect((await b.list('invoices', '?status=all&sort=due_asc&limit=100')).body.documents.map((d: { id: string }) => d.id)).not.toContain(janA);
+  });
+});
+
 describe('tenancy and permissions', () => {
   it('another business sees nothing and cannot settle this business\'s invoices or use its payments', async () => {
     const own = api(A.people.OWNER!, A.slug);

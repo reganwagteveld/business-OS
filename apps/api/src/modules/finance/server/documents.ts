@@ -376,9 +376,17 @@ export type ListQuery = {
   status: 'draft' | 'issued' | 'accepted' | 'declined' | 'expired' | 'void' | 'all'; customerId?: string; projectId?: string;
   from?: string; to?: string; cursor?: string; limit: number; overdue?: 'true' | 'false'; invoiceId?: string;
   settlement?: 'unpaid' | 'partially_paid' | 'paid' | 'open';
+  /** Invoices only. Omitted means created_desc. */
+  sort?: 'created_desc' | 'due_asc';
 };
 
-/** Newest first, keyset-paginated on (created_at, id). */
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Keyset-paginated. Default: newest first on (created_at desc, id desc). Invoices with sort=due_asc:
+ * oldest due date first, undated last, ties by id, on (due_date asc nulls last, id asc). Each order has
+ * its own cursor list, so a cursor from one order is refused by the other.
+ */
 export async function listDocuments(db: AppTenantDb, kind: Kind, query: ListQuery) {
   const where: Record<string, unknown>[] = [{ kind }];
   if (query.status !== 'all') where.push({ status: query.status.toUpperCase() });
@@ -403,21 +411,41 @@ export async function listDocuments(db: AppTenantDb, kind: Kind, query: ListQuer
         AND (${today}::date IS NULL OR due_date < ${today}::date)`;
     where.push({ id: { in: ids.map((r) => r.id) } });
   }
-  const list = `finance:${kind}`;
-  const after = decodeCursor(query.cursor, list, ['t', 'i'] as const);
-  if (after) {
-    const t = new Date(after.t);
-    if (Number.isNaN(t.getTime()) || !UUID.test(after.i)) invalidCursor();
-    where.push({ OR: [{ createdAt: { lt: t } }, { createdAt: t, id: { lt: after.i } }] });
+  let orderBy: Record<string, unknown>[];
+  let cursorOf: (r: Row) => Record<string, string>;
+  let list: string;
+  if (kind === 'INVOICE' && query.sort === 'due_asc') {
+    list = `finance:${kind}:due_asc`;
+    const after = decodeCursor(query.cursor, list, ['d', 'i'] as const);
+    if (after) {
+      if (!UUID.test(after.i) || (after.d !== 'none' && !DAY.test(after.d))) invalidCursor();
+      if (after.d === 'none') where.push({ dueDate: null, id: { gt: after.i } });
+      else {
+        const d = dateOf(after.d);
+        if (Number.isNaN(d.getTime())) invalidCursor();
+        where.push({ OR: [{ dueDate: { gt: d } }, { dueDate: d, id: { gt: after.i } }, { dueDate: null }] });
+      }
+    }
+    orderBy = [{ dueDate: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }];
+    cursorOf = (r) => ({ d: dayOf(r.dueDate) ?? 'none', i: r.id });
+  } else {
+    // The default list keeps its original cursor list name, so cursors issued before sort existed still work.
+    list = `finance:${kind}`;
+    const after = decodeCursor(query.cursor, list, ['t', 'i'] as const);
+    if (after) {
+      const t = new Date(after.t);
+      if (Number.isNaN(t.getTime()) || !UUID.test(after.i)) invalidCursor();
+      where.push({ OR: [{ createdAt: { lt: t } }, { createdAt: t, id: { lt: after.i } }] });
+    }
+    orderBy = [{ createdAt: 'desc' }, { id: 'desc' }];
+    cursorOf = (r) => ({ t: r.createdAt.toISOString(), i: r.id });
   }
-  const rows = (await db.financeDocument.findMany({
-    where: { AND: where }, select, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: query.limit + 1,
-  })) as Row[];
+  const rows = (await db.financeDocument.findMany({ where: { AND: where }, select, orderBy, take: query.limit + 1 })) as Row[];
   const page = rows.slice(0, query.limit);
   const last = page[page.length - 1];
   return {
     documents: page.map(headerDto),
-    nextCursor: rows.length > query.limit && last ? encodeCursor(list, { t: last.createdAt.toISOString(), i: last.id }) : null,
+    nextCursor: rows.length > query.limit && last ? encodeCursor(list, cursorOf(last)) : null,
   };
 }
 
