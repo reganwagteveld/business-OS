@@ -1,18 +1,60 @@
-/* Business OS design system: Pixakova identity (architecture §6.5, UI Phase 1 design amendment).
+/* Business OS design system: Pixa Design System V2 foundations (docs/ui/pixa-design-system-v2-a.md §7,
+   V2-B1). Pixakova identity: indigo accent, violet focus, neutral ink surfaces in dark.
 
-   Three layers, in this order:
-   1. Palette (`--pk-*`): the raw Pixakova colours. Provisional approximations of the reference
-      artwork. Components never use them directly; only the semantic tokens below do.
-   2. Semantic tokens (`--background`, `--primary`, `--glass-*`, `--atmo-*`, ...): what a colour is
-      for. Light values live on :root; dark values are declared twice, once for the OS preference and
-      once for the `.dark` class, and tests/tokens.test.ts keeps the two blocks identical.
-   3. Tailwind mapping (`@theme inline`) and the reusable treatments (`.bos-atmosphere`, `.bos-glass`).
+   Layers, in this order:
+   1. Fonts: Inter (variable, OFL, bundled in ./fonts) and a metric-matched fallback.
+   2. Palette (`--pk-*`): the raw Pixakova colours. Never used by components or mapped to Tailwind.
+   3. Scale tokens: radius, control and row heights, layout, motion, type scale. Same in both themes.
+   4. Semantic tokens (`--bg-*`, `--fg-*`, `--border-*`, `--accent-*`, `--status-*`, ...): an explicit light
+      and dark value for every token. Dark values are declared twice, once for the OS preference and
+      once for the `.dark` class; tests/tokens.test.ts keeps the two blocks identical and checks that no
+      themed token is missing from either theme.
+   5. Compatibility aliases: every V1 name (`--background`, `--primary`, `--destructive`, ...) points at
+      its V2 token so no screen changes its code when V2 lands. Removed in V2-E.
+   6. Tailwind mapping (`@theme inline`), utilities for scale tokens and the state recipes (§7.4), and
+      the treatments (`.bos-atmosphere`, `.bos-glass`).
+
+   Naming note: the spec's solid accent token `--accent` is `--accent-solid` here, because `--accent`
+   (Tailwind `bg-accent`) is a V1 name that means "selected/hover tint" and must keep meaning that
+   until V2-E. In Tailwind the V2 accent is `bg-accent-solid`.
 
    Theme selection is unchanged: the OS preference by default; a `.dark` or `.light` class on <html>
-   overrides it. Dark is the primary expression of the identity. */
+   overrides it. */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* 1. Palette ------------------------------------------------------------------------------------ */
+/* 1. Fonts --------------------------------------------------------------------------------------- */
+/* Inter 4 variable (weights 100-900) from @fontsource-variable/inter 5.3.0, Latin and Latin Extended
+   subsets. Bundled, so the CSP's `font-src 'self'` needs no change. Latin Extended (Māori macrons,
+   Central European letters) downloads only when a page uses one of its characters. */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./fonts/inter-latin-wght-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./fonts/inter-latin-ext-wght-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* Shown while Inter loads, scaled to Inter's metrics so text does not jump when it swaps in. */
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial'), local('Helvetica');
+  size-adjust: 107.12%;
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0%;
+}
+
+/* 2. Palette ------------------------------------------------------------------------------------ */
 :root {
   --pk-midnight: #070f2d;
   --pk-midnight-deep: #040a20;
@@ -26,76 +68,158 @@
   --pk-ink: #0b1338;
 }
 
-/* 2. Semantic tokens: light ---------------------------------------------------------------------- */
+/* 3. Scale tokens (same in both themes) ---------------------------------------------------------- */
+:root {
+  --radius: 0.75rem;
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --radius-dialog: 16px;
+  --radius-pill: 9999px;
+
+  --control-h-sm: 28px;
+  --control-h-md: 32px;
+  --control-h-lg: 40px;
+  --target-min: 24px;
+  --row-h-compact: 32px;
+  --row-h-default: 40px;
+  --row-h-comfortable: 48px;
+
+  --sidebar-w: 232px;
+  --sidebar-w-compact: 64px;
+  --topbar-h: 48px;
+  --content-max: 1240px;
+
+  --duration-fast: 100ms;
+  --duration-base: 160ms;
+  --duration-slow: 240ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasised: cubic-bezier(0.3, 0, 0, 1);
+
+  --font-family-sans: 'Inter Variable', 'Inter Fallback', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-family-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  /* Type scale (§6.2): size / line height */
+  --font-size-caption: 12px;
+  --line-height-caption: 16px;
+  --font-size-small: 13px;
+  --line-height-small: 18px;
+  --font-size-body: 14px;
+  --line-height-body: 20px;
+  --font-size-lead: 16px;
+  --line-height-lead: 24px;
+  --font-size-section: 18px;
+  --line-height-section: 24px;
+  --font-size-title: 22px;
+  --line-height-title: 28px;
+  --font-size-display: 28px;
+  --line-height-display: 36px;
+}
+/* Touch: medium controls grow to 40 px and every target to 44 px. */
+@media (pointer: coarse) {
+  :root {
+    --control-h-md: 40px;
+    --target-min: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+}
+
+/* 4. Semantic tokens: light ---------------------------------------------------------------------- */
 :root {
   color-scheme: light;
-  --radius: 0.75rem;
 
-  /* Canvas and text */
-  --background: #f6f4fc;
-  --foreground: #0b1338;
-  --muted: #ece8f6;
-  --muted-foreground: #534e7a;
+  /* Canvas and surfaces (V2) */
+  --bg-canvas: #f7f7fb;
+  --bg-surface: #ffffff;
+  --bg-sunken: #f2f2f8;
+  --bg-raised: #ffffff;
+  --bg-hover: rgb(16 20 46 / 0.04);
+  --bg-selected: #eef0fb;
 
-  /* Opaque surfaces: card for content, raised for things above it, popover for menus */
-  --card: #ffffff;
-  --card-foreground: #0b1338;
-  --surface-raised: #fbfaff;
-  --popover: #ffffff;
-  --popover-foreground: #0b1338;
+  /* Text (V2) */
+  --fg-default: #10142e;
+  --fg-muted: #555a77;
+  --fg-subtle: #646987;
+  --fg-accent: #2f42a6;
+  --fg-on-accent: #ffffff;
 
-  /* Interactive */
-  --primary: #384eba;
-  --primary-hover: #2e42a3;
-  --primary-foreground: #ffffff;
-  --secondary: #ebe6f7;
-  --secondary-hover: #dfd8f1;
+  /* Lines (V2) */
+  --border-default: #e4e4ee;
+  --border-strong: #d3d3e2;
+  --border-input: #878aa8;
+
+  /* Accent and focus (V2). `--accent-solid` is the spec's `--accent`; see the note on aliases below. */
+  --accent-solid: #384eba;
+  --accent-hover: #2e42a3;
+  --accent-subtle: #eef0fb;
+  --focus-ring: #6b57b3;
+
+  /* Status (V2): text and icon, subtle fill, border, and a rare solid fill with its own text */
+  --status-success-fg: #1a7354;
+  --status-success-bg: #e7f4ee;
+  --status-success-border: #a9d5c2;
+  --status-success-solid: #1a7354;
+  --status-success-on-solid: #ffffff;
+  --status-warning-fg: #855400;
+  --status-warning-bg: #fbf1df;
+  --status-warning-border: #e6c88f;
+  --status-warning-solid: #855400;
+  --status-warning-on-solid: #ffffff;
+  --status-danger-fg: #b4234a;
+  --status-danger-bg: #fbe9ee;
+  --status-danger-border: #eab0c0;
+  --status-danger-solid: #b4234a;
+  --status-danger-on-solid: #ffffff;
+  --status-info-fg: #2b53c7;
+  --status-info-bg: #eaf0fc;
+  --status-info-border: #b3c6f0;
+  --status-info-solid: #2b53c7;
+  --status-info-on-solid: #ffffff;
+
+  /* Disabled controls (replaces blanket opacity-50) */
+  --disabled-fg: #6f7390;
+  --disabled-bg: #ececf3;
+
+  /* Retained V1 roles that have no V2 replacement yet: neutral fills, secondary buttons, field fill */
+  --muted: #eeeef5;
+  --secondary: #ececf5;
+  --secondary-hover: #e1e1ee;
   --secondary-foreground: #1c2357;
-  --accent: rgb(121 102 187 / 0.1);
-  --accent-foreground: #0b1338;
-  --ring: #6b57b3;
-
-  /* Lines */
-  --border: #ddd6ec;
-  --input: #8f84b5;
   --field: #ffffff;
-
-  /* Status: text-safe colour, a soft fill, and a solid fill with its own foreground */
-  --destructive: #b4234a;
-  --destructive-foreground: #ffffff;
-  --success: #1a7354;
-  --success-foreground: #ffffff;
-  --warning: #855400;
-  --warning-foreground: #ffffff;
-  --info: #2b53c7;
-  --info-foreground: #ffffff;
 
   /* Overlays behind dialogs */
   --overlay: rgb(11 19 56 / 0.4);
 
-  /* Data visualisation: series colours (each at least 3:1 on a card), the comparison series and grid lines */
+  /* Data visualisation: series colours (each at least 3:1 on a surface), the comparison series and grid lines */
   --chart-1: #384eba;
   --chart-2: #8a3f8f;
   --chart-3: #1a7354;
   --chart-4: #a34a00;
   --chart-5: #1f6fa8;
   --chart-comparison: #7d73a6;
-  --chart-grid: #e6e0f2;
+  --chart-grid: #e6e6ef;
 
-  /* Glass: tint mixed at --glass-alpha, plus an opaque fallback when blur is unavailable */
+  /* Glass: tint mixed at --glass-alpha, plus an opaque fallback when blur or color-mix is unavailable */
   --glass-tint: #ffffff;
-  --glass-fallback: #fdfcff;
+  --glass-fallback: #fdfdff;
   --glass-border: rgb(255 255 255 / 0.75);
-  --glass-edge: rgb(121 102 187 / 0.18);
+  --glass-edge: rgb(56 78 186 / 0.14);
   --glass-highlight: rgb(255 255 255 / 0.9);
-  --glass-shadow: 0 1px 2px rgb(20 41 107 / 0.06), 0 12px 32px -12px rgb(20 41 107 / 0.18);
+  --glass-shadow: 0 1px 2px rgb(16 20 46 / 0.06), 0 12px 32px -12px rgb(16 20 46 / 0.18);
   --glass-blur: 18px;
 
-  /* Card shadow: restrained */
-  --shadow-card: 0 1px 2px rgb(20 41 107 / 0.06), 0 4px 16px -8px rgb(20 41 107 / 0.12);
+  /* Elevation: panels have a border and no shadow; menus are raised; dialogs and the palette overlay */
+  --shadow-card: 0 1px 2px rgb(16 20 46 / 0.06), 0 4px 16px -8px rgb(16 20 46 / 0.12);
+  --shadow-raised: 0 1px 2px rgb(16 20 46 / 0.08), 0 8px 24px -8px rgb(16 20 46 / 0.18);
+  --shadow-overlay: 0 2px 4px rgb(16 20 46 / 0.08), 0 24px 56px -16px rgb(16 20 46 / 0.32);
 
   /* Atmosphere: base gradient stops and the three lights */
-  --atmo-from: #f8f6fe;
+  --atmo-from: #f7f7fb;
   --atmo-to: #e9e6fa;
   --atmo-indigo: rgb(56 78 186 / 0.16);
   --atmo-violet: rgb(121 102 187 / 0.22);
@@ -103,126 +227,223 @@
   --atmo-pink: rgb(208 162 197 / 0.32);
 }
 
-/* 2. Semantic tokens: dark (OS preference) ------------------------------------------------------- */
+/* 4. Semantic tokens: dark (OS preference) ------------------------------------------------------- */
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
-    --background: #070f2d;
-    --foreground: #f7f5ff;
-    --muted: #15215a;
-    --muted-foreground: #b8afd6;
-    --card: #0d1a47;
-    --card-foreground: #f7f5ff;
-    --surface-raised: #13235c;
-    --popover: #111f52;
-    --popover-foreground: #f7f5ff;
-    --primary: #4f66d8;
-    --primary-hover: #4258c8;
-    --primary-foreground: #ffffff;
+    --bg-canvas: #0b0f1e;
+    --bg-surface: #121729;
+    --bg-sunken: #0e1324;
+    --bg-raised: #181e33;
+    --bg-hover: rgb(238 240 250 / 0.05);
+    --bg-selected: rgb(91 110 224 / 0.18);
+    --fg-default: #eef0fa;
+    --fg-muted: #a6abc6;
+    --fg-subtle: #8a8faa;
+    --fg-accent: #aab6ff;
+    --fg-on-accent: #ffffff;
+    --border-default: #262c45;
+    --border-strong: #323958;
+    --border-input: #6b7193;
+    --accent-solid: #4f63d6;
+    --accent-hover: #4357c7;
+    --accent-subtle: rgb(91 110 224 / 0.18);
+    --focus-ring: #c4a6d3;
+    --status-success-fg: #5fd3a6;
+    --status-success-bg: rgb(95 211 166 / 0.12);
+    --status-success-border: rgb(95 211 166 / 0.35);
+    --status-success-solid: #5fd3a6;
+    --status-success-on-solid: #04231a;
+    --status-warning-fg: #f2c46d;
+    --status-warning-bg: rgb(242 196 109 / 0.12);
+    --status-warning-border: rgb(242 196 109 / 0.35);
+    --status-warning-solid: #f2c46d;
+    --status-warning-on-solid: #2a1a00;
+    --status-danger-fg: #f27b93;
+    --status-danger-bg: rgb(242 123 147 / 0.12);
+    --status-danger-border: rgb(242 123 147 / 0.35);
+    --status-danger-solid: #f27b93;
+    --status-danger-on-solid: #1d0612;
+    --status-info-fg: #8fb0ff;
+    --status-info-bg: rgb(143 176 255 / 0.12);
+    --status-info-border: rgb(143 176 255 / 0.35);
+    --status-info-solid: #8fb0ff;
+    --status-info-on-solid: #071338;
+    --disabled-fg: #7d829f;
+    --disabled-bg: #1a2036;
+    --muted: #1a2036;
     --secondary: rgb(178 143 194 / 0.14);
     --secondary-hover: rgb(178 143 194 / 0.22);
-    --secondary-foreground: #f7f5ff;
-    --accent: rgb(121 102 187 / 0.2);
-    --accent-foreground: #f7f5ff;
-    --ring: #c4a6d3;
-    --border: rgb(178 143 194 / 0.2);
-    --input: rgb(196 166 211 / 0.62);
-    --field: #0a1539;
-    --destructive: #f27b93;
-    --destructive-foreground: #1d0612;
-    --success: #5fd3a6;
-    --success-foreground: #04231a;
-    --warning: #f2c46d;
-    --warning-foreground: #2a1a00;
-    --info: #8fb0ff;
-    --info-foreground: #071338;
-    --overlay: rgb(4 10 32 / 0.6);
+    --secondary-foreground: #eef0fa;
+    --field: #0e1324;
+    --overlay: rgb(4 6 16 / 0.6);
     --chart-1: #8fa0ff;
     --chart-2: #e3a6dc;
     --chart-3: #5fd3a6;
     --chart-4: #f2c46d;
     --chart-5: #7cc4f5;
     --chart-comparison: #9d95c4;
-    --chart-grid: rgb(178 143 194 / 0.16);
-    --glass-tint: #13235c;
-    --glass-fallback: #0f1d4d;
-    --glass-border: rgb(208 162 197 / 0.2);
-    --glass-edge: rgb(4 10 32 / 0.5);
-    --glass-highlight: rgb(255 255 255 / 0.08);
-    --glass-shadow: 0 1px 2px rgb(4 10 32 / 0.4), 0 20px 48px -20px rgb(4 10 32 / 0.8);
+    --chart-grid: #20263d;
+    --glass-tint: #181e33;
+    --glass-fallback: #141a2e;
+    --glass-border: rgb(208 162 197 / 0.18);
+    --glass-edge: rgb(4 6 16 / 0.5);
+    --glass-highlight: rgb(255 255 255 / 0.06);
+    --glass-shadow: 0 1px 2px rgb(4 6 16 / 0.4), 0 20px 48px -20px rgb(4 6 16 / 0.8);
     --glass-blur: 20px;
-    --shadow-card: 0 1px 2px rgb(4 10 32 / 0.4), 0 8px 24px -12px rgb(4 10 32 / 0.6);
-    --atmo-from: #070f2d;
-    --atmo-to: #14296b;
-    --atmo-indigo: rgb(56 78 186 / 0.45);
-    --atmo-violet: rgb(121 102 187 / 0.5);
-    --atmo-lavender: rgb(178 143 194 / 0.3);
-    --atmo-pink: rgb(208 162 197 / 0.28);
+    --shadow-card: 0 1px 2px rgb(4 6 16 / 0.4), 0 8px 24px -12px rgb(4 6 16 / 0.6);
+    --shadow-raised: 0 1px 2px rgb(4 6 16 / 0.5), 0 12px 28px -10px rgb(4 6 16 / 0.7);
+    --shadow-overlay: 0 2px 4px rgb(4 6 16 / 0.5), 0 28px 64px -16px rgb(4 6 16 / 0.85);
+    --atmo-from: #0b0f1e;
+    --atmo-to: #161d45;
+    --atmo-indigo: rgb(56 78 186 / 0.4);
+    --atmo-violet: rgb(121 102 187 / 0.42);
+    --atmo-lavender: rgb(178 143 194 / 0.26);
+    --atmo-pink: rgb(208 162 197 / 0.24);
   }
 }
 
-/* 2. Semantic tokens: dark (`.dark` class). Keep identical to the block above. ------------------- */
+/* 4. Semantic tokens: dark (`.dark` class). Keep identical to the block above. ------------------- */
 .dark {
   color-scheme: dark;
-  --background: #070f2d;
-  --foreground: #f7f5ff;
-  --muted: #15215a;
-  --muted-foreground: #b8afd6;
-  --card: #0d1a47;
-  --card-foreground: #f7f5ff;
-  --surface-raised: #13235c;
-  --popover: #111f52;
-  --popover-foreground: #f7f5ff;
-  --primary: #4f66d8;
-  --primary-hover: #4258c8;
-  --primary-foreground: #ffffff;
+  --bg-canvas: #0b0f1e;
+  --bg-surface: #121729;
+  --bg-sunken: #0e1324;
+  --bg-raised: #181e33;
+  --bg-hover: rgb(238 240 250 / 0.05);
+  --bg-selected: rgb(91 110 224 / 0.18);
+  --fg-default: #eef0fa;
+  --fg-muted: #a6abc6;
+  --fg-subtle: #8a8faa;
+  --fg-accent: #aab6ff;
+  --fg-on-accent: #ffffff;
+  --border-default: #262c45;
+  --border-strong: #323958;
+  --border-input: #6b7193;
+  --accent-solid: #4f63d6;
+  --accent-hover: #4357c7;
+  --accent-subtle: rgb(91 110 224 / 0.18);
+  --focus-ring: #c4a6d3;
+  --status-success-fg: #5fd3a6;
+  --status-success-bg: rgb(95 211 166 / 0.12);
+  --status-success-border: rgb(95 211 166 / 0.35);
+  --status-success-solid: #5fd3a6;
+  --status-success-on-solid: #04231a;
+  --status-warning-fg: #f2c46d;
+  --status-warning-bg: rgb(242 196 109 / 0.12);
+  --status-warning-border: rgb(242 196 109 / 0.35);
+  --status-warning-solid: #f2c46d;
+  --status-warning-on-solid: #2a1a00;
+  --status-danger-fg: #f27b93;
+  --status-danger-bg: rgb(242 123 147 / 0.12);
+  --status-danger-border: rgb(242 123 147 / 0.35);
+  --status-danger-solid: #f27b93;
+  --status-danger-on-solid: #1d0612;
+  --status-info-fg: #8fb0ff;
+  --status-info-bg: rgb(143 176 255 / 0.12);
+  --status-info-border: rgb(143 176 255 / 0.35);
+  --status-info-solid: #8fb0ff;
+  --status-info-on-solid: #071338;
+  --disabled-fg: #7d829f;
+  --disabled-bg: #1a2036;
+  --muted: #1a2036;
   --secondary: rgb(178 143 194 / 0.14);
   --secondary-hover: rgb(178 143 194 / 0.22);
-  --secondary-foreground: #f7f5ff;
-  --accent: rgb(121 102 187 / 0.2);
-  --accent-foreground: #f7f5ff;
-  --ring: #c4a6d3;
-  --border: rgb(178 143 194 / 0.2);
-  --input: rgb(196 166 211 / 0.62);
-  --field: #0a1539;
-  --destructive: #f27b93;
-  --destructive-foreground: #1d0612;
-  --success: #5fd3a6;
-  --success-foreground: #04231a;
-  --warning: #f2c46d;
-  --warning-foreground: #2a1a00;
-  --info: #8fb0ff;
-  --info-foreground: #071338;
-  --overlay: rgb(4 10 32 / 0.6);
+  --secondary-foreground: #eef0fa;
+  --field: #0e1324;
+  --overlay: rgb(4 6 16 / 0.6);
   --chart-1: #8fa0ff;
   --chart-2: #e3a6dc;
   --chart-3: #5fd3a6;
   --chart-4: #f2c46d;
   --chart-5: #7cc4f5;
   --chart-comparison: #9d95c4;
-  --chart-grid: rgb(178 143 194 / 0.16);
-  --glass-tint: #13235c;
-  --glass-fallback: #0f1d4d;
-  --glass-border: rgb(208 162 197 / 0.2);
-  --glass-edge: rgb(4 10 32 / 0.5);
-  --glass-highlight: rgb(255 255 255 / 0.08);
-  --glass-shadow: 0 1px 2px rgb(4 10 32 / 0.4), 0 20px 48px -20px rgb(4 10 32 / 0.8);
+  --chart-grid: #20263d;
+  --glass-tint: #181e33;
+  --glass-fallback: #141a2e;
+  --glass-border: rgb(208 162 197 / 0.18);
+  --glass-edge: rgb(4 6 16 / 0.5);
+  --glass-highlight: rgb(255 255 255 / 0.06);
+  --glass-shadow: 0 1px 2px rgb(4 6 16 / 0.4), 0 20px 48px -20px rgb(4 6 16 / 0.8);
   --glass-blur: 20px;
-  --shadow-card: 0 1px 2px rgb(4 10 32 / 0.4), 0 8px 24px -12px rgb(4 10 32 / 0.6);
-  --atmo-from: #070f2d;
-  --atmo-to: #14296b;
-  --atmo-indigo: rgb(56 78 186 / 0.45);
-  --atmo-violet: rgb(121 102 187 / 0.5);
-  --atmo-lavender: rgb(178 143 194 / 0.3);
-  --atmo-pink: rgb(208 162 197 / 0.28);
+  --shadow-card: 0 1px 2px rgb(4 6 16 / 0.4), 0 8px 24px -12px rgb(4 6 16 / 0.6);
+  --shadow-raised: 0 1px 2px rgb(4 6 16 / 0.5), 0 12px 28px -10px rgb(4 6 16 / 0.7);
+  --shadow-overlay: 0 2px 4px rgb(4 6 16 / 0.5), 0 28px 64px -16px rgb(4 6 16 / 0.85);
+  --atmo-from: #0b0f1e;
+  --atmo-to: #161d45;
+  --atmo-indigo: rgb(56 78 186 / 0.4);
+  --atmo-violet: rgb(121 102 187 / 0.42);
+  --atmo-lavender: rgb(178 143 194 / 0.26);
+  --atmo-pink: rgb(208 162 197 / 0.24);
 }
 
-/* 3. Tailwind mapping ---------------------------------------------------------------------------- */
+/* 5. Compatibility aliases (V1 name -> V2 token). Declared on .light and .dark too, so a themed
+   subtree resolves them against its own theme. Removed in V2-E once nothing uses them. ------------ */
+:root,
+.light,
+.dark {
+  --background: var(--bg-canvas);
+  --foreground: var(--fg-default);
+  --muted-foreground: var(--fg-muted);
+  --card: var(--bg-surface);
+  --card-foreground: var(--fg-default);
+  --surface-raised: var(--bg-raised);
+  --popover: var(--bg-raised);
+  --popover-foreground: var(--fg-default);
+  --primary: var(--accent-solid);
+  --primary-hover: var(--accent-hover);
+  --primary-foreground: var(--fg-on-accent);
+  --accent: var(--bg-selected);
+  --accent-foreground: var(--fg-default);
+  --ring: var(--focus-ring);
+  --border: var(--border-default);
+  --input: var(--border-input);
+  --destructive: var(--status-danger-solid);
+  --destructive-foreground: var(--status-danger-on-solid);
+  --success: var(--status-success-solid);
+  --success-foreground: var(--status-success-on-solid);
+  --warning: var(--status-warning-solid);
+  --warning-foreground: var(--status-warning-on-solid);
+  --info: var(--status-info-solid);
+  --info-foreground: var(--status-info-on-solid);
+}
+
+/* 6. Tailwind mapping ---------------------------------------------------------------------------- */
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-control: var(--radius-control);
+  --radius-panel: var(--radius-panel);
+  --radius-dialog: var(--radius-dialog);
+  --radius-pill: var(--radius-pill);
+
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+  --text-caption: var(--font-size-caption);
+  --text-caption--line-height: var(--line-height-caption);
+  --text-small: var(--font-size-small);
+  --text-small--line-height: var(--line-height-small);
+  --text-body: var(--font-size-body);
+  --text-body--line-height: var(--line-height-body);
+  --text-lead: var(--font-size-lead);
+  --text-lead--line-height: var(--line-height-lead);
+  --text-section: var(--font-size-section);
+  --text-section--line-height: var(--line-height-section);
+  --text-title: var(--font-size-title);
+  --text-title--line-height: var(--line-height-title);
+  --text-display: var(--font-size-display);
+  --text-display--line-height: var(--line-height-display);
+
+  --ease-standard: var(--ease-standard);
+  --ease-emphasised: var(--ease-emphasised);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-overlay: var(--shadow-overlay);
+
+  /* V1 names (compatibility aliases; removed in V2-E) */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -260,7 +481,136 @@
   --color-chart-5: var(--chart-5);
   --color-chart-comparison: var(--chart-comparison);
   --color-chart-grid: var(--chart-grid);
-  --shadow-card: var(--shadow-card);
+
+  /* V2 names. Utilities: bg-canvas, bg-surface, text-fg-muted, border-line-strong, bg-accent-solid,
+     text-status-danger-fg, outline-focus-ring ... */
+  --color-canvas: var(--bg-canvas);
+  --color-surface: var(--bg-surface);
+  --color-sunken: var(--bg-sunken);
+  --color-raised: var(--bg-raised);
+  --color-hover: var(--bg-hover);
+  --color-selected: var(--bg-selected);
+  --color-fg: var(--fg-default);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-fg-accent: var(--fg-accent);
+  --color-fg-on-accent: var(--fg-on-accent);
+  --color-line: var(--border-default);
+  --color-line-strong: var(--border-strong);
+  --color-line-input: var(--border-input);
+  --color-accent-solid: var(--accent-solid);
+  --color-accent-solid-hover: var(--accent-hover);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-focus-ring: var(--focus-ring);
+  --color-disabled-fg: var(--disabled-fg);
+  --color-disabled-bg: var(--disabled-bg);
+  --color-status-success-fg: var(--status-success-fg);
+  --color-status-success-bg: var(--status-success-bg);
+  --color-status-success-border: var(--status-success-border);
+  --color-status-success-solid: var(--status-success-solid);
+  --color-status-success-on-solid: var(--status-success-on-solid);
+  --color-status-warning-fg: var(--status-warning-fg);
+  --color-status-warning-bg: var(--status-warning-bg);
+  --color-status-warning-border: var(--status-warning-border);
+  --color-status-warning-solid: var(--status-warning-solid);
+  --color-status-warning-on-solid: var(--status-warning-on-solid);
+  --color-status-danger-fg: var(--status-danger-fg);
+  --color-status-danger-bg: var(--status-danger-bg);
+  --color-status-danger-border: var(--status-danger-border);
+  --color-status-danger-solid: var(--status-danger-solid);
+  --color-status-danger-on-solid: var(--status-danger-on-solid);
+  --color-status-info-fg: var(--status-info-fg);
+  --color-status-info-bg: var(--status-info-bg);
+  --color-status-info-border: var(--status-info-border);
+  --color-status-info-solid: var(--status-info-solid);
+  --color-status-info-on-solid: var(--status-info-on-solid);
+}
+
+/* Scale utilities with no Tailwind namespace of their own. */
+@utility h-control-sm {
+  height: var(--control-h-sm);
+}
+@utility h-control-md {
+  height: var(--control-h-md);
+}
+@utility h-control-lg {
+  height: var(--control-h-lg);
+}
+@utility h-row-compact {
+  height: var(--row-h-compact);
+}
+@utility h-row-default {
+  height: var(--row-h-default);
+}
+@utility h-row-comfortable {
+  height: var(--row-h-comfortable);
+}
+@utility min-target {
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+}
+@utility duration-fast {
+  transition-duration: var(--duration-fast);
+}
+@utility duration-base {
+  transition-duration: var(--duration-base);
+}
+@utility duration-slow {
+  transition-duration: var(--duration-slow);
+}
+
+/* State recipes (§7.4): one recipe everywhere, each with its forced-colours rule. Components in
+   V2-B3 onwards compose these; they are additive and change nothing that exists today. */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  @media (forced-colors: active) {
+    &:focus-visible {
+      outline-color: Highlight;
+    }
+  }
+}
+/* Inside tables and other clipped containers. */
+@utility focus-ring-inset {
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+  @media (forced-colors: active) {
+    &:focus-visible {
+      outline-color: Highlight;
+    }
+  }
+}
+/* Hover overlay; pressed doubles it. No transform. */
+@utility state-interactive {
+  &:hover:not(:disabled, [aria-disabled='true']) {
+    background-color: var(--bg-hover);
+  }
+  &:active:not(:disabled, [aria-disabled='true']) {
+    background-color: var(--bg-hover);
+    background-image: linear-gradient(var(--bg-hover), var(--bg-hover));
+  }
+}
+/* Selected or current item. Pair with aria-current, aria-selected or aria-pressed. */
+@utility state-selected {
+  background-color: var(--bg-selected);
+  @media (forced-colors: active) {
+    background-color: Highlight;
+    color: HighlightText;
+    outline: 1px solid CanvasText;
+  }
+}
+@utility state-disabled {
+  color: var(--disabled-fg);
+  background-color: var(--disabled-bg);
+  cursor: not-allowed;
+  @media (forced-colors: active) {
+    color: GrayText;
+    border-color: GrayText;
+  }
 }
 
 @layer base {
@@ -269,11 +619,18 @@
   }
   body {
     @apply min-h-screen bg-background text-foreground antialiased;
-    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-family-sans);
+    font-feature-settings: 'cv11';
+  }
+  /* Every focus indicator stays visible when the OS forces its own colours. */
+  @media (forced-colors: active) {
+    :focus-visible {
+      outline-color: Highlight;
+    }
   }
 }
 
-/* 3. Treatments ---------------------------------------------------------------------------------- */
+/* 7. Treatments ---------------------------------------------------------------------------------- */
 @layer components {
   /* Atmospheric background. Pure CSS gradients: no images, no animation, no rendering libraries.
      Variants are chosen per screen with data-atmosphere; dense screens should use "calm". */
@@ -310,11 +667,17 @@
   .bos-glass {
     --glass-alpha: 0.62;
     background-color: var(--glass-fallback);
-    background-color: color-mix(in oklab, var(--glass-tint) calc(var(--glass-alpha) * 100%), transparent);
     border: 1px solid var(--glass-border);
     box-shadow: inset 0 1px 0 var(--glass-highlight), 0 0 0 1px var(--glass-edge), var(--glass-shadow);
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
     backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  }
+  /* Translucency only where color-mix() works (older WebKit drew it wrongly, F-24); otherwise the
+     opaque fallback above stays. The two rules below must come after this one. */
+  @supports (color: color-mix(in oklab, red, red)) {
+    .bos-glass {
+      background-color: color-mix(in oklab, var(--glass-tint) calc(var(--glass-alpha) * 100%), transparent);
+    }
   }
   /* No blur available, or the user asked for less transparency: become an opaque surface. */
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

@@ -8,16 +8,32 @@ import { aboveShell } from '../drafts';
 import { ZoneFrame } from '../zone-frame';
 import { CustomerDetail, type FinanceLink, type ProjectsLink } from './customer-detail';
 import { CustomerForm } from './customer-form';
+import { ContactEntry, type ContactFocus } from './contact-entry';
 import { Directory, type DirectoryQuery } from './directory';
 
-type View = { name: 'list' } | { name: 'detail'; id: string } | { name: 'new' } | { name: 'edit'; customer: Customer };
+type View =
+  | { name: 'list' }
+  | { name: 'detail'; id: string; contact?: ContactFocus }
+  | { name: 'contact'; id: string }
+  | { name: 'new' }
+  | { name: 'edit'; customer: Customer };
+
+/**
+ * Splits a shell target for this Zone: `contact:<id>` opens one contact (GS1 §10.6), anything else is
+ * a customer id. The contact's customer is not in the target; the Zone asks the API for it, so a
+ * target can never point at a customer the contact does not belong to.
+ */
+export function customerTarget(target: string | undefined): { customerId?: string; contactId?: string } {
+  if (!target) return {};
+  return target.startsWith('contact:') ? { contactId: target.slice('contact:'.length) } : { customerId: target };
+}
 
 /**
  * The Customer Zone: directory, create/edit form and customer workspace. Mount it with `key={slug}`
  * so switching business discards every bit of this state; nothing here is persisted or cached
  * outside the component, and every request names the business only through the URL.
  */
-export function CustomerZone({ client, context, userLabel, projects, finance, initialCustomerId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function CustomerZone({ client, context, userLabel, projects, finance, initialCustomerId, initialContactId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: CustomersClient; context: BusinessContext; userLabel: string; onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
   /** Linked projects on each customer's page (passed only to people who may read projects). */
   projects?: ProjectsLink;
@@ -25,6 +41,11 @@ export function CustomerZone({ client, context, userLabel, projects, finance, in
   finance?: FinanceLink;
   /** Opens straight into one customer (for example from a project's page). */
   initialCustomerId?: string;
+  /**
+   * Opens straight into one contact (for example from a search result): its customer's page with the
+   * contact marked, or a read-only contact page when it has no customer. Wins over `initialCustomerId`.
+   */
+  initialContactId?: string;
   /** Opens straight into the add-customer form (a Home shortcut); ignored without customers:write. */
   initialAction?: 'new';
 }) {
@@ -32,7 +53,7 @@ export function CustomerZone({ client, context, userLabel, projects, finance, in
   const canWrite = context.membership.permissions.includes('customers:write');
   const canLogActivity = context.membership.permissions.includes('activity:write');
   const canReadMessages = context.membership.permissions.includes('communications:read');
-  const [view, setView] = useState<View>(initialCustomerId ? { name: 'detail', id: initialCustomerId } : initialAction === 'new' && canWrite ? { name: 'new' } : { name: 'list' });
+  const [view, setView] = useState<View>(initialContactId ? { name: 'contact', id: initialContactId } : initialCustomerId ? { name: 'detail', id: initialCustomerId } : initialAction === 'new' && canWrite ? { name: 'new' } : { name: 'list' });
   const [query, setQuery] = useState<DirectoryQuery>({ q: '', status: 'active' });
   const [notice, setNotice] = useState<string | null>(null);
   // Each open editor reports here by name (the customer form, a contact form, the activity composer).
@@ -60,7 +81,7 @@ export function CustomerZone({ client, context, userLabel, projects, finance, in
   };
 
   // Move focus to the new screen's heading so keyboard and screen-reader users land on the change.
-  const viewKey = view.name === 'detail' ? `detail:${view.id}` : view.name === 'edit' ? `edit:${view.customer.id}` : view.name;
+  const viewKey = view.name === 'detail' || view.name === 'contact' ? `${view.name}:${view.id}` : view.name === 'edit' ? `edit:${view.customer.id}` : view.name;
   useEffect(() => {
     const heading = content.current?.querySelector('h1');
     if (heading instanceof HTMLElement) {
@@ -79,9 +100,16 @@ export function CustomerZone({ client, context, userLabel, projects, finance, in
             onOpen={(id) => go({ name: 'detail', id })} onAdd={() => go({ name: 'new' })} onSessionEnded={onSessionEnded}
           />
         ) : null}
+        {view.name === 'contact' ? (
+          <ContactEntry
+            client={client} slug={slug} id={view.id}
+            onCustomer={(customerId, contact) => setView({ name: 'detail', id: customerId, contact })}
+            onBack={() => go({ name: 'list' })} onSessionEnded={onSessionEnded}
+          />
+        ) : null}
         {view.name === 'detail' ? (
           <CustomerDetail
-            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages} projects={projects} finance={finance}
+            client={client} slug={slug} id={view.id} contact={view.contact} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages} projects={projects} finance={finance}
             onBack={() => leave(() => go({ name: 'list' }))} onEdit={(customer) => go({ name: 'edit', customer })}
             onDraftChange={markDraft} confirmDiscard={leave} onSessionEnded={onSessionEnded}
           />
