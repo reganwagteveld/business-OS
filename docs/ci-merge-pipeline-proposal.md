@@ -1,6 +1,6 @@
-# CI and merge pipeline optimisation — measurements and proposal
+# CI and merge pipeline optimisation — measurements, design and owner decisions
 
-**Status:** Proposal only (docs). Nothing here changes workflows, branch protection, the merge process or production. Each phase in §7 is a separate PR that needs ChatGPT audit and Regan's approval.
+**Status:** Direction approved by Regan on 2026-11-16 (decisions D-CI-1 to D-CI-5, §9). This document is documentation only: it changes no workflow, branch protection, merge process or production setting. Each phase (§8) is implemented in its own PR, which needs a ChatGPT audit and Regan's merge approval.
 **Measured:** 2026-11-16 16:30 UTC, `main` at `0e7e1d9`, all 357 runs of `.github/workflows/ci.yml` since 2026-11-13, with job and step timings sampled from recent runs.
 
 ## 1. Summary
@@ -91,13 +91,13 @@ Today alone: docs-only PR runs 49 (≈256 run-minutes), of which 18 were sync ru
 |---|---|---|---|
 | D1 | **Sync runs**: each `main` merge makes every open PR stale, and threads merge `main` in and re-run the full suite even when they are nowhere near merging | 63 of 149 PR runs | **Remove** (§5.1) |
 | D2 | **Docs-only PRs run the Database, build, unit and static jobs** | 49 runs, ≈256 run-min, about 6 min wait per iteration | **Remove** (§5.4, §5.6) |
-| D3 | **Client-only PRs run the Database job**, although clients cannot reach the database (enforced by boundaries and tests) | Not separately counted; most GS2-A and V2-B1 runs | Reduce, if Regan agrees (§5.4) |
+| D3 | **Client-only PRs run the Database job**, although clients cannot reach the database (enforced by boundaries and tests) | Not separately counted; most GS2-A and V2-B1 runs | **Reduce** (approved, D-CI-2; §5.4) |
 | D4 | **Post-merge `main` run** re-tests the same tree the final PR run tested (squash of an up-to-date branch) | 30 runs, 186 min | **Keep**: it is the only full desktop build for most PRs and the post-deploy signal. Overlap it with the next queue item instead (§5.1). |
 | D5 | **Pooler re-runs**: seven integration suites run directly and again behind PgBouncer | ≈1m 50s per run | **Keep**: this is the production pooling model for finance, people, leave, billing, reminders, scheduling and membership races. Run it in parallel instead (§5.3). |
 | D6 | **Workspace setup in every job** (checkout, pnpm, install, Prisma generate) | ≈25–35 s × 5 jobs | Partly reducible (§5.3) |
 | D7 | **Re-runs after flaky failures**, which also halt the queue | 14 re-runs; `main` red twice | Fix the tests. Never skip or quarantine them. |
 
-## 5. Proposed design
+## 5. Design (direction approved 2026-11-16)
 
 ### 5.1 Parallel development and one serialized merge coordinator
 
@@ -114,11 +114,13 @@ Today alone: docs-only PR runs 49 (≈256 run-minutes), of which 18 were sync ru
 
 ### 5.3 Dependency caching and safe reuse of build outputs
 
-1. **Shard the Database job** (the largest win). The job becomes four parallel jobs, each with its own PostgreSQL service, roles, migrations and privileged SQL:
+1. **Shard the Database job** (the largest win; approved as D-CI-3). The job becomes four parallel jobs, each with its own PostgreSQL service, roles, migrations and privileged SQL:
    - `Database integration (1/3, 2/3, 3/3)`: `vitest --shard=i/3` over the same 29 files, still `fileParallelism: false` inside each shard.
    - `Database isolation and pooler suites`: the RLS spike (S1–S13), all seven pooler suites unchanged, and `db:check-migrations`.
 
    Every test still runs, against a fresh database per shard. Expected critical path: about 50 s setup + about 1.5–2 min, so roughly 3–3.5 min for the whole run (estimated; to be measured in a dry run).
+
+   **Acceptance criteria before adoption (D-CI-3):** each of the four jobs has its own PostgreSQL service, roles, migrations and privileged SQL; a deliberately failing test placed in each shard (and in the pooler job) fails the overall `CI gate`; the set of executed test files and test counts matches the current Database job exactly (compared from vitest output); and measured job and gate durations are reported against the §3 baseline.
 2. **Cache Prisma-generated clients and `node_modules` per job.** Key: OS, Node version, `pnpm-lock.yaml` hash, and a hash of every `schema.prisma`. Install still runs `--frozen-lockfile` (fast when nothing changed). Saving ≈10–20 s per job. Low risk, but the key must include the schemas.
 3. **Do not reuse test results across commits.** Reusing build outputs across different trees risks false greens, so it is out of scope. One safe form of reuse may come later (Phase 4): the `main` push run could skip jobs whose exact git tree already passed the full tier at the queue head. That needs its own review.
 
@@ -130,7 +132,9 @@ Extend `classify-changes.sh` (fail-closed, self-tested) to output a **tier** fro
 |---|---|---|
 | **docs** | `docs/**`, `*.md` outside `.github/` and `apps/*/src/**`, `docs/**` images | Detect changes, a docs check (Markdown link/anchor check), gate |
 | **client** | `apps/web/**` (not config), `apps/desktop/src/**`, `packages/ui/**`, `packages/app/**` | Detect changes, static, unit, build, gate (desktop matrix by its existing rule) |
-| **full** | anything else, **including** `apps/api/**`, `packages/contracts/**`, `prisma/**` and `privileged/**`, `tests/**`, `.github/**`, lockfiles, root config, `ops/**`, `scripts/**`, any unknown path, an empty or unreadable diff | Everything, including all Database shards and every pooler suite |
+| **full** | anything else, **including** API (`apps/api/**`), contracts (`packages/contracts/**`), database, migrations and privileged SQL, authentication, permissions/RBAC, CI configuration (`.github/**`), dependency changes (lockfile, any `package.json`, `Cargo.*`), root or build config, `tests/**`, `ops/**`, `scripts/**`, any unknown path, an empty or unreadable diff | Everything, including all Database shards and every pooler suite |
+
+**D-CI-2 conditions (approved):** client-only PRs may skip the Database jobs, but must still pass typecheck, lint, boundaries, unit tests, builds, the API-boot and bundle-security checks, and the desktop matrix whenever its existing rule applies. Any change to the API, contracts, database, migrations, authentication, permissions, CI configuration or dependencies, and any unknown change, gets full CI. Classification fails closed, and `CI gate` stays the single required check.
 
 Rules that keep this safe:
 
@@ -170,8 +174,8 @@ Blocked PRs keep their priority slot and return to the head as soon as they beco
 
 ### 5.8 Visibility
 
-- **Queue table**, kept by the merge-queue thread and mirrored to one pinned GitHub issue (only if Regan approves posting there): PR, tier, priority, audit, Regan approval (link), migration state, last CI result and duration, queue position, blocker, merge status and time.
-- **Labels** (optional, need Regan's approval to create): `queue:eligible`, `queue:blocked`, `queue:merging`, `hold`.
+- **Queue table**, kept by the merge-queue thread and mirrored to the pinned GitHub issue: PR, tier, priority, audit, Regan approval (link), migration state, last CI result and duration, queue position, blocker, merge status and time.
+- **Pinned issue and labels** (approved as D-CI-4): one pinned "Merge queue" issue, and labels `queue:eligible`, `queue:blocked`, `queue:merging` and `queue:held`. The issue shows each PR's audit status, Regan's approval, CI state, blockers and queue position. **Labels and the issue are informational only. They never stand in for Regan's explicit approval**, which is always a message of his.
 - **Gate summary** (already prints per-job durations) adds: tier and reason, critical-path duration, shard durations, and whether the run tested an up-to-date merge with `main`.
 - **Weekly metrics** in the queue thread, read from the Actions API: runs per merged PR, share of sync runs, gate p50/p90, re-run count, approval-to-merge time.
 
@@ -206,22 +210,33 @@ Unchanged by any phase: tenant isolation tests, RLS spike, every pooler suite, a
 
 ## 8. Rollout (each phase is its own PR → ChatGPT audit → Regan approval)
 
-1. **Phase 1, process only (no workflow change):** sync-at-queue-head rule, eligibility and skip rules (§5.7), approval tied to content, pipelining, queue table. This edits `docs/agent-task-protocol.md` and the merge-queue procedure, so it needs Regan's explicit process review.
-2. **Phase 2, workflow:** tiers in `classify-changes.sh` and `ci-gate.sh` with self-tests, `ready_for_review` trigger, tier in the gate summary, `docs/ci.md` update.
-3. **Phase 3, workflow:** Database sharding, with a dry run on a disposable branch showing that a deliberately failing test in each shard fails the gate.
-4. **Phase 4, optional:** Prisma and `node_modules` cache, `main` tree reuse, pinned queue issue and labels.
+Approved sequence (2026-11-16). The phases stay independently reviewable and avoid files owned by active feature PRs. All phases are separate from this PR.
 
-## 9. Decisions for Regan
+1. **This PR (#94):** documentation only, recording the measurements and the decisions.
+2. **Phase 1, process (D-CI-1):** serialized merge queue; no repeated syncs with `main`; sync at the queue head, or earlier only for a genuine dependency or conflict; skip blocked or unapproved PRs without losing priority; ChatGPT audit and Regan's explicit merge approval for every PR; prepare the next PR's CI while the previous merge's `main` verification runs, but never merge it until that verification and the required deployment checks succeed; pinned issue and labels (D-CI-4). Edits `docs/agent-task-protocol.md` and the merge-queue procedure.
+3. **Phase 2, workflow (D-CI-2):** docs, client and full tiers in `classify-changes.sh` and `ci-gate.sh` with self-tests, `ready_for_review` trigger, tier in the gate summary, `docs/ci.md` update.
+4. **Phase 3, workflow (D-CI-3):** three integration shards plus the RLS/PgBouncer job, meeting the §5.3 acceptance criteria.
+5. **Measure** each phase against the §3 baseline before proposing anything further. Phase 4 (caches, `main` tree reuse) is not approved and would need a new proposal.
 
-1. Approve Phase 1: sync only at the queue head, and skip ineligible PRs without changing approval rules.
-2. Approve a **client tier** that skips Database tests for client-only changes, or keep the full tier for all code and accept the time.
-3. Approve Database sharding (Phase 3).
-4. Optional: a pinned GitHub issue and `queue:*` labels for visibility.
-5. Confirm the current *Require branches to be up to date* setting on `main`. This proposal works either way and does not change it.
+**Reporting after each phase:** measured CI duration, redundant runs removed, merge throughput, remaining bottlenecks, and any failures or regressions.
+
+**Safeguards for every phase:** never weaken authentication, RLS, tenant isolation, financial integrity, migration or privileged SQL testing; never bypass or fabricate a green `CI gate`; never merge without Regan's explicit approval; production migrations and privileged SQL need their own approval; an unexpected conflict or a substantive code change invalidates earlier sign-off until re-reviewed; a failed `main` CI run or production smoke test halts merging; no production or infrastructure change is authorised by this direction.
+
+## 9. Owner decisions (Regan, 2026-11-16)
+
+| ID | Decision | Outcome |
+|---|---|---|
+| D-CI-1 | Phase 1 merge-queue process (§5.1, §5.7) | **Approved** |
+| D-CI-2 | Client-only CI tier (§5.4) | **Approved with conditions**: fail closed, full CI for API, contracts, database, migrations, auth, permissions, CI config, dependencies or unknown changes; `CI gate` stays the only required check |
+| D-CI-3 | Database sharding (§5.3) | **Approved for implementation**, subject to the acceptance criteria in §5.3 |
+| D-CI-4 | Queue visibility: pinned issue and status labels (§5.8) | **Approved**; labels are informational only |
+| D-CI-5 | Branch protection | **No change.** Whether "Require branches to be up to date" is on stays a manual check for Regan. The merge coordinator enforces up-to-date final-head verification regardless of that setting. |
+
+Model guidance from Regan: Opus 5.5 for architectural decisions, Sonnet 5.5 for bounded implementation tasks.
 
 ## 10. Not verified in this audit
 
-- Branch protection or ruleset settings, which this session's tools could not read.
+- Branch protection or ruleset settings, which this session's tools could not read (left as a manual check for Regan, D-CI-5).
 - Whether GitHub's native merge queue is available for this user-owned repository.
 - The root cause of the two red `main` runs on 2026-11-16.
 - Savings figures, which are estimates until each phase is measured.
