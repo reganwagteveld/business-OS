@@ -17,6 +17,7 @@ import { Failed, SessionExpiredNotice, Unreachable, Unverified } from './shell/s
 import { AppShell } from './shell/app-shell';
 import { Home, type CustomerMetrics } from './shell/home';
 import { OperationalDashboard, type DashboardClients } from './shell/dashboard/operational-dashboard';
+import { dashboardIdentity } from './shell/dashboard/sources';
 import { canOpen, HOME, resolveNavigation, type ResolvedNavigation, type ShellRoute } from './shell/registry';
 import { useLoad } from './zones/use-load';
 import type { BusinessContext } from './api/tenancy';
@@ -285,7 +286,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       />
     );
   } else if (active) {
-    screen = <HomeWithMetrics key={slug} customers={customers} dashboard={dashboardClients} context={active} user={phase.user} navigation={navigation} onOpen={open} onSessionEnded={workspace.retry} />;
+    screen = <HomeWithMetrics key={dashboardIdentity(active)} customers={customers} dashboard={dashboardClients} context={active} user={phase.user} navigation={navigation} onOpen={open} onSessionEnded={workspace.retry} />;
   }
 
   return (
@@ -317,8 +318,9 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
 
 /**
  * Home with live figures: the Customers counts (one request, shared by the Zone card and the dashboard)
- * and the operational dashboard. Mounted per business (key) and each time the person comes back from a
- * Zone, so figures reflect any changes just made.
+ * and the operational dashboard. Mounted per business, membership and permission set (`dashboardIdentity`),
+ * and each time the person comes back from a Zone, so figures reflect any changes just made and never
+ * outlive the access they were loaded with.
  */
 function HomeWithMetrics({ customers, dashboard, context, user, navigation, onOpen, onSessionEnded }: {
   customers: CustomersClient; dashboard: DashboardClients; context: BusinessContext; user: CurrentUser; navigation: ResolvedNavigation; onOpen: (route: ShellRoute) => void; onSessionEnded: () => void;

@@ -1,5 +1,6 @@
 import type { Activity, FinanceDocumentListItem, ProjectSummary, ReportingCatalog, ReportingDateConfig, ReportingQueryResult, SchedulingEvent } from '@business-os/contracts';
 import { Badge, Button, Card, EmptyState, KpiCard, SectionHeader, Select, Skeleton } from '@business-os/ui';
+import { addDays, startOfDay } from '@business-os/contracts';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { BoundedPage, DashboardClient, SalesSummary } from '../../api/dashboard';
 import type { FinanceClient } from '../../api/finance';
@@ -64,7 +65,7 @@ export function OperationalDashboard({ context, clients, customers, onOpen, onSe
   customers?: CustomerCounts;
   onOpen: (route: ShellRoute) => void;
   onSessionEnded: () => void;
-  /** Tests only: a fixed "now". */
+  /** Tests only: a fixed "now" (no midnight roll-over). */
   now?: number;
 }) {
   const { slug, timeZone, locale, currency } = context.business;
@@ -72,19 +73,26 @@ export function OperationalDashboard({ context, clients, customers, onOpen, onSe
   const visible = visibleWidgets(permissions);
   const has = (id: DashboardWidgetId) => visible.has(id);
   const can = (p: string) => permissions.includes(p);
-  // Fixed per visit, so the schedule request key is stable; coming back to Home mounts a fresh one.
-  const [now] = useState(() => nowOverride ?? Date.now());
+  // Fixed per visit (so request keys are stable) until the business's day changes: at its midnight every
+  // date-dependent figure is fetched again for the new day. Coming back to Home mounts a fresh one.
+  const [now, setNow] = useState(() => nowOverride ?? Date.now());
   const [date, setDate] = useState<ReportingDateConfig>(DEFAULT_DASHBOARD_DATE);
   const window = upcomingWindow(timeZone, DASHBOARD_LIMITS.horizonDays, now);
   const today = businessToday(timeZone, now);
+  useEffect(() => {
+    if (nowOverride !== undefined) return; // a fixed clock (tests) never rolls over
+    const ms = startOfDay(addDays(today, 1), timeZone) - Date.now();
+    const timer = setTimeout(() => setNow(Math.max(Date.now(), startOfDay(addDays(today, 1), timeZone))), Math.min(Math.max(ms, 0), 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [today, timeZone, nowOverride]);
 
   const wantsReporting = has('kpi.invoiced') || has('panel.financial-performance');
-  const catalog = useLoad<ReportingCatalog>(`dash-catalog|${slug}|${wantsReporting}`, (s) => (wantsReporting ? clients.reporting.catalog(slug, s) : idle()));
+  const catalog = useLoad<ReportingCatalog>(`dash-catalog|${slug}|${wantsReporting}|${today}`, (s) => (wantsReporting ? clients.reporting.catalog(slug, s) : idle()));
   const sales = useLoad<SalesSummary>(`dash-sales|${slug}|${has('panel.pipeline')}`, (s) => (has('panel.pipeline') ? clients.dashboard.salesSummary(slug, s) : idle()));
   const projects = useLoad<ProjectSummary>(`dash-projects|${slug}|${has('kpi.active-projects')}`, (s) => (has('kpi.active-projects') ? clients.projects.summary(slug, s) : idle()));
   const events = useLoad<BoundedPage<SchedulingEvent>>(`dash-events|${slug}|${has('panel.schedule')}|${window.from}`, (s) =>
     has('panel.schedule') ? clients.dashboard.upcomingEvents(slug, { from: window.from, to: window.to, limit: DASHBOARD_LIMITS.events }, s) : idle());
-  const overdue = useLoad<{ documents: FinanceDocumentListItem[]; nextCursor: string | null }>(`dash-overdue|${slug}|${has('panel.overdue-invoices')}`, (s) =>
+  const overdue = useLoad<{ documents: FinanceDocumentListItem[]; nextCursor: string | null }>(`dash-overdue|${slug}|${has('panel.overdue-invoices')}|${today}`, (s) =>
     has('panel.overdue-invoices') ? clients.finance.documents(slug, 'invoices', { status: 'all', overdue: true, limit: DASHBOARD_LIMITS.overdueInvoices }, s) : idle());
   const activity = useLoad<BoundedPage<Activity>>(`dash-activity|${slug}|${has('panel.activity')}`, (s) =>
     has('panel.activity') ? clients.dashboard.recentActivity(slug, DASHBOARD_LIMITS.activity, s) : idle());
@@ -127,7 +135,7 @@ export function OperationalDashboard({ context, clients, customers, onOpen, onSe
             <Card className="p-0"><EmptyState className="border-0" title="Financial figures are not available to you" description="Reporting did not grant any of these figures for your role." /></Card>
           ) : (
             <>
-              <Kpis client={clients.reporting} slug={slug} date={date} comparison metrics={financeKpis} locale={locale} onSessionEnded={onSessionEnded}
+              <Kpis key={cat.today} client={clients.reporting} slug={slug} date={date} comparison metrics={financeKpis} locale={locale} onSessionEnded={onSessionEnded}
                 title="Financial figures" columns="xl:grid-cols-4" pickLabel="Open in Finance"
                 onPick={can('finance:read') ? (id) => { const r = KPI_ROUTE[id]; if (r) onOpen(r); } : undefined} />
             </>
@@ -157,7 +165,7 @@ export function OperationalDashboard({ context, clients, customers, onOpen, onSe
             switch (id) {
               case 'panel.financial-performance':
                 return cat && performance.length > 0 ? (
-                  <Performance key={id} client={clients.reporting} slug={slug} catalog={cat} metrics={performance} date={date} locale={locale} currency={currency}
+                  <Performance key={`${id}|${cat.today}`} client={clients.reporting} slug={slug} catalog={cat} metrics={performance} date={date} locale={locale} currency={currency}
                     onExplore={() => onOpen({ zone: 'reporting', child: 'explore' })} onSessionEnded={onSessionEnded} />
                 ) : null;
               case 'panel.overdue-invoices':
@@ -211,7 +219,9 @@ function UpcomingEventsCard({ load, lastDay, locale }: { load: Load<BoundedPage<
   return (
     <KpiCard label="Scheduled, next 7 days" state={cardState(load)} unavailableText="Could not load the schedule."
       values={p ? [{ key: 'n', text: `${count(p.items.length, locale)}${p.more ? '+' : ''}` }] : undefined}
-      note={`Scheduled events from now to the end of ${formatDate(lastDay, locale)}. Cancelled events are not counted.`} />
+      note={p?.more
+        ? `At least ${count(p.items.length, locale)}: only the first ${count(p.items.length, locale)} scheduled events up to the end of ${formatDate(lastDay, locale)} were counted.`
+        : `Scheduled events from now to the end of ${formatDate(lastDay, locale)}. Cancelled events are not counted.`} />
   );
 }
 
@@ -276,7 +286,7 @@ function OverdueInvoices({ load, today, locale, onOpen, onAll, onSessionEnded }:
   const data = done(load);
   const problem = failed(load);
   return (
-    <Panel id="dash-overdue" title="Overdue invoices" description={`Issued, not fully paid, due before today (${formatDate(today, locale)}).`}
+    <Panel id="dash-overdue" title="Overdue invoices" description={`Issued, not fully paid, due before today (${formatDate(today, locale)}). Newest invoices first.`}
       actions={<Button size="sm" variant="outline" onClick={onAll}>All invoices</Button>}>
       {problem ? <Problem outcome={problem} what="Overdue invoices" onRetry={load.reload} onSessionEnded={onSessionEnded} />
         : !data ? <PanelLoading label="Loading overdue invoices" />
@@ -302,7 +312,7 @@ function OverdueInvoices({ load, today, locale, onOpen, onAll, onSessionEnded }:
                 );
               })}
             </ul>
-            {data.nextCursor ? <p className="text-xs text-muted-foreground">Showing the {DASHBOARD_LIMITS.overdueInvoices} most recently created. More are in Finance.</p> : null}
+            {data.nextCursor ? <p className="text-xs text-muted-foreground">Showing the {DASHBOARD_LIMITS.overdueInvoices} most recently created, not the oldest due. More are in Finance.</p> : null}
           </>
         )}
     </Panel>

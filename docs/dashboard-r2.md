@@ -59,13 +59,16 @@ needs stage. If the owner wants it in Explore later, it can be registered as an 
 
 - Permission `sales:read` (every role by default), tenant unit of work, RLS.
 - One grouped SQL query: open (status OPEN, not archived) opportunities by pipeline, stage and currency, joined to the
-  business's stages. Bounded by stages × currencies; no opportunity rows leave the database.
+  business's stages. Opportunities, stages and pipelines are each filtered to the business explicitly (joins also match
+  on `business_id`), with forced RLS on all three as the backstop. Bounded by stages × currencies; no opportunity rows leave the database.
 - Amounts are summed exactly (`Decimal`), per currency, formatted to the currency's minor unit. Unpriced opportunities
   are counted but add nothing. Archived pipelines and stages appear only while they still hold open opportunities.
 - Contract: `SalesSummaryResponse` in `packages/contracts/src/sales.ts`; endpoint `salesSummary`; JSON schema regenerated.
 - Integration tests (`apps/api/tests/integration/sales.test.ts`, "R2 dashboard"): empty business (and reading creates
   nothing), exact multi-currency totals beyond float precision, won/lost/archived excluded, reopen counted again, second
-  pipeline, every role 200, no session 401, another business 404 with no figures leaked.
+  pipeline, every role 200, no session 401, another business 404 with no figures leaked; an archived stage and an archived
+  pipeline that still hold open work, with mixed currencies (including a 3-decimal one) and unpriced deals, and every
+  per-stage and overall count equal to the Sales board's own open list.
 
 ## 4. Permissions and tenancy
 
@@ -73,8 +76,11 @@ needs stage. If the owner wants it in Explore later, it can be registered as an 
   Reporting widgets also need the metric to be `accessible` in the catalogue. The API checks every request again.
 - With the server's defaults, Member (no `finance:read`) sees no Finance KPI, chart or overdue list, and no Finance or
   Reporting-Finance request is sent (tested in the client and against `ROLE_PERMISSIONS`).
-- Home is mounted with `key={slug}`; every request is under `/b/:slug`. A business switch discards all dashboard state
-  (tested with two businesses: the first business's figures never appear under the second).
+- Home is mounted under `dashboardIdentity(context)`: business slug, membership id, role and the sorted permission keys.
+  A business switch, a different membership, or a role or permission change within the same business discards every
+  figure loaded before and starts again with the new access (tested: an Owner downgraded to Member in the same business
+  loses the overdue list and Finance figures at once, and no Finance request follows). Signing out unmounts Home. Every
+  request is under `/b/:slug`, and the API checks each one again.
 
 ## 5. Requests and bounds
 
@@ -89,6 +95,13 @@ business zone, so it is 7 days minus or plus an hour across a clock change (test
 York). Events are grouped by business day; an event already under way is listed under today. Reporting ranges are
 resolved by the R1 engine in the business zone.
 
+If Home stays open across the business's midnight, it rolls over: the schedule window, the overdue list (and its
+"days overdue"), the Reporting catalogue (its "today") and the Money KPIs and charts are fetched again for the new
+day; the chosen date range is kept (tested with a clock crossing midnight in Perth).
+
+Period figures (Amount invoiced, Amount received, the charts) are for the chosen dates; Outstanding and Overdue are
+balances as of today. The Money header says so.
+
 ## 7. UI V2 compatibility
 
 Built only from `@business-os/ui` (`Card`, `KpiCard`, `SectionHeader`, `EmptyState`, `Skeleton`, `Badge`, `Button`,
@@ -100,20 +113,27 @@ cross-Zone endpoint, per V2-A §10).
 
 ## 8. Tests
 
-- `packages/app/tests/dashboard-r2.test.tsx` (20): source table, role gating (Owner, Manager, Member, none), real
+- `packages/app/tests/dashboard-r2.test.tsx` (22): source table, role gating (Owner, Manager, Member, none), real
   figures through the real clients and contracts, request budget and page sizes, date range re-query, schedule window
   and DST, days overdue and day labels, empty business, per-panel error and retry, offline vs server error, 401, contract
-  mismatch, navigation targets, no customer link without `customers:read`, tenant separation, client paths.
-- `tests/architecture/dashboard-sources.test.ts` (2): endpoints declared, keys exist, server role defaults.
-- `apps/api/tests/integration/sales.test.ts` (+3): §3.
+  mismatch, navigation targets, no customer link without `customers:read`, tenant separation, permission change in the
+  same business, midnight roll-over, client paths.
+- `tests/architecture/dashboard-sources.test.ts` (3): endpoints declared, keys exist, server role defaults, Home keyed by
+  `dashboardIdentity`.
+- `apps/api/tests/integration/sales.test.ts` (+4): §3.
 - Existing tests changed: `screens.test.tsx` (the "no combined activity feed yet" placeholder is gone, replaced by real
   activity), `shell.test.tsx` (passes the dashboard client over the same fake API). `packages/app/tests/setup.ts` makes
   any default client in tests fail as offline at once instead of trying DNS.
 
 ## 9. Known limitations
 
-- Upcoming schedule has no link: Scheduling is not in the navigation yet (D-V2A-8, deferred to V2-C).
-- Overdue invoices shows the 5 most recently created, not the oldest due (the list endpoint orders by creation).
+- Upcoming schedule has no link: Scheduling is not in the navigation yet (D-V2A-8, deferred to V2-C). The events API
+  keeps its own authorisation.
+- Overdue invoices shows the 5 most recently created, not the oldest due (the list endpoint orders by creation). The
+  panel says "Newest invoices first". Oldest-due ordering needs `sort=due_asc` on Finance's invoice list, planned as a
+  separate small Finance PR (D-R2D-4).
+- The "Scheduled, next 7 days" count stops at 100: with more it shows "100+" and "At least 100: only the first 100 …
+  were counted", never an unqualified total.
 - Pipeline value is unweighted (no probability weighting) and shows the default pipeline first.
 - Activity rows show no customer name or author (that would need per-record lookups); "Open" goes to the customer.
 - Expenses and project metrics remain unavailable (R1 planned metrics), as accepted for R2.
@@ -128,3 +148,18 @@ None. No schema change, no privileged SQL. One additive read-only endpoint; depl
 `docs/ui/screenshots/dashboard-r2/`: Owner light and dark at 1440, Member at 1440, Owner at 900 × 600, Owner and Member on
 a 390 px phone. Rendered by the real `App` against the in-memory test fakes (sample data only, no server or production
 data); harness sources in `harness/` as `.txt`. Colour-quantized; not golden baselines.
+
+## 12. Review amendments (owner review, 2026-11-16)
+
+Recommendations recorded in the review: D-R2D-1 approve `/sales/summary`; D-R2D-2 show the schedule now, no link;
+D-R2D-3 default Last 30 days (already the default); D-R2D-4 oldest due first, via a separate Finance PR; D-R2D-5 defer
+weighted value. Changes made for the review's checks:
+
+| Check | Change |
+|---|---|
+| Sales SQL tenancy | Explicit business filter on opportunities, stages and pipelines; new archived/mixed-currency/board-agreement test |
+| Permission change in the same business | Home keyed by `dashboardIdentity` (slug, membership, role, permissions); client and architecture tests |
+| Schedule count | Partial-count note "At least N" alongside "N+" |
+| Midnight while mounted | Roll-over timer at the business's midnight; date-dependent loads re-run; test |
+| Overdue order | Panel says "Newest invoices first" until the Finance sort lands |
+| Desktop and signed-in walkthrough | Still to do before pilot release (§9) |

@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ListActivitiesResponse, ListEventsResponse, ListFinanceDocumentsResponse, SalesSummaryResponse, type Activity, type FinanceDocument, type ProjectSummary, type SchedulingEvent } from '@business-os/contracts';
 import { createDashboardClient, createFinanceClient, createReportingClient, type BusinessContext, type ProjectsClient } from '../src';
-import { DASHBOARD_LIMITS, DASHBOARD_SOURCES, visibleWidgets } from '../src/shell/dashboard/sources';
+import { DASHBOARD_LIMITS, DASHBOARD_SOURCES, dashboardIdentity, visibleWidgets } from '../src/shell/dashboard/sources';
 import { OperationalDashboard, type CustomerCounts } from '../src/shell/dashboard/operational-dashboard';
 import { businessDay, dayLabel, daysOverdue, upcomingWindow } from '../src/shell/dashboard/time';
 import { activity, customer } from './support/fake-api';
@@ -272,6 +272,38 @@ describe('date range and time zones', () => {
     setup({ permissions: MEMBER, data: { events: many, eventsMore: true } });
     const ops = await panel('Operations');
     await waitFor(() => expect(within(ops).getByText('3+')).toBeTruthy());
+    expect(within(ops).getByText(/At least 3: only the first 3 scheduled events/)).toBeTruthy();
+  });
+
+  it("at the business's midnight, Home rolls over: the schedule, overdue list and Reporting figures are fetched for the new day", async () => {
+    // 23:59:30 on Sunday 15 November in Perth.
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      vi.setSystemTime(Date.parse('2026-11-15T15:59:30.000Z'));
+      const api = fakeApi({ alpha: OWNER_DATA });
+      const rep = createFakeReporting({ permissions: OWNER });
+      const projects = { summary: vi.fn(async () => ({ kind: 'ok' as const, data: PROJECTS })) } as unknown as ProjectsClient;
+      const clients = { reporting: createReportingClient(BASE, { kind: 'cookie' }, rep.fetch), dashboard: createDashboardClient(BASE, { kind: 'cookie' }, api.fetch), finance: createFinanceClient(BASE, { kind: 'cookie' }, api.fetch), projects };
+      render(<OperationalDashboard context={ctx(OWNER)} clients={clients} onOpen={vi.fn()} onSessionEnded={vi.fn()} />);
+      await panel('Overdue invoices');
+      await waitFor(() => expect(api.calls.filter((c) => c.path === '/scheduling/events')).toHaveLength(1));
+      expect(within(await panel('Overdue invoices')).getByText(/due before today \(15 Nov 2026\)/)).toBeTruthy();
+      const catalogs = () => rep.calls.filter((c) => c.path === '/metrics').length;
+      const before = { catalogs: catalogs(), queries: rep.calls.filter((c) => c.path === '/query').length };
+
+      await vi.advanceTimersByTimeAsync(31_000);
+      const events = () => api.calls.filter((c) => c.path === '/scheduling/events');
+      await waitFor(() => expect(events()).toHaveLength(2));
+      // The new window starts at the new day's midnight (16:00 UTC) and ends at the start of the 8th day after it.
+      expect(Date.parse(events()[1]!.query.from!)).toBeGreaterThanOrEqual(Date.parse('2026-11-15T16:00:00.000Z'));
+      expect(events()[1]!.query.to).toBe('2026-11-22T16:00:00.000Z');
+      await waitFor(() => expect(api.calls.filter((c) => c.path === '/finance/invoices')).toHaveLength(2));
+      await waitFor(() => expect(catalogs()).toBe(before.catalogs + 1));
+      await waitFor(() => expect(rep.calls.filter((c) => c.path === '/query').length).toBeGreaterThan(before.queries));
+      await waitFor(() => expect(within(screen.getByRole('region', { name: 'Overdue invoices' })).getByText(/due before today \(16 Nov 2026\)/)).toBeTruthy());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -363,6 +395,33 @@ describe('tenant separation', () => {
     expect(screen.queryByText('Called about the quote')).toBeNull();
     expect(new Set(api.calls.map((c) => c.slug))).toEqual(new Set(['alpha', 'beta']));
     expect(vi.mocked(projects.summary).mock.calls.map((c) => c[0])).toEqual(['alpha', 'beta']);
+  });
+
+  it('a permission change in the same business discards loaded Finance figures and never re-requests them', async () => {
+    const owner = ctx(OWNER);
+    const member: BusinessContext = { ...owner, membership: { ...owner.membership, role: 'MEMBER', permissions: MEMBER } };
+    // Order does not matter; any change in business, membership, role or permissions does.
+    expect(dashboardIdentity({ ...owner, membership: { ...owner.membership, permissions: [...OWNER].reverse() } })).toBe(dashboardIdentity(owner));
+    expect(dashboardIdentity(member)).not.toBe(dashboardIdentity(owner));
+    expect(dashboardIdentity({ ...owner, membership: { ...owner.membership, id: randomUUID() } })).not.toBe(dashboardIdentity(owner));
+
+    const api = fakeApi({ alpha: OWNER_DATA });
+    const rep = createFakeReporting({ permissions: OWNER });
+    const projects = { summary: vi.fn(async () => ({ kind: 'ok' as const, data: PROJECTS })) } as unknown as ProjectsClient;
+    const clients = { reporting: createReportingClient(BASE, { kind: 'cookie' }, rep.fetch), dashboard: createDashboardClient(BASE, { kind: 'cookie' }, api.fetch), finance: createFinanceClient(BASE, { kind: 'cookie' }, api.fetch), projects };
+    const { rerender } = render(<OperationalDashboard key={dashboardIdentity(owner)} context={owner} clients={clients} onOpen={vi.fn()} onSessionEnded={vi.fn()} now={NOW} />);
+    await waitFor(() => expect(screen.getByText('INV-0007')).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Financial performance' })).toBeTruthy());
+    const finance = api.calls.filter((c) => c.path.startsWith('/finance')).length;
+    const reporting = rep.calls.length;
+
+    // Same business, same slug: the membership is downgraded (as when the context is re-read after a role change).
+    rerender(<OperationalDashboard key={dashboardIdentity(member)} context={member} clients={clients} onOpen={vi.fn()} onSessionEnded={vi.fn()} now={NOW} />);
+    await waitFor(() => expect(screen.getByText(/Open value: \$12,500\.00/)).toBeTruthy());
+    expect(screen.queryByText('INV-0007')).toBeNull();
+    expect(screen.queryByText(/Overdue invoices|Financial performance|receivables|invoiced/i)).toBeNull();
+    expect(api.calls.filter((c) => c.path.startsWith('/finance')).length).toBe(finance);
+    expect(rep.calls.length).toBe(reporting);
   });
 
   it('the dashboard client only ever builds paths under /api/v1/b/:slug and parses with the contracts', async () => {

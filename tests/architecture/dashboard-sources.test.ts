@@ -1,6 +1,7 @@
 // R2 operational dashboard (docs/dashboard-r2.md): the widget table in the client must match the API. Every
 // widget names an endpoint the shared contract declares and permission keys the server's registry defines,
 // and with the server's own role defaults a Member sees no Finance widget at all.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ALL_PERMISSIONS, ROLE_PERMISSIONS } from '../../apps/api/src/modules/access/server/permissions';
 import { endpoints } from '../../packages/contracts/src/index';
@@ -23,5 +24,10 @@ describe('operational dashboard sources', () => {
     for (const id of finance) expect(of('MEMBER').has(id), id).toBe(false);
     for (const role of ['OWNER', 'ADMIN', 'MANAGER'] as const) expect(of(role).size, role).toBe(DASHBOARD_SOURCES.length);
     expect(of('MEMBER').size).toBe(DASHBOARD_SOURCES.length - finance.length);
+  });
+
+  it('Home is mounted per business, membership and permission set, so no figure outlives the access it was loaded with', () => {
+    const app = readFileSync(new URL('../../packages/app/src/app.tsx', import.meta.url), 'utf8');
+    expect(app).toMatch(/<HomeWithMetrics key=\{dashboardIdentity\(active\)\}/);
   });
 });

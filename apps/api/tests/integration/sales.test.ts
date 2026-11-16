@@ -658,6 +658,38 @@ describe('R2 dashboard: open pipeline summary', () => {
     expect((await owner.summary()).body.summary.open.count).toBe(7);
   });
 
+  it('archived stages and pipelines that still hold open work are listed with mixed currencies and unpriced deals; counts match the board', async () => {
+    const fresh = await team('sh');
+    const owner = api(fresh.people.OWNER!, fresh.slug);
+    const stages = (await owner.init()).body.stages as { id: string }[];
+    const make = async (body: Record<string, unknown>) => (await owner.create(body)).body.opportunity as { id: string };
+    await make({ title: 'Kept AUD', amount: '10.05', stageId: stages[3]!.id });
+    await make({ title: 'Kept USD', amount: '1.10', currencyCode: 'USD', stageId: stages[3]!.id });
+    await make({ title: 'Kept unpriced', stageId: stages[3]!.id });
+    const old = (await owner.createPipeline({ name: 'Old', stages: [{ name: 'Held' }, { name: 'Empty' }] })).body;
+    await make({ title: 'Old KWD', amount: '3.333', currencyCode: 'KWD', pipelineId: old.pipeline.id, stageId: old.stages[0].id });
+    await make({ title: 'Old unpriced', pipelineId: old.pipeline.id, stageId: old.stages[0].id });
+    // Archive a stage holding open work, an empty stage, and a whole pipeline (no API for these yet; set directly).
+    await admin.query('UPDATE sales_stages SET archived_at = now() WHERE id = ANY($1::uuid[])', [[stages[3]!.id, stages[2]!.id]]);
+    await admin.query('UPDATE sales_pipelines SET archived_at = now() WHERE id = $1', [old.pipeline.id]);
+
+    const { body } = await owner.summary();
+    const [main, archived] = body.summary.pipelines;
+    // The empty archived stage and the empty stage of the archived pipeline are gone; the ones holding open work stay, marked.
+    expect(main.stages.map((s: StageSum) => [s.name, s.archived, s.count])).toEqual([['New', false, 0], ['Qualified', false, 0], ['Negotiation', true, 3]]);
+    // The unpriced deal takes the business currency: counted, adds nothing.
+    expect(main.stages[2].totals).toEqual([{ currencyCode: 'AUD', amount: '10.05', count: 2 }, { currencyCode: 'USD', amount: '1.10', count: 1 }]);
+    expect(archived).toMatchObject({ name: 'Old', count: 2, totals: [{ currencyCode: 'AUD', amount: '0.00', count: 1 }, { currencyCode: 'KWD', amount: '3.333', count: 1 }] });
+    expect(archived.stages.map((s: StageSum) => s.name)).toEqual(['Held']);
+    expect(body.summary.open.count).toBe(5);
+
+    // Every count agrees with the Sales board's own open list, per stage and overall.
+    const openList = (await owner.list('?status=open&limit=100')).body.opportunities as { stageId: string }[];
+    expect(openList).toHaveLength(body.summary.open.count);
+    for (const p of body.summary.pipelines) for (const st of p.stages as StageSum[])
+      expect(openList.filter((o) => o.stageId === st.id), st.name).toHaveLength(st.count);
+  });
+
   it('every role with sales:read may read it; no session is 401; another business gets 404 and never sees these figures', async () => {
     const fresh = await team('sg');
     await api(fresh.people.OWNER!, fresh.slug).create({ title: 'Secret deal', amount: '4242' });

@@ -7,7 +7,8 @@ import 'server-only';
 //           currencies). Opportunities without an amount are counted but add nothing.
 //
 // One grouped query, bounded by stages x currencies; no opportunity rows leave the database. Runs in a
-// tenant unit of work: the business filter below and RLS both scope it to the business in the URL.
+// tenant unit of work. Every table read (opportunities, stages, pipelines) is filtered to the business in the
+// URL explicitly, and forced RLS on all three is the backstop; joins also match on business_id.
 import type { PipelineCurrencyTotal, SalesSummary } from '@business-os/contracts';
 import type { AppTenantDb } from '@/core/db';
 import { Decimal } from '@/core/db';
@@ -35,10 +36,11 @@ class Totals {
 
 export async function salesSummary(db: AppTenantDb): Promise<{ summary: SalesSummary }> {
   const rows = await db.$queryRaw<Row[]>`
-    WITH open AS (
+    WITH tenant AS (SELECT nullif(current_setting('app.business_id', true), '')::uuid AS id),
+    open AS (
       SELECT o.pipeline_id, o.stage_id, o.currency_code::text AS currency_code, sum(o.amount) AS amount, count(*)::int AS count
         FROM opportunities o
-       WHERE o.business_id = nullif(current_setting('app.business_id', true), '')::uuid
+       WHERE o.business_id = (SELECT id FROM tenant)
          AND o.status = 'OPEN' AND o.archived_at IS NULL
        GROUP BY 1, 2, 3
     )
@@ -48,7 +50,8 @@ export async function salesSummary(db: AppTenantDb): Promise<{ summary: SalesSum
       FROM sales_stages s
       JOIN sales_pipelines p ON p.business_id = s.business_id AND p.id = s.pipeline_id
       LEFT JOIN open o ON o.pipeline_id = s.pipeline_id AND o.stage_id = s.id
-     WHERE s.business_id = nullif(current_setting('app.business_id', true), '')::uuid
+     WHERE s.business_id = (SELECT id FROM tenant)
+       AND p.business_id = (SELECT id FROM tenant)
        AND ((s.archived_at IS NULL AND p.archived_at IS NULL) OR o.count IS NOT NULL)
      ORDER BY p.position, p.id, s.position, s.id, o.currency_code`;
 

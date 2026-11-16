@@ -50,3 +50,14 @@ export function visibleWidgets(permissions: readonly string[], sources: readonly
 
 /** Page sizes: every list on the dashboard is one bounded request. */
 export const DASHBOARD_LIMITS = { overdueInvoices: 5, activity: 8, events: 100, scheduleRows: 8, horizonDays: 7 } as const;
+
+/**
+ * Who the dashboard was loaded for: the business, the membership and exactly what it may read. Home is
+ * mounted under this key, so a business switch, a different membership, or a role or permission change in
+ * the same business discards every figure loaded before and starts again with the new access. (Signing out
+ * unmounts Home altogether.) The API still checks every request on its own.
+ */
+export function dashboardIdentity(context: { business: { slug: string }; membership: { id: string; role: string; permissions: readonly string[] } }): string {
+  const { business, membership } = context;
+  return [business.slug, membership.id, membership.role, [...membership.permissions].sort().join(',')].join('|');
+}
