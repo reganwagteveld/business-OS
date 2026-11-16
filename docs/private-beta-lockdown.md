@@ -45,7 +45,7 @@ There is **no Prisma migration**. Everything is in the privileged SQL, applied b
 - `app_private.beta_admission_events`: an append-only audit trail (update, delete and truncate raise). Every operator change and every invitation admission is recorded with operator name, reason and time. There is no runtime-role access.
 - Definer functions (owned by `bos_definer`, fixed `search_path`, no PUBLIC execute). These are executable by `bos_app`: `beta_can_register`, `beta_can_sign_in`, `beta_session_admitted`, `beta_session_can_create_business`. They are boolean-only and take no client-supplied user id except the server-side hook's.
 - Operator functions: `operator_admit_user`, `operator_revoke_user`, `operator_set_business_creation`. They are owned by the administrative role and executable by nobody else, because they are not granted to any runtime role.
-- **No automatic seed.** Nobody is admitted by applying the SQL. The initial roster (Regan's account only) is set explicitly with the operator tool right after applying it (§6).
+- **No automatic seed.** Nobody is admitted by applying the SQL. The initial roster (Regan's account only; Regan supplied the id on 2026-11-16, and the deploy re-confirms it with `find` before `admit`) is set explicitly with the operator tool right after applying it (§6).
 - Changed: `create_business` (requires the creation grant), `my_memberships` (requires admission), `accept_invitation` (admits and audits; refuses revoked users). Signatures and return types are unchanged, so the currently deployed application works with the new SQL (§5).
 
 ## 4. Operator admission tool
@@ -88,7 +88,7 @@ The rules are enforced in the database functions, not the script:
 Preconditions: CI green on PR 71's final commit, and Regan's production user id confirmed read-only (not inferred). The administrative connection must be available on the Mac (it is not saved there today).
 
 1. **Read-only preflight** (allowed without approval):
-   - Confirm `_prisma_migrations` has 20 applied and nothing pending (PR 71 adds no migration).
+   - Read `_prisma_migrations` and confirm the applied set is exactly the expected one with matching checksums. PR 71 adds no migration. As of 2026-11-16 10:09 UTC, production has 21: `main`'s 20 plus A2-A `20261202000000_business_profile`, applied ahead of PR 70. Stop on any unexpected or pending migration.
    - Confirm the 4 function hashes in §5 still match, and that `app_private.beta_admissions` does not exist.
    - Read `SELECT region FROM app_private.deployment_config`; the deploy must pass this exact value as `DEPLOYMENT_REGION`, because the script upserts it.
    - With the admin role, check `has_schema_privilege(current_user, 'app_private', 'CREATE')` and that it can read `public.users`. The operator functions run as the admin role and must see users through RLS: the Neon owner role normally has BYPASSRLS. Confirm this, and stop if not.
