@@ -352,7 +352,9 @@ describe('pre-dispatch balance check (financial correctness)', () => {
     const skippedAudit = await audits((await rowsOf(settledLater.id))[0].id);
     expect(skippedAudit.map((a) => a.action)).toEqual(['finance.system.reminder.skipped']);
     expect(skippedAudit[0].metadata).toMatchObject({ reason: 'settled' });
-    expect(JSON.stringify(skippedAudit[0].metadata)).not.toMatch(/80/); // no amounts in the audit log
+    // No amounts in the audit log. Ids are random, so mask them first, then look for 80 as a number.
+    const auditText = JSON.stringify(skippedAudit[0].metadata).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<id>');
+    expect(auditText).not.toMatch(/(?<![\d.])80(?:\.\d+)?(?!\d)/);
     // A READY reminder whose invoice is then paid is skipped at its next check.
     await pay(A, c, partial.id, '66.67');
     await dueNow(A);
