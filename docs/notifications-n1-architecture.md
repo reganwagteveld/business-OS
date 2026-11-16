@@ -20,6 +20,11 @@ user-level notices are written by **database triggers on the real state change**
 session can call to erase, resolve or write a notice), so provenance is the committed transition itself
 (§5.2.1, §11.2); §7.1.1 now separates the tenant-inbox `notify` path from the trigger path. Response
 table: §23.3.
+**Revision 5 (2026-11-16):** answers the fourth audit (conditional pass). Both badge paths now share
+one visibility predicate that excludes expired, archived and hidden rows, with regression tests for
+expired rows still physically stored (§5.4). §11.2 now defines the database facts that distinguish an
+individual membership removal from a business-purge cascade, without relying on a null actor, and adds
+tests for both paths. Response table: §23.4.
 
 ---
 
@@ -401,7 +406,13 @@ Every inbox read (`list`, `count`, `get`) returns only rows where, **now**:
 - the reader's role grants the type's `requiredPermission`;
 - the type's record check, if any, still passes (run for the page being returned, at most 50 rows, so
   it stays bounded);
-- the subject has not been erased (§13.3).
+- the subject has not been erased (§13.3);
+- the row is **not expired**: `expires_at > now()`, except an open `ACTION` row
+  (`category = 'ACTION' AND resolved_at IS NULL`), which stays visible until resolved (§13.1). `now()`
+  is database time, never a client value.
+
+Archived rows (`archived_at IS NOT NULL`) are shown only in the Archive view, never in the main list
+and never in any count.
 
 Rows that fail are **hidden, not deleted**, and not counted in the badge. If the reader's role is
 later restored, they reappear. This is the rule that makes a stored title snapshot acceptable: losing
@@ -409,12 +420,27 @@ access hides the snapshot immediately.
 
 **The unread badge is an ACL-safe lower bound: it never counts a row the reader could not open**
 (D-N1-7, revised after audit). It is exact for ordinary types and may under-count record-scoped ones.
-It is computed in two parts:
+It is computed in two parts, and **both parts start from the same base predicate**, defined once in the
+notifications module (`visibleUnread(now)`) so that neither path can drop a condition:
 
-1. **Types without a record check:** a SQL count over the reader's unread rows, filtered by the set of
+```sql
+business_id = app.business_id
+AND recipient_user_id = app.user_id          -- also enforced by RLS
+AND read_at IS NULL                          -- unread
+AND archived_at IS NULL                      -- archived rows never count
+AND (expires_at > now()                      -- expired rows never count, even while still stored
+     OR (category = 'ACTION' AND resolved_at IS NULL))
+-- plus: reader's membership ACTIVE (route guard, re-read under FOR SHARE) and type permitted (below)
+```
+
+Erased subjects need no clause, because the subject-erased trigger deletes their rows (§13.3).
+Badge index: partial `(business_id, recipient_user_id, expires_at) WHERE read_at IS NULL AND archived_at
+IS NULL`.
+
+1. **Types without a record check:** a SQL count over `visibleUnread(now)`, filtered by the set of
    type keys their role currently permits. Exact and cheap.
 2. **Types with a record check** (People, mailbox, restricted activity, anything registered with
-   `recordCheck`): the newest 20 unread rows of those types are loaded and passed through each type's
+   `recordCheck`): the newest 20 rows of those types matching `visibleUnread(now)` are loaded and passed through each type's
    **batch** record check (`(db, userId, subjectIds[]) => Set<subjectId>`, one query per type, not
    per row). Only rows that pass are counted. Older unread rows of these types beyond the newest 20 are
    **not counted** in the badge (they still appear, checked, when the list is opened).
@@ -424,6 +450,22 @@ someone who cannot open it. It is **not** a complete total: the `unread-count` r
 `{ count, complete: false }` when part 2 was truncated, and the client then shows the number without implying it is the total ("20+" is not
 used, because it would itself hint at hidden rows). Tested by revoking record access (manager link,
 mailbox share, restricted note) after the notification was written, with the coarse key kept.
+
+**Badge regression tests (N1-A, against the real database with RLS forced):**
+
+- Expired but still stored: rows with `expires_at` in the past that `notifications_purge_own` has not
+  yet deleted (the recipient has not opened the inbox; no retention job runs) are excluded from part 1,
+  part 2, `list` and `get`. The test sets `expires_at` in the past through the owner fixture, asserts
+  the rows still exist physically, then asserts count 0 and an empty list, for a type with and a type
+  without a record check.
+- An open `ACTION` row past `expires_at` still counts; the same row once resolved and past `expires_at`
+  does not.
+- Archived unread rows count in neither part, and appear only in the Archive view.
+- Hidden rows (permission revoked, record check failing, membership suspended) count in neither part.
+- `complete` is `true` when part 2 loads fewer than 20 rows, and expired or archived rows never make
+  it `false` (they are excluded before the limit is applied).
+- An architecture test asserts that `count`, `list` and both badge parts call `visibleUnread`, and that
+  no other query in the module reads `notifications` for display.
 
 ### 5.5 Users in several businesses
 
@@ -705,10 +747,49 @@ tenant inbox would either duplicate them per business or hide them from users wi
   | Role change | `AFTER UPDATE OF role ON memberships`, only when `OLD.role IS DISTINCT FROM NEW.role` | `tenancy.membership.role_changed`, or `tenancy.ownership.changed` when either side is `OWNER` | Fires after the row is updated, inside the statement. The A2 service has already locked the row and run its authority and rank checks; a trigger failure aborts the update (fail closed). |
   | Ownership transfer / step-down (A2-B) | The same trigger, once per affected row | One `tenancy.ownership.changed` notice for the outgoing and one for the incoming owner | Both role updates and both notices commit or roll back together in the A2-B transfer transaction; the A2-B last-owner guard runs first. |
   | Suspension / reactivation (A2-B) | `AFTER UPDATE OF status ON memberships`, only when the status changes | `tenancy.membership.suspended` / `.reactivated` | As above. |
-  | Removal | `AFTER DELETE ON memberships` | `tenancy.membership.removed` | Fires after the delete, in the same statement. Skipped when the delete is a cascade from business purge (purge runs as `bos_jobs` with no session user; exact detection tested in N1-U). The notice has no FK to the membership, so it survives. |
+  | Removal | `AFTER DELETE ON memberships` | `tenancy.membership.removed` | Fires after the delete, in the same statement. Skipped **only** for a business-purge cascade, detected as defined in "Purge versus individual removal" below. A null actor is never used as the signal. The notice has no FK to the membership, so it survives. |
   | Password change | `AFTER UPDATE OF password ON accounts` (the Better Auth credential row; column verified in `identity.prisma`) when it changes | `account.password.changed` | Fires for any path that changes the password (reset or change), so no adapter hook is needed. |
   | Email change | `AFTER UPDATE OF email ON users` when it changes | `account.email.changed` (old address kept in params only for the N1-D email to the old address, then cleared) | As above. |
 
+- **Purge versus individual removal.** The removal trigger writes `tenancy.membership.removed` unless
+  **all three** of these database facts hold. None can be supplied or changed by tenant code, and an
+  empty `app.user_id` is not one of them (it is set by the caller and is not trusted for this):
+
+  1. **Connection identity:** `session_user = 'bos_jobs'`. This is the login role of the connection.
+     The trigger function is `SECURITY DEFINER`, so `current_user` is its owner and is not used.
+     `SET ROLE` does not change `session_user`, and `SET SESSION AUTHORIZATION` needs superuser.
+     `bos_app` is not a member of `bos_jobs`, and a test asserts `pg_has_role('bos_app', 'bos_jobs',
+     'MEMBER')` is false.
+  2. **The business is being purged:** either `app_private.is_purgeable(OLD.business_id)` is true
+     (archived for at least the 30-day floor, `data-model.md` §7.1; `bos_app` has no `UPDATE` on
+     `businesses.archived_at` and no `DELETE` on `businesses`), or the `businesses` row for
+     `OLD.business_id` is already gone in this transaction. The only role that can delete a business row
+     is `bos_jobs`, under `jobs_purge_delete`, which itself requires `is_purgeable`. The trigger owner
+     gets `EXECUTE` on `is_purgeable` and `SELECT (id, archived_at)` on `businesses` for this check.
+  3. **The delete is the foreign-key cascade:** `pg_trigger_depth() > 1`. That is, the membership row was
+     deleted by the `ON DELETE CASCADE` action of `DELETE FROM businesses`, not by a direct `DELETE` on
+     `memberships`. The purge job (data-model §7.1, not yet built) must delete the business row and let
+     memberships cascade, never delete memberships first. This is an N1-U requirement on that job.
+
+  If any check fails, or cannot be evaluated, the notice **is written**: the failure mode is a surplus
+  notice, never a suppressed one. `bos_jobs` still cannot insert notices itself, because only the
+  trigger writes them.
+- Tests for both paths (N1-U, real roles, RLS forced):
+  - **Individual removal writes a notice:** an admin removes a member; a member leaves; an owner is
+    removed by another owner. Each writes exactly one `tenancy.membership.removed`.
+  - **Spoofed actor still writes:** a `bos_app` removal with `app.user_id` set to empty writes a notice
+    (or is refused by the existing guards), and never skips.
+  - **Archived but not purged:** removal from a business that is archived but still inside the
+    grace period, made as `bos_app`, writes a notice.
+  - **Purge cascade writes none:** a `bos_jobs` purge of a purgeable business by
+    `DELETE FROM businesses` writes no removal notices, and leaves no orphaned notification rows. The
+    `business.purged` audit event is written.
+  - **Direct delete by the job writes:** a direct `DELETE FROM memberships` as `bos_jobs` on a
+    purgeable business writes notices, because check 3 fails.
+  - **Not purgeable means nothing happens:** `bos_jobs` on a business that is not purgeable sees and
+    deletes nothing.
+  - **No privilege escalation:** `bos_app` cannot `SET ROLE bos_jobs`, cannot delete a business, and
+    cannot set `archived_at`.
 - Concurrency: two changes to one membership serialise on its row lock (taken by the `UPDATE`
   itself); each committed transition produces exactly one notice; a no-op update produces none.
 - Tests: user A cannot read or mark user B's notices; `bos_app` cannot `INSERT` into `user_notices` and
@@ -1180,3 +1261,10 @@ merging this PR each still need Regan's separate approval.
 | 1 | HIGH: callable erase/resolve functions let any tenant session erase or resolve others' notifications | §5.2.1: erase and resolve are **trigger functions** on the subject/action tables, with no `EXECUTE` grant; they fire only on a real delete, erasure or open→closed transition in the same transaction; mismatched business aborts; tests for direct-call refusal and non-transition updates. Only `purge_own` remains callable, and it touches only the caller's own rows |
 | 2 | MEDIUM/HIGH: access-notice ordering and provenance | §11.2: no callable `record_access_notice` or `record_account_notice`. Notices are written by `AFTER` row triggers on `memberships` (role, status, delete), `accounts.password` and `users.email`, with params only from `OLD`/`NEW`; ordering per operation in the §11.2 table; authority, rank and owner checks stay in the A2 services that make the change; tests for demotion, suspension, removal, transfer, concurrency and spoofing |
 | — | §7.1.1 mixed `notify` with user-level notices | §7.1.1 now states it covers the tenant-inbox path only and points to the trigger path; `ERROR_MANDATORY` example no longer uses role or ownership; §18.1 rows aligned |
+
+### 23.4 Fourth audit (conditional pass)
+
+| # | Finding | Change |
+|---|---|---|
+| 1 | Unread badge paths must explicitly exclude expired, archived and otherwise invisible rows | §5.4: one `visibleUnread(now)` predicate (unread, not archived, `expires_at > now()` except open `ACTION`, recipient, active membership, permitted type) used by part 1, part 2, `list` and `count`, enforced by an architecture test. Regression tests cover expired rows still stored before cleanup or retention, expired open versus resolved `ACTION` rows, archived rows, hidden rows and the `complete` flag. |
+| 2 | Purge versus individual removal must not rely on a null session actor | §11.2: skip only when `session_user = 'bos_jobs'`, the business is purgeable or already deleted in this transaction, and the delete is the FK cascade (`pg_trigger_depth() > 1`). Otherwise the notice is written (fail toward a surplus notice). Tests cover individual removal, spoofed empty actor, archived but not purgeable, purge cascade, a direct job delete, a non-purgeable business, and no role escalation. |
