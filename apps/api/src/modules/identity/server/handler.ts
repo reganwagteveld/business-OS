@@ -1,5 +1,6 @@
 import 'server-only';
 import { getEnv } from '@/core/config/env';
+import { allowedAuthRoute, rejectAuthRequest } from './allow-list';
 import { getAuth } from './auth-adapter';
 import { authHeaders, verifySignedToken } from './session';
 
@@ -45,8 +46,13 @@ export function classifyAuthRequest(request: Request): AuthRequestMode {
   return { kind: 'cookie' };
 }
 
-/** Passes a request under /api/v1/auth to Better Auth, with desktop bearer tokens converted. */
+/**
+ * Passes a request under /api/v1/auth to Better Auth, with desktop bearer tokens converted. Only routes
+ * on the explicit allow-list (allow-list.ts) are forwarded; the check runs before CSRF classification,
+ * so a refused path never reaches Better Auth or the database.
+ */
 export async function handleAuthRequest(request: Request): Promise<Response> {
+  if (!allowedAuthRoute(request)) return rejectAuthRequest(request);
   const mode = classifyAuthRequest(request);
   if (mode.kind === 'reject') {
     return Response.json({ error: mode.error }, { status: mode.status, headers: { 'Cache-Control': 'no-store' } });
