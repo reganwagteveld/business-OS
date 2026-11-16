@@ -24,6 +24,8 @@ export type StateConflictCode =
   // People (docs/people-data-model.md §4).
   | 'invalid_transition' | 'has_direct_reports' | 'manager_cycle' | 'in_use' | 'duplicate_employee_number' | 'user_already_linked' | 'terminated'
   | 'start_date_locked'
+  // People P3-A (docs/people-leave-p3.md): leave configuration.
+  | 'inactive_reference' | 'not_assigned'
   // Scheduling S1: the default calendar cannot be archived; cancelled events are read-only.
   | 'default_calendar' | 'not_scheduled'
   // Scheduling S2 (docs/scheduling-s2.md §3): an inactive resource cannot be newly assigned.

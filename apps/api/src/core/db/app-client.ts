@@ -29,6 +29,7 @@ const TENANT_MODELS = {
   financeDocumentBranding: 'businessId', financeBrandingAsset: 'businessId', financeDocumentPdf: 'businessId',
   peopleDepartment: 'businessId', peopleLocation: 'businessId', peopleEmployee: 'businessId', peopleEmployeePersonalDetails: 'businessId',
   peopleDepartmentAssignment: 'businessId', peopleManagerAssignment: 'businessId', peopleEmploymentStatusHistory: 'businessId',
+  peopleLeaveType: 'businessId', peopleLeavePolicy: 'businessId', peopleLeavePolicyRevision: 'businessId', peopleLeavePolicyAssignment: 'businessId',
   schedulingCalendar: 'businessId', schedulingEvent: 'businessId', schedulingResource: 'businessId', schedulingEventResource: 'businessId',
   conversation: 'businessId', message: 'businessId', messageParticipant: 'businessId',
   mailConnection: 'businessId', mailConnectionCredential: 'businessId', mailOAuthState: 'businessId', mailSyncJob: 'businessId',
