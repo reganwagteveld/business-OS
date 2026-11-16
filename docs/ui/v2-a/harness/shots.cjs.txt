@@ -1,0 +1,67 @@
+// UI V2-A: screenshots of current main, rendered by the real shared App against the in-memory test fakes.
+const { chromium } = require('playwright');
+const OUT = process.argv[2];
+const URL = 'http://localhost:5199/';
+(async () => {
+  const b = await chromium.launch();
+  const errors = [];
+  async function session(width, height, scheme) {
+    const ctx = await b.newContext({ viewport: { width, height }, deviceScaleFactor: 2, colorScheme: scheme, ...(width < 500 ? { isMobile: true, hasTouch: true } : {}) });
+    const p = await ctx.newPage();
+    p.setDefaultTimeout(8000);
+    p.on('pageerror', (e) => errors.push(e.message));
+    await p.goto(URL);
+    await p.getByRole('heading', { level: 1, name: /Welcome/ }).waitFor();
+    await p.waitForTimeout(400);
+    return { ctx, p };
+  }
+  const shot = async (p, name, full = false) => { await p.waitForTimeout(350); await p.screenshot({ path: `${OUT}/${name}.png`, fullPage: full }); console.log('ok', name); };
+  const zone = async (p, name, narrow) => {
+    if (narrow) { await p.getByRole('button', { name: 'Open navigation' }).click(); await p.getByRole('dialog', { name: 'Navigation' }).getByRole('button', { name, exact: true }).click(); }
+    else await p.getByRole('navigation', { name: 'Zones' }).getByRole('button', { name, exact: true }).click();
+    await p.waitForTimeout(600);
+  };
+  const h1 = (p, name) => p.getByRole('heading', { level: 1, name }).waitFor();
+  const safe = async (label, fn) => { try { await fn(); } catch (e) { console.log('FAIL', label, e.message.split('\n')[0]); } };
+
+  for (const scheme of ['light', 'dark']) {
+    const { ctx, p } = await session(1440, 900, scheme);
+    const d = `desktop-${scheme}`;
+    await shot(p, `${d}-01-home`);
+    await safe('account', async () => { await p.getByRole('button', { name: /Account menu/ }).click(); await shot(p, `${d}-02-account-menu`); await p.keyboard.press('Escape'); });
+    await safe('customers', async () => { await zone(p, 'Customers'); await h1(p, 'Customers'); await p.getByText('Kelp & Co Seafood').first().waitFor(); await shot(p, `${d}-03-customers-list`); });
+    await safe('customer detail', async () => { await p.getByRole('button', { name: 'Kelp & Co Seafood' }).click(); await h1(p, 'Kelp & Co Seafood'); await p.waitForTimeout(800); await shot(p, `${d}-04-customer-detail`); });
+    await safe('customer form', async () => { await zone(p, 'Customers'); await p.getByRole('button', { name: 'Add customer' }).first().click(); await h1(p, 'Add customer'); await shot(p, `${d}-05-customer-form`); });
+    await safe('sales', async () => { await zone(p, 'Sales'); await p.waitForTimeout(800); await shot(p, `${d}-06-sales`); });
+    await safe('sales board', async () => { await p.getByRole('button', { name: /Board/ }).first().click(); await p.waitForTimeout(700); await shot(p, `${d}-07-sales-board`); });
+    await safe('projects', async () => { await zone(p, 'Projects'); await p.getByText('Tidewater brand refresh').first().waitFor(); await shot(p, `${d}-08-projects-list`); });
+    await safe('project board', async () => { await p.getByRole('button', { name: 'Tidewater brand refresh' }).first().click(); await h1(p, 'Tidewater brand refresh'); await p.waitForTimeout(800); await shot(p, `${d}-09-project-detail`); });
+    await safe('finance', async () => { await zone(p, 'Finance'); await h1(p, 'Finance'); await p.waitForTimeout(800); await shot(p, `${d}-10-finance-overview`); });
+    await safe('invoices', async () => { await p.getByRole('navigation', { name: 'Finance sections' }).getByRole('button', { name: 'Invoices' }).click(); await h1(p, 'Invoices'); await p.waitForTimeout(800); await shot(p, `${d}-11-finance-invoices`); });
+    await safe('invoice', async () => { await p.getByRole('button', { name: /INV-0001/ }).first().click(); await h1(p, 'INV-0001'); await p.waitForTimeout(900); await shot(p, `${d}-12-finance-invoice-detail`); });
+    await safe('invoice form', async () => { await p.getByRole('navigation', { name: 'Finance sections' }).getByRole('button', { name: 'Invoices' }).click(); await h1(p, 'Invoices'); await p.getByRole('button', { name: /New invoice/ }).first().click(); await p.waitForTimeout(900); await shot(p, `${d}-13-finance-invoice-form`); });
+    await safe('people', async () => { await zone(p, 'People'); await p.waitForTimeout(900); await shot(p, `${d}-14-people`); });
+    await safe('reporting', async () => { await zone(p, 'Reporting'); await p.waitForTimeout(1500); await shot(p, `${d}-15-reporting-dashboard`); });
+    await safe('explore', async () => { await p.getByRole('navigation', { name: 'Reporting sections' }).getByRole('button', { name: 'Explore' }).click(); await p.waitForTimeout(1500); await shot(p, `${d}-16-reporting-explore`); });
+    await ctx.close();
+  }
+  for (const scheme of ['light', 'dark']) {
+    const { ctx, p } = await session(390, 844, scheme);
+    const m = `mobile-${scheme}`;
+    await shot(p, `${m}-01-home`);
+    await safe('drawer', async () => { await p.getByRole('button', { name: 'Open navigation' }).click(); await shot(p, `${m}-02-drawer`); await p.keyboard.press('Escape'); });
+    await safe('m customers', async () => { await zone(p, 'Customers', true); await p.getByText('Kelp & Co Seafood').first().waitFor(); await shot(p, `${m}-03-customers`); });
+    await safe('m invoices', async () => { await zone(p, 'Finance', true); await h1(p, 'Finance'); await p.getByRole('navigation', { name: 'Finance sections' }).getByRole('button', { name: 'Invoices' }).click(); await h1(p, 'Invoices'); await p.waitForTimeout(800); await shot(p, `${m}-04-finance-invoices`); });
+    await safe('m reporting', async () => { await zone(p, 'Reporting', true); await p.waitForTimeout(1500); await shot(p, `${m}-05-reporting`); });
+    await ctx.close();
+  }
+  // Tauri minimum window (900 x 600) and a tablet: compact rail layout.
+  for (const [w, h, name] of [[900, 600, 'desktop-min-900'], [834, 1112, 'tablet-834']]) {
+    const { ctx, p } = await session(w, h, 'light');
+    await safe(name, async () => { await zone(p, 'Customers'); await p.getByText('Kelp & Co Seafood').first().waitFor(); await shot(p, `${name}-light-customers`); });
+    await safe(name + ' fin', async () => { await zone(p, 'Finance'); await h1(p, 'Finance'); await p.getByRole('navigation', { name: 'Finance sections' }).getByRole('button', { name: 'Invoices' }).click(); await h1(p, 'Invoices'); await p.waitForTimeout(700); await shot(p, `${name}-light-invoices`); });
+    await ctx.close();
+  }
+  console.log('errors', errors.slice(0, 5));
+  await b.close();
+})();
