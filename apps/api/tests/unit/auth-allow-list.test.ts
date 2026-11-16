@@ -175,17 +175,30 @@ describe('non-allowed built-ins and unknown paths', () => {
     await expectRejected(new Request(`${BASE}/change-password`, { method: 'POST', headers: { authorization: 'Bearer forged' }, body: '{}' }));
   });
 
-  it('are counted and logged without the query string or any later path segment', async () => {
-    const { rejectedAuthRequestCount } = await import('@/modules/identity/server/allow-list');
+  it('are counted and logged under a fixed code, never with any path, segment, query or header text', async () => {
+    const { rejectedAuthRequestCount, AUTH_REJECTION_CODE } = await import('@/modules/identity/server/allow-list');
     const warn = vi.mocked(console.warn);
     const before = rejectedAuthRequestCount();
-    await handle(request('GET', '/delete-user/callback?token=secret-token-value&callbackURL=%2F'));
-    await handle(request('GET', `/reset-password/${RESET_TOKEN}/?callbackURL=x`));
-    expect(rejectedAuthRequestCount()).toBe(before + 2);
-    const lines = warn.mock.calls.map((c) => String(c[0]));
-    expect(lines[0]).toMatch(/^\[auth:rejected\] method=GET route=delete-user total=\d+$/);
-    expect(lines[1]).toMatch(/^\[auth:rejected\] method=GET route=reset-password total=\d+$/);
-    expect(lines.join('\n')).not.toMatch(/secret-token-value|callbackURL|AbCdEf0123/);
+    const sensitive = [
+      request('GET', '/delete-user/callback?token=secret-token-value&callbackURL=%2F'),
+      request('GET', `/reset-password/${RESET_TOKEN}/?callbackURL=x`),
+      request('POST', '/user@example.com/update-user'),
+      request('POST', '/eyJhbGciOiJIUzI1NiJ9.payload.sig'),
+      request('POST', '/%0Aforged-log-line%0D'),
+      request('POST', '/AKIAEXAMPLESECRET1234'),
+      new Request(`${BASE}/x`, { method: 'PROPFIND', headers: { origin: APP } }),
+    ];
+    for (const r of sensitive) await handle(r);
+    expect(rejectedAuthRequestCount()).toBe(before + sensitive.length);
+    const lines = warn.mock.calls.map((c) => c.map(String).join(' '));
+    expect(lines).toHaveLength(sensitive.length);
+    for (const line of lines) {
+      expect(line).toMatch(new RegExp(`^\\[auth:rejected\\] code=${AUTH_REJECTION_CODE} method=(GET|POST|OTHER) total=\\d+$`));
+    }
+    const all = lines.join('\n');
+    for (const fragment of ['secret-token-value', 'callbackURL', RESET_TOKEN, 'example.com', 'eyJhbGci', 'forged', 'AKIA', 'delete-user', 'update-user', 'reset-password', 'PROPFIND', '/']) {
+      expect(all).not.toContain(fragment);
+    }
   });
 });
 
@@ -252,5 +265,46 @@ describe('path normalisation (§15.9 gate 1)', () => {
   it('rejects anything outside the auth base path', async () => {
     await expectRejected(new Request(`${APP}/api/v1/authx/sign-out`, { method: 'POST', headers: { origin: APP } }));
     await expectRejected(new Request(`${APP}/sign-out`, { method: 'POST', headers: { origin: APP } }));
+  });
+});
+
+describe('CORS preflight (OPTIONS) exception', () => {
+  async function route() {
+    return import('@/app/api/v1/auth/[...all]/route');
+  }
+
+  it('answers 204 for allowed and blocked paths alike, without reaching Better Auth or the allow-list', async () => {
+    const { OPTIONS } = await route();
+    const { rejectedAuthRequestCount } = await import('@/modules/identity/server/allow-list');
+    const before = rejectedAuthRequestCount();
+    for (const path of ['/sign-in/email', '/update-user', '/delete-user', '/no-such-endpoint']) {
+      const res = OPTIONS(new Request(`${BASE}${path}`, { method: 'OPTIONS', headers: { origin: 'tauri://localhost', 'access-control-request-method': 'POST' } }));
+      expect(res.status, path).toBe(204);
+      expect(await res.text()).toBe('');
+      expect(res.headers.get('access-control-allow-origin')).toBe('tauri://localhost');
+      expect(res.headers.get('access-control-allow-credentials')).toBeNull();
+    }
+    expect(mocks.handler).not.toHaveBeenCalled();
+    expect(mocks.context).not.toHaveBeenCalled();
+    expect(rejectedAuthRequestCount()).toBe(before);
+  });
+
+  it('grants no CORS headers to a foreign origin', async () => {
+    const { OPTIONS } = await route();
+    const res = OPTIONS(new Request(`${BASE}/sign-in/email`, { method: 'OPTIONS', headers: { origin: 'https://evil.example' } }));
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+    expect(mocks.handler).not.toHaveBeenCalled();
+  });
+
+  it('does not open the blocked route: the follow-up request is still refused', async () => {
+    const { POST } = await route();
+    const res = await POST(request('POST', '/update-user', 'bearer', { origin: 'tauri://localhost' }));
+    expect(res.status).toBe(404);
+    expect(mocks.handler).not.toHaveBeenCalled();
+  });
+
+  it('is refused if OPTIONS ever reaches handleAuthRequest directly', async () => {
+    await expectRejected(request('OPTIONS', '/sign-in/email', 'none'));
   });
 });

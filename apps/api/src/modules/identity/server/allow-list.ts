@@ -16,6 +16,13 @@ import { AUTH_BASE_PATH } from './auth-adapter';
  * audit event, rate-limit rule and tests. Never add one pre-emptively.
  *
  * Server-side calls such as getAuth().api.getSession() do not go through HTTP and are unaffected.
+ *
+ * OPTIONS is the one method outside this list that the route answers: app/api/v1/auth/[...all]/route.ts
+ * exports OPTIONS as the shared CORS preflight (core/http `preflight`), a bodyless 204 with CORS headers
+ * for allow-listed origins only. It never calls handleAuthRequest, so a preflight never reaches Better
+ * Auth, never touches the database and grants nothing by itself: the GET or POST that follows is still
+ * checked here. If handleAuthRequest were ever called with OPTIONS, it is refused like any other
+ * unlisted method.
  */
 type AllowedRoute = { method: 'GET' | 'POST'; path: string };
 
@@ -58,25 +65,19 @@ export function allowedAuthRoute(request: Request): AllowedRoute | null {
   return AUTH_ALLOWED_ROUTES.find((route) => route.method === request.method && matches(route.path, path)) ?? null;
 }
 
+/**
+ * The one code every refused request is logged under. Logs never carry any part of the request URL (path,
+ * segments or query) or any other attacker-controlled text: only this fixed code, the method from a fixed
+ * set, and the process-local aggregate count.
+ */
+export const AUTH_REJECTION_CODE = 'auth_route_not_allowed';
+const LOGGED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
+
 const rejected = { count: 0 };
 
-/** Number of requests refused by the allow-list in this process (test and diagnostics hook). */
+/** Number of requests refused by the allow-list in this process (aggregate metric and test hook). */
 export function rejectedAuthRequestCount(): number {
   return rejected.count;
-}
-
-/**
- * A safe label for logs: the first path segment under the auth base path, lower-cased, limited to
- * [a-z0-9-] and 40 characters. Never the query string, never a later segment (which could hold a token).
- */
-function logLabel(request: Request): string {
-  try {
-    const pathname = new URL(request.url).pathname;
-    const first = pathname.startsWith(`${AUTH_BASE_PATH}/`) ? pathname.slice(AUTH_BASE_PATH.length + 1).split('/')[0]! : '';
-    return first.toLowerCase().replace(/[^a-z0-9-]/g, '_').slice(0, 40) || '_';
-  } catch {
-    return '_';
-  }
 }
 
 /**
@@ -85,6 +86,7 @@ function logLabel(request: Request): string {
  */
 export function rejectAuthRequest(request: Request): Response {
   rejected.count += 1;
-  console.warn(`[auth:rejected] method=${request.method.slice(0, 10)} route=${logLabel(request)} total=${rejected.count}`);
+  const method = LOGGED_METHODS.has(request.method) ? request.method : 'OTHER';
+  console.warn(`[auth:rejected] code=${AUTH_REJECTION_CODE} method=${method} total=${rejected.count}`);
   return Response.json({ error: 'not_found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
 }
