@@ -1,9 +1,11 @@
 # Finance F6: Automated billing and receivables
 
 Status: F6-1 (recurring billing, §3, §5) and F6-2 (statements and ageing, §4) are merged; the owner
-approved D-F6-1 to D-F6-12 on 2026-11-15. **F6-3 (payment reminders, §10) is a draft PR**, built on
-D-F6-13 to D-F6-18, which the owner approved on 2026-11-16. Its migration is not applied to production
-and nothing in it sends mail.
+approved D-F6-1 to D-F6-12 on 2026-11-15. **F6-3 (payment reminders, §10) is merged** (`52de37f`, #54),
+built on D-F6-13 to D-F6-18, which the owner approved on 2026-11-16. Its migration
+`20261127000000_finance_reminders` and `003_finance_reminders_due.sql` were applied to production on
+2026-11-16 (see migration-readiness §9). The reminder scheduler is off (no `CRON_SECRET`, no cron
+entry) and nothing in it sends mail.
 
 F6 adds recurring invoices (F6A), payment reminders (F6B) and customer statements with receivables
 ageing (F6C) on top of F1-F5, C1 and C2-A. It reuses the existing invoice service, money rules,
