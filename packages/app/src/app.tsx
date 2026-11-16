@@ -240,8 +240,8 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   } else if (active && current.zone === 'sales') {
     screen = (
       <SalesZone
-        key={`${slug}|${intent ?? ''}`}
-        sales={sales} customers={customers} context={active} userLabel={userLabel} initialAction={intent}
+        key={`${slug}|${target ?? ''}|${intent ?? ''}`}
+        sales={sales} customers={customers} context={active} userLabel={userLabel} initialOpportunityId={target} initialAction={intent}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
