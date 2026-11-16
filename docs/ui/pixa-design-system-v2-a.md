@@ -1,11 +1,11 @@
 # UI V2-A: Pixa Design System, architecture audit and specification
 
-- Status: **Proposal for review.** Documentation only. Nothing here changes application code, API contracts, permissions, tenant isolation, financial rules or the database. Implementation starts at V2-B only after the approval gate in §13.
+- Status: **Direction approved by Regan on PR #74 (2026-11-16); review corrections applied; draft until owner re-review.** Not approved for merge or for V2-B yet. Documentation only. Nothing here changes application code, API contracts, permissions, tenant isolation, financial rules or the database. Implementation starts at V2-B only after the approval gate in §13.
 - Issue: #73. Branch: `claude/project-thread-d3hwy5`. Audited commit: `1b2bf15` (main, 2026-11-16).
 - Visual direction (approved in #73): **Pixa Hybrid**. Linear-like precision, Raycast-like desktop ergonomics, Stripe-like clarity for business workflows. Not a clone of any of them.
 - Themes: light and dark from day one, following the system preference unless the person chooses one.
 
-How to read this: §2 to §5 are the audit (what exists, with evidence). §6 to §10 are the specification (what V2 should be). §11 to §13 are the plan, the risks and the decisions waiting on the owner. Every finding has an ID (`F-nn`) and every decision an ID (`D-V2A-n`).
+How to read this: §2 to §5 are the audit (what exists, with evidence). §6 to §10 are the specification (what V2 should be). §11 to §13 are the plan, the risks and the owner's decisions (recorded in §13.2). Every finding has an ID (`F-nn`) and every decision an ID (`D-V2A-n`).
 
 ## Contents
 
@@ -145,7 +145,7 @@ Severity: **S1** blocks a task or fails an accessibility requirement; **S2** cle
 | F-21 | **Long forms hide their actions.** The Add customer submit button is below the fold at 1440 × 900; there is no sticky action bar. | `v2-a/current/desktop-light-05-customer-form.png` | S3 | F | S | V2-B (FormActions) |
 | F-22 | **Architecture §6.5 patterns were never built.** It promises `packages/ui/src/patterns` (`ZoneHeader`, `EntityTable`, `EntityForm`, `EmptyState`, `Timeline`, `DetailPanel`) as "the only way Zones build standard screens", and "Zone accent colours" tokens. Neither exists; most of F-03 to F-16 follows from that. | `docs/architecture.md` §6.5; `packages/ui/src` | S2 | F | L | V2-B to V2-D |
 | F-23 | **Three stacked bars on phones.** Top bar (64 px) + breadcrumb bar + section tabs use about 155 px of an 844 px screen before any content. | `v2-a/current/mobile-light-04-finance-invoices.png` | S3 | F | S | V2-C |
-| F-24 | **No declared browser and WebView floor.** Tailwind 4 needs Safari 16.4+ / Chromium 111+. `.bos-glass` puts `color-mix(… var() …)` after an opaque fallback, but a declaration with `var()` fails at computed-value time, not parse time, so an engine without `color-mix` gets a transparent panel, not the fallback. `tauri.conf.json` sets no minimum macOS version. Not verified on a real old WebView. | `styles.css` `.bos-glass`; `tauri.conf.json` | S2 (risk) | F | S | Decision D-V2A-10 |
+| F-24 | **No declared browser and WebView floor.** Tailwind 4 needs a WebKit engine at the Safari 16.4 level or later, or Chromium 111+. In the Tauri app the engine is the system WKWebView, which is WebKit from the macOS version (and its Safari/WebKit updates), not the Safari version a person happens to have installed; the two are not the same thing and must not be assumed equal. `.bos-glass` puts `color-mix(… var() …)` after an opaque fallback, but a declaration with `var()` fails at computed-value time, not parse time, so an engine without `color-mix` gets a transparent panel, not the fallback. `tauri.conf.json` sets no `minimumSystemVersion`. Not verified on a real old WebView or on any real Mac or Windows machine. | `styles.css` `.bos-glass`; `tauri.conf.json` | S2 (risk) | F | S | Decision D-V2A-10 |
 | F-25 | **No motion tokens.** `transition-colors` with default timing everywhere; reduced motion is handled for spinners and skeletons only. | grep | S3 | V | S | V2-B |
 
 ## 5. Token coverage audit
@@ -181,7 +181,7 @@ Severity: **S1** blocks a task or fails an accessibility requirement; **S2** cle
 
 ### 6.2 Identity
 
-- **Typeface (D-V2A-1).** Recommend **Inter** (variable, SIL Open Font Licence), self-hosted and bundled with the app. Reasons: proven legibility at 12 to 14 px, tabular figures and slashed zero for amounts and IDs, wide language coverage, and a neutral precision that suits the Hybrid direction. Bundling is required: the desktop CSP allows `font-src 'self'` only, so a font CDN cannot be used, and a bundled font also makes visual-regression baselines identical on every runner. A Latin-subset variable WOFF2 is about 50 to 100 kB (not measured yet). Monospace for document numbers and codes: **JetBrains Mono** (OFL), or none if D-V2A-1 prefers fewer assets. Alternatives: Geist (OFL), or a licensed Pixakova face if one exists.
+- **Typeface (D-V2A-1).** Recommend **Inter** (variable, SIL Open Font Licence), self-hosted and bundled with the app. Reasons: proven legibility at 12 to 14 px, tabular figures and slashed zero for amounts and IDs, wide language coverage, and a neutral precision that suits the Hybrid direction. Bundling is required: the desktop CSP allows `font-src 'self'` only, so a font CDN cannot be used, and a bundled font also makes visual-regression baselines identical on every runner. A Latin-subset variable WOFF2 is about 50 to 100 kB (not measured yet). Monospace for document numbers and codes: **JetBrains Mono** (OFL) is proposed, but per the owner decision it is a separate typography decision taken in V2-B1, not part of the D-V2A-12 dependency list; Inter's tabular figures are the fallback. Alternatives: Geist (OFL), or a licensed Pixakova face if one exists.
 - **Type scale** (px / line height): 12/16 caption, 13/18 small and table, **14/20 body (default)**, 16/24 lead, 18/24 section title, 22/28 page title, 28/36 display (Home only). Weights 400, 500, 600 (650 for page titles where the variable axis allows). Page titles drop from today's 30 px to 22 px: a business tool's title labels the screen, it does not headline it.
 - **Colour.** Keep the Pixakova palette. Indigo (`--pk-indigo`) is the single accent for primary actions, selection and links. Violet stays as the focus ring (it already passes 5.8:1 and 7.8:1). Lavender and pink are atmosphere only, never on controls. Add an indigo-tinted **neutral ramp** for surfaces and text so that "lavender" is a tint, not the whole page.
 - **Dark theme direction (D-V2A-2).** Recommend moving dark surfaces from saturated navy (`#0d1a47` cards on `#070f2d`) to a deep **ink** (`#121729` on `#0b0f1e`) with clearer steps between canvas, sunken, surface and raised. The identity survives in the accent, the focus ring, the atmosphere on Home and the sidebar glass. See `v2-a/reference/v2-desktop-dark-*.png`.
@@ -275,17 +275,33 @@ Values are provisional; V2-B makes them final through `tokens.test.ts`. The refe
 - **Compact rail (640 to 1023 px, including the 900 px Tauri minimum):** icons with real tooltips (F-14); the current Zone's children appear as a **section bar** under the top bar, with overflow collapsing into a "More" menu instead of scrolling off-screen.
 - **Narrow (< 640 px):** one 52 px app bar (menu, page title, command button). Breadcrumbs are dropped below 640 px; the Zone's children become a **section select** at the top of the page (fixes F-23). The drawer stays as today.
 - **Breadcrumbs** gain the record level through a small contract: a screen calls `useBreadcrumb(label)` and the shell shows `Home / Customers / Kelp & Co Seafood`, each level clickable. The per-screen "← All customers" links are then removed (F-18).
-- **Clicking the current Zone** always returns to the Zone's root, through the unsaved-changes guard (F-02). Implementation: a navigation counter in the route so the Zone remounts.
-- **Scheduling** gets its registry entry once D-V2A-8 approves it (F-01). It needs `scheduling:read`; the permission key already exists in `apps/api/src/modules/access/server/permissions.ts`.
+- **Clicking the current Zone** returns to the Zone's root (F-02), **guard first**:
+  1. The click asks the unsaved-changes guard (`useDraftGuard` / shell guard) for permission to leave, exactly like any other navigation.
+  2. Only if the guard allows departure does the shell bump a navigation counter in the route, which remounts the Zone at its root.
+  3. If the person cancels, or the guard rejects, nothing changes: the counter is not bumped, the Zone does not remount, the form and its draft stay as they were, and focus returns to the control the person used.
+  4. No draft is discarded by the remount itself; drafts are only discarded by the guard's own "Discard" choice, as today.
+  - Tests in V2-C: clean form (returns to root), dirty form + cancel (stays, draft intact, no remount), dirty form + discard (returns to root), dirty form + save failure or a navigation that fails (stays, draft intact), and clicking the current Zone while already at its root (no-op, no remount).
+- **Scheduling** (D-V2A-8, approved with a condition): V2-C adds its registry entry with `scheduling:read` (the key exists in `apps/api/src/modules/access/server/permissions.ts`) **only after an end-to-end readiness check** passes: the Zone loads against the deployed API for a member with and without `scheduling:read`, its endpoints respond, and its existing tests pass. Until then Scheduling is **not** reachable in the product, and nothing in this document should be read as saying it is.
 - **Top bar:** breadcrumbs, the command button ("Jump to…  ⌘K"), the account menu. The disabled bell is removed until a notifications backend exists (D-V2A-6).
 - **Page header:** title (22 px), one-line description, at most one primary and two secondary actions; anything more goes in an overflow menu. Header buttons never duplicate the navigation (fixes the Reporting double).
 
 ### 8.2 Command palette (client-side, no backend)
 
-`⌘K` on macOS, `Ctrl+K` elsewhere, and the top-bar button. Built from the registry and the person's permissions only:
+`⌘K` on macOS, `Ctrl+K` elsewhere, and the top-bar button. Built from the registry and the person's permissions only.
+
+Source and security rules (binding for V2-C):
+
+- **One source of truth.** "Go to" commands come from `resolveNavigation` for the current membership, so the palette can never list a Zone or child that the sidebar would hide. It does not keep its own list of routes.
+- **Create commands check write permission separately.** A Zone being readable is not enough: each create command names the write permission it needs (for example `customers:write`) and is shown only when the current membership holds it. The client only hides; the server still enforces (ADR 0005).
+- **Rebuilt on context change.** The command list is cleared and rebuilt when the business is switched, the membership's role or permissions change, or the person signs out. No command from the previous business is ever shown, even for a frame.
+- **No capture while typing or in modals.** The palette shortcut is ignored while focus is in an editable field (`input`, `textarea`, `select`, `contenteditable`), except the palette's own input, and while a modal dialog other than the palette is open. Composition (IME) events are ignored.
+- **Platform labels.** `⌘K` is shown on macOS, `Ctrl+K` on Windows and Linux (§8.4); the label never promises a key the platform does not use.
+- Tests in V2-C cover each of these rules.
+
+Commands:
 
 - **Go to:** every Zone and child the person can open ("Finance › Invoices").
-- **Create:** the create intents already supported by routes (`intent: 'new'` for customers, opportunities, projects; Finance documents and expenses as their forms exist), shown only when the permission is held.
+- **Create:** the create intents already supported by routes (`intent: 'new'` for customers, opportunities, projects; Finance documents and expenses as their forms exist), each gated on its write permission as above.
 - **Switch business:** the businesses the server listed.
 - **Preferences:** theme (System, Light, Dark), sidebar mode.
 
@@ -297,13 +313,13 @@ What it does **not** do: search records. Record search ("Kelp…") needs a searc
 |---|---|---|
 | `⌘/Ctrl+K` | Command palette | global |
 | `/` | Focus the page's search or filter field | list screens |
-| `?` | Keyboard shortcuts help | global (not while typing) |
+| `?` | Keyboard shortcuts help | global (not while typing or in a modal) |
 | `Esc` | Close the top-most menu, popover, panel or dialog | global |
-| `↑ ↓`, `Enter` | Move between rows, open the row | `DataTable` with row navigation |
+| `↑ ↓`, `Enter` | Move between rows, open the row | only a `DataTable` that implements the ARIA grid pattern (`role="grid"`, roving focus); plain HTML tables keep normal Tab and screen-reader table navigation and get no arrow-key handling |
 | `⌘/Ctrl+Enter` | Submit the form | forms |
 | `⌘/Ctrl+[` and `]` | Back and forward | after URL routing exists (deferred) |
 
-Single-letter shortcuts are avoided (WCAG 2.1.4); every shortcut has a visible alternative.
+Single-letter shortcuts are avoided (WCAG 2.1.4); every shortcut has a visible alternative. Global shortcuts are not captured while the person is typing in a field or while a modal is open.
 
 ### 8.4 Desktop (Tauri) and web parity
 
@@ -338,7 +354,7 @@ Single-letter shortcuts are avoided (WCAG 2.1.4); every shortcut has a visible a
 | `Menu` / `DropdownMenu` | Promote `shell/menu.tsx` (already WAI-ARIA) into `packages/ui` | — |
 | `Dialog`, `ConfirmDialog`, `Sheet` | One modal implementation (Radix). `ConfirmDialog` for archive, void, discard, delete: title, consequence sentence, safe action focused first, destructive action uses `danger`. `Sheet` for side panels and the mobile drawer | `useDialog` overlays, inline `alertdialog` panels, the duplicated discard dialog, custom task dialog (F-04) |
 | `Tabs` / `SectionNav` | One component for the shell section bar, `ZonePage` tabs and record tabs; overflow into "More" | `SecondaryNav`, `ZonePage` tabs (F-07) |
-| `DataTable` | Column definitions with `align` (numbers right, tabular), `priority` (which columns move under the primary cell at medium and become a record list at narrow, generalising the Customers pattern), `width` from a small set (`auto`, `xs`…`xl`), `aria-sort` on sortable headers, optional row navigation, row actions in an overflow menu, density from row tokens, sticky header, caption | hand-written tables in Customers, Sales, Projects; percentage widths (F-09, F-16) |
+| `DataTable` | Column definitions with `align` (numbers right, tabular), `priority` (which columns move under the primary cell at medium and become a record list at narrow, generalising the Customers pattern), `width` from a small set (`auto`, `xs`…`xl`), `aria-sort` on sortable headers, optional arrow-key row navigation **only** in an explicit grid mode that uses the ARIA grid pattern (default is a plain table with links or buttons in the primary cell), row actions in an overflow menu, density from row tokens, sticky header, caption | hand-written tables in Customers, Sales, Projects; percentage widths (F-09, F-16) |
 | `FilterBar` | Search field (with `/`), up to three visible quick filters, the rest behind "Filters"; active filters as removable chips; "Clear"; result count. Reflows to two rows at most at 900 px and collapses to search + "Filters" at narrow | four filter patterns (F-08) |
 | `Toolbar` | Groups related actions with roving focus where it is a real toolbar | — |
 | `Pagination` | Cursor pages with "Previous"/"Next" and a polite status; same in every Zone | three local versions |
@@ -365,6 +381,12 @@ Directions for review, not final designs. Rendered from `docs/ui/v2-a/reference/
 | Finance invoice form | `v2-a/reference/v2-desktop-light-invoice-form.png` | `v2-a/reference/v2-desktop-dark-invoice-form.png` | — | — |
 | Data-dense dashboard (Reporting) | `v2-a/reference/v2-desktop-light-dashboard.png` | `v2-a/reference/v2-desktop-dark-dashboard.png` | `v2-a/reference/v2-mobile-light-dashboard.png` | `v2-a/reference/v2-mobile-dark-dashboard.png` |
 
+**Data rule for every reference screen (binding before V2-D).** Before a V2-D PR builds a screen, it adds an endpoint-to-widget map for that screen: each figure, column, list and badge, the existing endpoint and field that supplies it, and the request count for the whole screen. Rules:
+
+- A widget with no existing endpoint and field is **left out**, not faked and not filled with placeholders. Adding an endpoint is a separate, reviewed API change outside V2.
+- **No N+1 fetching**: a list never fetches one request per row (for example an "Open invoices" figure per customer). If a per-row figure is not in the list response, the column is omitted.
+- The screen's request count is stated in the PR and checked in the harness.
+
 What each one demonstrates, compared with today:
 
 - **Home:** a compact hero (the one place for atmosphere), four figures, compact Zone tiles with a real count each, and a "Needs attention" list. Every figure and row comes from list or summary endpoints that already exist (Finance documents with status and overdue filters, Sales list, Customers and Projects summaries). **Not verified yet:** whether each figure can be produced in one request without new endpoints; V2-D confirms or drops each card. Tasks and opportunities in "Needs attention" need a cross-Zone summary endpoint and are not shown. Compare `v2-a/current/desktop-light-01-home.png`.
@@ -380,12 +402,22 @@ Each phase is its own numbered PR (or small PR series) in its own thread, as a d
 
 | Phase | Scope | Exit criteria | Rollback |
 |---|---|---|---|
-| **V2-B Foundations** (`packages/ui` only, plus the two `index.html` splash files) | V2 tokens with compatibility aliases; bundled font; type scale; control, row, radius, motion tokens; state recipes and forced-colours rules; new components: `IconButton`, `Tooltip`, `SegmentedControl`, `Menu` (promoted), `ConfirmDialog`, `Sheet`, `Tabs`, `DataTable`, `FilterBar`, `Pagination`, `Combobox`, `DateField` wrapper, `Toast`, `StatusBadge`, `ErrorState`, `DescriptionList`, `FormActions`, `Avatar`, `Kbd`; patterns `EntityList`, `EntityDetail`, `EntityForm`; showcase pages for each; splash uses tokens and the stored theme. Visual-regression harness lands here (§12). | All existing app tests pass unchanged (aliases); token, contrast and forced-colours tests for every new token; interaction tests for every new component; showcase screenshots in both themes reviewed | Revert the PR; aliases mean nothing in `packages/app` depends on the new names yet |
-| **V2-C Shell** (`packages/app/src/shell`) | Sidebar-only children on wide; section bar with overflow at medium; single app bar and section select on narrow; command palette; keyboard map and help; record breadcrumbs; current-Zone click returns to root (F-02); top bar cleanup; Scheduling entry if D-V2A-8 approves | Shell tests updated for the new structure (same behaviours: guard, switching, permissions, drawer); new tests for palette permissions (never lists a Zone the person cannot open) and shortcuts; baselines for every width | Revert; Zones are untouched in this phase |
-| **V2-D Zones**, one PR per Zone, in this order: Customers, Sales, Projects (Gen 1, highest value), then Finance, People, Reporting, Scheduling (already Gen 2; mostly table, filter and status alignment) | Move each Zone onto the patterns; delete local class strings, badges, dialogs and tables as each Zone moves; Home direction | Zone tests pass with the same roles and names (tests query by role, so most survive); no new arbitrary values; that Zone's baselines approved; the source-scan allowlist shrinks | Revert that Zone's PR only |
+| **V2-B Foundations** (`packages/ui` only, plus the two `index.html` splash files), delivered as the small PRs B1 to B5 listed below the table | V2 tokens with compatibility aliases; bundled font; type scale; control, row, radius, motion tokens; state recipes and forced-colours rules; new components: `IconButton`, `Tooltip`, `SegmentedControl`, `Menu` (promoted), `ConfirmDialog`, `Sheet`, `Tabs`, `DataTable`, `FilterBar`, `Pagination`, `Combobox`, `DateField` wrapper, `Toast`, `StatusBadge`, `ErrorState`, `DescriptionList`, `FormActions`, `Avatar`, `Kbd`; patterns `EntityList`, `EntityDetail`, `EntityForm`; showcase pages for each; splash uses tokens and the stored theme. Visual-regression harness lands here (§12). | All existing app tests pass unchanged (aliases); token, contrast and forced-colours tests for every new token; interaction tests for every new component; showcase screenshots in both themes reviewed | Revert the PR; aliases mean nothing in `packages/app` depends on the new names yet |
+| **V2-C Shell** (`packages/app/src/shell`) | Sidebar-only children on wide; section bar with overflow at medium; single app bar and section select on narrow; command palette; keyboard map and help; record breadcrumbs; current-Zone click returns to root, guard first (F-02, §8.1); top bar cleanup; Scheduling entry after its readiness check (D-V2A-8) | Shell tests updated for the new structure (same behaviours: guard, switching, permissions, drawer); new tests for the palette rules in §8.2 (navigation from `resolveNavigation`, write-permission create commands, rebuild on business or role change, no capture while typing or in modals, platform labels), the F-02 guard cases in §8.1, and shortcuts; baselines for every width | Revert; Zones are untouched in this phase |
+| **V2-D Zones**, one PR per Zone, in this order: Customers, Sales, Projects (Gen 1, highest value), then Finance, People, Reporting, Scheduling (already Gen 2; mostly table, filter and status alignment) | Endpoint-to-widget map first (§10 data rule); move each Zone onto the patterns; delete local class strings, badges, dialogs and tables as each Zone moves; Home direction | Zone tests pass with the same roles and names (tests query by role, so most survive); no new arbitrary values; that Zone's baselines approved; the source-scan allowlist shrinks | Revert that Zone's PR only |
 | **V2-E Polish** | Remove compatibility aliases and `actionClass`/`secondaryClass`/`inputClass`; motion pass; empty-state and error copy pass; density option if D-V2A-3 asks for one; final accessibility audit with a screen reader on macOS and Windows | Zero allowlisted violations; the source-scan test switches from "no new" to "none" | Revert; aliases can be restored from V2-B |
 
-Order constraints: V2-B before everything. V2-C and the first V2-D PR can overlap once V2-B is merged. Each V2-D PR must leave the app consistent (no half-migrated screens in a Zone).
+**V2-B is a series of small, independent PRs**, not one large one. Each is reviewable and revertable on its own, keeps the compatibility aliases and the existing component roles and names working, and does not wait for unrelated components. Priority order:
+
+1. **V2-B1 Tokens and type:** V2 semantic tokens with compatibility aliases, bundled Inter, type scale, control/row/radius/motion tokens, state recipes, forced-colours rules, glass `@supports` fallback, token and contrast tests, splash files.
+2. **V2-B2 Visual-regression harness:** deterministic harness with bundled fonts, lossless goldens regenerated from it (§12.3), non-gating CI job.
+3. **V2-B3 Shell-critical components:** only what V2-C needs: `IconButton`, `Tooltip`, `Kbd`, `Menu`, `SegmentedControl`, `Tabs`, `Sheet`, `ConfirmDialog`.
+4. **V2-B4 Data components:** `DataTable`, `FilterBar`, `Pagination`, `StatusBadge`, `DescriptionList`, `ErrorState`.
+5. **V2-B5 Form components and patterns:** `Combobox`, `DateField`, `FormActions`, `Avatar`, `Toast`, and the `EntityList` / `EntityDetail` / `EntityForm` patterns.
+
+V2-C needs only B1 and B3 (B2 recommended); it does not wait for B4 or B5. Each V2-D Zone PR needs only the components it uses. Any new dependency inside these PRs follows D-V2A-12.
+
+Order constraints: V2-B1 before everything. V2-C and the first V2-D PR can overlap once the B-PRs they use are merged. Each V2-D PR must leave the app consistent (no half-migrated screens in a Zone).
 
 ## 12. Accessibility, performance and regression test plan
 
@@ -393,7 +425,9 @@ Order constraints: V2-B before everything. V2-C and the first V2-D PR can overla
 
 - **Automated in jsdom** (existing Vitest): add `axe-core` checks to the component tests and to one test per Zone screen (D-V2A-12). Contrast stays in `tokens.test.ts` (axe cannot compute contrast in jsdom).
 - **Automated in a real browser** (the V2-B harness): axe on every captured screen in both themes; keyboard walk-through for the shell (Tab order, skip link, palette, Esc); `forced-colors: active` and `prefers-reduced-motion` and `prefers-reduced-transparency` emulation screenshots; target size check (≥ 24 × 24 px, 44 on coarse pointers); focus not obscured by sticky headers or footers (2.4.11).
+- **Specific requirements:** a visible focus indicator on every interactive element in both themes and in forced colours (2.4.7, 2.4.13 as a target); arrow-key navigation only where the ARIA grid pattern is implemented, never bolted onto a plain HTML table; selected state (sidebar, tabs, segmented controls, rows) visible in `forced-colors: active` through border, outline or `Highlight` system colours, not background alone (F-13); target size ≥ 24 × 24 CSS px with the WCAG 2.5.8 exceptions (inline links in text, equivalent larger control, spacing) recorded per component, and 44 px on coarse pointers.
 - **Manual, per phase:** VoiceOver on macOS (Safari and the Tauri app), NVDA on Windows (WebView2 app and Edge), Windows High Contrast, 200 % and 400 % zoom (reflow at 320 CSS px), keyboard-only completion of the core tasks: add a customer, create and issue an invoice, record a payment, move a task, open a report.
+- **Release gate:** manual testing on a real Mac (Tauri app and Safari) and a real Windows machine (Tauri app with WebView2 and Edge) is an explicit, recorded gate for each V2-C and V2-D release, not optional. The results (OS and WebView versions, tester, date, pass or issues) are recorded in the PR.
 
 ### 12.2 Performance
 
@@ -405,10 +439,11 @@ Order constraints: V2-B before everything. V2-C and the first V2-D PR can overla
 
 ### 12.3 Visual regression
 
+- **The screenshots in `docs/ui/v2-a/current/` and `reference/` are audit evidence, not golden baselines.** They were taken with system fonts and quantized to 256 colours to keep the repository small, so they must not be compared against.
 - Promote the harness used for this audit (`docs/ui/v2-a/harness/`) to a real dev-only package in V2-B: the shared `App` rendered against the existing test fakes, so no server or database is needed and data is deterministic.
-- Matrix: light and dark × 1440, 900 × 600, 834 and 390, for each reference screen and each Zone's main screens, plus the component showcase. Fonts are bundled (D-V2A-1), so Linux CI baselines are stable.
+- Matrix: light and dark × 1440, 900 × 600, 834 and 390, for each reference screen and each Zone's main screens, plus the component showcase. Goldens are regenerated in V2-B2 from scratch, **lossless** (PNG without quantization), with bundled fonts (D-V2A-1), a fixed clock, time zone and locale, animations and caret disabled, and deterministic test data, so Linux CI baselines are stable.
 - Playwright `toHaveScreenshot` with a small pixel threshold; baselines committed next to the harness; updates only in PRs that say why.
-- CI: a separate job, **non-gating** for the first two weeks (D-V2A-11), then added to the `CI gate` once flake-free. The desktop matrix is not needed for it (it is a web build).
+- CI: a separate job, **non-gating** at first (D-V2A-11). It joins the `CI gate` only on demonstrated stability, not after a fixed period: the baseline set has been reviewed and approved, and a documented flake rate (re-runs of unchanged code across a stated number of CI runs) is recorded in the PR that makes it gating. The desktop matrix is not needed for it (it is a web build).
 
 ### 12.4 Existing tests and migration risk
 
@@ -423,49 +458,54 @@ Order constraints: V2-B before everything. V2-C and the first V2-D PR can overla
 |---|---|---|---|
 | Restyling Gen 1 Zones changes behaviour by accident (unsaved-changes guard, focus moves) | Medium | High | One Zone per PR; existing tests unchanged first; guard tests run on every PR |
 | Dark ink palette weakens chart or status contrast | Low | Medium | Token test covers every pair before V2-B merges |
-| Old WKWebView renders glass or `color-mix` incorrectly (F-24) | Unknown (not verified) | Medium | D-V2A-10 support floor; move the glass fallback into an `@supports (color: color-mix(in oklab, red, red))` block in V2-B |
+| Old WKWebView renders glass or `color-mix` incorrectly (F-24) | Unknown (not verified) | Medium | D-V2A-10 provisional floor, confirmed only on real machines; move the glass fallback into an `@supports (color: color-mix(in oklab, red, red))` block in V2-B |
 | Font licence or size | Low | Low | OFL fonts only; size budget |
 | Scope creep into backend (search, notifications, activity feed, Home figures) | Medium | Medium | Marked future and out of V2; Home cards dropped if they need a new endpoint |
 | Desktop native features (menus, title bar) pull in Tauri capabilities | Low | High (security) | Out of scope; needs its own ADR 0005 review |
-| Visual-regression flakiness blocks merges | Medium | Low | Non-gating first (D-V2A-11) |
+| Visual-regression flakiness blocks merges | Medium | Low | Non-gating until stability is shown (D-V2A-11) |
 
-### 13.2 Decisions for the owner
+### 13.2 Owner decisions (recorded 2026-11-16, PR #74 review)
 
-Recommended defaults are in **bold**; V2-B starts from them unless Regan decides otherwise.
+Regan reviewed this specification on PR #74 and approved the direction. The table records each decision as given. None of them authorises implementation, deployment, a migration or a merge.
 
-| ID | Decision | Options | Recommendation |
+| ID | Decision | Outcome | Conditions |
 |---|---|---|---|
-| D-V2A-1 | Typeface | **Inter (bundled) + JetBrains Mono for codes** · Inter only · Geist · licensed Pixakova face | Inter + JetBrains Mono |
-| D-V2A-2 | Dark theme surfaces | **Neutral ink with indigo accent** · keep saturated navy | Ink |
-| D-V2A-3 | Default density | **40 px rows, 32 px controls on desktop, 44 px targets on touch** · keep today's · add a per-person density setting now | 40 px default; setting later if asked |
-| D-V2A-4 | Sidebar material | **Subtle glass over the calm atmosphere** · opaque | Subtle glass |
-| D-V2A-5 | Zone sub-navigation | **Sidebar on wide, section bar at medium, section select on phones (no duplicates)** · keep both | No duplicates |
-| D-V2A-6 | Top-bar placeholders | **Replace "Search · Soon" with the client-side command palette; remove the bell until notifications exist** · keep both placeholders | Palette, no bell |
-| D-V2A-7 | Zone accent colours (architecture §6.5) | **Supersede: one accent; Zones by icon and name** · build per-Zone accents | Supersede |
-| D-V2A-8 | Scheduling in navigation (F-01) | Add the registry entry in V2-C · keep hidden until a separate Scheduling release | Product call (pilot needs it; not a design decision) |
-| D-V2A-9 | Date entry | **Keep native date inputs with a locale hint in V2-B; decide on a custom field after pilot feedback** · build a custom date field now | Native first |
-| D-V2A-10 | Support floor | **macOS 13+ (WKWebView ≥ Safari 16.4), Windows 10/11 with evergreen WebView2, current Chrome, Edge, Firefox and Safari 16.4+** · other | As stated; record in ADR 0005 and `tauri.conf.json` (`minimumSystemVersion`) |
-| D-V2A-11 | Visual regression in CI | **Non-gating for two weeks, then part of `CI gate`** · gating at once · local only | Non-gating first |
-| D-V2A-12 | New dev and runtime dependencies | **Radix (dropdown, popover, tooltip, tabs), `axe-core` (dev), `@fontsource-variable/inter`** · build in-house | Approve the list in V2-B's PR |
-| D-V2A-13 | Toasts | **Add for non-blocking confirmations only** · keep inline notices | Add |
+| D-V2A-1 | Typeface | **Accepted:** Inter, bundled | Inter itself is a dependency under D-V2A-12 (licence, size, security review in V2-B1). **JetBrains Mono for codes is a separate typography decision**, not part of the dependency list; V2-B1 proposes it with a size figure, or uses Inter's tabular figures only. |
+| D-V2A-2 | Dark theme surfaces | **Accepted:** neutral ink with indigo accent | Token contrast tests for every pair before V2-B1 merges |
+| D-V2A-3 | Default density | **Accepted:** 40 px rows, 32 px controls on desktop, 44 px targets on touch | Density setting only if asked later |
+| D-V2A-4 | Sidebar material | **Accepted:** subtle glass over the calm atmosphere | Opaque fallbacks as in §7 |
+| D-V2A-5 | Zone sub-navigation | **Accepted:** sidebar on wide, section bar at medium, section select on phones, no duplicates | — |
+| D-V2A-6 | Top-bar placeholders | **Accepted:** client-side command palette, bell removed until notifications exist | Palette rules in §8.2 |
+| D-V2A-7 | Zone accent colours | **Accepted:** one accent, Zones by icon and name | Recorded as an amendment to architecture §6.5 (§14) |
+| D-V2A-8 | Scheduling in navigation (F-01) | **Yes, in V2-C**, with `scheduling:read` | Only after an end-to-end readiness check (§8.1). Until then Scheduling is not accessible and must not be described as accessible. |
+| D-V2A-9 | Date entry | **Accepted:** native date inputs with a locale hint; custom field after pilot feedback | — |
+| D-V2A-10 | Support floor | **Provisional:** macOS at the first version whose system WKWebView is at the WebKit/Safari 16.4 feature level (expected macOS 13.3; to be confirmed), Windows 10/11 with evergreen WebView2, current Chrome, Edge, Firefox, and Safari 16.4+ on the web | Conditional on verifying the effective system WKWebView feature level, not the installed Safari version. V2-B1 adds a compatibility matrix (OS version → WebView engine and version → required features: `color-mix`, `@layer`, `:has`, `backdrop-filter`, `@property`) and checks it on real machines before `minimumSystemVersion` is set in `tauri.conf.json` and the floor is written into ADR 0005 as an amendment. |
+| D-V2A-11 | Visual regression in CI | **Non-gating at first** | Becomes part of `CI gate` only on demonstrated stability: reviewed baseline and a documented flake rate (§12.3). No fixed two-week rule. |
+| D-V2A-12 | New dependencies | **Explore, not yet approved:** Radix dropdown, popover, tooltip, tabs; `axe-core` (dev only); bundled Inter | Each one gets a licence, accessibility, bundle-size and security (supply chain, maintenance) review in the V2-B PR that adds it, and is added only by that PR. |
+| D-V2A-13 | Toasts | **Accepted:** for non-blocking confirmations only | — |
 
 ### 13.3 Approval gate before V2-B
 
 V2-B starts only when all of these are true:
 
-1. Regan has reviewed this document and the reference screens, and recorded a choice (or accepted the default) for D-V2A-1 to D-V2A-7, D-V2A-9, D-V2A-10, D-V2A-12 and D-V2A-13. D-V2A-8 and D-V2A-11 can follow later.
-2. The independent architecture review (ChatGPT audit) of this draft PR has been addressed in the PR.
-3. This PR is merged by Regan (documentation only; no deploy, no migration).
-4. A new thread and numbered PR is opened for V2-B.
+1. Regan's decisions are recorded in §13.2. **Done** (2026-11-16, with the conditions listed there).
+2. The required clarifications from the PR #74 review are addressed in this document. **Done in this revision; awaiting re-audit.**
+3. The updated head has been re-audited for merge readiness and Regan has explicitly approved the merge. **Open.**
+4. This PR is merged by Regan (documentation only; no deploy, no migration). **Open.**
+5. A new thread and numbered PR is opened for V2-B1, and Regan has explicitly authorised V2-B to start. **Open.** Merging this document is not, by itself, authorisation to start V2-B.
+
+Conditions carried into V2-B: the D-V2A-10 compatibility matrix and real-machine verification, the D-V2A-12 dependency reviews, lossless goldens (§12.3), and the small-PR order in §11.
 
 ## 14. Existing decisions: preserved or superseded
+
+Changes to earlier decisions are recorded as **amendments or supersessions** in the source document (a dated note that links here), never by silently rewriting it. This PR does not edit those documents; the notes are added in the V2 PR that makes each change real.
 
 | Decision | Source | V2 position |
 |---|---|---|
 | One design system for desktop and web in `packages/ui`, tokens as CSS variables, light and dark from the start | architecture §6.5, ADR 0005 | **Preserved** |
 | shadcn-style components owned by the project | architecture §6.5, `packages/ui/README.md` | **Preserved** |
 | Standard-screen patterns in `packages/ui/src/patterns` | architecture §6.5 | **Preserved and finally implemented** (V2-B) |
-| Zone accent colours | architecture §6.5 | **Superseded if D-V2A-7 is accepted** |
+| Zone accent colours | architecture §6.5 | **Superseded (D-V2A-7 accepted).** Recorded as an amendment note in architecture §6.5 in the V2-B1 PR, pointing to this document; the original text is kept, struck through, not deleted. |
 | Keyboard shortcuts, window sizing and menus in the shared app; platform differences only where the OS expects them | architecture §6.5 | **Preserved**; native menus excluded (ADR 0005 rule 4) |
 | WCAG 2.2 AA | architecture §6.5 | **Preserved**, with more automation |
 | Three token layers; palette not mapped to utilities | UI Phase 1, `packages/ui/README.md` | **Preserved**, component layer formalised |
@@ -475,5 +515,6 @@ V2-B starts only when all of these are true:
 | Zone registry and permission filtering; Zones never shown disabled | `docs/ui/app-shell.md` | **Preserved** |
 | Responsive breakpoints 640 / 1024 | `docs/ui/app-shell.md`, `zones/use-layout.ts` | **Preserved**; behaviour inside each band changes (§8.1) |
 | Tauri least privilege, no plugins, strict CSP | ADR 0005 | **Preserved**; bundled font needs no CSP change |
+| Supported platforms (no floor stated today) | ADR 0005 | **Amended, pending verification** (D-V2A-10): the floor is added to ADR 0005 as a dated amendment only after the compatibility matrix is verified on real Mac and Windows machines; `minimumSystemVersion` is set in the same PR |
 | Server-calculated money, exact decimal strings | ADR 0007, Finance docs | **Preserved**; no client arithmetic in any V2 component |
 | Client never enforces permissions, only hides | ADR 0005 | **Preserved**; the palette uses the same permission filter as the sidebar |

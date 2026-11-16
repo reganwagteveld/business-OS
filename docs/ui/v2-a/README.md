@@ -2,6 +2,8 @@
 
 Supporting files for [`../pixa-design-system-v2-a.md`](../pixa-design-system-v2-a.md). Documentation only: nothing here is built or shipped.
 
+**These images are audit evidence, not golden baselines.** They are colour-quantized and depend on the fonts of the capture machine. V2-B2 regenerates lossless goldens with bundled fonts and deterministic rendering; never compare against these files.
+
 - `current/`: the app on main (`1b2bf15`), rendered by the real shared `App` with every API call answered in the browser by the in-memory test fakes (`packages/app/tests/support`). Sample data only, no server, no database, no production data. Chromium, device scale 2, colours reduced to a 256-colour palette to keep the repository small.
   - `desktop-{light,dark}-NN-*.png`: 1440 × 900.
   - `desktop-min-900-light-*.png`: 900 × 600, the Tauri minimum window.
