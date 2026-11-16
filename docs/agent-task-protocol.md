@@ -35,7 +35,7 @@
 - Preserve audit logs, version/concurrency behaviour and migrations. Never edit a migration that has been applied anywhere. New migrations need a dedicated design and review path and must sort after every stamp on `main` and in open PRs.
 - Validate failure, empty and permission-denied cases.
 - Run targeted tests first, then the checks that match the change: `pnpm typecheck`, `pnpm lint`, `pnpm boundaries`, `pnpm test`, `pnpm contracts:check`, `pnpm db:check-migrations`, and `pnpm test:integration` / `pnpm test:isolation` (need `pnpm db:setup`). Report exact outcomes and anything skipped.
-- The only required CI check is **`CI gate`**. Before merge the branch must be up to date with `main`: merge `main` into the branch. Don't rebase or force-push a shared branch.
+- The only required CI check is **`CI gate`**. Don't merge `main` into your branch repeatedly while developing: sync only for a genuine conflict or dependency. The merge-queue thread syncs the branch at the front of the queue and verifies `CI gate` on the up-to-date final head (`docs/merge-queue.md` §2 and §5). Don't rebase or force-push a shared branch. Push commits in batches, not one at a time.
 - Never state that green CI guarantees production safety or complete beta readiness.
 
 ## Approvals
@@ -68,7 +68,7 @@ Production database work runs only from the Mac session, which is the only place
 
 ## PR submission standard
 
-- Draft PR by default, from a branch based on current `main`. The order is: draft PR → ChatGPT audit → fixes in the same PR → Regan's approval → migration (if any) → merge. Agents never merge unless Regan explicitly authorises that merge.
+- Draft PR by default, from a branch based on current `main`. The order is: draft PR → ChatGPT audit → fixes in the same PR → Regan's approval → migration (if any) → merge queue → merge. Development threads never merge. Only the merge-queue thread merges, one PR at a time, and only with Regan's explicit approval for that PR (`docs/merge-queue.md`). New commits or a conflict resolution after sign-off send the PR back for re-audit and re-approval; a conflict-free sync from `main` does not.
 - Fill in `.github/pull_request_template.md`. The description covers: objective, changed files, architectural choice, dependencies, security notes, tests and CI, screenshots if UI, migration status, blockers and decisions needed.
 - For architecture-only tasks: Markdown/spec files only. No functional code, migrations, provider registration or deployment.
 - Treat external research as source-dated. Label pricing and regulatory statements as verified, estimated or unverified.
