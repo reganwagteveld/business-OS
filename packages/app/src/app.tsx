@@ -10,7 +10,7 @@ import { createTenancyClient, type TenancyClient } from './api/tenancy';
 import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
 import type { ClientPlatform } from './config';
 import { ChooseWorkspace } from './shell/choose';
-import { Startup } from './shell/frame';
+import { Frame, Startup } from './shell/frame';
 import { BusinessSetup } from './shell/onboarding';
 import { Failed, SessionExpiredNotice, Unreachable, Unverified } from './shell/states';
 import { AppShell } from './shell/app-shell';
@@ -97,6 +97,23 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   }, [location?.pathname, replaceLocation]);
 
   const user = 'user' in phase ? phase.user : null;
+
+  // Private beta: "create a business" is offered only with the explicit platform grant, read from the
+  // server for the signed-in user. Unknown, failed or denied all mean "not offered"; the server
+  // enforces the rule regardless of what the client shows.
+  const userId = user?.id ?? null;
+  const [access, setAccess] = useState<{ userId: string; canCreate: boolean } | null>(null);
+  const accessUser = userId && (phase.kind === 'no-workspace' || phase.kind === 'pick' || phase.kind === 'ready') ? userId : null;
+  useEffect(() => {
+    if (!accessUser) return;
+    const controller = new AbortController();
+    void tenancy.platformAccess(controller.signal).then((result) => {
+      if (!controller.signal.aborted) setAccess({ userId: accessUser, canCreate: result.kind === 'ok' && result.data.canCreateBusiness === true });
+    });
+    return () => controller.abort();
+  }, [accessUser, tenancy]);
+  const accessKnown = access !== null && access.userId === userId;
+  const canCreate = accessKnown && access.canCreate;
   useEffect(() => {
     if (user && next && SAFE_NEXT.test(next) && navigate) navigate(next);
   }, [user, next, navigate]);
@@ -144,6 +161,12 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     );
   }
 
+  if (phase.kind === 'invite-required') return (
+    <Frame title="Invitation required" subtitle="Pixa OS is in private beta. Open your invitation email and follow its link to join.">
+      <button type="button" onClick={signOut}>Sign out</button>
+    </Frame>
+  );
+
   if (phase.kind === 'unverified') return <Unverified user={phase.user} onSignOut={signOut} onRefresh={workspace.retry} />;
 
   const create = async (data: Parameters<typeof workspace.create>[0]) => {
@@ -151,8 +174,16 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     if (result.ok) setMode('default');
     return result;
   };
-  if (phase.kind === 'no-workspace') return <BusinessSetup onCreate={create} />;
-  if (mode === 'new') return <BusinessSetup onCreate={create} onBack={() => setMode('default')} />;
+  if (phase.kind === 'no-workspace') {
+    if (!accessKnown) return <Startup label="Checking your access" />;
+    if (!canCreate) return (
+      <Frame title="No workspace yet" subtitle="You are not a member of any business. Ask a business owner to invite you, then open the invitation link.">
+        <button type="button" onClick={signOut}>Sign out</button>
+      </Frame>
+    );
+    return <BusinessSetup onCreate={create} />;
+  }
+  if (mode === 'new' && canCreate) return <BusinessSetup onCreate={create} onBack={() => setMode('default')} />;
 
   const businesses = phase.businesses;
   if (phase.kind === 'pick' || mode === 'choose') {
@@ -163,7 +194,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
           setMode('default');
           workspace.select(slug);
         }}
-        onCreate={() => setMode('new')}
+        onCreate={canCreate ? () => setMode('new') : undefined}
         onSignOut={signOut}
         onBack={phase.kind === 'ready' ? () => setMode('default') : undefined}
         revoked={phase.kind === 'pick' ? phase.notice?.business : undefined}
@@ -267,10 +298,10 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         workspace.switchTo(next);
       }}
       onChooseBusiness={leaveToChooser}
-      onCreateBusiness={() => {
+      onCreateBusiness={canCreate ? () => {
         setRoute(HOME);
         setMode('new');
-      }}
+      } : undefined}
       onSignOut={signOut}
     >
       {screen}

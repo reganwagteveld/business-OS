@@ -38,6 +38,7 @@ function mount() {
     listBusinesses: vi.fn(async () => ({ kind: 'ok' as const, data: ['alpha', 'beta'].map((s) => ({ slug: s, name: ctx(s).business.name, role: 'OWNER' as const })) })),
     businessContext: vi.fn(async (slug: string) => ({ kind: 'ok' as const, data: ctx(slug) })),
     createBusiness: vi.fn(),
+    platformAccess: vi.fn(async () => ({ kind: 'ok' as const, data: { canCreateBusiness: true } })),
   };
   render(<App platform="web" apiBaseUrl={BASE} auth={auth} tenancy={tenancy} storage={memoryStorage({ slug: 'alpha' })}
     customers={createCustomersClient(BASE, { kind: 'cookie' }, api.fetch)} finance={createFinanceClient(BASE, { kind: 'cookie' }, api.fetch)} />);

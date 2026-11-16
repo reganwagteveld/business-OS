@@ -45,6 +45,7 @@ function mountApp(api: ReturnType<typeof createFakeApi>, opts: { slugs?: string[
     listBusinesses: vi.fn(async () => ({ kind: 'ok' as const, data: slugs.map((s) => ({ slug: s, name: context(s).business.name, role: 'MANAGER' as const })) })),
     businessContext: vi.fn(async (slug: string) => ({ kind: 'ok' as const, data: context(slug) })),
     createBusiness: vi.fn(),
+    platformAccess: vi.fn(async () => ({ kind: 'ok' as const, data: { canCreateBusiness: true } })),
   };
   const view = render(<App platform="web" apiBaseUrl={BASE} auth={auth} tenancy={tenancy} customers={clientFor(api)} storage={opts.storage ?? memoryStorage()} />);
   return { auth, ...view, user: userEvent.setup() };

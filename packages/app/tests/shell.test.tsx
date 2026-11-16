@@ -65,6 +65,7 @@ function mountApp(opts: {
   context?: (slug: string) => Promise<Outcome<BusinessContext>>;
   list?: () => Promise<Outcome<{ slug: string; name: string; role: 'MANAGER' }[]>>;
   session?: () => SessionCheck;
+  canCreateBusiness?: boolean;
 } = {}) {
   const slugs = opts.slugs ?? ['alpha', 'beta'];
   const businesses = opts.businesses ?? Object.fromEntries(slugs.map((s) => [s, { ...emptyBusiness(), customers: [customer({ displayName: `${s} customer` })] }]));
@@ -82,6 +83,7 @@ function mountApp(opts: {
     listBusinesses: vi.fn(opts.list ?? defaultList),
     businessContext: vi.fn(opts.context ?? (async (slug: string) => (listed.has(slug) ? { kind: 'ok' as const, data: ctx(slug, opts.permissions?.(slug)) } : { kind: 'not_found' as const }))),
     createBusiness: vi.fn(),
+    platformAccess: vi.fn(async () => ({ kind: 'ok' as const, data: { canCreateBusiness: opts.canCreateBusiness ?? true } })),
   };
   const storage = memoryStorage({ slug: slugs[0] });
   // Membership can change while the app is open: `listed` is what the server lists right now.
@@ -618,5 +620,31 @@ describe('module discovery states', () => {
     await waitFor(() => expect(api.calls.length).toBeGreaterThan(0));
     expect(api.calls.every((c) => c.slug === 'beta')).toBe(true);
     expect(screen.queryByText('alpha project')).toBeNull();
+  });
+});
+
+describe('private beta: business creation is offered only with the platform grant', () => {
+  it('hides "Create another business" in the switcher and the chooser without the grant', async () => {
+    const { user, tenancy } = mountApp({ canCreateBusiness: false });
+    await h1('Welcome to Alpha Plumbing.');
+    expect(tenancy.platformAccess).toHaveBeenCalled();
+    switcher().focus();
+    await user.keyboard('{ArrowDown}');
+    const menu = screen.getByRole('menu', { name: 'Businesses' });
+    expect(within(menu).queryByText('Create another business')).toBeNull();
+    await user.keyboard('{Escape}');
+    expect(tenancy.createBusiness).not.toHaveBeenCalled();
+  });
+
+  it('a signed-in user with no business and no grant is told to ask for an invitation, not offered setup', async () => {
+    mountApp({ slugs: [], canCreateBusiness: false });
+    await h1('No workspace yet');
+    expect(screen.queryByRole('button', { name: /create/i })).toBeNull();
+  });
+
+  it('a user with the grant and no business still gets business setup', async () => {
+    mountApp({ slugs: [], canCreateBusiness: true });
+    await waitFor(() => expect(screen.queryByRole('heading', { level: 1, name: 'No workspace yet' })).toBeNull());
+    await h1('Make it yours.');
   });
 });
