@@ -31,6 +31,8 @@ export function formatValue(value: string | null, valueType: 'money' | 'count', 
 
 /** Short axis text from an approximate number. */
 export function formatTick(value: number, valueType: 'money' | 'count', currency: string | null, locale?: string): string {
+  // Counts are whole numbers: a fractional gridline ("0.3 invoices") is left unlabelled.
+  if (valueType === 'count' && !Number.isInteger(value)) return '';
   try {
     return new Intl.NumberFormat(locale, valueType === 'money' && currency
       ? { style: 'currency', currency, notation: 'compact', maximumFractionDigits: 1 }
@@ -67,4 +69,70 @@ export function changeText(changePercent: string | null): { text: string; trend:
   const n = Number(changePercent);
   if (n === 0) return { text: 'No change vs previous period', trend: 'neutral' };
   return { text: `${n > 0 ? '+' : ''}${changePercent}% vs previous period`, trend: n > 0 ? 'up' : 'down' };
+}
+
+// ---- R2: date helpers (presentation only; the API resolves and validates every range itself) ------------
+
+const DAY_MS = 86_400_000;
+const toDay = (d: Date) => d.toISOString().slice(0, 10);
+const parseDay = (day: string) => new Date(`${day}T00:00:00Z`);
+const addDays = (day: string, n: number) => toDay(new Date(parseDay(day).getTime() + n * DAY_MS));
+
+/** Inclusive number of calendar days between two YYYY-MM-DD dates. */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((parseDay(to).getTime() - parseDay(from).getTime()) / DAY_MS) + 1;
+}
+
+/**
+ * Roughly how many days a date setting covers, from the business's "today" (the catalogue's). Used only to
+ * pick a readable interval and to keep requests inside the API's bucket limit; the API resolves the real range.
+ */
+export function approxDays(date: { kind: 'fixed'; from: string; to: string } | { kind: 'relative'; preset: ReportingDatePreset }, today: string): number {
+  if (date.kind === 'fixed') return daysBetween(date.from, date.to);
+  switch (date.preset) {
+    case 'last_7_days': return 7;
+    case 'last_30_days': return 30;
+    case 'last_90_days': return 90;
+    case 'this_month': return Number(today.slice(8, 10));
+    case 'last_month': return 31;
+    case 'last_3_months': return 92;
+    case 'last_12_months': return 366;
+    case 'year_to_date': return daysBetween(`${today.slice(0, 4)}-01-01`, today);
+  }
+}
+
+/** A readable interval for a range: days up to a month, weeks up to a quarter, months beyond. */
+export function autoGranularity(days: number): Exclude<ReportingGranularity, 'none'> {
+  if (days <= 31) return 'day';
+  if (days <= 92) return 'week';
+  return 'month';
+}
+
+/** The last calendar day of the bucket that starts on `start` (weeks start on Monday, per the API). */
+export function bucketEnd(start: string, granularity: ReportingGranularity): string {
+  if (granularity === 'day') return start;
+  if (granularity === 'week') return addDays(start, 6);
+  if (granularity === 'month') {
+    const d = parseDay(start);
+    return toDay(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)));
+  }
+  return start;
+}
+
+/**
+ * The dates one bucket covers inside the report's range. The first bucket can start before the range and
+ * the last can end after it; the API only counts in-range records, so the drill-down is clipped the same way.
+ */
+export function bucketRange(start: string, granularity: ReportingGranularity, range: { from: string; to: string }): { from: string; to: string } {
+  const end = bucketEnd(start, granularity);
+  return { from: start < range.from ? range.from : start, to: end > range.to ? range.to : end };
+}
+
+/** Checks a custom range before it is sent. Returns a message for the person, or null when it can be run. */
+export function customRangeProblem(from: string, to: string, maxRangeDays: number): string | null {
+  const valid = (v: string) => /^20\d{2}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(parseDay(v).getTime()) && toDay(parseDay(v)) === v;
+  if (!valid(from) || !valid(to)) return 'Enter both dates (years 2000 to 2099).';
+  if (from > to) return 'The start date must be on or before the end date.';
+  if (daysBetween(from, to) > maxRangeDays) return `Choose a range of at most ${maxRangeDays.toLocaleString()} days.`;
+  return null;
 }

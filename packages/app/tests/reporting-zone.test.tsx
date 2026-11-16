@@ -24,11 +24,12 @@ const ctx = (permissions: string[]): BusinessContext => ({
   membership: { id: randomUUID(), role: 'OWNER', permissions },
 });
 
-function setup(o: Parameters<typeof createFakeReporting>[0] & { maxViewPages?: number }) {
+function setup(o: Parameters<typeof createFakeReporting>[0] & { maxViewPages?: number; section?: 'dashboard' | 'explore' | 'saved' }) {
   const api = createFakeReporting(o);
   const client = createReportingClient('https://api.test', { kind: 'cookie' }, api.fetch, { maxViewPages: o.maxViewPages });
   const handlers = { onHome: vi.fn(), onSwitch: vi.fn(), onSignOut: vi.fn(), onSessionEnded: vi.fn() };
-  render(<ReportingZone key="alpha" client={client} context={ctx(o.permissions)} userLabel="Ada" {...handlers} />);
+  // R1's screen is now the Explore section; R2 tests (reporting-r2.test.tsx) cover the Dashboard and Saved reports.
+  render(<ReportingZone key="alpha" client={client} context={ctx(o.permissions)} userLabel="Ada" section={o.section ?? 'explore'} {...handlers} />);
   return { api, handlers, user: userEvent.setup() };
 }
 const kpis = () => screen.findByRole('region', { name: 'Headline figures' });
@@ -196,7 +197,7 @@ describe('Reporting Zone', () => {
     expect(within(region).queryByText('Amount invoiced')).toBeNull();
     expect(queries(api).flatMap((q) => q.metrics.map((m) => m.id)).some((id) => id.startsWith('finance.'))).toBe(false);
     const chart = screen.getByLabelText('Chart') as HTMLSelectElement;
-    expect([...chart.options].map((o) => o.textContent)).toEqual(['Won opportunity value', 'New customers']);
+    expect([...chart.options].map((o) => o.textContent)).toEqual(['Won opportunity value', 'Opportunities won', 'New customers']);
   });
 
   it('explains when no report is available to this role', async () => {

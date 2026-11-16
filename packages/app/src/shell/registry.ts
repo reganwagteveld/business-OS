@@ -68,7 +68,15 @@ export const ZONES: readonly ZoneDefinition[] = [
   { id: 'operations', name: 'Operations', description: 'Keep everything moving', icon: 'operations', route: '/operations', order: 60, requires: [], availability: 'planned' },
   // Reporting R1 (docs/reporting-r1.md): takes the place of the planned "Insights" entry. reporting:read opens the
   // Zone; every figure inside also needs its source Zone's key, which the API checks on each request.
-  { id: 'reporting', name: 'Reporting', description: 'See what matters', icon: 'insights', route: '/reporting', order: 70, requires: ['reporting:read'], availability: 'built' },
+  // R2: Dashboard (the Zone's homepage), Explore (R1's report screen) and Saved reports.
+  {
+    id: 'reporting', name: 'Reporting', description: 'See what matters', icon: 'insights', route: '/reporting', order: 70, requires: ['reporting:read'], availability: 'built',
+    children: [
+      { id: 'dashboard', label: 'Dashboard', route: '/reporting' },
+      { id: 'explore', label: 'Explore', route: '/reporting/explore' },
+      { id: 'saved', label: 'Saved reports', route: '/reporting/saved' },
+    ],
+  },
   { id: 'settings', name: 'Settings', description: 'Workspace preferences', icon: 'settings', route: '/settings', order: 80, requires: [], availability: 'planned' },
 ];
 
