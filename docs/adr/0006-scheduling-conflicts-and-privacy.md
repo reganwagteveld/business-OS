@@ -1,10 +1,12 @@
 # ADR 0006: Scheduling conflict prevention, time and privacy
 
-- Status: **Proposed** (S0). Architecture provisionally approved by ChatGPT (final auditor) on 2026-11-14 subject to this ADR. Accepted only when Regan and ChatGPT approve; nothing in S1 starts before then.
+- Status: **Superseded in part by [ADR 0008](./0008-scheduling-ordered-lock-conflict-prevention.md)** (2026-11-16): §2 (exclusion constraint) and §3 (`btree_gist` privileged step) are replaced by globally ordered transaction locks. §1 (time) is implemented as written. §4–§7 (private details, busy-only visibility, escalation guards, trust model, erasure) remain **Proposed future requirements**: not built, not accepted. Originally Proposed (S0); architecture provisionally approved by ChatGPT on 2026-11-14 subject to this ADR.
 - Date: 2026-11-14
 - Related: [scheduling-data-model.md](../scheduling-data-model.md), ADR 0004 (database isolation design), [scheduling-s1.md](../scheduling-s1.md)
 
 > **S1 note (2026-11-15).** This ADR stays Proposed. S1 was approved by Regan to build a smaller, calendar-centred core: per-calendar advisory locks instead of the exclusion constraint, no `btree_gist`, no private entries and no erasure path. [scheduling-s1.md §2](../scheduling-s1.md#2-differences-from-s0-adr-0006-compatibility) lists each difference and how S1 keeps resources, private details and erasure possible later. Nothing in S1 accepts or rejects a decision recorded here.
+
+> **S2 note (2026-11-16).** S2 (PR #61) added resources and assignments with per-resource locks, without an exclusion constraint, because accepted overlaps (`enforceConflicts=false`) must remain possible. That contradicts §2 below and this ADR's "Alternatives considered", which reject per-resource locks as the primary guarantee. Regan (D-S2-5) and ChatGPT's PR #61 audit approved the lock approach, so [ADR 0008](./0008-scheduling-ordered-lock-conflict-prevention.md) now records the conflict-prevention decision: its guarantees, its limits, and the rule every future write path must follow. **Read §2–§3 below as the original S0 proposal, not as the current design.** ADR 0008 §6 lists what is implemented and what is still future.
 
 ## Context
 
@@ -23,7 +25,7 @@ Both must hold under the existing isolation design (ADR 0004): forced RLS, `bos_
 - Repeating local times (working hours, and later recurrence) are stored as local `time` plus a zone and expanded on the server.
 - Ranges are half-open (`[start, end)`), so back-to-back bookings never conflict.
 
-### 2. Conflict prevention: exclusion constraint with database-maintained copies (variant A)
+### 2. Conflict prevention: exclusion constraint with database-maintained copies (variant A) — superseded by ADR 0008
 
 - On `schedule_events`:
   - `during tstzrange GENERATED ALWAYS AS (tstzrange(starts_at, ends_at, '[)')) STORED`;
@@ -35,17 +37,17 @@ Both must hold under the existing isolation design (ADR 0004): forced RLS, `bos_
 - **Lock order (liveness).** Every write that can occupy time first takes a transaction advisory lock per resource, sorted by key: the PR #19 pattern, per resource instead of per project. Without it, conflicting concurrent writers wait on each other's uncommitted exclusion-index entries and can deadlock. In one observed local run, 19 of 20 concurrent reschedules got `40P01` and the last one ran into the unit-of-work timeout, so none succeeded and nobody double-booked. The lock is for progress only: the exclusion constraint remains the guarantee, and a write path that forgets the lock can fail, but cannot double-book.
 - **Fallback (variant B, tested in S0):** `SECURITY INVOKER` triggers maintain the copies, with a column-level `UPDATE` grant guarded by a trigger that re-derives them. It is never `SECURITY DEFINER` (see consequence 3).
 
-### 3. Extensions: privileged pre-migration step
+### 3. Extensions: privileged pre-migration step — superseded by ADR 0008 (no extension is installed)
 
 `btree_gist` is installed by an administrative role **before** `prisma migrate deploy`, in a new `prisma/privileged/000_extensions.sql` and a matching CI/docker init step. The S1 migration keeps `CREATE EXTENSION IF NOT EXISTS btree_gist` as an assertion that the step ran. `bos_owner` is **not** given `CREATE` on the database.
 
-### 4. Privacy
+### 4. Privacy — future requirement, not built
 
 - Sensitive content (title, description, location, customer/contact/project/task links, cancel reason) lives in `schedule_event_details`, 1:1 with the event.
 - A **restrictive** RLS policy on that table, ANDed with `tenant_isolation`, allows reads and writes only when `may_see_details()` holds: the entry is STANDARD, or the caller (`app.user_id`) is its organizer or an active member participant. There is no owner/admin override.
 - The time row (`schedule_events`) stays visible to everyone with `schedule:read`, so conflicts and calendars work.
 
-### 5. No escalation into private details
+### 5. No escalation into private details — future requirement, not built
 
 `SECURITY INVOKER` guards in the database (and the same rules in the service) allow a change that could **widen** who sees a private entry only to someone who can already see it:
 
@@ -66,7 +68,7 @@ Narrowing changes (STANDARD → PRIVATE, clearing the organizer, removing a part
   - a boundary rule allows `set_config` and `current_setting` only in `core/db`, which `check-boundaries.mjs` already does for `businessId`;
   - `$queryRawUnsafe` and `$executeRawUnsafe` stay unreachable from services (ADR 0004 S3).
 
-### 7. Privileged erasure: authority from a database-verified session
+### 7. Privileged erasure: authority from a database-verified session — future requirement, not built
 
 - Erasure is the only path that changes private details its caller cannot see. Its authority comes from the caller's **raw session token, verified in the database**, the same mechanism as the pre-tenant trusted paths (data-model §5.5, ADR 0004). `bos_app` cannot read `sessions`, so it cannot obtain or forge a token for someone else.
 - The work is split across two functions:

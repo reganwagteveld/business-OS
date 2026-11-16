@@ -1,49 +1,49 @@
 diff --git a/packages/app/src/app.tsx b/packages/app/src/app.tsx
-index 1f1a14b..26dce8d 100644
+index 53c86fe..5bb57ac 100644
 --- a/packages/app/src/app.tsx
 +++ b/packages/app/src/app.tsx
-@@ -4,6 +4,7 @@ import { createCustomersClient, type CustomersClient } from './api/customers';
+@@ -5,6 +5,7 @@ import { createPeopleClient, type PeopleClient } from './api/people';
  import { createProjectsClient, type ProjectsClient } from './api/projects';
  import { createFinanceClient, type FinanceClient } from './api/finance';
- import { createSalesClient, type SalesClient } from './api/sales';
+ import { createReportingClient, type ReportingClient } from './api/reporting';
 +import { createSchedulingClient, type SchedulingClient } from './api/scheduling';
+ import { createSalesClient, type SalesClient } from './api/sales';
  import { createTenancyClient, type TenancyClient } from './api/tenancy';
  import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
- import type { ClientPlatform } from './config';
-@@ -21,6 +22,7 @@ import { CustomerZone } from './zones/customers/customer-zone';
+@@ -24,6 +25,7 @@ import { PeopleZone } from './zones/people/people-zone';
  import { ProjectsZone } from './zones/projects/projects-zone';
  import { FinanceZone } from './zones/finance/finance-zone';
- import { SalesZone } from './zones/sales/sales-zone';
+ import { ReportingZone } from './zones/reporting/reporting-zone';
 +import { SchedulingZone } from './zones/scheduling/scheduling-zone';
+ import { SalesZone } from './zones/sales/sales-zone';
  import { browserStorage, type WorkspaceStorage } from './workspace/storage';
  import { useWorkspace } from './workspace/use-workspace';
- 
-@@ -42,6 +44,7 @@ export interface AppProps {
-   sales?: SalesClient;
-   projects?: ProjectsClient;
+@@ -48,6 +50,7 @@ export interface AppProps {
+   people?: PeopleClient;
    finance?: FinanceClient;
+   reporting?: ReportingClient;
 +  scheduling?: SchedulingClient;
    storage?: WorkspaceStorage;
  }
  
-@@ -57,7 +60,7 @@ type Mode = 'default' | 'choose' | 'new';
+@@ -63,7 +66,7 @@ type Mode = 'default' | 'choose' | 'new';
   * open the right one. Offline, server errors and an ended session each get their own screen, and
   * the active business is only ever one the server lists for you.
   */
--export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, finance: financeOverride, storage: storageOverride }: AppProps) {
-+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, finance: financeOverride, scheduling: schedulingOverride, storage: storageOverride }: AppProps) {
+-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, storage: storageOverride }: AppProps) {
++export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, scheduling: schedulingOverride, storage: storageOverride }: AppProps) {
    const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
    const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
    const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
-@@ -65,6 +68,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
-   const sales = useMemo(() => salesOverride ?? createSalesClient(apiBaseUrl, resolvedTransport), [salesOverride, apiBaseUrl, resolvedTransport]);
+@@ -73,6 +76,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
    const projects = useMemo(() => projectsOverride ?? createProjectsClient(apiBaseUrl, resolvedTransport), [projectsOverride, apiBaseUrl, resolvedTransport]);
    const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
+   const reporting = useMemo(() => reportingOverride ?? createReportingClient(apiBaseUrl, resolvedTransport), [reportingOverride, apiBaseUrl, resolvedTransport]);
 +  const scheduling = useMemo(() => schedulingOverride ?? createSchedulingClient(apiBaseUrl, resolvedTransport), [schedulingOverride, apiBaseUrl, resolvedTransport]);
    const storage = useMemo(() => storageOverride ?? browserStorage(), [storageOverride]);
    const workspace = useWorkspace({ auth, tenancy, storage });
    const { phase } = workspace;
-@@ -221,6 +225,14 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
+@@ -245,6 +249,14 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
          onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
        />
      );
@@ -59,23 +59,23 @@ index 1f1a14b..26dce8d 100644
      screen = <HomeWithMetrics key={slug} customers={customers} context={active} user={phase.user} navigation={navigation} onOpen={open} onSessionEnded={workspace.retry} />;
    }
 diff --git a/packages/app/src/shell/registry.ts b/packages/app/src/shell/registry.ts
-index 61f1310..f3a9c8a 100644
+index fead789..c860d4a 100644
 --- a/packages/app/src/shell/registry.ts
 +++ b/packages/app/src/shell/registry.ts
 @@ -11,7 +11,7 @@ import type { IconName } from './icons';
   * because its entry exists, and the API still checks every request.
   */
  
--export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'people' | 'operations' | 'insights' | 'settings';
-+export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'scheduling' | 'people' | 'operations' | 'insights' | 'settings';
+-export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'people' | 'operations' | 'reporting' | 'settings';
++export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'scheduling' | 'people' | 'operations' | 'reporting' | 'settings';
  
  export interface ZoneChild {
    /** Stable within its Zone. */
-@@ -63,6 +63,7 @@ export const ZONES: readonly ZoneDefinition[] = [
+@@ -64,6 +64,7 @@ export const ZONES: readonly ZoneDefinition[] = [
        { id: 'settings', label: 'Settings', route: '/finance/settings' },
      ],
    },
-+  { id: 'scheduling', name: 'Schedule', description: 'Calendars and bookings', icon: 'operations', route: '/schedule', order: 45, requires: ['scheduling:read'], availability: 'built' },
-   { id: 'people', name: 'People', description: 'Your team and their work', icon: 'people', route: '/people', order: 50, requires: [], availability: 'planned' },
++  { id: 'scheduling', name: 'Schedule', description: 'Calendars, bookings and resources', icon: 'operations', route: '/schedule', order: 45, requires: ['scheduling:read'], availability: 'built' },
+   { id: 'people', name: 'People', description: 'Your team and their work', icon: 'people', route: '/people', order: 50, requires: ['people:read'], availability: 'built' },
    { id: 'operations', name: 'Operations', description: 'Keep everything moving', icon: 'operations', route: '/operations', order: 60, requires: [], availability: 'planned' },
-   { id: 'insights', name: 'Insights', description: 'See what matters', icon: 'insights', route: '/insights', order: 70, requires: [], availability: 'planned' },
+   // Reporting R1 (docs/reporting-r1.md): takes the place of the planned "Insights" entry. reporting:read opens the

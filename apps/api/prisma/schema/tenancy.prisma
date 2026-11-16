@@ -72,6 +72,8 @@ model Business {
   peopleStatusHistory       PeopleEmploymentStatusHistory[]
   schedulingCalendars       SchedulingCalendar[]
   schedulingEvents          SchedulingEvent[]
+  schedulingResources       SchedulingResource[]
+  schedulingEventResources  SchedulingEventResource[]
   conversations             Conversation[]
   messages                  Message[]
   messageParticipants       MessageParticipant[]

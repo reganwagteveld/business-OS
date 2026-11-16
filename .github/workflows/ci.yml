@@ -199,6 +199,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
           REMINDERS_TEST_IP_BLOCK: '131'
+      - name: Scheduling resources suite behind the pooler
+        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/scheduling-resources.test.ts
+        env:
+          DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
+          SCHEDULING_RESOURCES_TEST_IP_BLOCK: '92'
       - name: Migrations match schema
         run: pnpm db:check-migrations
 

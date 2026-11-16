@@ -79,7 +79,8 @@ import {
 import {
   AvailabilityQuery, AvailabilityResponse, CalendarResponse, CalendarTransitionRequest, CreateCalendarRequest, CreateEventRequest, DefaultCalendarResponse,
   EventResponse, EventTransitionRequest, ListCalendarsQuery, ListCalendarsResponse, ListEventsQuery, ListEventsResponse, UpdateCalendarRequest,
-  UpdateEventRequest,
+  UpdateEventRequest, CreateResourceRequest, ListResourcesQuery, ListResourcesResponse, ResourceAvailabilityQuery, ResourceAvailabilityResponse,
+  ResourceResponse, ResourceTransitionRequest, UpdateResourceRequest,
 } from './scheduling.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
@@ -447,6 +448,17 @@ export const endpoints = {
   cancelEvent: { method: 'POST', path: '/api/v1/b/:slug/scheduling/events/:eventId/cancel', request: EventTransitionRequest, response: EventResponse },
   archiveEvent: { method: 'POST', path: '/api/v1/b/:slug/scheduling/events/:eventId/archive', request: EventTransitionRequest, response: EventResponse },
   checkAvailability: { method: 'GET', path: '/api/v1/b/:slug/scheduling/availability', query: AvailabilityQuery, response: AvailabilityResponse },
+  // Scheduling S2 (docs/scheduling-s2.md): resources. No DELETE: resources are archived. Assignments are
+  // written with the event (resourceIds on createEvent/updateEvent), all or nothing.
+  listResources: { method: 'GET', path: '/api/v1/b/:slug/scheduling/resources', query: ListResourcesQuery, response: ListResourcesResponse },
+  createResource: { method: 'POST', path: '/api/v1/b/:slug/scheduling/resources', request: CreateResourceRequest, response: ResourceResponse },
+  /** Advisory: the booking transaction re-checks under locks. */
+  resourceAvailability: { method: 'GET', path: '/api/v1/b/:slug/scheduling/resources/availability', query: ResourceAvailabilityQuery, response: ResourceAvailabilityResponse },
+  getResource: { method: 'GET', path: '/api/v1/b/:slug/scheduling/resources/:resourceId', response: ResourceResponse },
+  updateResource: { method: 'PATCH', path: '/api/v1/b/:slug/scheduling/resources/:resourceId', request: UpdateResourceRequest, response: ResourceResponse },
+  /** Existing bookings keep the resource; it cannot be newly assigned until restored. */
+  archiveResource: { method: 'POST', path: '/api/v1/b/:slug/scheduling/resources/:resourceId/archive', request: ResourceTransitionRequest, response: ResourceResponse },
+  restoreResource: { method: 'POST', path: '/api/v1/b/:slug/scheduling/resources/:resourceId/restore', request: ResourceTransitionRequest, response: ResourceResponse },
   // Reporting R1 (docs/reporting-r1.md). Registered metrics only; every run is checked against reporting:read
   // AND each metric's source permissions. Query and details are POST because their bodies are structured;
   // neither changes anything.

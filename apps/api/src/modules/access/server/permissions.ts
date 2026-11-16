@@ -45,7 +45,10 @@ export const ZONE_PERMISSIONS = {
   // Scheduling S1 (docs/scheduling-s1.md §5). Calendars are shared by the whole business (no private
   // calendars yet). create/update/cancel cover events (cancel also archives an event, both keep history);
   // manage_calendars covers creating, editing, archiving and restoring calendars and choosing the default.
-  scheduling: ['scheduling:read', 'scheduling:create', 'scheduling:update', 'scheduling:cancel', 'scheduling:manage_calendars'],
+  // S2 (docs/scheduling-s2.md §7): manage_resources = create, edit, deactivate, archive and restore
+  // resources. Seeing resources and their availability is scheduling:read; assigning them to an event is
+  // that event's scheduling:create or scheduling:update.
+  scheduling: ['scheduling:read', 'scheduling:create', 'scheduling:update', 'scheduling:cancel', 'scheduling:manage_calendars', 'scheduling:manage_resources'],
   // Communications C1: conversations and recorded/imported historical messages. Nothing is sent.
   // C2-A (docs/communications-c2.md §4): connect = connect, reconnect, share, pause and disconnect
   // YOUR OWN mailbox; manage_connections = see every mailbox's metadata, restrict, pause, disconnect
@@ -93,7 +96,7 @@ const COMMUNICATIONS: Permission[] = ['communications:read', 'communications:rec
 const REPORTING_WORK: Permission[] = ['reporting:read', 'reporting:save'];
 const DATA: Permission[] = [
   'customers:read', 'customers:write', 'customers:delete', 'activity:read', 'activity:write', 'sales:read', 'sales:write', ...PROJECTS_WORK, 'projects:archive',
-  ...SCHEDULING_WORK, 'scheduling:manage_calendars',
+  ...SCHEDULING_WORK, 'scheduling:manage_calendars', 'scheduling:manage_resources',
   ...COMMUNICATIONS,
 ];
 

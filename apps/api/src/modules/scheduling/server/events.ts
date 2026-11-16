@@ -5,13 +5,16 @@ import 'server-only';
 // check and the write are one atomic step per calendar, and every edit is conditional on the version the
 // caller saw.
 import { randomUUID } from 'node:crypto';
-import { resolveWallTime, parseWallTime, type SchedulingConflict, type SchedulingEvent as EventDto } from '@business-os/contracts';
+import { resolveWallTime, parseWallTime, type SchedulingConflict, type SchedulingEvent as EventDto, type SchedulingResourceRef } from '@business-os/contracts';
 import { ForbiddenError } from '@/modules/access';
 import { recordAudit } from '@/core/audit';
 import type { AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { RecordNotFoundError, StateConflictError } from '@/core/http/errors';
-import { BUMP, changedFields, invalid, lockCalendars, MAX_EVENT_MS, MAX_RANGE_MS, UUID, writableCalendar, type Viewer } from './shared';
+import {
+  assignableResource, BUMP, changedFields, invalid, lockCalendars, lockResources, MAX_CONFLICTS_PER_RESOURCE, MAX_EVENT_MS, MAX_RANGE_MS, UUID,
+  writableCalendar, type Viewer,
+} from './shared';
 
 type Status = 'SCHEDULED' | 'CANCELLED';
 type Row = {
@@ -19,17 +22,27 @@ type Row = {
   blocksAvailability: boolean; customerId: string | null; cancelledAt: Date | null; cancelledById: string | null; version: number;
   createdById: string; updatedById: string; createdAt: Date; updatedAt: Date; archivedAt: Date | null;
   customer?: { id: string; displayName: string; archivedAt: Date | null } | null;
+  resources: { resource: { id: string; name: string; resourceType: SchedulingResourceRef['type']; status: SchedulingResourceRef['status'] } }[];
 };
 const base = {
   id: true, calendarId: true, title: true, description: true, location: true, startAt: true, endAt: true, status: true, blocksAvailability: true,
   customerId: true, cancelledAt: true, cancelledById: true, version: true, createdById: true, updatedById: true, createdAt: true, updatedAt: true, archivedAt: true,
+  // S2: live assignments only (a removed one is history and no longer part of the event).
+  resources: { where: { removedAt: null }, select: { resource: { select: { id: true, name: true, resourceType: true, status: true } } } },
 } as const;
 const selectFor = (viewer: Viewer) => (viewer.canReadCustomers ? { ...base, customer: { select: { id: true, displayName: true, archivedAt: true } } } : base);
+
+const resourceRefs = (r: Row): SchedulingResourceRef[] =>
+  r.resources
+    .map(({ resource: x }) => ({ id: x.id, name: x.name, type: x.resourceType, status: x.status }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));
+const resourceIdsOf = (r: Row) => r.resources.map((x) => x.resource.id);
 
 const toDto = (r: Row): EventDto => ({
   id: r.id, calendarId: r.calendarId, title: r.title, description: r.description, location: r.location,
   startAt: r.startAt.toISOString(), endAt: r.endAt.toISOString(), status: r.status, blocksAvailability: r.blocksAvailability,
   customerId: r.customerId, customer: r.customer ? { id: r.customer.id, displayName: r.customer.displayName, archived: r.customer.archivedAt !== null } : null,
+  resources: resourceRefs(r),
   cancelledAt: r.cancelledAt?.toISOString() ?? null, cancelledById: r.cancelledById, version: r.version,
   createdById: r.createdById, updatedById: r.updatedById, createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
   archivedAt: r.archivedAt?.toISOString() ?? null,
@@ -71,7 +84,7 @@ function checkInterval(start: Date, end: Date) {
  * intervals do not overlap). The start bound uses the 31-day maximum so the scan stays on the
  * (business_id, calendar_id, start_at) index.
  */
-export async function findConflicts(db: AppTenantDb, calendarId: string, start: Date, end: Date, excludeEventId?: string): Promise<SchedulingConflict[]> {
+export async function findConflicts(db: AppTenantDb, calendarId: string, start: Date, end: Date, excludeEventId?: string, blocking = false): Promise<SchedulingConflict[]> {
   const rows = (await db.schedulingEvent.findMany({
     where: {
       calendarId, archivedAt: null, status: 'SCHEDULED', blocksAvailability: true,
@@ -82,7 +95,61 @@ export async function findConflicts(db: AppTenantDb, calendarId: string, start: 
     orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
     take: 50,
   } as never)) as { id: string; calendarId: string; title: string; startAt: Date; endAt: Date }[];
-  return rows.map((r) => ({ eventId: r.id, calendarId: r.calendarId, title: r.title, startAt: r.startAt.toISOString(), endAt: r.endAt.toISOString() }));
+  return rows.map((r) => ({
+    kind: 'calendar' as const, eventId: r.id, calendarId: r.calendarId, title: r.title, startAt: r.startAt.toISOString(), endAt: r.endAt.toISOString(),
+    resource: null, blocking,
+  }));
+}
+
+/**
+ * S2 (docs/scheduling-s2.md §4): occupying events that hold any of `resourceIds` and overlap [start, end).
+ * Occupying = SCHEDULED, not archived, blocks_availability, and a live (not removed) assignment of the
+ * resource. Same half-open rule as calendars. One entry per (resource, event), at most `perResource` per
+ * resource (earliest first); `occupied` lists every resource with at least one, however many are cut.
+ * Computed from the events and assignments themselves: there is no availability ledger. The start bound
+ * uses the 31-day maximum so the event side stays index-bounded.
+ */
+export async function findResourceConflicts(
+  db: AppTenantDb, resourceIds: string[], start: Date, end: Date, opts: { excludeEventId?: string; blocking?: boolean; perResource?: number } = {},
+): Promise<SchedulingConflict[]> {
+  const ids = [...new Set(resourceIds.map((i) => i.toLowerCase()))];
+  if (ids.length === 0) return [];
+  const exclude = opts.excludeEventId ?? null;
+  const rows = await db.$queryRaw<{ resource_id: string; resource_name: string; event_id: string; calendar_id: string; title: string; start_at: Date; end_at: Date }[]>`
+    SELECT resource_id, resource_name, event_id, calendar_id, title, start_at, end_at FROM (
+      SELECT a.resource_id::text AS resource_id, r.name AS resource_name, e.id::text AS event_id, e.calendar_id::text AS calendar_id,
+             e.title, e.start_at, e.end_at,
+             row_number() OVER (PARTITION BY a.resource_id ORDER BY e.start_at, e.id) AS n
+      FROM scheduling_event_resources a
+      JOIN scheduling_events e ON e.business_id = a.business_id AND e.id = a.event_id
+      JOIN scheduling_resources r ON r.business_id = a.business_id AND r.id = a.resource_id
+      WHERE a.business_id = nullif(current_setting('app.business_id', true), '')::uuid
+        AND a.removed_at IS NULL AND a.resource_id = ANY(${ids}::uuid[])
+        AND e.status = 'SCHEDULED' AND e.archived_at IS NULL AND e.blocks_availability
+        AND e.start_at < ${end} AND e.start_at > ${new Date(start.getTime() - MAX_EVENT_MS - 1)} AND e.end_at > ${start}
+        AND (${exclude}::uuid IS NULL OR e.id <> ${exclude}::uuid)
+    ) x
+    WHERE n <= ${opts.perResource ?? MAX_CONFLICTS_PER_RESOURCE}
+    ORDER BY resource_name, resource_id, start_at, event_id`;
+  return rows.map((r) => ({
+    kind: 'resource' as const, eventId: r.event_id, calendarId: r.calendar_id, title: r.title,
+    startAt: new Date(r.start_at).toISOString(), endAt: new Date(r.end_at).toISOString(),
+    resource: { id: r.resource_id, name: r.resource_name }, blocking: opts.blocking ?? false,
+  }));
+}
+
+const uniqueIds = (ids: string[] | undefined) => [...new Set((ids ?? []).map((i) => i.toLowerCase()))];
+const withBlocking = (conflicts: SchedulingConflict[], blocking: boolean) => conflicts.map((c) => ({ ...c, blocking }));
+
+/** Audit for an overlap kept on purpose (enforceConflicts false): ids and counts only, never text. */
+async function auditAcceptedOverlap(db: AppTenantDb, actorUserId: string, id: string, conflicts: SchedulingConflict[]) {
+  if (conflicts.length === 0) return;
+  const calendar = conflicts.filter((c) => c.kind === 'calendar');
+  const resource = conflicts.filter((c) => c.kind === 'resource');
+  await recordAudit(db, actorUserId, 'scheduling.event.overlap_accepted', { type: 'scheduling_event', id }, {
+    calendarOverlaps: String(calendar.length), resourceOverlaps: String(resource.length),
+    eventIds: [...new Set(conflicts.map((c) => c.eventId))].sort(), resourceIds: [...new Set(resource.map((c) => c.resource!.id))].sort(),
+  });
 }
 
 /** The outcome of a write: written (with any overlaps it was allowed to make), or refused with nothing written. */
@@ -98,6 +165,8 @@ async function checkCustomer(db: AppTenantDb, viewer: Viewer, customerId: string
 export type EventInput = {
   calendarId?: string; title?: string; description?: string | null; location?: string | null; start?: TimeInput; end?: TimeInput;
   blocksAvailability?: boolean; customerId?: string | null; enforceConflicts: boolean;
+  /** S2: the event's resources (create: initial set; edit: complete new set, undefined keeps the current one). */
+  resourceIds?: string[];
 };
 
 export async function createEvent(db: AppTenantDb, viewer: Viewer, actorUserId: string, input: EventInput & { calendarId: string; title: string; start: TimeInput; end: TimeInput }): Promise<WriteResult> {
@@ -107,9 +176,17 @@ export async function createEvent(db: AppTenantDb, viewer: Viewer, actorUserId: 
   if (input.customerId) await checkCustomer(db, viewer, input.customerId);
   const blocks = input.blocksAvailability ?? true;
 
+  const resourceIds = uniqueIds(input.resourceIds);
+
+  // Lock protocol (shared.ts): calendar, then resources, then the checks and the writes.
   writableCalendar(await lockCalendars(db, [input.calendarId]), input.calendarId);
-  const conflicts = blocks ? await findConflicts(db, input.calendarId, startAt, endAt) : [];
-  if (conflicts.length > 0 && input.enforceConflicts) return { kind: 'conflict', conflicts };
+  const resources = await lockResources(db, resourceIds);
+  for (const r of resourceIds) assignableResource(resources, r);
+  const conflicts = blocks
+    ? [...(await findConflicts(db, input.calendarId, startAt, endAt)), ...(await findResourceConflicts(db, resourceIds, startAt, endAt))]
+    : [];
+  // One override for both kinds (D-S2-4): an enforced write refuses any overlap, and nothing is written.
+  if (conflicts.length > 0 && input.enforceConflicts) return { kind: 'conflict', conflicts: withBlocking(conflicts, true) };
 
   const id = randomUUID();
   await db.schedulingEvent.create({
@@ -118,18 +195,34 @@ export async function createEvent(db: AppTenantDb, viewer: Viewer, actorUserId: 
       startAt, endAt, blocksAvailability: blocks, customerId: input.customerId ?? null, createdById: actorUserId, updatedById: actorUserId,
     } as never,
   });
+  if (resourceIds.length > 0) {
+    await db.schedulingEventResource.createMany({
+      data: resourceIds.map((resourceId) => ({ id: randomUUID(), eventId: id, resourceId, createdById: actorUserId })) as never,
+    });
+  }
   // Structured facts only: no title, description or location (they may hold customer details).
   await recordAudit(db, actorUserId, 'scheduling.event.created', { type: 'scheduling_event', id }, {
     calendarId: input.calendarId, customerId: input.customerId ?? null, blocksAvailability: String(blocks),
-    enforced: String(input.enforceConflicts), overlaps: String(conflicts.length),
+    enforced: String(input.enforceConflicts), overlaps: String(conflicts.length), resources: String(resourceIds.length),
   });
-  return { kind: 'written', event: toDto(await load(db, viewer, id)), conflicts };
+  if (resourceIds.length > 0) {
+    await recordAudit(db, actorUserId, 'scheduling.event.resources_changed', { type: 'scheduling_event', id }, { added: [...resourceIds].sort(), removed: [] });
+  }
+  await auditAcceptedOverlap(db, actorUserId, id, conflicts);
+  return { kind: 'written', event: toDto(await load(db, viewer, id)), conflicts: withBlocking(conflicts, false) };
 }
 
 export async function getEvent(db: AppTenantDb, viewer: Viewer, id: string) {
   const row = await load(db, viewer, id);
   const active = row.status === 'SCHEDULED' && row.archivedAt === null && row.blocksAvailability;
-  return { event: toDto(row), conflicts: active ? await findConflicts(db, row.calendarId, row.startAt, row.endAt, row.id) : [] };
+  if (!active) return { event: toDto(row), conflicts: [] };
+  return {
+    event: toDto(row),
+    conflicts: [
+      ...(await findConflicts(db, row.calendarId, row.startAt, row.endAt, row.id)),
+      ...(await findResourceConflicts(db, resourceIdsOf(row), row.startAt, row.endAt, { excludeEventId: row.id })),
+    ],
+  };
 }
 
 /** Lock protocol step 3: the event row, after the calendar locks, at the version the caller saw. */
@@ -145,6 +238,8 @@ async function lockEvent(db: AppTenantDb, id: string, version: number, calendarI
 
 /** The fields whose change can create a conflict. Only these trigger the check on an edit. */
 const AVAILABILITY_FIELDS = ['calendarId', 'startAt', 'endAt', 'blocksAvailability'];
+/** The fields whose change re-checks every resource the event keeps (S2). */
+const RESOURCE_TIME_FIELDS = ['startAt', 'endAt', 'blocksAvailability'];
 
 /**
  * Edits a scheduled event: details, times, blocking, customer link, or a move to another active calendar.
@@ -169,44 +264,80 @@ export async function updateEvent(db: AppTenantDb, viewer: Viewer, actorUserId: 
     else if (!viewer.canReadCustomers) throw new ForbiddenError(); // unlinking is a customer decision too
     data.customerId = patch.customerId;
   }
-  const { customer: _customer, ...comparable } = before;
+  const { customer: _customer, resources: _resources, ...comparable } = before;
   void _customer;
+  void _resources;
   const fields = changedFields(comparable as unknown as Record<string, unknown>, data);
+
+  // S2: the resource set. `resourceIds` is the complete new set; undefined keeps the current one.
+  const beforeIds = resourceIdsOf(before);
+  const afterIds = patch.resourceIds === undefined ? beforeIds : uniqueIds(patch.resourceIds);
+  const added = afterIds.filter((r) => !beforeIds.includes(r));
+  const removed = beforeIds.filter((r) => !afterIds.includes(r));
+  if (added.length > 0 || removed.length > 0) fields.push('resourceIds');
+  fields.sort();
   if (fields.length === 0) return { kind: 'written', ...(await getEvent(db, viewer, id)) };
 
   const calendarId = (data.calendarId as string | undefined) ?? before.calendarId;
   const locked = await lockCalendars(db, [before.calendarId, calendarId]);
   writableCalendar(locked, before.calendarId);
   writableCalendar(locked, calendarId);
+  // Every resource the write touches: kept, added and removed (removing frees time, so it serialises too).
+  const resources = await lockResources(db, [...beforeIds, ...afterIds]);
+  for (const r of added) assignableResource(resources, r);
+  // Also proves the assignment set read above is unchanged (assignments change only with a version bump).
   await lockEvent(db, id, patch.version, before.calendarId);
 
   const blocks = (data.blocksAvailability as boolean | undefined) ?? before.blocksAvailability;
   const affectsAvailability = blocks && fields.some((f) => AVAILABILITY_FIELDS.includes(f));
-  const conflicts = affectsAvailability ? await findConflicts(db, calendarId, startAt, endAt, id) : [];
-  if (conflicts.length > 0 && patch.enforceConflicts) return { kind: 'conflict', conflicts };
+  // Resources are business-wide: a calendar move alone does not change their occupancy. A new time or
+  // switching blocking on re-checks every resource; otherwise only the newly added ones are checked.
+  const retimed = fields.some((f) => RESOURCE_TIME_FIELDS.includes(f));
+  const resourcesToCheck = blocks ? (retimed ? afterIds : added) : [];
+  const conflicts = [
+    ...(affectsAvailability ? await findConflicts(db, calendarId, startAt, endAt, id) : []),
+    ...(await findResourceConflicts(db, resourcesToCheck, startAt, endAt, { excludeEventId: id })),
+  ];
+  if (conflicts.length > 0 && patch.enforceConflicts) return { kind: 'conflict', conflicts: withBlocking(conflicts, true) };
 
+  // The version bumps on every change, a resource-only change included.
   const result = await db.schedulingEvent.updateMany({
     where: { id, version: patch.version, status: 'SCHEDULED', archivedAt: null }, data: { ...data, ...BUMP, updatedById: actorUserId } as never,
   });
   if (result.count === 0) throw new StateConflictError('stale');
+  if (removed.length > 0) {
+    await db.schedulingEventResource.updateMany({
+      where: { eventId: id, resourceId: { in: removed }, removedAt: null }, data: { removedAt: new Date(), removedById: actorUserId } as never,
+    });
+  }
+  if (added.length > 0) {
+    await db.schedulingEventResource.createMany({
+      data: added.map((resourceId) => ({ id: randomUUID(), eventId: id, resourceId, createdById: actorUserId })) as never,
+    });
+  }
   await recordAudit(db, actorUserId, 'scheduling.event.updated', { type: 'scheduling_event', id }, {
     fields, enforced: String(patch.enforceConflicts), overlaps: String(conflicts.length),
   });
   if (fields.includes('calendarId')) {
     await recordAudit(db, actorUserId, 'scheduling.event.moved', { type: 'scheduling_event', id }, { from: before.calendarId, to: calendarId });
   }
-  return { kind: 'written', event: toDto(await load(db, viewer, id)), conflicts };
+  if (added.length > 0 || removed.length > 0) {
+    await recordAudit(db, actorUserId, 'scheduling.event.resources_changed', { type: 'scheduling_event', id }, { added: [...added].sort(), removed: [...removed].sort() });
+  }
+  await auditAcceptedOverlap(db, actorUserId, id, conflicts);
+  return { kind: 'written', event: toDto(await load(db, viewer, id)), conflicts: withBlocking(conflicts, false) };
 }
 
 /**
- * Cancels a scheduled event. The row is kept (status CANCELLED, who and when); it stops blocking time at
- * once, under the calendar lock, so a booking waiting for that slot sees it free when it runs.
+ * Cancels a scheduled event. The row is kept (status CANCELLED, who and when), and so are its resource
+ * assignments (history); it stops occupying the calendar and its resources at once, under their locks, so a booking waiting for that slot sees it free when it runs.
  */
 export async function cancelEvent(db: AppTenantDb, viewer: Viewer, actorUserId: string, id: string, version: number) {
   const before = await load(db, viewer, id);
   if (before.archivedAt) throw new StateConflictError('archived');
   if (before.status !== 'SCHEDULED') throw new StateConflictError('not_scheduled');
   writableCalendar(await lockCalendars(db, [before.calendarId]), before.calendarId);
+  await lockResources(db, resourceIdsOf(before)); // frees their time: serialised like any booking of them
   await lockEvent(db, id, version, before.calendarId);
   const result = await db.schedulingEvent.updateMany({
     where: { id, version, status: 'SCHEDULED', archivedAt: null },
@@ -222,6 +353,7 @@ export async function archiveEvent(db: AppTenantDb, viewer: Viewer, actorUserId:
   const before = await load(db, viewer, id);
   if (before.archivedAt) throw new StateConflictError('archived');
   writableCalendar(await lockCalendars(db, [before.calendarId]), before.calendarId);
+  await lockResources(db, resourceIdsOf(before));
   await lockEvent(db, id, version, before.calendarId);
   const result = await db.schedulingEvent.updateMany({ where: { id, version, archivedAt: null }, data: { archivedAt: new Date(), ...BUMP, updatedById: actorUserId } as never });
   if (result.count === 0) throw new StateConflictError('stale');
@@ -229,7 +361,7 @@ export async function archiveEvent(db: AppTenantDb, viewer: Viewer, actorUserId:
   return { event: toDto(await load(db, viewer, id)), conflicts: [] };
 }
 
-export type EventQuery = { from: string; to: string; calendarId?: string; status: 'scheduled' | 'cancelled' | 'all'; cursor?: string; limit: number };
+export type EventQuery = { from: string; to: string; calendarId?: string; resourceId?: string; status: 'scheduled' | 'cancelled' | 'all'; cursor?: string; limit: number };
 
 /**
  * Events overlapping [from, to), at most 62 days, ordered by start then id, keyset-paginated. Archived
@@ -250,8 +382,13 @@ export async function listEvents(db: AppTenantDb, viewer: Viewer, query: EventQu
   } else {
     where.push({ calendar: { archivedAt: null } });
   }
+  if (query.resourceId) {
+    if (!(await db.schedulingResource.findFirst({ where: { id: query.resourceId }, select: { id: true } }))) throw new RecordNotFoundError();
+    where.push({ resources: { some: { resourceId: query.resourceId, removedAt: null } } });
+  }
   if (query.status !== 'all') where.push({ status: query.status === 'scheduled' ? 'SCHEDULED' : 'CANCELLED' });
-  const list = `scheduling-events:${query.from}:${query.to}:${query.calendarId ?? '*'}:${query.status}`;
+  // S1's list key is unchanged when no resource is named, so cursors issued before S2 stay valid.
+  const list = `scheduling-events:${query.from}:${query.to}:${query.calendarId ?? '*'}:${query.status}${query.resourceId ? `:r:${query.resourceId}` : ''}`;
   const after = decodeCursor(query.cursor, list, ['t', 'i'] as const);
   if (after) {
     const t = new Date(after.t);
@@ -260,7 +397,7 @@ export async function listEvents(db: AppTenantDb, viewer: Viewer, query: EventQu
   }
   const rows = (await db.schedulingEvent.findMany({
     where: { AND: where }, select: selectFor(viewer), orderBy: [{ startAt: 'asc' }, { id: 'asc' }], take: query.limit + 1,
-  } as never)) as Row[];
+  } as never)) as unknown as Row[];
   const page = rows.slice(0, query.limit);
   const last = page[page.length - 1];
   return { events: page.map(toDto), nextCursor: rows.length > query.limit && last ? encodeCursor(list, { t: last.startAt.toISOString(), i: last.id }) : null };
