@@ -1,0 +1,134 @@
+// communications module, E1 (docs/communications-e1.md): the erasure ledger and legal holds. Content is
+// never stored here: the ledger keeps ids, codes and counts only. Every write to erasures and items goes
+// through the bos_maint functions in prisma/privileged/004_communications_erasure.sql; bos_app may only
+// read them. Value sets are CHECK constraints; guards, grants and RLS live in migration
+// 20261129000000_communications_erasure.
+
+/// One erasure: a request for a contact, conversation or message (kind REQUEST, created by a database-verified
+/// OWNER or ADMIN session), or one retention purge batch (kind RETENTION, no user).
+model CommunicationsErasure {
+  id                  String    @db.Uuid
+  businessId          String    @map("business_id") @db.Uuid
+  kind                String
+  targetType          String?   @map("target_type")
+  contactId           String?   @map("contact_id") @db.Uuid
+  conversationId      String?   @map("conversation_id") @db.Uuid
+  messageId           String?   @map("message_id") @db.Uuid
+  reasonCode          String    @map("reason_code")
+  status              String    @default("PENDING")
+  requestedById       String?   @map("requested_by_id") @db.Uuid
+  requestedAt         DateTime  @default(now()) @map("requested_at") @db.Timestamptz
+  nextAttemptAt       DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz
+  attempts            Int       @default(0)
+  lastErrorCode       String?   @map("last_error_code")
+  deferredReason      String?   @map("deferred_reason")
+  messagesErased      Int       @default(0) @map("messages_erased")
+  participantsErased  Int       @default(0) @map("participants_erased")
+  activitiesErased    Int       @default(0) @map("activities_erased")
+  conversationsErased Int       @default(0) @map("conversations_erased")
+  reviewRequired      Int       @default(0) @map("review_required")
+  deferredCount       Int       @default(0) @map("deferred_count")
+  completedAt         DateTime? @map("completed_at") @db.Timestamptz
+  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  business     Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "communications_erasures_business_fkey")
+  contact      Contact?                    @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "communications_erasures_contact_fkey")
+  conversation Conversation?               @relation(fields: [businessId, conversationId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "communications_erasures_conversation_fkey")
+  message      Message?                    @relation(fields: [businessId, messageId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "communications_erasures_message_fkey")
+  items        CommunicationsErasureItem[]
+
+  @@id([businessId, id])
+  @@index([businessId, status, nextAttemptAt])
+  @@index([businessId, requestedAt(sort: Desc), id])
+  @@map("communications_erasures")
+}
+
+/// The ledger: one row per entity an erasure changed or flagged (ids only). Append-only. Replayed after a
+/// restore of the content tables so erased content cannot come back (docs/communications-e1.md §7).
+model CommunicationsErasureItem {
+  businessId String   @map("business_id") @db.Uuid
+  erasureId  String   @map("erasure_id") @db.Uuid
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id") @db.Uuid
+  action     String
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+
+  business Business              @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "communications_erasure_items_business_fkey")
+  erasure  CommunicationsErasure @relation(fields: [businessId, erasureId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "communications_erasure_items_erasure_fkey")
+
+  @@id([businessId, erasureId, entityType, entityId])
+  @@index([businessId, entityType, entityId])
+  @@map("communications_erasure_items")
+}
+
+/// A legal hold pauses retention purge and erasure for the whole business, one contact or one mailbox.
+/// Placed by manage_connections members; released only through the privileged path (verified OWNER/ADMIN).
+model CommunicationsLegalHold {
+  id           String    @db.Uuid
+  businessId   String    @map("business_id") @db.Uuid
+  scope        String
+  contactId    String?   @map("contact_id") @db.Uuid
+  connectionId String?   @map("connection_id") @db.Uuid
+  reasonCode   String    @map("reason_code")
+  placedById   String    @map("placed_by_id") @db.Uuid
+  placedAt     DateTime  @default(now()) @map("placed_at") @db.Timestamptz
+  releasedAt   DateTime? @map("released_at") @db.Timestamptz
+  releasedById String?   @map("released_by_id") @db.Uuid
+
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "communications_legal_holds_business_fkey")
+  contact    Contact?        @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "communications_legal_holds_contact_fkey")
+  connection MailConnection? @relation(fields: [businessId, connectionId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "communications_legal_holds_connection_fkey")
+
+  @@id([businessId, id])
+  @@index([businessId, placedAt(sort: Desc), id])
+  @@map("communications_legal_holds")
+}
+
+/// Per-business secret for erased-reference digests (D-E1-2). Readable only by bos_maint (no bos_app grant).
+/// Deleted with the business; destroying it makes every reference of the business unlinkable.
+model CommunicationsErasureKey {
+  businessId String   @id @map("business_id") @db.Uuid
+  secret     Bytes
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "communications_erasure_keys_business_fkey")
+
+  @@map("communications_erasure_keys")
+}
+
+/// Keyed, non-reversible digests of erased provider identifiers (D-E1-2): they stop an erased message or
+/// thread from being imported or synced again without keeping the identifier. They expire (expires_at).
+model CommunicationsErasedReference {
+  businessId String   @map("business_id") @db.Uuid
+  kind       String
+  digest     String   @db.Char(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "communications_erased_references_business_fkey")
+
+  @@id([businessId, kind, digest])
+  @@index([expiresAt])
+  @@map("communications_erased_references")
+}
+
+/// Short-lived, single-use, operation-scoped authorisations for high-risk operations (D-E1-4). Created and
+/// consumed only by bos_maint functions after verifying a live OWNER/ADMIN session; only a hash of the
+/// one-time code is stored. bos_app has no access.
+model CommunicationsPrivilegedGrant {
+  id         String    @db.Uuid
+  businessId String    @map("business_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  operation  String
+  targetId   String?   @map("target_id") @db.Uuid
+  codeHash   String    @map("code_hash") @db.Char(64)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "communications_privileged_grants_business_fkey")
+
+  @@id([businessId, id])
+  @@unique([codeHash])
+  @@map("communications_privileged_grants")
+}

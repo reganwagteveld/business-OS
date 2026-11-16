@@ -205,6 +205,12 @@ export const MailRetention = z
     ordinaryRetentionDays: z.number().int().nullable(),
     updatedAt: z.string().datetime().nullable(),
     version: Version.nullable(),
+    /**
+     * E1 (D-E1-3): the period actually applied now. A shortened period takes effect 30 days after the change;
+     * until then the longer previous one applies. Optional for older servers.
+     */
+    ordinaryRetentionDaysInForce: z.number().int().nullable().optional(),
+    pendingReduction: z.object({ previousDays: z.number().int(), effectiveAt: z.string().datetime() }).strict().nullable().optional(),
   })
   .strict();
 export type MailRetention = z.infer<typeof MailRetention>;

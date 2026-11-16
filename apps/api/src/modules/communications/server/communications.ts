@@ -14,6 +14,7 @@ import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { recordAudit } from '@/core/audit';
 import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
 import { recordMessageActivity, resolveSubject } from '@/modules/activity';
+import { erasedExternalIds } from './erasure';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A historical message may carry a timestamp slightly ahead (clock skew), never later (CM004 agrees). */
@@ -34,17 +35,17 @@ export interface ImportInput extends MessageInput { external: { source: string; 
 
 type ConversationRow = {
   id: string; channel: string; subject: string | null; customerId: string | null; contactId: string | null; source: string;
-  createdById: string; lastMessageAt: Date | null; createdAt: Date;
+  createdById: string; lastMessageAt: Date | null; createdAt: Date; erasedAt: Date | null;
 };
 const conversationSelect = {
-  id: true, channel: true, subject: true, customerId: true, contactId: true, source: true, createdById: true, lastMessageAt: true, createdAt: true,
+  id: true, channel: true, subject: true, customerId: true, contactId: true, source: true, createdById: true, lastMessageAt: true, createdAt: true, erasedAt: true,
 } as const;
 
 function toConversation(r: ConversationRow): ConversationDto {
   return {
     id: r.id, channel: r.channel as Channel, subject: r.subject, customerId: r.customerId, contactId: r.contactId,
     source: r.source === 'IMPORT' ? 'IMPORT' : 'MANUAL', createdById: r.createdById,
-    lastMessageAt: r.lastMessageAt?.toISOString() ?? null, createdAt: r.createdAt.toISOString(),
+    lastMessageAt: r.lastMessageAt?.toISOString() ?? null, createdAt: r.createdAt.toISOString(), erasedAt: r.erasedAt?.toISOString() ?? null,
   };
 }
 
@@ -104,11 +105,11 @@ type ParticipantRow = { role: string; position: number; displayName: string | nu
 type MessageRow = {
   id: string; conversationId: string; direction: string; source: string; occurredAt: Date; recordedAt: Date; recordedById: string;
   subject: string | null; body: string | null; externalSource: string | null; externalMessageId: string | null; contentHash: string;
-  participants: ParticipantRow[];
+  erasedAt: Date | null; participants: ParticipantRow[];
 };
 const messageSelect = {
   id: true, conversationId: true, direction: true, source: true, occurredAt: true, recordedAt: true, recordedById: true, subject: true, body: true,
-  externalSource: true, externalMessageId: true, contentHash: true,
+  externalSource: true, externalMessageId: true, contentHash: true, erasedAt: true,
   participants: { select: { role: true, position: true, displayName: true, address: true, contactId: true, userId: true } },
 } as const;
 
@@ -119,6 +120,7 @@ function toMessage(r: MessageRow): MessageDto {
     occurredAt: r.occurredAt.toISOString(), recordedAt: r.recordedAt.toISOString(), recordedById: r.recordedById,
     subject: r.subject, body: r.body, externalSource: r.externalSource, externalMessageId: r.externalMessageId,
     participants: participants.map((p) => ({ role: p.role as Role, position: p.position, displayName: p.displayName, address: p.address, contactId: p.contactId, userId: p.userId })),
+    erasedAt: r.erasedAt?.toISOString() ?? null,
   };
 }
 
@@ -225,6 +227,7 @@ function occurredAtOf(input: MessageInput): Date {
 /** A person records one message exchanged outside Business OS (for example an email they sent from their mail app). */
 export async function recordMessage(db: AppTenantDb, actorUserId: string, conversationId: string, input: MessageInput): Promise<MessageDto> {
   const conversation = await conversationRow(db, conversationId);
+  if (conversation.erasedAt) throw new StateConflictError('erased');
   const link = await timelineLink(db, conversation);
   const occurredAt = occurredAtOf(input);
   const participants = normaliseParticipants(input.participants);
@@ -240,6 +243,8 @@ export async function recordMessage(db: AppTenantDb, actorUserId: string, conver
  * external id was already imported into this conversation with the same content is reported as a
  * duplicate and not written again. The same external id with different content, or in another
  * conversation, refuses the whole batch (409 idempotency_conflict), so nothing is half-imported.
+ * E1 (D-E1-2): an external id that was erased here (an unexpired keyed marker) refuses the whole batch
+ * with 409 erased, so a re-import cannot bring erased content back; so does an erased conversation.
  */
 export async function importMessages(
   db: AppTenantDb,
@@ -248,6 +253,10 @@ export async function importMessages(
   messages: ImportInput[],
 ): Promise<{ results: { externalMessageId: string; messageId: string; status: 'created' | 'duplicate' }[] }> {
   const conversation = await conversationRow(db, conversationId);
+  if (conversation.erasedAt) throw new StateConflictError('erased');
+  const bySource = new Map<string, string[]>();
+  for (const m of messages) bySource.set(m.external.source, [...(bySource.get(m.external.source) ?? []), m.external.messageId]);
+  for (const [source, ids] of bySource) if ((await erasedExternalIds(db, source, ids)).size > 0) throw new StateConflictError('erased');
   const link = await timelineLink(db, conversation);
   const results: { externalMessageId: string; messageId: string; status: 'created' | 'duplicate' }[] = [];
   let latest: Date | null = null;
