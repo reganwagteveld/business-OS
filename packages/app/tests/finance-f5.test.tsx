@@ -28,7 +28,11 @@ function renderOk(pageCount = 2) {
     drawn.push(entry);
     return {
       pageCount,
-      drawPage: async (n) => void entry.pages.push(n),
+      drawPage: async (n, canvas) => {
+        // The real renderer needs the page's canvas to be on screen already.
+        if (!canvas.isConnected || canvas.dataset.page !== String(n)) throw new Error(`page ${n} drawn on the wrong canvas`);
+        entry.pages.push(n);
+      },
       destroy: async () => void (entry.destroyed = true),
     };
   });
