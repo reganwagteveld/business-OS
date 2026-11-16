@@ -1,0 +1,384 @@
+{
+  "//": "Recovery-point registry for Neon branch housekeeping. Every migration thread that cuts a recovery branch adds an entry here. See docs/operations/neon-branch-housekeeping.md.",
+  "projectId": "steep-boat-37446590",
+  "cleanupEnabled": false,
+  "billing": {
+    "plan": "launch",
+    "includedBranches": 10,
+    "extraBranchMonthUsd": 1.5,
+    "source": "Neon Launch list price, $1.50 per extra branch-month (neon.com/pricing, checked 2026-11-16)"
+  },
+  "incidents": [],
+  "branches": [
+    {
+      "branchId": "br-royal-silence-bb8hqo25",
+      "name": "production",
+      "kind": "production"
+    },
+    {
+      "branchId": "br-rapid-union-bbeik94q",
+      "name": "pre-sales-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261114090000_sales"
+      ],
+      "prs": [
+        15
+      ],
+      "appliedAt": "2026-11-14T09:46:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "applied as bos_owner, checksums matched"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #15 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-winter-snow-bbxj1wea",
+      "name": "pre-projects-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261114120000_projects"
+      ],
+      "prs": [
+        18
+      ],
+      "appliedAt": "2026-11-14T11:53:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "RLS+FORCE, policies and grants verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #18 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-autumn-pond-bbn8uvdm",
+      "name": "pre-finance-migrations",
+      "kind": "recovery",
+      "migrations": [
+        "20261115000000_finance",
+        "20261116000000_finance_payments",
+        "20261117000000_finance_expenses"
+      ],
+      "prs": [
+        31,
+        34,
+        35
+      ],
+      "appliedAt": "2026-11-14T19:26:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "checksums matched; 11 finance tables RLS+FORCE verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #35 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-odd-king-bbwpz5w9",
+      "name": "pre-c1-migrations",
+      "kind": "recovery",
+      "migrations": [
+        "20261118000000_people",
+        "20261118050000_scheduling",
+        "20261119300000_communications"
+      ],
+      "prs": [
+        36,
+        39
+      ],
+      "appliedAt": "2026-11-15T06:20:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "checksums matched; RLS, grants and triggers verified; health 200"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #39 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-snowy-art-bbv0qdfr",
+      "name": "pre-c2a-f5-migrations",
+      "kind": "recovery",
+      "migrations": [
+        "20261121000000_communications_providers",
+        "20261122000000_finance_documents"
+      ],
+      "prs": [
+        42
+      ],
+      "appliedAt": "2026-11-15T09:20:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "RLS forced, triggers and bos_app grants verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #42 merged; later production deploys healthy (health 200)"
+      },
+      "note": "C2-A PR number not recorded",
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-broad-dawn-bb0uidp7",
+      "name": "pre-reporting-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261124000000_reporting"
+      ],
+      "prs": [
+        43
+      ],
+      "appliedAt": "2026-11-15T09:42:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "reporting_saved_views RLS and policies verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #43 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-mute-term-bbizcakj",
+      "name": "pre-c2b1-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261125000000_communications_mailbox_identity"
+      ],
+      "prs": [],
+      "appliedAt": "2026-11-15T10:09:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "15/15 migrations; mail_* tables RLS+FORCE verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "main deploys since then healthy (health 200)"
+      },
+      "note": "PR number not recorded",
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-aged-lake-bbzad79v",
+      "name": "pre-f6-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261126000000_finance_billing",
+        "privileged 002_finance_billing_due.sql"
+      ],
+      "prs": [
+        45
+      ],
+      "appliedAt": "2026-11-15T10:24:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "16/16 migrations; definer function, grants and RLS verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #45 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-shy-wave-bbrssahm",
+      "name": "pre-f6-3-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261127000000_finance_reminders",
+        "privileged 003_finance_reminders_due.sql"
+      ],
+      "prs": [
+        57
+      ],
+      "appliedAt": "2026-11-16T06:24:50Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "all checks verified; scheduler off"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "main 52de37f deployed; docs PR #57 merged"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-wild-band-bbsipovj",
+      "name": "pre-s2-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261128000000_scheduling_resources"
+      ],
+      "prs": [
+        61
+      ],
+      "appliedAt": "2026-11-16T07:46:23Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "RLS+FORCE, tenant_isolation and grants verified; health 200"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #61 merged 07:47 UTC; later production deploys healthy; A2-A prod smoke test passed 2026-11-16 11:14 UTC"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-broad-pine-bbxuynji",
+      "name": "pre-f7a-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261130000000_finance_catalog"
+      ],
+      "prs": [
+        63
+      ],
+      "appliedAt": "2026-11-16T07:47:26Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "applied as bos_owner; verified by the F7-A thread"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #63 merged 08:04 UTC; later production deploys healthy; A2-A prod smoke test passed 2026-11-16 11:14 UTC"
+      },
+      "note": "Cut at 07:45:40 UTC, before S2 was applied at 07:46:23, so restoring it would also undo S2.",
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-damp-band-bbc521r1",
+      "name": "pre-e1-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261201000000 (E1)",
+        "privileged 004"
+      ],
+      "prs": [
+        64
+      ],
+      "appliedAt": "2026-11-16T08:54:11Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "20 migrations applied; RLS/FORCE, grants, 25 app_private functions verified; health 200"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #64 merged 09:04 UTC; later production deploys healthy; A2-A prod smoke test passed 2026-11-16 11:14 UTC"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      },
+      "note": "E1 is dormant: activation still off"
+    },
+    {
+      "branchId": "br-square-band-bbeir8ty",
+      "name": "pre-a2a-migration",
+      "kind": "unknown",
+      "note": "stale A2-A recovery branch cut 09:03 UTC by an earlier thread and never used (superseded by pre-a2a-migration-2); has read-only endpoint ep-sparkling-field-bbl96s4z; Regan to decide"
+    },
+    {
+      "branchId": "br-late-pine-bbuyk72m",
+      "name": "pre-a2a-migration-2",
+      "kind": "recovery",
+      "migrations": [
+        "20261202000000_business_profile"
+      ],
+      "prs": [
+        70
+      ],
+      "appliedAt": "2026-11-16T10:09:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "21 applied, checksum ok, columns/checks/trigger/RLS/grants verified; health 200"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #70 merged 10:24 UTC; prod smoke test passed 11:14 UTC"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      },
+      "note": "Has read-only endpoint ep-patient-meadow-bbcv1cqz used for pre-migration verification; branch verified identical to prod at cut time"
+    },
+    {
+      "branchId": "br-broad-mountain-bbjk5eyg",
+      "name": "pre-pr71-beta-admission",
+      "kind": "recovery",
+      "migrations": [
+        "PR #71 beta admission change (details not recorded here)"
+      ],
+      "prs": [
+        71
+      ],
+      "appliedAt": null,
+      "migration": {
+        "status": "pending",
+        "evidence": "cut 11:17 UTC by the PR 71 thread; outcome not yet recorded"
+      },
+      "deployment": {
+        "status": "pending",
+        "evidence": "PR #71 merged 11:18 UTC; post-deploy check not recorded"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
+      "branchId": "br-odd-star-bbn70rm9",
+      "name": "pre-p3a-migration",
+      "kind": "recovery",
+      "migrations": [
+        "People P3-A migration"
+      ],
+      "prs": [
+        68
+      ],
+      "appliedAt": null,
+      "migration": {
+        "status": "pending",
+        "evidence": "cut 11:20 UTC; PR #68 still open"
+      },
+      "deployment": {
+        "status": "pending",
+        "evidence": "PR #68 not merged"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    }
+  ]
+}

@@ -1,0 +1,117 @@
+import './buffer-shim';
+import {
+  App, createCustomersClient, createFinanceClient, createPeopleClient, createProjectsClient, createReportingClient, createSalesClient, memoryStorage,
+  type AuthClient, type BusinessContext, type TenancyClient,
+} from '@business-os/app';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { activity, contact, createFakeApi, customer } from '../../../packages/app/tests/support/fake-api';
+import { createFakeFinance, financeData, issued, doc } from '../../../packages/app/tests/support/fake-finance';
+import { department, emptyPeople, employee, location, withPeople } from '../../../packages/app/tests/support/fake-people';
+import { emptyProjects, project, task, withProjects } from '../../../packages/app/tests/support/fake-projects';
+import { createFakeReporting } from '../../../packages/app/tests/support/fake-reporting';
+import { emptySales, opportunity, pipelineWithStages, withSales } from '../../../packages/app/tests/support/fake-sales';
+import './index.css';
+
+const BASE = 'https://api.test';
+const SLUG = 'harbour-studio';
+const PERMS = [
+  'business:read', 'members:read', 'customers:read', 'customers:write', 'activity:read', 'activity:write', 'communications:read', 'sales:read', 'sales:write',
+  'projects:read', 'projects:create', 'projects:update', 'projects:manage_tasks', 'finance:read', 'finance:write', 'finance:issue', 'finance:payments',
+  'finance:expenses', 'finance:manage', 'finance:catalog', 'people:read', 'people:manage', 'people:configure', 'reporting:read', 'reporting:save',
+];
+const USER = { id: crypto.randomUUID(), email: 'morgan@harbour.example', name: 'Morgan Lee', emailVerified: true };
+const context: BusinessContext = {
+  business: { slug: SLUG, name: 'Harbour Design Studio', countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' },
+  membership: { id: crypto.randomUUID(), role: 'OWNER', permissions: PERMS },
+};
+
+// Sample data only (no production data).
+const C = (displayName: string, o: Parameters<typeof customer>[0] = {}) => customer({ displayName, ...o });
+const kelp = C('Kelp & Co Seafood', { email: 'accounts@kelpco.example', phone: '08 9430 1122', city: 'Fremantle', region: 'WA', countryCode: 'AU' });
+const north = C('Northshore Physio', { email: 'admin@northshore.example', phone: '08 9335 0101', city: 'Cottesloe', region: 'WA', countryCode: 'AU' });
+const tide = C('Tidewater Brewing', { email: 'hello@tidewater.example', city: 'Margaret River', region: 'WA', countryCode: 'AU' });
+const pacific = C('Pacific Rim Tours', { email: 'billing@pacificrim.example', city: 'Honolulu', countryCode: 'US' });
+const customers = [
+  kelp, north, tide, pacific,
+  C('Avery Collins', { kind: 'INDIVIDUAL', email: 'avery@example.com', phone: '0412 555 019', city: 'Perth', region: 'WA', countryCode: 'AU' }),
+  C('Bluegum Landscaping', { email: 'office@bluegum.example', phone: '08 9221 4400', city: 'Subiaco', region: 'WA', countryCode: 'AU' }),
+  C('Coastal Dental Group', { email: 'practice@coastaldental.example', city: 'Scarborough', region: 'WA', countryCode: 'AU' }),
+  C('Driftwood Cafe', { email: 'hi@driftwood.example', phone: '08 9430 7788', city: 'Fremantle', region: 'WA', countryCode: 'AU' }),
+  C('Elm Street Architects', { email: 'studio@elmstreet.example', city: 'Leederville', region: 'WA', countryCode: 'AU' }),
+  C('Old Mill Bakery', { email: 'orders@oldmill.example', city: 'Guildford', region: 'WA', countryCode: 'AU', archivedAt: '2026-10-01T00:00:00.000Z' }),
+];
+const jo = contact(kelp.id, { displayName: 'Jo Marsh', firstName: 'Jo', lastName: 'Marsh', email: 'jo@kelpco.example', jobTitle: 'Operations manager' });
+kelp.primaryContactId = jo.id;
+const activities = [
+  activity(kelp.id, { type: 'note', subject: 'Packaging brief', body: 'New compostable trays from February. Needs print-ready art by 20 Jan.', occurredAt: '2026-11-13T02:00:00.000Z' }),
+  activity(kelp.id, { type: 'call', subject: 'Invoice query', body: 'Asked to split INV-0001 across two cost centres.', occurredAt: '2026-11-10T03:30:00.000Z', data: { direction: 'OUTBOUND' } }),
+];
+
+const pipe = pipelineWithStages();
+const [sNew, sQual, sProp, sNeg] = pipe.stages;
+const opps = [
+  opportunity(pipe, { title: 'Brand refresh', customerId: tide.id, stageId: sProp!.id, amount: '8150.00', probability: 50, expectedCloseDate: '2026-12-05' }),
+  opportunity(pipe, { title: 'Website redesign', customerId: north.id, stageId: sNeg!.id, amount: '9200.00', probability: 75, expectedCloseDate: '2026-11-28' }),
+  opportunity(pipe, { title: 'Menu boards', customerId: kelp.id, stageId: sQual!.id, amount: '1200.00', expectedCloseDate: '2026-12-15' }),
+  opportunity(pipe, { title: 'Tour brochure reprint', customerId: pacific.id, stageId: sNew!.id, amount: '1850.00', currencyCode: 'USD' }),
+  opportunity(pipe, { title: 'Clinic signage', customerId: customers[6]!.id, stageId: sNew!.id, amount: '3400.00' }),
+];
+
+const p1 = project({ name: 'Tidewater brand refresh', status: 'ACTIVE', priority: 'HIGH', customerId: tide.id, customer: { id: tide.id, displayName: tide.displayName }, startDate: '2026-11-01', dueDate: '2026-12-12', taskCounts: { total: 6, done: 2 } } as never);
+const p2 = project({ name: 'Northshore website', status: 'PLANNED', customerId: north.id, customer: { id: north.id, displayName: north.displayName }, dueDate: '2027-01-30', taskCounts: { total: 0, done: 0 } } as never);
+const p3 = project({ name: 'Kelp packaging', status: 'ON_HOLD', priority: 'LOW', customerId: kelp.id, customer: { id: kelp.id, displayName: kelp.displayName }, taskCounts: { total: 3, done: 1 } } as never);
+const p4 = project({ name: 'Studio website refresh', status: 'COMPLETED', completedAt: '2026-10-30T00:00:00.000Z', taskCounts: { total: 4, done: 4 } } as never);
+const tasks = [
+  task(p1.id, { title: 'Moodboards', status: 'DONE', position: 1000 }), task(p1.id, { title: 'Logo concepts', status: 'DONE', position: 2000 }),
+  task(p1.id, { title: 'Label system', status: 'IN_PROGRESS', priority: 'HIGH', dueDate: '2026-11-20', position: 3000 }),
+  task(p1.id, { title: 'Print proofs', status: 'BLOCKED', dueDate: '2026-11-18', position: 4000 }),
+  task(p1.id, { title: 'Brand guidelines', status: 'TODO', position: 5000 }), task(p1.id, { title: 'Handover', status: 'TODO', priority: 'LOW', position: 6000 }),
+];
+
+const ops = department({ name: 'Studio' });
+const acct = department({ name: 'Accounts' });
+const perth = location({ name: 'Fremantle studio' });
+const ppl = emptyPeople();
+const lead = employee({ givenName: 'Morgan', familyName: 'Lee', jobTitle: 'Creative director', employmentType: 'FULL_TIME', department: { id: ops.id, name: ops.name }, location: { id: perth.id, name: perth.name }, workEmail: 'morgan@harbour.example' } as never);
+ppl.employees = [
+  lead,
+  employee({ givenName: 'Priya', familyName: 'Nair', jobTitle: 'Senior designer', employmentType: 'FULL_TIME', department: { id: ops.id, name: ops.name }, location: { id: perth.id, name: perth.name }, manager: { id: lead.id, name: lead.displayName } } as never),
+  employee({ givenName: 'Tom', familyName: 'Becker', jobTitle: 'Designer', employmentType: 'PART_TIME', status: 'ON_LEAVE', department: { id: ops.id, name: ops.name }, manager: { id: lead.id, name: lead.displayName } } as never),
+  employee({ givenName: 'Lena', familyName: 'Ortiz', jobTitle: 'Bookkeeper', employmentType: 'CONTRACTOR', department: { id: acct.id, name: acct.name } } as never),
+  employee({ givenName: 'Sam', familyName: 'Ito', jobTitle: 'Junior designer', status: 'PENDING', startDate: '2026-12-01' } as never),
+];
+ppl.departments = [ops, acct];
+ppl.locations = [perth];
+
+const fin = financeData({ customers });
+fin.settings.sellerLegalName = 'Harbour Design Studio Pty Ltd';
+fin.documents = [
+  issued('INVOICE', kelp, 'INV-0001', { amount: '3800.00', issueDate: '2026-10-01', dueDate: '2026-10-15', allocatedTotal: '2000.00', settlementState: 'PARTIALLY_PAID' }),
+  issued('INVOICE', north, 'INV-0002', { amount: '2400.00', issueDate: '2026-10-12', dueDate: '2026-10-26', allocatedTotal: '2400.00', settlementState: 'PAID' }),
+  issued('INVOICE', tide, 'INV-0003', { amount: '8150.00', issueDate: '2026-11-05', dueDate: '2026-12-01' }),
+  issued('INVOICE', pacific, 'INV-0004', { amount: '1850.00', currencyCode: 'USD', issueDate: '2026-11-02', dueDate: '2026-11-30', allocatedTotal: '500.00', settlementState: 'PARTIALLY_PAID' }),
+  doc('INVOICE', { customerId: north.id, amount: '1500.00' }),
+  issued('QUOTE', tide, 'QUO-0001', { amount: '8150.00', issueDate: '2026-10-20', status: 'ACCEPTED' }),
+  issued('QUOTE', north, 'QUO-0002', { amount: '9200.00', issueDate: '2026-11-10', validUntil: '2026-12-10' }),
+];
+fin.payables = [{ currencyCode: 'AUD', currencyScale: 2, outstanding: '4200.00', overdue: '1800.00', openCount: 2, overdueCount: 1 }];
+
+const api = withPeople(withSales(withProjects(createFakeApi({ [SLUG]: { customers, contacts: [jo], activities, members: [] } }), { [SLUG]: { ...emptyProjects(), projects: [p1, p2, p3, p4], tasks } }), { [SLUG]: { ...emptySales(), pipelines: [pipe], opportunities: opps } }), { [SLUG]: ppl });
+const finance = createFakeFinance({ [SLUG]: fin });
+const reporting = createFakeReporting({ permissions: PERMS });
+
+const auth = { session: async () => ({ kind: 'signed-in', user: USER }), signOut: async () => undefined } as unknown as AuthClient;
+const tenancy: TenancyClient = {
+  listBusinesses: async () => ({ kind: 'ok' as const, data: [{ slug: SLUG, name: context.business.name, role: 'OWNER' as const }, { slug: 'north-studio', name: 'North Studio', role: 'MANAGER' as const }] }),
+  businessContext: async () => ({ kind: 'ok' as const, data: context }),
+  createBusiness: async () => ({ kind: 'server_error' as const }) as never,
+};
+const t = { kind: 'cookie' as const };
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App platform="web" apiBaseUrl={BASE} auth={auth} tenancy={tenancy} storage={memoryStorage({ slug: SLUG })}
+      customers={createCustomersClient(BASE, t, api.fetch)} sales={createSalesClient(BASE, t, api.fetch)} projects={createProjectsClient(BASE, t, api.fetch)}
+      people={createPeopleClient(BASE, t, api.fetch)} finance={createFinanceClient(BASE, t, finance.fetch)} reporting={createReportingClient(BASE, t, reporting.fetch)} />
+  </StrictMode>,
+);
