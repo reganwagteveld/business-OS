@@ -195,3 +195,25 @@ across two releases.
 | STAB-M6 | A failed migration leaves a partial schema (no automatic rollback) | Documented procedure (§7); recovery branch before every migration; explicit transactions in new migrations | Developer, Regan |
 | STAB-L1 | Five unindexed composite FKs | Deferred; no impact while parents are archived, not deleted | Developer (next additive migration) |
 | STAB-L7 | `20261119300000` encodes hour 30 | Accepted; cannot rename applied migration | — |
+
+## 9. Production migration log
+
+### F6-3 payment reminders (2026-11-16)
+
+Approved by Regan in the project thread (subject to preflight). Applied from `main` at `52de37f`.
+
+| Step | Result (UTC) |
+|---|---|
+| Preflight (read-only, `bos_owner` on the production direct endpoint, database `neondb`) | 16 migrations applied, newest `20261126000000_finance_billing`, none failed or rolled back; checksums of all 16 match the files; `20261127000000_finance_reminders` the only pending migration; none of the four reminder tables or `app_private.finance_reminders_due` existed |
+| Recovery branch | First attempt failed: Neon Free plan limit of 10 branches. With Regan's approval, `pre-customers-migration` (`br-lingering-violet-bb5t44yw`; not default, no compute, no children, unreferenced) was deleted at 06:24:06. Preflight re-run, unchanged. `pre-f6-3-migration` = `br-shy-wave-bbrssahm`, parent `production` at LSN `0/2869FE0`, created 06:24:28, no compute |
+| `prisma migrate deploy` | Applied only `20261127000000_finance_reminders`: started 06:24:50.893, finished 06:24:52.746, 1 step, no rollback |
+| `pnpm --filter @business-os/api db:privileged` (Neon owner role, region `us-east-1`) | 06:25:08–06:25:15: re-applied 001 and 002 (idempotent), applied `003_finance_reminders_due.sql` |
+| Migration state | 17 applied, 0 failed; `prisma migrate status`: up to date |
+| RLS | `finance_reminder_policies`, `finance_reminder_customer_policies`, `finance_reminder_holds`, `finance_reminders`: `relrowsecurity` and `relforcerowsecurity` true, owner `bos_owner`, `tenant_isolation` policy for `bos_app`; `definer_reminders_due_read` (SELECT, `bos_definer`) on policies and reminders |
+| Grants | `bos_app`: SELECT, INSERT and column-level UPDATE only; no table-level UPDATE, DELETE or TRUNCATE; no other grantees |
+| Triggers and constraints | Four guard triggers present; CHECK constraints 6 / 1 / 6 / 16 (policies / customer policies / holds / reminders); partial unique index `finance_reminder_policies_default_key (business_id) WHERE is_default` |
+| Functions | Guard functions and `finance_reminder_stages_valid` not executable by PUBLIC (`stages_valid` executable by `bos_app`, as the migration grants); `app_private.finance_reminders_due(integer)` SECURITY DEFINER, owner `bos_definer`, fixed `search_path`, EXECUTE `bos_app` only; `bos_definer` has no CREATE on `app_private` afterwards; `SELECT count(*) FROM app_private.finance_reminders_due(50)` as `bos_app` returned 0 |
+| Health (06:25:58) | `GET /api/v1/health` 200 `ok`; unauthenticated `GET /api/v1/b/x/finance/reminder-policies` 401 `unauthenticated` (not 500). No signed-in smoke test: no production test account exists |
+
+Not done, by instruction: no `CRON_SECRET`, no cron entry, the internal finance-reminders job route
+was not called, no email was sent. Keep `pre-f6-3-migration` until the next migration is verified.
