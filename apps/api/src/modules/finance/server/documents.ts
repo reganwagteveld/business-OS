@@ -14,6 +14,7 @@ import { Decimal, type AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
 import { checkCurrency, currencyScale, documentTotals, formatAmount, formatPlain, lineAmounts, toAmount, type LineAmounts } from './money';
+import { resolveCatalogLines, type DraftLineInput } from './catalog';
 import { ensureSeries, loadSettings, sellerSnapshot } from './settings';
 import {
   addDays, BUMP, businessProfile, changedFields, dateOf, dayOf, lockDocuments, lockIdempotencyKey, requestHash, todayIn,
@@ -207,19 +208,26 @@ async function replaceLines(db: AppTenantDb, documentId: string, priced: Priced)
   });
 }
 
+/** Credit notes credit what an invoice billed; they never start lines from the catalog (D-F7B-5). */
+function noCatalogLines(lines: DraftLineInput[]) {
+  if (lines.some((l) => l.catalogItemId !== undefined)) {
+    throw new RuleViolationError('invalid_input', 'A credit note line cannot be added from the catalog.');
+  }
+}
+
 export function totalsOf(priced: { amounts: LineAmounts }[]) {
   return documentTotals(priced.map((p) => p.amounts));
 }
 
 // ---- create --------------------------------------------------------------------------------------
 
-type DraftCommon = { contactId?: string | null; opportunityId?: string | null; projectId?: string | null; notes?: string | null; taxMode?: string; lines?: LineInput[] };
+type DraftCommon = { contactId?: string | null; opportunityId?: string | null; projectId?: string | null; notes?: string | null; taxMode?: string; lines?: DraftLineInput[] };
 export type QuoteInput = DraftCommon & { customerId: string; currencyCode?: string; validUntil?: string | null };
 export type InvoiceInput = DraftCommon & { customerId: string; currencyCode?: string; dueDate?: string | null };
 
 type NewDraft = {
   kind: Kind; customerId: string; contactId: string | null; opportunityId: string | null; projectId: string | null; currencyCode: string;
-  dueDate: string | null; validUntil: string | null; notes: string | null; lines: LineInput[]; sourceQuoteId?: string; creditedInvoiceId?: string;
+  dueDate: string | null; validUntil: string | null; notes: string | null; lines: DraftLineInput[]; sourceQuoteId?: string; creditedInvoiceId?: string;
   alreadyUsedRates?: Set<string>;
 };
 
@@ -249,7 +257,11 @@ async function insertDraft(db: AppTenantDb, author: string | DraftAuthor, d: New
   const actorUserId = 'userId' in who ? who.userId : null;
   const currency = checkCurrency(d.currencyCode);
   const scale = currencyScale(currency);
-  const priced = await priceLines(db, d.lines, currency, scale, d.alreadyUsedRates ?? new Set());
+  // F7-B: lines that name a catalog item become ordinary lines first (the item id is not stored).
+  // Quotes and invoices only (D-F7B-5); the credit note contract has no catalogItemId either.
+  if (d.kind === 'CREDIT_NOTE') noCatalogLines(d.lines);
+  const { lines, catalogLines } = await resolveCatalogLines(db, d.lines, currency);
+  const priced = await priceLines(db, lines, currency, scale, d.alreadyUsedRates ?? new Set());
   const totals = totalsOf(priced);
   if (d.dueDate && d.kind !== 'INVOICE') throw new RuleViolationError('invalid_dates', 'Only invoices have a due date.');
   const id = randomUUID();
@@ -268,6 +280,7 @@ async function insertDraft(db: AppTenantDb, author: string | DraftAuthor, d: New
   const facts = {
     kind: d.kind, currencyCode: currency, customerId: d.customerId, projectId: d.projectId, sourceQuoteId: d.sourceQuoteId ?? null,
     creditedInvoiceId: d.creditedInvoiceId ?? null, lineCount: String(priced.length), total: formatAmount(totals.total, scale),
+    ...(catalogLines > 0 ? { catalogLineCount: String(catalogLines) } : {}),
   };
   if ('system' in who) {
     await recordSystemAudit(db, 'finance.system.document.created', { type: 'finance_document', id }, {
@@ -452,9 +465,14 @@ export async function updateDraft(db: AppTenantDb, actorUserId: string, kind: Ki
   if (changed.project) data.projectId = next.projectId;
 
   let fields = changedFields(before as unknown as Record<string, unknown>, data);
+  let catalogLines = 0;
   if (patch.lines !== undefined) {
     const used = new Set((await linesOf(db, id)).map((l) => l.taxRateId).filter((v): v is string => !!v));
-    const priced = await priceLines(db, patch.lines, before.currencyCode, before.currencyScale, used);
+    // F7-B: after the document lock (lock order: document, then catalog items).
+    if (kind === 'CREDIT_NOTE') noCatalogLines(patch.lines);
+    const resolved = await resolveCatalogLines(db, patch.lines, before.currencyCode);
+    catalogLines = resolved.catalogLines;
+    const priced = await priceLines(db, resolved.lines, before.currencyCode, before.currencyScale, used);
     const totals = totalsOf(priced);
     await replaceLines(db, id, priced);
     Object.assign(data, { subtotal: totals.subtotal, taxTotal: totals.taxTotal, total: totals.total });
@@ -466,7 +484,9 @@ export async function updateDraft(db: AppTenantDb, actorUserId: string, kind: Ki
     data: { ...data, ...BUMP, updatedById: actorUserId } as never,
   });
   if (result.count === 0) throw new StateConflictError('stale'); // unreachable while the row is locked
-  await recordAudit(db, actorUserId, 'finance.document.updated', { type: 'finance_document', id }, { kind, fields });
+  await recordAudit(db, actorUserId, 'finance.document.updated', { type: 'finance_document', id }, {
+    kind, fields, ...(catalogLines > 0 ? { catalogLineCount: String(catalogLines) } : {}),
+  });
   return dto(db, await load(db, kind, id));
 }
 

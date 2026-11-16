@@ -234,3 +234,23 @@ Approved by Regan in the S2 project thread (recovery branch and migration named 
 | Merge | PR #61 squash-merged as `9dc670d` after CI passed on `1caa429` |
 
 Not done, by instruction: Scheduling navigation not switched on. Keep `pre-s2-migration` until the next migration is verified.
+
+### E1 communications erasure foundation, dormant (2026-11-16)
+
+Approved by Regan in the E1 project thread at 08:53 UTC, naming the recovery branch, the migration, `db:privileged` with `004` and the merge. Applied from PR #64's head `63abd53` **before** the merge. Activation was explicitly excluded; see `docs/communications-e1.md` §13.
+
+| Step | Result (UTC) |
+|---|---|
+| Preflight (read-only, `bos_owner`, production direct endpoint), 08:51 and again at 08:53 | 19 applied, newest `20261130000000_finance_catalog`, none failed, checksums match; `20261201000000_communications_erasure` the only pending migration; `bos_app`, `bos_jobs`, `bos_definer` and `bos_maint` exist, none BYPASSRLS; none of the six E1 tables existed; no `erased_at` on `messages` |
+| Recovery branch | `pre-e1-migration` = `br-damp-band-bbc521r1`, from production at 08:51:15 (LSN `0/2A7E9A0`), no compute |
+| `prisma migrate deploy` | Applied only `20261201000000_communications_erasure`: 08:54:11–08:54:13, 1 step, no rollback. 20 applied, up to date |
+| `db:privileged` (from `apps/api`, project owner) | 08:54:20–08:54:29: re-applied `001`–`003` (idempotent) and applied `004_communications_erasure.sql` |
+| RLS | The six new tables: `relrowsecurity` and `relforcerowsecurity` true, owner `bos_owner`; tenant policies for `bos_maint` (all six), `bos_app` (erasures, items, holds), read-only `bos_definer` (erasures, holds) |
+| Grants | `bos_app`: SELECT on erasures, items and holds, INSERT on holds; nothing on keys, erased references or privileged grants; no DELETE or TRUNCATE on any new table; only other grantee `bos_maint`. `bos_app` table grants on `messages`, `message_participants`, `conversations`, `activities` and `mail_retention_settings` identical before and after |
+| Columns | `erased_at` on messages, participants, conversations and activities; `retention_category` on messages |
+| Functions | 25 `app_private.communications_*`, all SECURITY DEFINER with `search_path = pg_catalog, pg_temp`, none executable by PUBLIC; `erasure_actor` and `erasure_due` owned by `bos_definer`, the rest by `bos_maint`; `bos_app` may execute only the 9 entry points `004` grants plus `erasure_due`; neither owner can create in `app_private` |
+| Data | All six new tables empty |
+| Merge | Branch updated with main's #67 (Finance PDF fix, no E1 file; Regan approved 08:57), CI green on `984f3e4`, PR #64 squash-merged as `e5d19cd` |
+| Health after deploy (09:07) | `GET /api/v1/health` 200; unauthenticated `GET /api/v1/b/x/communications/erasures`, `/legal-holds` and `/retention/eligibility` 401 (not 500); `/api/internal/jobs/communications-retention` 503 (disabled) |
+
+Not done, by instruction: no `CRON_SECRET`, no `COMMUNICATIONS_RETENTION_JOBS_ENABLED`, no cron entry, no mailbox connected, no erasure run, §13 policies unchanged. Keep `pre-e1-migration` until the next migration is verified.
