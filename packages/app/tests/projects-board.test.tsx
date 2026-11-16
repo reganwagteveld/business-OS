@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCustomersClient, createProjectsClient, type BusinessContext } from '../src';
 import { DEFAULT_TASK_BOARD } from '../src/zones/projects/board-stages';
-import { ProjectsZone } from '../src/zones/projects/projects-zone';
+import { parseProjectTarget, ProjectsZone } from '../src/zones/projects/projects-zone';
 import { createFakeApi, emptyBusiness, uuid, type FakeBusiness, type FakeMember } from './support/fake-api';
 import { emptyProjects, project, task, withProjects, type FakeProjects } from './support/fake-projects';
 
@@ -361,5 +361,75 @@ describe('read-only boards', () => {
     within(board).getByRole('button', { name: 'Order cabinets' }).focus();
     await user.keyboard('{Alt>}{ArrowRight}{/Alt}');
     expect(moves(api)).toHaveLength(0);
+  });
+});
+
+// GS2-A (GS1 §10.6): a search result for a task opens `<projectId>:task:<taskId>`, the project's board with the task's panel.
+async function openTarget(target: string, opts: { permissions?: string[]; projects?: Partial<FakeProjects> } = {}) {
+  const biz: FakeBusiness = { ...emptyBusiness(), members: team() };
+  const api = withProjects(createFakeApi({ alpha: biz }), { alpha: { ...emptyProjects(), ...opts.projects } });
+  const f: typeof fetch = (input, init) => api.fetch(input, init);
+  const handlers = { onHome: vi.fn(), onSwitch: vi.fn(), onSignOut: vi.fn(), onSessionEnded: vi.fn(), onOpenCustomer: vi.fn() };
+  render(<ProjectsZone client={createProjectsClient(BASE, { kind: 'cookie' }, f)} customers={createCustomersClient(BASE, { kind: 'cookie' }, f)}
+    context={ctx(opts.permissions ?? ALL)} userLabel="Ada" initialProjectId={target} {...handlers} />);
+  const user = userEvent.setup();
+  const board = await screen.findByRole('region', { name: 'Tasks' });
+  await within(board).findByRole('list', { name: 'To Do tasks' });
+  return { api, user, board };
+}
+
+describe('task target (GS2-A)', () => {
+  it('reads <projectId>:task:<taskId>; a bare id is a project; anything malformed stays one opaque project id', () => {
+    expect(parseProjectTarget('p1')).toEqual({ projectId: 'p1' });
+    expect(parseProjectTarget('p1:task:t1')).toEqual({ projectId: 'p1', taskId: 't1' });
+    for (const bad of ['p1:task:', ':task:t1', 'p1:note:t1', 'p1:task:t1:x', 'p1:task']) expect(parseProjectTarget(bad)).toEqual({ projectId: bad });
+  });
+
+  it('opens the project on its board with the task panel focused; closing returns focus to the card, and the panel does not reopen', async () => {
+    const { p, t, tasks } = fixture();
+    const { board, user } = await openTarget(`${p.id}:task:${t.b.id}`, { projects: { projects: [p], tasks } });
+    const panel = await screen.findByRole('dialog', { name: 'Book electrician' });
+    expect(panel.textContent).toContain('Needs a licensed sparky');
+    expect(screen.getByRole('heading', { level: 1, name: 'Kitchen renovation' })).toBeTruthy();
+    await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement?.textContent).toBe('Book electrician');
+    // Switching to the list and back is a fresh board, not a second arrival.
+    await user.click(within(board).getByRole('button', { name: 'List' }));
+    await user.click(await screen.findByRole('button', { name: 'Board' }));
+    await within(await screen.findByRole('region', { name: 'Tasks' })).findByRole('list', { name: 'To Do tasks' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a removed task, or one from another project, opens only the board with a note; nothing else is requested', async () => {
+    const { p, tasks } = fixture();
+    const other = project({ name: 'Bathroom' });
+    const elsewhere = task(other.id, { title: 'Other project task' });
+    const removed = task(p.id, { title: 'Old task', archivedAt: '2026-11-12T00:00:00.000Z' });
+    for (const hidden of [elsewhere, removed]) {
+      const { api, board } = await openTarget(`${p.id}:task:${hidden.id}`, { projects: { projects: [p, other], tasks: [...tasks, elsewhere, removed] } });
+      expect(await within(board).findByText('That task is no longer on this board. It may have been removed.')).toBeTruthy();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(within(board).queryByText(hidden.title)).toBeNull();
+      expect(api.callsTo(new RegExp(other.id))).toHaveLength(0);
+      cleanup();
+    }
+  });
+
+  it('without task permission the panel opens read-only', async () => {
+    const { p, t, tasks } = fixture();
+    await openTarget(`${p.id}:task:${t.a.id}`, { permissions: READ_ONLY, projects: { projects: [p], tasks } });
+    const panel = await screen.findByRole('dialog', { name: 'Order cabinets' });
+    expect(within(panel).queryByLabelText('Status')).toBeNull();
+    expect(within(panel).queryByRole('button', { name: 'Edit details' })).toBeNull();
+  });
+
+  it('a bare project id still opens the board with no panel', async () => {
+    const { p, tasks } = fixture();
+    const { board } = await openTarget(p.id, { projects: { projects: [p], tasks } });
+    expect(within(board).getByRole('button', { name: 'Book electrician' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(within(board).queryByText(/no longer on this board/)).toBeNull();
   });
 });
