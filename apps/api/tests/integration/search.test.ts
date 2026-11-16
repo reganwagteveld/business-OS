@@ -28,7 +28,7 @@ import * as resolveRoute from '@/app/api/v1/b/[slug]/search/resolve/route';
 import { devOutbox } from '@/core/email';
 import { joinSql, sql, TransactionStartTimeoutError, withTenant } from '@/core/db';
 import { SearchTimeoutError } from '@/core/http/errors';
-import type { SearchProvider } from '@/core/search';
+import { SINGLE_TYPE_DEPTH, type SearchProvider } from '@/core/search';
 import { permissionsFor } from '@/modules/access';
 import { runSearch, SEARCH_PROVIDERS } from '@/modules/search';
 
@@ -285,7 +285,7 @@ describe('permissions and tenant isolation', () => {
     const user = A.people.OWNER!;
     const rows = await withTenant({ businessId: A.businessId, userId: user.id }, async (db) => {
       const branches = SEARCH_PROVIDERS.map((p) => p.branch({
-        mode: 'text', query: { q: 'kelp', tsquery: "'kelp':*" }, take: 50, includeArchived: true, canReadCustomers: true, prefixCap: 50, after: null,
+        mode: 'text', query: { q: 'kelp', tsquery: "'kelp':*" }, take: 50, includeArchived: true, canReadCustomers: true, prefixCap: 50, depth: 50, after: null,
         withoutTenantPredicateForIsolationTests: true,
       }));
       return db.$queryRaw<{ id: string }[]>(joinSql(branches, ' UNION ALL '));
@@ -397,9 +397,40 @@ describe('bounded discovery (not exhaustive)', () => {
       cursor = group.nextCursor;
     }
     // 140 records start with "de" (a 2-character query runs prefix arms only); search reaches the first 125
-    // in rank order and then reports no more reachable rows. Word matches are capped the same way at 200.
+    // in rank order and then reports no more reachable rows.
     expect(seen).toEqual(Array.from({ length: 125 }, (_, i) => `Deep ${String(i + 1).padStart(3, '0')}`));
     expect(last!.hasMore).toBe(false);
+  });
+
+  it('caps the whole type at the depth across arms, including middle-word matches, with no overlap between pages', async () => {
+    // 300 distinct matches for "zeta" from three arms: 100 by display-name prefix (tier 2), 150 by a MIDDLE word
+    // only (word arm, tier 3, which alone could add up to 200 candidates) and 50 by email prefix (tier 4).
+    await admin.query(`INSERT INTO customers (id, business_id, display_name) SELECT gen_random_uuid(), $1, 'Zeta ' || lpad(n::text, 3, '0') FROM generate_series(1, 100) n`, [A.businessId]);
+    await admin.query(`INSERT INTO customers (id, business_id, display_name) SELECT gen_random_uuid(), $1, 'Acme Zeta ' || lpad(n::text, 3, '0') FROM generate_series(1, 150) n`, [A.businessId]);
+    await admin.query(`INSERT INTO customers (id, business_id, display_name, email) SELECT gen_random_uuid(), $1, 'Mailbox ' || lpad(n::text, 3, '0'), 'zeta' || n || '@example.test' FROM generate_series(1, 50) n`, [A.businessId]);
+    const items: { id: string; title: string }[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    for (;;) {
+      const group: SearchResponse['groups'][number] = ok(await search(A.people.OWNER!, A.slug, { q: 'zeta', types: ['customer'], limit: 25, cursor })).groups[0]!;
+      items.push(...group.items);
+      pages++;
+      if (!group.hasMore) break;
+      expect(pages).toBeLessThan(10);
+      cursor = group.nextCursor;
+    }
+    // A true per-type ceiling: 125 in total, not 125 per arm and not 200 more from the word arm.
+    expect(items).toHaveLength(SINGLE_TYPE_DEPTH);
+    expect(new Set(items.map((i) => i.id)).size).toBe(SINGLE_TYPE_DEPTH);
+    // One ranked window: all 100 prefix matches first (byte order), then 25 middle-word matches in byte order.
+    // Which word matches are candidates is unspecified past WORD_ARM_CAP, so only their rank order is asserted.
+    expect(items.slice(0, 100).map((i) => i.title)).toEqual(Array.from({ length: 100 }, (_, i) => `Zeta ${String(i + 1).padStart(3, '0')}`));
+    const rest = items.slice(100).map((i) => i.title);
+    expect(rest.every((t) => t.startsWith('Acme Zeta '))).toBe(true);
+    expect(rest).toEqual([...rest].sort());
+    // The same window again: page boundaries are stable while the data is unchanged.
+    const again = ok(await search(A.people.OWNER!, A.slug, { q: 'zeta', types: ['customer'], limit: 25 })).groups[0]!;
+    expect(again.items.map((i) => i.id)).toEqual(items.slice(0, 25).map((i) => i.id));
   });
 });
 

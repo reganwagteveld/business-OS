@@ -117,7 +117,8 @@ export async function runSearch(db: AppTenantDb, principal: Principal, input: Se
   if (providers.length === 0) return { searchedTypes, groups: [] };
 
   const businessId = await prepare(db, 'search', startedAt);
-  // A single-type request reads a deeper, fixed candidate set so every page of "Show more" continues the same order (§7.2).
+  // A single-type request reads a deeper candidate set and cuts it to one ranked window of SINGLE_TYPE_DEPTH, so
+  // every page of "Show more" continues the same order and the type never exposes more than that in total (§7.2).
   const single = input.types?.length === 1;
   const binding = (type: SearchType) => ({ businessId, type, q: query.q, includeArchived: input.includeArchived });
   let after: SearchPosition | null = null;
@@ -128,7 +129,7 @@ export async function runSearch(db: AppTenantDb, principal: Principal, input: Se
   const canReadCustomers = can(principal, 'customers:read');
   const branchInput: BranchInput = {
     mode: 'text', query, take: limit + 1, includeArchived: input.includeArchived, canReadCustomers,
-    prefixCap: single ? SINGLE_TYPE_DEPTH : limit + 1, after,
+    prefixCap: single ? SINGLE_TYPE_DEPTH : limit + 1, depth: single ? SINGLE_TYPE_DEPTH : limit + 1, after,
   };
   const rows = await runBranches(db, providers.map((p) => p.branch(branchInput)), 'search', startedAt);
 

@@ -10,13 +10,24 @@ import { joinSql, rawSql, sql, type SqlFragment } from '@/core/db';
 /** The explicit tenant predicate's right-hand side: the unit of work's own verified context (§6.1 layer 4). */
 const TENANT = rawSql(`nullif(current_setting('app.business_id', true), '')::uuid`);
 
-/** Per-arm candidate cap for the word arm (§5.3). Caps rows, not the GIN work behind them. */
+/**
+ * Candidate cap for the word arm (§5.3). Caps rows, not the GIN work behind them. The arm has no ORDER BY
+ * (a GIN index cannot supply one, and sorting every match would remove the bound), so when more than this
+ * many records match by word, WHICH ones become candidates is unspecified: it follows the plan's scan order.
+ */
 export const WORD_ARM_CAP = 200;
 /**
- * Deepest position "Show more" can reach in one type: each prefix arm reads at most this many rows, and
- * the word arm at most WORD_ARM_CAP. Search is bounded discovery, not exhaustive retrieval: past these caps
- * more records may match than search can reach, and `hasMore: false` only means nothing more is reachable.
- * The Zone list screens remain the exhaustive view (ChatGPT audit of PR #93, M3).
+ * Cumulative per-type ceiling for single-type paging ("Show more"): at most this many results of one type
+ * are reachable across all pages, whatever arms produced them. Each prefix arm also reads at most this many
+ * rows (in its own index order) and the word arm at most WORD_ARM_CAP; the merged candidates are then ranked
+ * in the result order and cut to this many BEFORE the cursor applies, so page boundaries are cut from one
+ * fixed, ranked window and pages neither overlap nor skip within it while the data is unchanged.
+ *
+ * Search is bounded discovery, not exhaustive retrieval. The window is the best-ranked of the CANDIDATES,
+ * not necessarily of every match: past the arm caps, matches may exist that search never reads, and with
+ * more than WORD_ARM_CAP word matches the candidate subset is unspecified. Writes between pages can change
+ * the window like any keyset list. `hasMore: false` only means nothing more is reachable; the Zone list
+ * screens remain the exhaustive view (ChatGPT audit of PR #93, M3).
  */
 export const SINGLE_TYPE_DEPTH = 125;
 
@@ -46,7 +57,15 @@ export type BranchInput = {
    */
   withoutTenantPredicateForIsolationTests?: boolean;
 } & (
-  | { mode: 'text'; query: NormalizedQuery; prefixCap: number; after: SearchPosition | null }
+  | {
+      mode: 'text';
+      query: NormalizedQuery;
+      /** Rows each prefix arm reads. */
+      prefixCap: number;
+      /** Cumulative ceiling: only the first `depth` ranked candidates are reachable, before `after` applies. */
+      depth: number;
+      after: SearchPosition | null;
+    }
   | { mode: 'ids'; ids: string[] }
 );
 
@@ -139,14 +158,19 @@ export function candidates(spec: TableSpec, input: BranchInput, extraArms: SqlFr
  * Wraps a provider's projection into its branch. The projection must select, in this order and type:
  * type text, id uuid, tier int, demote int, sort_key text, title text, subtitle text, badges text[], target text.
  * Ordering is fully deterministic (§5.3): tier, demote, sort key in byte order, id; the keyset cursor continues it.
+ * In text mode the ranked candidates are first cut to `depth` (the cumulative per-type ceiling), then the
+ * cursor and page size apply inside that window.
  */
 export function finalize(ctes: SqlFragment, projection: SqlFragment, input: BranchInput): SqlFragment {
   const after = input.mode === 'text' && input.after
     ? sql`WHERE (r.tier, r.demote, r.sort_key COLLATE "C", r.id) > (${input.after.tier}::int, ${input.after.demote}::int, ${input.after.sortKey}::text COLLATE "C", ${input.after.id}::uuid)`
     : sql``;
+  const source = input.mode === 'text'
+    ? sql`(SELECT * FROM (${projection}) w ORDER BY w.tier, w.demote, w.sort_key COLLATE "C", w.id LIMIT ${input.depth})`
+    : sql`(${projection})`;
   return sql`(WITH ${ctes}
     SELECT r.type, r.id::text AS id, r.tier, r.demote, r.sort_key, left(r.title, 200) AS title, left(r.subtitle, 160) AS subtitle, r.badges, r.target
-    FROM (${projection}) r
+    FROM ${source} r
     ${after}
     ORDER BY r.tier, r.demote, r.sort_key COLLATE "C", r.id
     LIMIT ${input.take})`;

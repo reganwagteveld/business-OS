@@ -86,9 +86,10 @@ export const SearchGroup = z
     items: z.array(SearchResult).max(SEARCH_LIMITS.maxLimit),
     /**
      * More rows are REACHABLE through search, not "more records match". Search is bounded command-palette
-     * discovery: each type reads a capped candidate set (single type: at most 125 rows deep; word matches
-     * capped at 200), so `hasMore: false` never means every match was returned. The Zone list screens are
-     * the exhaustive view; a client must not present "Show more" as complete retrieval.
+     * discovery: each type reads a capped candidate set (each prefix arm at most 125 rows, word matches at
+     * most 200, in an unspecified subset past that cap) and a single type exposes at most 125 results IN
+     * TOTAL across all its pages. So `hasMore: false` never means every match was returned. The Zone list
+     * screens are the exhaustive view; a client must not present "Show more" as complete retrieval.
      */
     hasMore: z.boolean(),
     /** Set only for single-type requests with more reachable rows (§7.1). */
