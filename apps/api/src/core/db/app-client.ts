@@ -34,6 +34,7 @@ const TENANT_MODELS = {
   mailConnection: 'businessId', mailConnectionCredential: 'businessId', mailOAuthState: 'businessId', mailSyncJob: 'businessId',
   reportingSavedView: 'businessId',
   mailBusinessDomain: 'businessId', mailBusinessAddress: 'businessId', mailConnectionMember: 'businessId', mailRetentionSetting: 'businessId',
+  communicationsErasure: 'businessId', communicationsErasureItem: 'businessId', communicationsLegalHold: 'businessId',
 } as const;
 type AppTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;
 export type AppTenantDb = TenantDb<AppTx, keyof typeof TENANT_MODELS>;
@@ -73,6 +74,17 @@ export async function businessesWithDueBilling(limit: number): Promise<string[]>
 export async function businessesWithDueReminders(limit: number): Promise<string[]> {
   const rows = await appPrisma().$queryRaw<{ business_id: string }[]>`
     SELECT business_id::text FROM app_private.finance_reminders_due(${limit}::int)`;
+  return rows.map((r) => r.business_id);
+}
+
+/**
+ * Communications retention worker (docs/communications-e1.md §7): ids of businesses with due erasure work
+ * (expired copies or pending/deferred requests), from app_private.communications_erasure_due. Ids only; every
+ * erasure then runs as bos_app inside withTenant through the bos_maint functions.
+ */
+export async function businessesWithDueErasure(limit: number): Promise<string[]> {
+  const rows = await appPrisma().$queryRaw<{ business_id: string }[]>`
+    SELECT business_id::text FROM app_private.communications_erasure_due(${limit}::int)`;
   return rows.map((r) => r.business_id);
 }
 

@@ -76,6 +76,9 @@ export const envSchema = z
     // Finance F6-1 scheduler (docs/finance-billing-f6.md §5). Vercel Cron sends it as a bearer token to
     // /api/internal/jobs/finance-billing. Unset means the job route refuses every call (nothing runs).
     CRON_SECRET: z.string().min(32, 'CRON_SECRET must be at least 32 characters').optional(),
+    // Communications E1 (docs/communications-e1.md §11): the retention and erasure worker refuses to run unless
+    // this is exactly "true", even with CRON_SECRET set. Off by default; turning it on is an owner decision.
+    COMMUNICATIONS_RETENTION_JOBS_ENABLED: z.enum(['true', 'false']).default('false'),
   })
   .superRefine((value, ctx) => {
     if (value.REGION !== value.DATABASE_REGION) {

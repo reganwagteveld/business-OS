@@ -92,6 +92,8 @@ model Contact {
   financeRecurringTemplates FinanceRecurringTemplate[]
   conversations             Conversation[]
   messageParticipants       MessageParticipant[]
+  communicationsErasures    CommunicationsErasure[]
+  communicationsLegalHolds  CommunicationsLegalHold[]
 
   @@unique([businessId, id])
   @@unique([businessId, customerId, id])
@@ -124,6 +126,8 @@ model Activity {
   /// Set only for message.recorded: the timeline entry of one recorded message (composite FKs).
   conversationId String?   @map("conversation_id") @db.Uuid
   messageId      String?   @map("message_id") @db.Uuid
+  /// E1 (docs/communications-e1.md): set when the erasure pathway removed subject and body. Written only by bos_maint.
+  erasedAt       DateTime? @map("erased_at") @db.Timestamptz
 
   business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "activities_business_fkey")
   customer     Customer?     @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "activities_customer_fkey")

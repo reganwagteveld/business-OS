@@ -66,9 +66,9 @@ model SchedulingEvent {
   updatedAt          DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt         DateTime?             @map("archived_at") @db.Timestamptz
 
-  business Business           @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "scheduling_events_business_fkey")
-  calendar SchedulingCalendar @relation(fields: [businessId, calendarId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_calendar_fkey")
-  customer Customer?          @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_customer_fkey")
+  business  Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "scheduling_events_business_fkey")
+  calendar  SchedulingCalendar        @relation(fields: [businessId, calendarId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_calendar_fkey")
+  customer  Customer?                 @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_customer_fkey")
   /// S2: resources assigned to this event (live and removed; live = removedAt null).
   resources SchedulingEventResource[]
 
