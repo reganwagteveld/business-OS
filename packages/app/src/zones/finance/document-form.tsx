@@ -1,15 +1,20 @@
-import type { FinanceDocument } from '@business-os/contracts';
+import type { CatalogItem, FinanceDocument } from '@business-os/contracts';
 import { Alert, AlertDescription, Button, Field, FormSection, Input, Select, Textarea } from '@business-os/ui';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { DocumentPath, TaxRateOption } from '../../api/finance';
 import { ZonePage } from '../../shell/zone-page';
 import { CustomerPicker } from '../customer-picker';
 import { currencyOptions } from '../sales/format';
+import { CatalogLinePicker, catalogLineStart, catalogPriceNote } from './catalog-picker';
 import { PATH_KIND, useFinance } from './env';
 import { formatMoney } from './format';
 import { KIND_LABEL, Row, useIdempotencyKey, useSubmit } from './shared';
 
-type Line = { key: string; description: string; quantity: string; unitPrice: string; discountAmount: string; taxRateId: string };
+type Line = {
+  key: string; description: string; quantity: string; unitPrice: string; discountAmount: string; taxRateId: string;
+  /** F7-B: the catalog item this unsaved line was started from. Sent once with the line, never stored. */
+  catalog?: { item: CatalogItem; priceFilled: boolean; taxNote: string | null };
+};
 type Values = { customerId: string; customerName: string | null; currencyCode: string; date: string; notes: string; lines: Line[] };
 
 let seq = 0;
@@ -45,7 +50,7 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
   const defaultTax = defaultTaxRateId && live(defaultTaxRateId) ? defaultTaxRateId : '';
   const start = useMemo(() => initial(doc, currency, defaultTax, customerId, customerId ? env.names.get(customerId) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [values, setValues] = useState<Values>(start);
-  const strip = (v: Values) => JSON.stringify({ ...v, customerName: null, lines: v.lines.map((l) => [l.description, l.quantity, l.unitPrice, l.discountAmount, l.taxRateId]) });
+  const strip = (v: Values) => JSON.stringify({ ...v, customerName: null, lines: v.lines.map((l) => [l.description, l.quantity, l.unitPrice, l.discountAmount, l.taxRateId, l.catalog?.item.id ?? null]) });
   const dirty = strip(values) !== strip(start);
   useEffect(() => markDirty('form', dirty), [dirty, markDirty]);
   useEffect(() => () => markDirty('form', false), [markDirty]);
@@ -54,6 +59,31 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
   const [lineErrors, setLineErrors] = useState<string | null>(null);
   const set = (patch: Partial<Values>) => setValues((v) => ({ ...v, ...patch }));
   const setLine = (key: string, patch: Partial<Line>) => setValues((v) => ({ ...v, lines: v.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) }));
+  // F7-B: start a new line from a catalog item (quotes and invoices only).
+  const [picking, setPicking] = useState(false);
+  const [announce, setAnnounce] = useState('');
+  const fromCatalog = kind !== 'CREDIT_NOTE' && env.can.write;
+  function addFromCatalog(item: CatalogItem) {
+    const start = catalogLineStart(item, values.currencyCode, defaultTax, live);
+    const line: Line = {
+      key: lineKey(), description: start.description, quantity: '1', unitPrice: start.unitPrice, discountAmount: '', taxRateId: start.taxRateId,
+      catalog: { item, priceFilled: start.unitPrice !== '', taxNote: start.taxNote },
+    };
+    setValues((v) => ({ ...v, lines: [...v.lines, line] }));
+    setAnnounce(`Added ${item.name} as line ${values.lines.length + 1}.`);
+    setPicking(false);
+  }
+  /** A new draft's currency can still change: a price copied from an item follows it (never converted). */
+  function changeCurrency(code: string) {
+    setValues((v) => ({
+      ...v, currencyCode: code,
+      lines: v.lines.map((l) => {
+        if (!l.catalog || (l.unitPrice !== '' && !l.catalog.priceFilled)) return l;
+        const fits = l.catalog.item.unitPrice !== null && l.catalog.item.currencyCode === code;
+        return { ...l, unitPrice: fits ? l.catalog.item.unitPrice! : '', catalog: { ...l.catalog, priceFilled: fits } };
+      }),
+    }));
+  }
   const move = (index: number, by: -1 | 1) => setValues((v) => {
     const lines = [...v.lines];
     const target = index + by;
@@ -71,6 +101,7 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
     setLineErrors(null);
     if (kind !== 'CREDIT_NOTE' && !values.customerId) return setLineErrors('Choose the customer.');
     const lines = values.lines.map((l) => ({
+      ...(l.catalog ? { catalogItemId: l.catalog.item.id } : {}),
       description: l.description, quantity: l.quantity.trim(), unitPrice: l.unitPrice.trim(),
       ...(l.discountAmount.trim() ? { discountAmount: l.discountAmount.trim() } : {}), taxRateId: l.taxRateId || null,
     }));
@@ -119,7 +150,7 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
               )}
               {isNew ? (
                 <Field label="Currency" hint="Fixed once the draft is saved.">{(c) => (
-                  <Select {...c} value={values.currencyCode} onChange={(e) => set({ currencyCode: e.target.value })}>
+                  <Select {...c} value={values.currencyCode} onChange={(e) => changeCurrency(e.target.value)}>
                     {currencies.map((o) => <option key={o.code} value={o.code}>{o.name}</option>)}
                   </Select>
                 )}</Field>
@@ -138,13 +169,29 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
               <li key={l.key} className="rounded-xl border p-4">
                 <fieldset>
                   <legend className="mb-3 text-sm font-medium">Line {i + 1}</legend>
+                  {l.catalog ? (
+                    <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+                        From catalog: {l.catalog.item.name}{l.catalog.item.code ? ` (${l.catalog.item.code})` : ''}
+                      </span>
+                      <button type="button" onClick={() => setLine(l.key, { catalog: undefined })} aria-label={`Keep line ${i + 1} as a manual line`}
+                        className="rounded-md font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+                        Keep as manual line
+                      </button>
+                    </div>
+                  ) : null}
+                  {l.catalog && !l.unitPrice && catalogPriceNote(l.catalog.item, values.currencyCode) ? (
+                    <p className="mb-3 text-xs text-muted-foreground">{catalogPriceNote(l.catalog.item, values.currencyCode)}</p>
+                  ) : null}
+                  {l.catalog?.taxNote ? <p className="mb-3 text-xs text-muted-foreground">{l.catalog.taxNote}</p> : null}
                   <div className="grid gap-3 sm:grid-cols-6">
                     <Field label="Description" className="sm:col-span-6">{(c) => (
                       <Textarea {...c} rows={2} maxLength={1000} value={l.description} onChange={(e) => setLine(l.key, { description: e.target.value })} />
                     )}</Field>
                     <Field label="Quantity" className="sm:col-span-1">{(c) => <Input {...c} inputMode="decimal" value={l.quantity} onChange={(e) => setLine(l.key, { quantity: e.target.value })} />}</Field>
                     <Field label={`Unit price (${values.currencyCode})`} className="sm:col-span-2">{(c) => (
-                      <Input {...c} inputMode="decimal" placeholder="0.00" value={l.unitPrice} onChange={(e) => setLine(l.key, { unitPrice: e.target.value })} />
+                      <Input {...c} inputMode="decimal" placeholder="0.00" value={l.unitPrice}
+                        onChange={(e) => setLine(l.key, { unitPrice: e.target.value, ...(l.catalog ? { catalog: { ...l.catalog, priceFilled: false } } : {}) })} />
                     )}</Field>
                     <Field label="Discount (optional)" className="sm:col-span-1">{(c) => (
                       <Input {...c} inputMode="decimal" placeholder="0.00" value={l.discountAmount} onChange={(e) => setLine(l.key, { discountAmount: e.target.value })} />
@@ -166,7 +213,16 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
             ))}
           </ol>
           {values.lines.length === 0 ? <p className="text-sm text-muted-foreground">No lines yet. A document needs at least one line before it can be issued.</p> : null}
-          <Button variant="outline" className="mt-4" disabled={values.lines.length >= 200} onClick={() => set({ lines: [...values.lines, blankLine(defaultTax)] })}>Add line</Button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="outline" disabled={values.lines.length >= 200} onClick={() => set({ lines: [...values.lines, blankLine(defaultTax)] })}>Add line</Button>
+            {fromCatalog ? (
+              <Button variant="outline" disabled={values.lines.length >= 200} aria-expanded={picking} onClick={() => setPicking((p) => !p)}>Add from catalog</Button>
+            ) : null}
+          </div>
+          {fromCatalog && picking ? (
+            <CatalogLinePicker documentCurrency={values.currencyCode} disabled={values.lines.length >= 200} onPick={addFromCatalog} onClose={() => setPicking(false)} />
+          ) : null}
+          <p className="sr-only" aria-live="polite">{announce}</p>
           {submit.fields.lines ? <p className="mt-2 text-xs font-medium text-destructive">{submit.fields.lines}</p> : null}
         </FormSection>
 
