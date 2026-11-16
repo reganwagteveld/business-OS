@@ -6,7 +6,7 @@ import { CurrencyCode } from './sales.ts';
 // /api/v1/b/:slug/finance, so no request carries a business id; bodies are strict (an unknown field is
 // rejected, never ignored); prices are exact decimal strings, never JSON numbers.
 //
-// The catalog is a source of defaults. Quotes and invoices never read it: a later picker copies an
+// The catalog is a source of defaults. Since F7-B a quote or invoice draft line may name an item: the server copies an
 // item's description, price and tax rate into a draft line, and an issued document keeps its own
 // sealed lines, so changing or archiving an item never changes a document. Tax percentages are never
 // stored here; an item points to one of the business's tax rates (or the business default, or none).

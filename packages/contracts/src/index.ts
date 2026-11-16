@@ -42,6 +42,7 @@ export * from './scheduling.ts';
 export * from './scheduling-time.ts';
 export * from './communications.ts';
 export * from './communications-connections.ts';
+export * from './communications-erasure.ts';
 export * from './reporting.ts';
 import {
   ConversationResponse, CreateConversationRequest, ImportMessagesRequest, ImportMessagesResponse, ListConversationsQuery, ListConversationsResponse,
@@ -54,6 +55,11 @@ import {
   ListMailBusinessDomainsResponse, ListMailConnectionMembersResponse, MailBusinessAddressResponse, MailBusinessDomainResponse, MailRetentionResponse,
   SetMailConnectionMemberRequest, SetMailRetentionRequest, VersionedRequest,
 } from './communications-connections.ts';
+import {
+  ApplyRetentionReductionRequest, ApplyRetentionReductionResponse, CreatePrivilegedAuthorizationRequest, ErasureDetailResponse, ErasureResponse,
+  LegalHoldResponse, ListErasuresQuery, ListErasuresResponse, ListLegalHoldsQuery, ListLegalHoldsResponse, PlaceLegalHoldRequest,
+  PrivilegedAuthorizationResponse, ReleaseLegalHoldRequest, RequestErasureRequest, RetentionEligibilityResponse,
+} from './communications-erasure.ts';
 import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
@@ -209,6 +215,29 @@ export const endpoints = {
   },
   getMailRetention: { method: 'GET', path: '/api/v1/b/:slug/communications/retention', response: MailRetentionResponse },
   setMailRetention: { method: 'PUT', path: '/api/v1/b/:slug/communications/retention', request: SetMailRetentionRequest, response: MailRetentionResponse },
+  // Communications E1 (docs/communications-e1.md §8): retention eligibility, legal holds, erasure. manage_connections,
+  // plus a database-verified OWNER/ADMIN session and a single-use authorisation for the high-risk operations.
+  getRetentionEligibility: { method: 'GET', path: '/api/v1/b/:slug/communications/retention/eligibility', response: RetentionEligibilityResponse },
+  /** OWNER only: makes a pending (30-day delayed) reduction apply now. Audited with the reason. */
+  applyRetentionReduction: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/retention/apply-reduction', request: ApplyRetentionReductionRequest,
+    response: ApplyRetentionReductionResponse,
+  },
+  /** A single-use code (5 minutes) for one high-risk operation on one target; presented with that operation. */
+  createPrivilegedAuthorization: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/authorizations', request: CreatePrivilegedAuthorizationRequest,
+    response: PrivilegedAuthorizationResponse,
+  },
+  listLegalHolds: { method: 'GET', path: '/api/v1/b/:slug/communications/legal-holds', query: ListLegalHoldsQuery, response: ListLegalHoldsResponse },
+  /** Idempotent: an active hold on the same target is returned (200) instead of a new one (201). */
+  placeLegalHold: { method: 'POST', path: '/api/v1/b/:slug/communications/legal-holds', request: PlaceLegalHoldRequest, response: LegalHoldResponse },
+  releaseLegalHold: {
+    method: 'POST', path: '/api/v1/b/:slug/communications/legal-holds/:holdId/release', request: ReleaseLegalHoldRequest, response: LegalHoldResponse,
+  },
+  listErasures: { method: 'GET', path: '/api/v1/b/:slug/communications/erasures', query: ListErasuresQuery, response: ListErasuresResponse },
+  /** 202: recorded and started; the worker finishes it. An open request for the same target is returned (200). */
+  requestErasure: { method: 'POST', path: '/api/v1/b/:slug/communications/erasures', request: RequestErasureRequest, response: ErasureResponse },
+  getErasure: { method: 'GET', path: '/api/v1/b/:slug/communications/erasures/:erasureId', response: ErasureDetailResponse },
   // Sales Zone (docs/sales-data-model.md)
   listPipelines: { method: 'GET', path: '/api/v1/b/:slug/sales/pipelines', response: ListPipelinesResponse },
   createPipeline: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines', request: CreatePipelineRequest, response: PipelineResponse },

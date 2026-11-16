@@ -17,12 +17,15 @@ model Conversation {
   lastMessageAt    DateTime? @map("last_message_at") @db.Timestamptz
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  /// E1: the subject was removed by the erasure pathway; the conversation takes no new messages (CM011).
+  erasedAt         DateTime? @map("erased_at") @db.Timestamptz
 
-  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "conversations_business_fkey")
-  customer   Customer?  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "conversations_customer_fkey")
-  contact    Contact?   @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "conversations_contact_fkey")
+  business   Business                @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "conversations_business_fkey")
+  customer   Customer?               @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "conversations_customer_fkey")
+  contact    Contact?                @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "conversations_contact_fkey")
   messages   Message[]
   activities Activity[]
+  erasures   CommunicationsErasure[]
 
   @@id([businessId, id])
   @@index([businessId, customerId, createdAt(sort: Desc), id])
@@ -33,24 +36,30 @@ model Conversation {
 
 /// Immutable once written (trigger messages_immutable, no UPDATE/DELETE grant).
 model Message {
-  id                String   @db.Uuid
-  businessId        String   @map("business_id") @db.Uuid
-  conversationId    String   @map("conversation_id") @db.Uuid
+  id                String    @db.Uuid
+  businessId        String    @map("business_id") @db.Uuid
+  conversationId    String    @map("conversation_id") @db.Uuid
   direction         String
   source            String
-  occurredAt        DateTime @map("occurred_at") @db.Timestamptz
-  recordedAt        DateTime @default(now()) @map("recorded_at") @db.Timestamptz
-  recordedById      String   @map("recorded_by_id") @db.Uuid
+  occurredAt        DateTime  @map("occurred_at") @db.Timestamptz
+  recordedAt        DateTime  @default(now()) @map("recorded_at") @db.Timestamptz
+  recordedById      String    @map("recorded_by_id") @db.Uuid
   subject           String?
   body              String?
-  externalSource    String?  @map("external_source")
-  externalMessageId String?  @map("external_message_id")
-  contentHash       String   @map("content_hash") @db.Char(64)
+  externalSource    String?   @map("external_source")
+  externalMessageId String?   @map("external_message_id")
+  contentHash       String    @map("content_hash") @db.Char(64)
+  /// E1 (docs/communications-e1.md §3): PERSONAL_UNSHARED, ORDINARY, RETAINED_RECORD or STAGED_INTAKE; null for
+  /// C1 manual and imported messages (no automatic expiry, D-E1-1). Not insertable by bos_app until C2-B2.
+  retentionCategory String?   @map("retention_category")
+  /// Set when the erasure pathway removed subject, body and participant details (a tombstone stays).
+  erasedAt          DateTime? @map("erased_at") @db.Timestamptz
 
-  business     Business             @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "messages_business_fkey")
-  conversation Conversation         @relation(fields: [businessId, conversationId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "messages_conversation_fkey")
+  business     Business                @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "messages_business_fkey")
+  conversation Conversation            @relation(fields: [businessId, conversationId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "messages_conversation_fkey")
   participants MessageParticipant[]
   activities   Activity[]
+  erasures     CommunicationsErasure[]
 
   @@id([businessId, id])
   @@unique([businessId, conversationId, id], map: "messages_conversation_link_key")
@@ -60,15 +69,17 @@ model Message {
 
 /// Immutable once written. Sender and recipients of one message, in order per role.
 model MessageParticipant {
-  id          String  @db.Uuid
-  businessId  String  @map("business_id") @db.Uuid
-  messageId   String  @map("message_id") @db.Uuid
+  id          String    @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  messageId   String    @map("message_id") @db.Uuid
   role        String
-  position    Int     @db.SmallInt
-  displayName String? @map("display_name")
+  position    Int       @db.SmallInt
+  displayName String?   @map("display_name")
   address     String?
-  contactId   String? @map("contact_id") @db.Uuid
-  userId      String? @map("user_id") @db.Uuid
+  contactId   String?   @map("contact_id") @db.Uuid
+  userId      String?   @map("user_id") @db.Uuid
+  /// E1: display name and address removed by the erasure pathway.
+  erasedAt    DateTime? @map("erased_at") @db.Timestamptz
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "message_participants_business_fkey")
   message  Message  @relation(fields: [businessId, messageId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "message_participants_message_fkey")
