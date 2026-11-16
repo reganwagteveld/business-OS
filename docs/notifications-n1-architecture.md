@@ -4,7 +4,7 @@
 until Regan approves it. No tables, migrations, queues, workers, schedules or email providers are added by
 the PR that carries this document.
 **Base:** `main` at `b2f308b` (2026-11-16).
-**Owner decisions:** §20 (D-N1-1 to D-N1-18).
+**Owner decisions:** §20 (D-N1-1 to D-N1-18), accepted by Regan on 2026-11-16 subject to the audit safeguards; D-N1-18 conditionally, for the restricted beta only. Acceptance of the design is not approval to implement, migrate or merge.
 **Revision 2 (2026-11-16):** answers the ChatGPT audit on PR #80 (head `c7424bc`): explicit `notify`
 outcomes and failure policy (§7.1.1), an ACL-safe badge (§5.4), N1-A limited to producers whose hooks
 and transaction context exist today (§18.1), a trusted write path for `user_notices` (§11.2), mandatory
@@ -15,6 +15,11 @@ under the recipient-only policies (cleanup, erasure, resolving) now goes through
 functions (§5.2.1); the 50-per-hour limit is a skip, not a fold (§16); access and role changes are
 user-level notices only, so a demotion can never be blocked by its own notice (§11.3, §18.1); the badge
 is described as an ACL-safe lower bound (§5.4). Response table: §23.2.
+**Revision 4 (2026-11-16):** answers the third audit on head `de7619b`: erasure, resolving and all
+user-level notices are written by **database triggers on the real state change** (no function a tenant
+session can call to erase, resolve or write a notice), so provenance is the committed transition itself
+(§5.2.1, §11.2); §7.1.1 now separates the tenant-inbox `notify` path from the trigger path. Response
+table: §23.3.
 
 ---
 
@@ -191,7 +196,7 @@ rules of §5.
 | `tenancy.membership.role_changed` | tenancy | ACCESS / SECURITY | role changed | The member, as a **user-level** notice (§11.3), never in the tenant inbox | Yes | N1-U |
 | `tenancy.membership.suspended` / `.removed` | tenancy | ACCESS / SECURITY | A2-B | The member: a `user_notices` row (§11.3); email in N1-D | No (A2-B #76) | N1-U, after A2-B |
 | `tenancy.invitation.accepted` | tenancy | UPDATE / STANDARD | invitee joins | Inviter, if still a member | Yes, but acceptance runs in the pre-tenant `app_private.accept_invitation` SECURITY DEFINER function, outside any tenant unit of work | Later: needs a privileged-SQL change (§18.1) |
-| `tenancy.ownership.transferred` | tenancy | ACCESS / SECURITY | owner transfer or step-down | The outgoing and incoming owner, as user-level notices (§11.3) | No (A2-B) | N1-U, after A2-B |
+| `tenancy.ownership.changed` | tenancy | ACCESS / SECURITY | a role change to or from OWNER (transfer, step-down, promotion) | The outgoing and incoming owner, as user-level notices (§11.3) | No (A2-B) | N1-U, after A2-B |
 | `account.password.changed` | identity | SECURITY / SECURITY | password changed or reset | The user | Hook not written | N1-U (user-level, §11, §18) |
 | `account.email.changed` | identity | SECURITY / SECURITY | email changed | The user, at **old and new** address | Hook not written | N1-D (email) |
 | `account.session.new_device` | identity | SECURITY / SECURITY | sign-in from an unrecognised client | The user | No device tracking | Later (D-N1-14) |
@@ -336,34 +341,42 @@ A recipient dropped by any step gets nothing, not a redacted copy.
 recipient policy. It has **no `DELETE`**, and it cannot update `resolved_at`. Every write that touches
 rows of a user other than the session user, or deletes rows, goes through §5.2.1.
 
-#### 5.2.1 Privileged maintenance functions (the only delete and resolve paths)
+#### 5.2.1 Privileged maintenance paths (the only delete and resolve paths)
 
 The producer runs as the **actor**, but the rows it would need to delete or resolve belong to
-**recipients**, and the recipient policy (correctly) stops the actor touching them. Rather than widen
-that policy or grant `DELETE`, three narrow `SECURITY DEFINER` functions in
-`apps/api/prisma/privileged/`, owned by `bos_maint` (the NOLOGIN maintenance owner E1 already uses),
-with `EXECUTE` for `bos_app` only:
+**recipients**, and the recipient policy (correctly) stops the actor touching them. `bos_app` gets no
+`DELETE` and no `UPDATE (resolved_at)`. Instead there are exactly three privileged paths, all owned by
+`bos_maint` (the NOLOGIN maintenance owner E1 already uses), in `apps/api/prisma/privileged/`:
 
-| Function | Who calls it | What it may do, enforced in SQL |
-|---|---|---|
-| `app_private.notifications_purge_own(p_limit int)` | The inbox API (list, mark-all), as the session user | Requires `app.business_id` and `app.user_id` set; `p_limit` 1–50. Deletes only rows with `business_id = app.business_id AND recipient_user_id = app.user_id` that are past `expires_at`, or archived more than 30 days ago, or resolved more than 30 days ago. Returns a count. Never touches another user's rows. |
-| `app_private.notifications_erase_subject(p_kind text, p_subject uuid)` | The owning module's erasure or hard-delete service, in the same transaction | Requires `app.business_id`. `p_kind` must be in an allowlist inside the function (the registered subject kinds). Deletes all rows in **this business** with that subject, in batches of 1 000 inside the call. Cannot reach another business. Misuse within a tenant can only remove notification pointers, never records, and the caller's erasure is audited by the caller. |
-| `app_private.notifications_resolve(p_type text, p_kind text, p_subject uuid)` | The producer that closes an `ACTION` (leave decided, mailbox reconnected) | Requires `app.business_id`. `p_type` must be an allowlisted `ACTION` type. Sets `resolved_at = now()` on matching unresolved rows in this business; changes no other column. |
+| Path | How it runs | Authority comes from | What it may do, enforced in SQL |
+|---|---|---|---|
+| `app_private.notifications_purge_own(p_limit int)` | Callable: `EXECUTE` for `bos_app`, from the inbox API (list, mark-all) | The session user acting on **their own** rows only | Requires `app.business_id` and `app.user_id`; `p_limit` 1–50. Deletes only `business_id = app.business_id AND recipient_user_id = app.user_id` rows that are past `expires_at`, archived over 30 days or resolved over 30 days. Cannot touch another user's rows, so it needs no further authority. |
+| `app_private.notifications_on_subject_erased()` | **Trigger function only.** `AFTER DELETE` (and, for E1 tombstoned rows, `AFTER UPDATE` when the row enters its erased state) `FOR EACH ROW` on each subject table, attached by the reviewed migration of the stage that adds that subject's producer. `TG_ARGV[0]` is the subject kind, fixed in `CREATE TRIGGER` | The record really was deleted or erased in this transaction: the trigger fires only on that committed-together row change | Deletes rows with `business_id = OLD.business_id AND subject_kind = TG_ARGV[0] AND subject_id = OLD.id`. Raises (aborting the erasure) if `app.business_id` is unset or differs from `OLD.business_id`, so it can never silently leave notifications behind or act on another business. |
+| `app_private.notifications_on_action_closed()` | **Trigger function only.** `AFTER UPDATE OF <status column>` `FOR EACH ROW` on the action's source table (for example P3-B leave requests, C2 mailbox connections). `TG_ARGV` = subject kind, `ACTION` type, and the set of "open" states, fixed in `CREATE TRIGGER` | The source row really left an open state in this transaction | Only when `OLD.status` is in the open set and `NEW.status` is not: sets `resolved_at = now()` on matching unresolved rows of that type for `NEW.id` in `NEW.business_id`. Changes no other column. |
+
+No `EXECUTE` is granted on the two trigger functions to any role, and PostgreSQL refuses to call a
+function returning `trigger` directly, so an ordinary tenant session **cannot** erase or resolve
+anyone's notifications except by actually erasing the record or closing the action, which is governed
+by the owning Zone's own permissions, guards and audit. The owning module therefore needs no
+`eraseNotificationsForSubject` or `resolveNotifications` call: atomicity comes from the trigger running
+inside the same statement.
 
 Grants for `bos_maint` on `notifications`: `SELECT (business_id, id, recipient_user_id, type,
 subject_kind, subject_id, expires_at, archived_at, resolved_at)`, `DELETE`, and `UPDATE (resolved_at)`,
 under forced RLS policies for `bos_maint` that restrict every operation to
-`business_id = nullif(current_setting('app.business_id', true), '')::uuid`, so the functions cannot act
-outside the transaction's business even if their own checks were wrong.
+`business_id = nullif(current_setting('app.business_id', true), '')::uuid`, as a second fence behind the
+function checks.
 
 Removal of a member deletes their rows through the `ON DELETE CASCADE` foreign key to `memberships`;
-PostgreSQL runs referential actions without applying the referencing table's grants or RLS, so this
-needs no `DELETE` grant either (to be confirmed by a test, as for other tenant tables).
+PostgreSQL runs referential actions without the referencing table's grants or RLS, so this needs no
+`DELETE` grant either (confirmed by a test, as for other tenant tables).
 
-Tests against the real roles: `bos_app` `DELETE` and `UPDATE (resolved_at)` are refused; the purge
-function deletes only the caller's expired rows (another user's expired row in the same business
-survives); erasure and resolve refuse a missing business context and an unlisted kind or type, and
-leave other businesses untouched with RLS forced; the cascade on removal works.
+Tests against the real roles, with RLS forced: `bos_app` `DELETE` and `UPDATE (resolved_at)` are
+refused; `bos_app` cannot call either trigger function (direct call fails, no `EXECUTE`); purge deletes
+only the caller's expired rows (another user's expired row survives); deleting or erasing a subject
+removes exactly its notifications and nothing else; an update that does not leave an open state
+resolves nothing; a rolled-back erasure or decision leaves notifications unchanged; a subject delete
+with a mismatched or missing `app.business_id` aborts.
 
 ### 5.3 Record-level checks
 
@@ -471,29 +484,32 @@ Zone service (inside withTenant, row locked)
 | `SKIPPED_CAP` | **Non-mandatory** type over the per-event recipient cap (§5.1), the per-recipient hourly limit or the per-business daily limit (§16). Applied per recipient: others under the limit still get theirs | returns | commits | warning counter with type and business id; an alert if it repeats |
 | `ERROR_CONTRACT` | Unknown type; params fail the schema; a sensitivity rule fails; a mandatory type with an unbounded recipient spec | **throws** | **rolls back** | error log (type and code only) |
 | `ERROR_DATABASE` | Insert fails (FK, RLS, timeout, serialization) | **throws** | **rolls back** (the transaction is already aborted) | as any DB error |
-| `ERROR_MANDATORY` | A mandatory tenant-inbox type resolves to **zero** recipients from its membership facts (for example an ownership event with no OWNER found) | **throws** | **rolls back** | error log; alert |
+| `ERROR_MANDATORY` | A mandatory **tenant-inbox** type resolves to zero recipients from its membership facts. No such type is planned in N1-A or N1-U; the outcome exists so a future one (for example an unresolved billing failure that must reach every `finance:billing` holder) fails closed | **throws** | **rolls back** | error log; alert |
+
+This table covers the **tenant-inbox path** (`notify`, called by Zone services). User-level notices
+about a person's own account or access (password, email, role, suspension, removal, ownership) do
+**not** use `notify`: they are written by database triggers on the change itself (§11.2) and follow the
+same principle, fail closed, by construction (a failed trigger aborts the statement that changed the
+role or status).
 
 Rules that follow from the table:
 
 1. **Skips are decisions, not failures.** They are expected and the producer's change stands.
 2. **Mandatory notices fail closed.** No skip outcome applies to a mandatory type except
    `SKIPPED_DUPLICATE` (the notice already exists) and `SKIPPED_NO_RECIPIENT` for "is the actor" where
-   the type allows it. A role, ownership or security change therefore **cannot commit** having silently
-   discarded its mandatory notice.
+   the type allows it. A change that produces a mandatory tenant-inbox notice therefore **cannot
+   commit** having silently discarded it. (Role, ownership and account changes get the same guarantee
+   from the trigger path in §11.2.)
 3. **Caps never decide whether a mandatory notice is written** (§16.1).
 3a. **Mandatory recipients never depend on the recipient's post-change permissions.** A mandatory type
    resolves recipients from membership facts only (§5.1 steps 3, 4 and 6 do not apply). Notices about a
    change to the recipient's **own** access (role change, suspension, removal, ownership transfer) are
-   not tenant-inbox notifications at all: they are user-level notices written through
-   `record_access_notice` (§11.2), which is readable whatever the recipient's role becomes. So no
-   legitimate demotion or removal can be blocked by its own notice.
+   not tenant-inbox notifications at all: they are user-level notices written by the `memberships`
+   trigger (§11.2), readable whatever the recipient's role becomes, and the trigger has no recipient
+   filter that could fail. So no legitimate demotion or removal can be blocked by its own notice.
 4. Producers do not catch `notify` errors. A contract test checks that no producer wraps `notify` in a
    `try`.
-5. Tests: rollback on each `ERROR_*`; commit on each `SKIPPED_*`; (N1-U) a role change with a forced
-   notice-insert failure leaves the role unchanged; demotions OWNER→ADMIN, ADMIN→MANAGER,
-   MANAGER→MEMBER and any role → a role without `members:read` all commit with their notice; two
-   concurrent role changes on one member serialise on the membership row lock and produce two notices;
-   cap exhaustion on a non-mandatory type commits the producer
+5. Tests (`notify` path): rollback on each `ERROR_*`; commit on each `SKIPPED_*`; cap exhaustion on a non-mandatory type commits the producer
    change and writes nothing; cap pressure from non-mandatory rows never blocks a mandatory one.
 
 ### 7.2 N1-C/N1-D: a Postgres outbox drained by the existing job pattern
@@ -564,7 +580,7 @@ created.
 | `group_key` | text, for collapsing (§16) |
 | `occurred_at` | DB time of the change |
 | `created_at` | insert time |
-| `read_at`, `archived_at`, `resolved_at` | nullable; the only columns `bos_app` may update (`resolved_at` only through `resolveNotifications`, §9) |
+| `read_at`, `archived_at`, `resolved_at` | nullable; the only columns `bos_app` may update (`resolved_at` only by the action-closed trigger, §5.2.1) |
 | `expires_at` | `created_at + registered expiry`; retention deletes after this (§13) |
 
 Indexes: `(business_id, recipient_user_id, archived_at, created_at DESC, id)` for the list,
@@ -618,9 +634,9 @@ it is listed in N1-E.
   filter, bounded by `before` so items that arrive while the click is in flight stay unread) and
   "Archive" are available.
 - `ACTION` notifications stay pinned at the top as "Needs action" until the action is resolved
-  (the leave decided, the mailbox reconnected). The producer resolves them by calling
-  `resolveNotifications(db, { type, subject })` in the transaction that closes the action, which calls
-  `app_private.notifications_resolve` (§5.2.1) because the rows usually belong to other users. Reading an `ACTION` notification does not resolve it.
+  (the leave decided, the mailbox reconnected). The producer calls
+  nothing: the action-closed trigger on the source table (§5.2.1) sets `resolved_at` when the source
+  row leaves its open state, in the same transaction. Reading an `ACTION` notification does not resolve it.
 - Read state is per business and per user and is not synchronised to email (an email opened is not a
   notification read; open tracking is not used, §12.4).
 - Read and archive are never audited (high volume, no security value). Changes to business defaults
@@ -675,27 +691,32 @@ tenant inbox would either duplicate them per business or hide them from users wi
 - `user_notices` (§8.1) is not tenant-scoped. **Reads:** only through `/api/v1/me/notices`, as
   `bos_app` with `app.user_id` set from the verified session, under RLS `user_id = app.user_id`;
   `bos_app` has `SELECT` and column `UPDATE (read_at)` only, never `INSERT` or `DELETE`.
-- **Writes** go only through `SECURITY DEFINER` functions in `apps/api/prisma/privileged/`, owned by
-  `bos_definer`, each for one allowlisted purpose, so tenant code cannot write a notice to an arbitrary
-  user:
-  - `app_private.record_account_notice(user_id, type, params)`: `EXECUTE` for `bos_auth` only (the
-    identity module's auth adapter, which already runs password and email changes). Types limited in
-    SQL to `account.*`.
-  - `app_private.record_access_notice(target_user_id, type)`: `EXECUTE` for `bos_app`, called inside
-    the admin's tenant unit of work **before** the membership row is suspended or deleted. The function
-    checks, in SQL, that `app.business_id` and `app.user_id` are set, that the caller has an ACTIVE
-    membership in that business with a role that holds `members:manage` (OWNER, ADMIN, MANAGER), that
-    the target has a membership in the same business, and that the type is one of
-    `tenancy.membership.role_changed`, `.suspended`, `.removed` or `tenancy.ownership.transferred`.
-    Params are fixed by the function and read from the database (the business id, and for a role change
-    the old and new role passed as enums that must match the target's current row), never caller text.
-    The notice row has no foreign key to the membership, so it survives the removal cascade. It is
-    called **after** the role or status update and **before** a delete, in the same transaction and
-    under the membership row lock the A2 service already takes, so the notice and the change commit or
-    roll back together; a failure throws and rolls the change back (fail closed).
-- Tests: user A cannot read or mark user B's notices; `bos_app` cannot insert directly; the access
-  function refuses a caller from another business, a non-manager caller, a target outside the business
-  and any other type; the account function is not executable by `bos_app`.
+- **Writes** happen only in `AFTER … FOR EACH ROW` **triggers** on the tables whose change the notice
+  reports. The trigger functions are `SECURITY DEFINER`, owned by `bos_definer` (which alone has
+  `INSERT` on `user_notices`), in `apps/api/prisma/privileged/`, with **no `EXECUTE` grant to any role**;
+  a function returning `trigger` cannot be called directly. There is therefore no callable notice
+  writer to spoof: the only way to produce an access notice is to make the access change itself,
+  through the A2 services that already enforce `members:manage`, rank, the last-owner lock and the
+  other A2-B guards. Every param comes from `OLD`/`NEW` (business id, old and new role or status) plus
+  the actor from `app.user_id` (null for system work); nothing comes from the caller.
+
+  | Change | Trigger | Notice | Order and checks |
+  |---|---|---|---|
+  | Role change | `AFTER UPDATE OF role ON memberships`, only when `OLD.role IS DISTINCT FROM NEW.role` | `tenancy.membership.role_changed`, or `tenancy.ownership.changed` when either side is `OWNER` | Fires after the row is updated, inside the statement. The A2 service has already locked the row and run its authority and rank checks; a trigger failure aborts the update (fail closed). |
+  | Ownership transfer / step-down (A2-B) | The same trigger, once per affected row | One `tenancy.ownership.changed` notice for the outgoing and one for the incoming owner | Both role updates and both notices commit or roll back together in the A2-B transfer transaction; the A2-B last-owner guard runs first. |
+  | Suspension / reactivation (A2-B) | `AFTER UPDATE OF status ON memberships`, only when the status changes | `tenancy.membership.suspended` / `.reactivated` | As above. |
+  | Removal | `AFTER DELETE ON memberships` | `tenancy.membership.removed` | Fires after the delete, in the same statement. Skipped when the delete is a cascade from business purge (purge runs as `bos_jobs` with no session user; exact detection tested in N1-U). The notice has no FK to the membership, so it survives. |
+  | Password change | `AFTER UPDATE OF password ON accounts` (the Better Auth credential row; column verified in `identity.prisma`) when it changes | `account.password.changed` | Fires for any path that changes the password (reset or change), so no adapter hook is needed. |
+  | Email change | `AFTER UPDATE OF email ON users` when it changes | `account.email.changed` (old address kept in params only for the N1-D email to the old address, then cleared) | As above. |
+
+- Concurrency: two changes to one membership serialise on its row lock (taken by the `UPDATE`
+  itself); each committed transition produces exactly one notice; a no-op update produces none.
+- Tests: user A cannot read or mark user B's notices; `bos_app` cannot `INSERT` into `user_notices` and
+  cannot call any trigger function; each change in the table writes exactly its notice with the right
+  old/new values; demotions OWNER→ADMIN, ADMIN→MANAGER, MANAGER→MEMBER and any role → a role without
+  `members:read` all commit with their notice; a forced trigger failure leaves the role unchanged;
+  concurrent role changes and a role change racing a removal produce consistent notices; a rolled-back
+  change leaves no notice; business purge writes no removal notices.
 - Shown in the same notification panel in a "Your account" section, above business items.
 - **Email is the primary channel** for security notices because the account itself may be
   compromised: the in-app copy is a record, the email is the alert. Email already exists for
@@ -709,8 +730,8 @@ tenant inbox would either duplicate them per business or hide them from users wi
 
 A change to someone's own access must reach them whatever access they have afterwards. A tenant-inbox
 row would either be filtered out by the new role (§5.1) and block the change (`ERROR_MANDATORY`), or be
-written and then be unreadable. So all four go to `user_notices` through `record_access_notice`, in the
-admin's transaction (N1-U). Role change and ownership transfer need nothing from A2-B (role change
+written and then be unreadable. So all of them go to `user_notices`, written by the `memberships`
+triggers of §11.2 inside the admin's transaction (N1-U). Role change and ownership transfer need nothing from A2-B (role change
 exists today); suspension, removal and transfer arrive with A2-B. The business name is rendered at read
 time only while the reader is still a member; otherwise the notice says "a business". For suspension
 and removal the copy is "Your access to a business changed" **without the business name** (D-N1-15: naming the business is useful but tells a
@@ -829,8 +850,8 @@ wider than the invite-only beta** (D-N1-18).
 ### 13.3 Erasure
 
 - When a record is erased or hard-deleted (contact erasure, E1 erasure of a message, a future People
-  erasure), the owning module calls `eraseNotificationsForSubject(db, subject)` in the same
-  transaction, which calls `app_private.notifications_erase_subject` (§5.2.1) and **deletes** matching rows (by the `(business_id, subject_kind, subject_id)`
+  erasure), the subject-erased trigger on that table (§5.2.1) **deletes** matching rows in the same
+  transaction (by the `(business_id, subject_kind, subject_id)`
   index). This is the only cross-module write N1 needs from E1, and it is a call into the
   notifications module's public API, not a change to Communications code now.
 - `STANDARD` title snapshots are the only personal data N1 can hold (for example a customer named after
@@ -1006,14 +1027,14 @@ PRs at the time; none is reserved by this document.
 
 | Stage | Scope | Depends on | Production effect when merged |
 |---|---|---|---|
-| **N1-A** | `notifications` module, registry, `notify` (§7.1.1), `resolveNotifications`, `eraseNotificationsForSubject`, purge-own cleanup (§13.1); `notifications` table (one migration) and the three `bos_maint` functions of §5.2.1 (privileged SQL, reviewed and applied with `db:privileged` under Regan's approval); inbox API and contracts; **only the producers in §18.1 marked N1-A** (none mandatory); bell, panel and full page | Regan's approval of this design; V2 bell slot | Table and functions exist; notifications appear in-app. No email, no cron |
-| **N1-U** | `user_notices` table and the two privileged write functions (§11.2); `/api/v1/me/notices`; `account.password.changed` hook; `tenancy.membership.role_changed` (can ship before A2-B); then `suspended/removed` and `ownership.transferred` | Privileged SQL review; A2-B merged for the last three | In-app account and access notices. No email |
+| **N1-A** | `notifications` module, registry, `notify` (§7.1.1), purge-own cleanup (§13.1); `notifications` table (one migration), the purge function and the two trigger functions of §5.2.1, with subject-erased triggers on the N1-A subject tables (tasks, projects, customers, opportunities, finance documents, scheduling events) (privileged SQL, reviewed and applied with `db:privileged` under Regan's approval); inbox API and contracts; **only the producers in §18.1 marked N1-A** (none mandatory); bell, panel and full page | Regan's approval of this design; V2 bell slot | Table and functions exist; notifications appear in-app. No email, no cron |
+| **N1-U** | `user_notices` table and the trigger functions of §11.2; `/api/v1/me/notices`; password, email, role-change and ownership notices (can ship before A2-B: these changes exist today); suspension and reactivation once A2-B adds them | Privileged SQL review; A2-B merged for the last three | In-app account and access notices. No email |
 | **N1-B** | Preferences and business defaults; mute record; grouping refinements; opt-in types; cross-business unread counts (if D-N1-8) | N1-A; A3 settings placement | In-app only |
 | **N1-C** | Time-based producers (task due/overdue, quote expired, invoice overdue); retention job; `app_private.notifications_due`; job route behind `NOTIFICATIONS_JOBS_ENABLED` | N1-A; Vercel plan cron limits checked; Regan approves turning the job on | **None** until Regan enables the job |
 | **N1-D** | Email channel: delivery rows, worker, `EmailTransport` extension, templates, suppression, optional bounce webhook, security notice emails | N1-A, N1-C job pattern; browser URL routing for links; legal check (D-N1-17); Regan approves enabling | **None** until Regan enables email |
 | **N1-E** | Desktop OS notifications (Tauri notification plugin, ADR 0005 capability review), web push, SSE/real-time, SMS (paid, separate decision) | N1-D | Per decision |
 | With P3-B | `people.leave.*` producers | P3-B and its approver resolver | In-app |
-| With A2-B | `tenancy.membership.suspended/removed`, `ownership.transferred`, `communications.mailbox.access_removed` | A2-B merged | In-app (+ email in N1-D) |
+| With A2-B | `communications.mailbox.access_removed` (tenant inbox); suspension notices start firing through the N1-U trigger once A2-B can suspend | A2-B merged | In-app (+ email in N1-D) |
 | With C2-C | `finance.reminder.delivery_*` | C2-C | In-app |
 
 ### 18.1 Which producers ship in N1-A, and how they run
@@ -1029,10 +1050,10 @@ makes the change, after the row lock the service already takes.
 | `sales.opportunity.owner_assigned` | N1-A | Sales service, session user | |
 | `finance.quote.accepted` / `.declined` | N1-A | Finance F1 transition service, session user holding `finance:issue`, document row `FOR NO KEY UPDATE` | Expiry is time-based: N1-C |
 | `scheduling.event.overlap_kept` | N1-A | Scheduling S1 write path, session user, inside the S1 lock protocol (notify runs after the locks, adds no new lock) | D-N1-10 |
-| `tenancy.membership.role_changed` | N1-U, **mandatory**, user-level | Members PATCH (exists today), session user with `members:manage`, membership row locked → `record_access_notice` after the update, same transaction | Fails closed; never depends on the new role (§7.1.1 rule 3a) |
-| `account.password.changed` | N1-U | Identity auth adapter → `record_account_notice` (`bos_auth`) | Hook to be written in N1-U |
-| `tenancy.membership.suspended` / `.removed` | N1-U | A2-B service → `record_access_notice` before the status change or delete | Needs A2-B |
-| `tenancy.ownership.transferred` | N1-U, after A2-B | A2-B transfer service, session user → `record_access_notice` for outgoing and incoming owner | Mandatory, user-level |
+| `tenancy.membership.role_changed`, `tenancy.ownership.changed` | N1-U, **mandatory**, user-level | Members PATCH (exists today) or the A2-B transfer, session user with `members:manage`; A2 locks the row and checks authority; the `memberships` `AFTER UPDATE` trigger writes the notice in the same statement | Fails closed; never depends on the new role (§7.1.1 rule 3a); no callable writer |
+| `tenancy.membership.removed` | N1-U | Existing member removal; `AFTER DELETE` trigger | Purge cascades excluded |
+| `tenancy.membership.suspended` / `.reactivated` | N1-U trigger, live once A2-B can suspend | `AFTER UPDATE OF status` trigger | Needs A2-B |
+| `account.password.changed`, `account.email.changed` | N1-U | `AFTER UPDATE` triggers on `accounts.password` / `users.email` | No adapter hook needed |
 | `tenancy.invitation.accepted` | Later | Acceptance runs inside `app_private.accept_invitation` (pre-tenant SECURITY DEFINER), which cannot call `notify`. Needs either a privileged-SQL insert (reviewed) or a follow-up tenant unit of work after acceptance | Not in N1-A |
 | `communications.mailbox.reconnect_required` | With C2-B3 | System path (`withTenant({ userId: null })`) in refresh/sync. Needs an additive RLS insert policy for system notifications limited to registered `communications.system`-sourced types, mirroring `audit_system_write`; agreed with the C2 thread | Not in N1-A; no sync worker runs today |
 | `finance.billing.run_failed` | When F6 jobs are enabled | Billing worker system path, same additive policy for `finance.system`-sourced types | |
@@ -1080,6 +1101,11 @@ notice and roll back if it cannot be written; `user_notices` isolation as in §1
 ---
 
 ## 20. Owner decisions
+
+**Status:** Regan accepted the recommended D-N1-1 to D-N1-18 on 2026-11-16 (project thread), subject to
+the safeguards in the latest audit; D-N1-18 is accepted conditionally, for the restricted beta only.
+Implementing N1-A or N1-U, privileged SQL, any production migration, scheduler or email activation, and
+merging this PR each still need Regan's separate approval.
 
 | # | Decision | Recommendation |
 |---|---|---|
@@ -1146,3 +1172,11 @@ notice and roll back if it cannot be written; `user_notices` isolation as in §1
 | B | MEDIUM: 50/hour fold vs skip | §16: skip (`SKIPPED_CAP`), unlocked soft count, no summary row; §7.1.1, D-N1-6, tests aligned |
 | C | HIGH: mandatory role-change notice could block a demotion or become unreadable | Role change, suspension, removal and ownership transfer are user-level notices via `record_access_notice`, written after the update in the same transaction under the membership lock; §7.1.1 rule 3a; moved to N1-U; N1-A has no mandatory producer; demotion and race tests listed |
 | — | Badge called exact; indefinite residual storage | §5.4 now "ACL-safe lower bound" with `complete: false`; §13.1 states indefinite persistence without the job, an order-of-magnitude size, and the wider-release gate |
+
+### 23.3 Third audit on head `de7619b`
+
+| # | Finding | Change |
+|---|---|---|
+| 1 | HIGH: callable erase/resolve functions let any tenant session erase or resolve others' notifications | §5.2.1: erase and resolve are **trigger functions** on the subject/action tables, with no `EXECUTE` grant; they fire only on a real delete, erasure or open→closed transition in the same transaction; mismatched business aborts; tests for direct-call refusal and non-transition updates. Only `purge_own` remains callable, and it touches only the caller's own rows |
+| 2 | MEDIUM/HIGH: access-notice ordering and provenance | §11.2: no callable `record_access_notice` or `record_account_notice`. Notices are written by `AFTER` row triggers on `memberships` (role, status, delete), `accounts.password` and `users.email`, with params only from `OLD`/`NEW`; ordering per operation in the §11.2 table; authority, rank and owner checks stay in the A2 services that make the change; tests for demotion, suspension, removal, transfer, concurrency and spoofing |
+| — | §7.1.1 mixed `notify` with user-level notices | §7.1.1 now states it covers the tenant-inbox path only and points to the trigger path; `ERROR_MANDATORY` example no longer uses role or ownership; §18.1 rows aligned |
