@@ -1,3 +1,4 @@
+import { inviteForSignup, admitFixture } from './support/admission';
 /**
  * Reporting R1 (docs/reporting-r1.md) through the real route handlers, against PostgreSQL with the
  * migrations and privileged SQL applied as in production. Two businesses (A in Perth, B), every role,
@@ -79,7 +80,9 @@ const ctx = (params: Record<string, string>) => ({ params: Promise.resolve(param
 
 async function newUser(prefix: string): Promise<User> {
   const email = `${prefix}-${randomUUID()}@example.com`;
+  await inviteForSignup(admin, email);
   await authRoute.POST(req('POST', '/api/v1/auth/sign-up/email', { body: { email, password: PASSWORD, name: prefix } }));
+  await admitFixture(admin, email);
   const mail = [...devOutbox].reverse().find((m) => m.to === email)!;
   const link = new URL(/(https?:\/\/\S+)/.exec(mail.text)![1]!);
   await authRoute.GET(new Request(`${BASE}${link.pathname}${link.search}`, { method: 'GET', headers: { 'x-forwarded-for': `100.127.${Math.floor(ip / 250) % 256}.${ip++ % 250}` } }));

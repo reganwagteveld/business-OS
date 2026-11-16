@@ -128,3 +128,20 @@ export async function acceptInvitation(sessionToken: string, inviteToken: string
     throw new TrustedPathError('invitation_invalid');
   }
 }
+
+/** Admission queries return booleans only. Runtime roles cannot edit the admission ledger. */
+export async function betaCanRegister(email: string): Promise<boolean> {
+  const rows = await appPrisma().$queryRaw<{ allowed: boolean }[]>`
+    SELECT app_private.beta_can_register(${email}) AS allowed`;
+  return rows[0]?.allowed === true;
+}
+export async function betaCanSignIn(userId: string): Promise<boolean> {
+  const rows = await appPrisma().$queryRaw<{ allowed: boolean }[]>`
+    SELECT app_private.beta_can_sign_in(${userId}::uuid) AS allowed`;
+  return rows[0]?.allowed === true;
+}
+export async function betaSessionAdmitted(token: string): Promise<boolean> {
+  const rows = await appPrisma().$queryRaw<{ allowed: boolean }[]>`
+    SELECT app_private.beta_session_admitted(${token}) AS allowed`;
+  return rows[0]?.allowed === true;
+}

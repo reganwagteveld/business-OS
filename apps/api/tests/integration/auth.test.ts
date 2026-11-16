@@ -2,6 +2,7 @@
  * Phase 1b authentication (ADR 0001 and its conditions, data-model §5.1/§5.6, D9a/D9b).
  * Runs the real route handlers in-process against PostgreSQL with the identity migration applied.
  */
+import { inviteForSignup, admitFixture } from './support/admission';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -45,7 +46,12 @@ async function call(method: 'GET' | 'POST', path: string, opts: Opts = {}) {
   const request = new Request(`${BASE}${path}`, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
   if (path.startsWith('/api/v1/auth/desktop/token')) return desktopToken.POST(request);
   if (path.startsWith('/api/v1/auth/desktop/authorize')) return method === 'GET' ? desktopAuthorize.GET(request) : desktopAuthorize.POST(request);
-  return method === 'GET' ? authRoute.GET(request) : authRoute.POST(request);
+  // This legacy suite tests already-approved identities. The beta suite tests denial/redemption.
+  const signupEmail = path === '/api/v1/auth/sign-up/email' ? (opts.body as { email?: string })?.email : undefined;
+  if (signupEmail) await inviteForSignup(admin, signupEmail);
+  const response = await (method === 'GET' ? authRoute.GET(request) : authRoute.POST(request));
+  if (signupEmail && response.ok) await admitFixture(admin, signupEmail);
+  return response;
 }
 
 function sessionCookie(response: Response) {

@@ -10,7 +10,7 @@ import { createTenancyClient, type TenancyClient } from './api/tenancy';
 import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
 import type { ClientPlatform } from './config';
 import { ChooseWorkspace } from './shell/choose';
-import { Startup } from './shell/frame';
+import { Frame, Startup } from './shell/frame';
 import { BusinessSetup } from './shell/onboarding';
 import { Failed, SessionExpiredNotice, Unreachable, Unverified } from './shell/states';
 import { AppShell } from './shell/app-shell';
@@ -143,6 +143,12 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       />
     );
   }
+
+  if (phase.kind === 'invite-required') return (
+    <Frame title="Invitation required" subtitle="Pixa OS is in private beta. Open your invitation email and follow its link to join.">
+      <button type="button" onClick={signOut}>Sign out</button>
+    </Frame>
+  );
 
   if (phase.kind === 'unverified') return <Unverified user={phase.user} onSignOut={signOut} onRefresh={workspace.retry} />;
 

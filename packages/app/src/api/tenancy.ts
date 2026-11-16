@@ -10,7 +10,7 @@ export type Outcome<T> =
   | { kind: 'ok'; data: T }
   | { kind: 'unauthenticated' }
   | { kind: 'unverified' }
-  | { kind: 'forbidden' }
+  | { kind: 'forbidden'; code?: 'invite_required' }
   | { kind: 'not_found' }
   /** `code` is the server's reason when it gives one (archived, stale, not_open, …). */
   | { kind: 'conflict'; code?: string }
@@ -46,6 +46,7 @@ export interface TenancyClient {
 
 export function classify(status: number, json: unknown): Outcome<never> | null {
   if (status === 401) return { kind: 'unauthenticated' };
+  if (status === 403 && (json as { error?: string } | undefined)?.error === 'invite_required') return { kind: 'forbidden', code: 'invite_required' };
   if (status === 403) return (json as { error?: string } | undefined)?.error === 'email_not_verified' ? { kind: 'unverified' } : { kind: 'forbidden' };
   if (status === 404) return { kind: 'not_found' };
   if (status === 409) {

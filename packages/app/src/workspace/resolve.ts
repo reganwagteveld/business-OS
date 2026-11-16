@@ -14,6 +14,7 @@ export type Phase =
   | { kind: 'unreachable' }
   | { kind: 'failed' }
   | { kind: 'unverified'; user: CurrentUser }
+  | { kind: 'invite-required'; user: CurrentUser }
   | { kind: 'no-workspace'; user: CurrentUser }
   | { kind: 'pick'; user: CurrentUser; businesses: BusinessSummary[]; notice?: PickNotice }
   | { kind: 'ready'; user: CurrentUser; businesses: BusinessSummary[]; context: BusinessContext; notice?: SwitchNotice }
@@ -57,6 +58,10 @@ export async function resolveWorkspace(deps: ResolveDeps, attempt = 0): Promise<
   if (listed.kind === 'unauthenticated') return { kind: 'signed-out', expired: true };
   if (listed.kind === 'unverified') return { kind: 'unverified', user };
   if (listed.kind === 'unreachable') return { kind: 'unreachable' };
+  if (listed.kind === 'forbidden' && listed.code === 'invite_required') {
+    storage.clearSlug();
+    return { kind: 'invite-required', user };
+  }
   if (listed.kind !== 'ok') return { kind: 'failed' };
   const businesses = listed.data;
 

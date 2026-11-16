@@ -68,6 +68,24 @@ DROP POLICY IF EXISTS definer_audit_write ON public.audit_events;
 CREATE POLICY definer_audit_write ON public.audit_events FOR INSERT TO bos_definer
   WITH CHECK (business_id IS NOT NULL AND action IN ('business.created', 'invitation.accepted'));
 
+-- Bootstrap existing active members ONCE. Reapplying must not restore revoked access.
+DO $bootstrap$
+BEGIN
+  IF pg_catalog.to_regclass('app_private.beta_admissions') IS NULL THEN
+    CREATE TABLE app_private.beta_admissions (
+      user_id uuid PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+      admitted_at timestamptz NOT NULL DEFAULT now(), revoked_at timestamptz, source text NOT NULL
+    );
+    INSERT INTO app_private.beta_admissions (user_id, source)
+      SELECT DISTINCT u.id, 'existing-active-member'
+      FROM public.users u JOIN public.memberships m ON m.user_id = u.id
+      JOIN public.businesses b ON b.id = m.business_id
+      WHERE u.deactivated_at IS NULL AND m.status = 'ACTIVE' AND b.archived_at IS NULL;
+  END IF;
+END $bootstrap$;
+REVOKE ALL ON app_private.beta_admissions FROM PUBLIC, bos_app, bos_auth;
+GRANT SELECT, INSERT ON app_private.beta_admissions TO bos_definer;
+
 -- Functions are created as bos_definer so it owns them. The administrative role needs membership in
 -- bos_definer only for this block; it is revoked again at the end (schema test checks pg_auth_members).
 GRANT bos_definer TO CURRENT_USER;
@@ -90,6 +108,44 @@ AS $$
     AND u.deactivated_at IS NULL
 $$;
 
+-- Admission is independent of membership and cannot be supplied by a client.
+CREATE OR REPLACE FUNCTION app_private.beta_user_admitted(p_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT EXISTS (SELECT 1 FROM app_private.beta_admissions a JOIN public.users u ON u.id = a.user_id
+    WHERE a.user_id = p_user AND a.revoked_at IS NULL AND u.deactivated_at IS NULL)
+$$;
+
+-- Registration eligibility is not admission: verify the email and redeem the token first.
+CREATE OR REPLACE FUNCTION app_private.beta_can_register(p_email text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT EXISTS (SELECT 1 FROM public.invitations i JOIN public.businesses b ON b.id = i.business_id
+    WHERE i.email = pg_catalog.lower(pg_catalog.btrim(p_email))
+      AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > pg_catalog.now()
+      AND b.archived_at IS NULL)
+$$;
+
+-- A pending invite permits a session for redemption only. Revocation overrides pending invites.
+CREATE OR REPLACE FUNCTION app_private.beta_can_sign_in(p_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT EXISTS (SELECT 1 FROM public.users u WHERE u.id = p_user AND u.deactivated_at IS NULL
+    AND (app_private.beta_user_admitted(u.id) OR
+      (NOT EXISTS (SELECT 1 FROM app_private.beta_admissions a WHERE a.user_id = u.id)
+       AND app_private.beta_can_register(u.email))))
+$$;
+CREATE OR REPLACE FUNCTION app_private.beta_session_admitted(p_token text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+AS $$ SELECT app_private.beta_user_admitted(app_private.session_user_id(p_token)) $$;
+
+REVOKE ALL ON FUNCTION app_private.beta_user_admitted(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_private.beta_can_register(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_private.beta_can_sign_in(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_private.beta_session_admitted(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app_private.beta_can_register(text), app_private.beta_can_sign_in(uuid),
+  app_private.beta_session_admitted(text) TO bos_app;
+
 -- The caller's active memberships in unarchived businesses (switcher and tenant resolution).
 CREATE OR REPLACE FUNCTION app_private.my_memberships(p_session_token text)
 RETURNS TABLE (business_id uuid, slug text, name text, role public."MembershipRole", membership_id uuid)
@@ -100,6 +156,7 @@ AS $$
   FROM public.memberships m
   JOIN public.businesses b ON b.id = m.business_id
   WHERE m.user_id = app_private.session_user_id(p_session_token)
+    AND app_private.beta_session_admitted(p_session_token)
     AND m.status = 'ACTIVE'
     AND b.archived_at IS NULL
   ORDER BY b.name, b.id
@@ -121,7 +178,7 @@ DECLARE
 BEGIN
   v_user := app_private.session_user_id(p_session_token);
   SELECT u.email_verified INTO v_verified FROM public.users u WHERE u.id = v_user;
-  IF v_user IS NULL OR v_verified IS NOT TRUE THEN
+  IF v_user IS NULL OR v_verified IS NOT TRUE OR NOT app_private.beta_user_admitted(v_user) THEN
     RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501';
   END IF;
   SELECT c.region INTO v_region FROM app_private.deployment_config c;
@@ -178,7 +235,8 @@ BEGIN
   FOR UPDATE;
   SELECT b.slug INTO v_slug FROM public.businesses b WHERE b.id = v_invite.business_id;
   IF v_user IS NULL OR v_verified IS NOT TRUE OR v_invite.id IS NULL OR v_slug IS NULL
-     OR pg_catalog.lower(v_email) <> v_invite.email THEN
+     OR pg_catalog.lower(v_email) <> v_invite.email
+     OR EXISTS (SELECT 1 FROM app_private.beta_admissions a WHERE a.user_id = v_user AND a.revoked_at IS NOT NULL) THEN
     RAISE EXCEPTION 'invitation not valid' USING ERRCODE = '42501';
   END IF;
   BEGIN
@@ -187,6 +245,8 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN
     RAISE EXCEPTION 'invitation not valid' USING ERRCODE = '42501';
   END;
+  INSERT INTO app_private.beta_admissions (user_id, source) VALUES (v_user, 'invitation')
+    ON CONFLICT (user_id) DO NOTHING;
   UPDATE public.invitations SET accepted_at = pg_catalog.now() WHERE id = v_invite.id;
   INSERT INTO public.audit_events (id, business_id, actor_user_id, action, target_type, target_id)
   VALUES (pg_catalog.gen_random_uuid(), v_invite.business_id, v_user, 'invitation.accepted', 'invitation', v_invite.id);

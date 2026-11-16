@@ -3,7 +3,8 @@ import { Email } from './auth.ts';
 
 // Businesses, memberships and invitations (data-model §4.2–4.4, architecture §7.2). The active
 // business is always the `:slug` path segment, resolved and checked on the server; no request body
-// ever carries a business id.
+// ever carries a business id. App endpoints may return HTTP 403 { error: 'invite_required' }
+// before tenant resolution. Invitation acceptance remains available to verified pending identities.
 
 export const Role = z.enum(['OWNER', 'ADMIN', 'MANAGER', 'MEMBER']);
 export type Role = z.infer<typeof Role>;

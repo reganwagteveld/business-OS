@@ -176,3 +176,13 @@ describe('creating the first business', () => {
     expect(await createBusinessFlow(tenancyWith(() => ({ kind: 'failed', status: 500 })), input)).toMatchObject({ kind: 'rejected' });
   });
 });
+
+describe('private beta admission', () => {
+  it('retains the identity for invitation redemption but never opens onboarding or a saved tenant', async () => {
+    const d = deps({ list: { kind: 'forbidden', code: 'invite_required' }, storage: memoryStorage({ slug: 'saved-tenant' }) });
+    expect(await resolveWorkspace(d)).toEqual({ kind: 'invite-required', user });
+    expect(d.storage.getSlug()).toBeNull();
+    expect(d.tenancy.businessContext).not.toHaveBeenCalled();
+    expect(d.tenancy.createBusiness).not.toHaveBeenCalled();
+  });
+});
