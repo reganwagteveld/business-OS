@@ -480,7 +480,11 @@ businesses yet.
 
 ## 14. Owner decisions
 
-All decisions are pending. "Flag" marks the decisions the brief asked to bring for review: account deletion,
+**Owner decisions recorded 2026-11-16:** D-A3-1 through D-A3-17 are approved as recommended below, with the conditions in §§15–16. D-A3-7 authorises the separate A3-0 security implementation PR for independent review; it does **not** authorise merging auth code. D-A3-17(a) is a hard release gate: transfer step-up must be implemented and tested before any wider/external beta. Business archive/deletion remains deferred pending its dedicated security and legal gates.
+
+**Decision register (approved choices):** D-A3-1(a), D-A3-2(a), D-A3-3(a), D-A3-4(a now / c later for read-only logo), D-A3-5(a), D-A3-6(a), D-A3-7(a), D-A3-8(a conditional), D-A3-9(a), D-A3-10(c), D-A3-11(b), D-A3-12(a), D-A3-13(a), D-A3-14(a), D-A3-15(a), D-A3-16(a), D-A3-17(a with mandatory before-wider-beta implementation gate).
+
+The table preserves the original recommendations and round-one audit rationale for traceability. "Flag" marks the decisions the brief asked to bring for review: account deletion,
 ownership transfer, invitations and sensitive settings. The **Audit R1** column records the ChatGPT round 1
 position, which Regan posted on PR #81. It is a reviewer's input, not Regan's decision.
 
@@ -785,7 +789,7 @@ CHANGED FILES: docs/settings-a3-architecture.md (new). No other file.
 REVISION: 2 + re-audit gates (§15.9). Round 1 amendments 1–9 in §15; re-audit of revision 2: conditional pass
 VERIFIED REPO FACTS: §2 and §4 (A2-A and #71 merged; A2-B draft #76 re-stamped 20261205000000; V2-A merged;
   audit:read and business:delete unused; users.locale/time_zone unused; auth catch-all has no path allow-list)
-DECISIONS / RECOMMENDATIONS: D-A3-1..17 (§14), all pending Regan; audit R1 positions recorded beside each
+DECISIONS / RECOMMENDATIONS: D-A3-1..17 (§14), owner-approved 2026-11-16 with staged gates; audit R1 positions recorded beside each
 DEPENDENCIES / POTENTIAL CONFLICTS: §13, §15.8 (A2-D is Settings stage 1; V2-C no-slug route; C2, E1, F8, N1, Scheduling gated)
 TESTS RUN / RESULTS: none (docs only)
 MIGRATIONS / PROD ACTIONS: none
