@@ -1,7 +1,7 @@
 # Pixa OS — Active Workstreams Registry
 
 **Purpose:** Prevent cross-agent file collisions and repeated PR archaeology.
-**Status snapshot:** 2026-11-16 ~12:00 UTC, checked against `main` at `e3eb636` and GitHub's open PR list at that time. **Update before every new agent starts** (see "Keeping this file current").
+**Status snapshot:** 2026-11-16 ~12:00 UTC, checked against `main` at `b2f308b` and GitHub's open PR list at that time. **Update before every new agent starts** (see "Keeping this file current").
 
 ## Important rules
 
@@ -17,24 +17,23 @@
 |---|---|---|---|
 | #76 | Administration A2-B: membership lifecycle, invitations, owner lock, mailbox cutoff | **Draft**, awaiting ChatGPT audit | Membership and invitation services and routes, migration `20261203000000_membership_lifecycle`, privileged `005_member_emails.sql`, edits privileged `001`. Not applied to production. Avoid membership/RBAC files. |
 | #75 | GS1 global search architecture and plan | **Draft**, docs only | `docs/global-search-gs1.md`. Decisions D-GS1-1..14 pending; nothing to implement yet. |
-| #68 | People P3-A: leave types, policies, assignments | **Open**, ChatGPT re-audit conditional pass | People leave schema and services, migration `20261204000000_people_leave_policies`. Not applied to production. Avoid People leave files. |
 | #53 | Claude and Codex delivery coordinator (`tooling/coordinator`) | Open, idle since 2026-11-16 04:00 UTC | Not part of the current workflow. Do not build on it without Regan. |
 | #48 | Docs: post-merge status and migration order (12–16) | Open, stale (superseded by `docs/migration-readiness.md` §9) | Ignore unless Regan asks. |
 
-Reserved migration stamps: `20261203000000` (A2-B) and `20261204000000` (P3-A). New migrations must sort after every stamp on `main` **and** in open PRs (CI `check-migration-order`).
+Migration stamps: `20261203000000` is reserved by A2-B (#76) and `20261204000000` is P3-A (merged). New migrations must sort after every stamp on `main` **and** in open PRs (CI `check-migration-order`).
 
 ## Recently merged (2026-11-16)
 
-#66 Neon housekeeping (audit-only), #74 UI V2-A spec, #71 invite-only beta admission (deployed), #70 A2-A business profile, #72 E1 migration record, #69 F7-B catalog in documents, #64 E1 retention/erasure (dormant), #67 F5 PDF preview fix, #63 F7-A catalog, #65 ADR 0008 and S2 migration record, #61 S2 resources, #62 R2 dashboards, #56 People P2, #54/#57/#59 F6-3 reminders.
+#68 People P3-A leave policies (migration applied first), #66 Neon housekeeping (audit-only), #74 UI V2-A spec, #71 invite-only beta admission (deployed), #70 A2-A business profile, #72 E1 migration record, #69 F7-B catalog in documents, #64 E1 retention/erasure (dormant), #67 F5 PDF preview fix, #63 F7-A catalog, #65 ADR 0008 and S2 migration record, #61 S2 resources, #62 R2 dashboards, #56 People P2, #54/#57/#59 F6-3 reminders.
 
-**Production database (last recorded, verify before relying on it):** 21 migrations applied, through `20261202000000_business_profile`, matching `main`.
+**Production database (last recorded, verify before relying on it):** 22 migrations applied, through `20261204000000_people_leave_policies`, matching `main`. A2-B's `20261203000000` is not applied; it sorts before P3-A, so its order must be resolved before its migration.
 
 ## Planned / concurrent task lanes
 
 | Lane | Assigned scope | Expected output | Reserved / avoid areas | State |
 |---|---|---|---|---|
 | A2-B | Membership lifecycle | Draft PR #76 | Membership, invitations, owner lock, privileged SQL 001/005 | In audit |
-| P3 | People leave management | PR #68 (P3-A), then P3-C before P3-B | Leave schema, leave policy files, migration files | In audit; later stages wait for #68 |
+| P3 | People leave management | P3-A merged (#68); next P3-C before P3-B | Leave schema, leave policy files, migration files | P3-C needs decisions D-P3-20/21/25 |
 | GS1 | Global search | Docs PR #75 | Search specs, command palette proposals | Waiting on Regan's decisions |
 | F8 | Bank connectivity and reconciliation | Architecture (docs-only) PR | Finance integration design docs | Draft in progress, no PR yet |
 | UI V2 | Design-system rollout | Phased implementation (V2-B, V2-C…) | Design tokens, shared navigation and shell components | Spec merged; V2-B waits for Regan's go-ahead |
