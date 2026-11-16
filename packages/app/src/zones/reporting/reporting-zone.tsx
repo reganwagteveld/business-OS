@@ -13,7 +13,10 @@ import { formatDate, formatWhen } from '../sales/format';
 import { Problem } from '../problem';
 import { useLoad } from '../use-load';
 import { ZoneFrame } from '../zone-frame';
-import { bucketLabel, changeText, formatTick, formatValue, GRANULARITY_LABEL, PRESETS, rangeLabel, ZONE_LABEL } from './format';
+import { Dashboard, DASHBOARD_DEFAULTS, type DashboardSettings, type DrillDown } from './dashboard';
+import { bucketLabel, bucketRange, changeText, formatTick, formatValue, GRANULARITY_LABEL, rangeLabel, ZONE_LABEL } from './format';
+import { ownership, savedActions, SavedReports } from './saved-list';
+import { DateRangeControl, Kpis, pick, runnableMetrics } from './shared';
 
 type MetricResultOk = Extract<ReportingMetricResult, { status: 'ok' }>;
 
@@ -53,16 +56,24 @@ export function configOf(s: ReportSettings, metric: ReportingMetricDefinition): 
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+export type ReportingSection = 'dashboard' | 'explore' | 'saved';
+const SECTIONS: readonly ReportingSection[] = ['dashboard', 'explore', 'saved'];
+export const asSection = (s: string | undefined): ReportingSection => (SECTIONS.includes(s as ReportingSection) ? (s as ReportingSection) : 'dashboard');
+
 /**
- * The Reporting Zone (R1): headline figures, one chart with its data table and records, a date range,
- * a Zone filter, and saved reports. Every figure comes from the API's registered metrics, which compute it
- * from the owning Zone's own records; this screen formats and never calculates. Mount with `key={slug}`:
- * switching business discards all state. Controls follow `membership.permissions` for presentation only;
- * the API checks reporting and source permissions on every request.
+ * The Reporting Zone. R1 built the trusted metrics, saved views and the report screen (now "Explore");
+ * R2 adds the Dashboard homepage and the Saved reports list. Every figure comes from the API's registered
+ * metrics, which compute it from the owning Zone's own records; this screen formats and never calculates.
+ * Mount with `key={slug}`: switching business discards all state. Controls follow `membership.permissions`
+ * for presentation only; the API checks reporting and source permissions on every request.
+ *
+ * `section` comes from the shell's secondary navigation; without `onSection` (rendered on its own) the Zone
+ * keeps the section itself. Settings for each section live here, so moving between tabs keeps them.
  */
-export function ReportingZone({ client, context, userLabel, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function ReportingZone({ client, context, userLabel, section, onSection, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: ReportingClient;
   context: BusinessContext; userLabel: string;
+  section?: string; onSection?: (section: ReportingSection) => void;
   onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
 }) {
   const { slug, name, locale, currency } = context.business;
@@ -70,9 +81,16 @@ export function ReportingZone({ client, context, userLabel, onHome, onSwitch, on
   const can = { save: perms.includes('reporting:save'), share: perms.includes('reporting:share'), manage: perms.includes('reporting:manage') };
   const catalog = useLoad(`reporting-catalog|${slug}`, (signal) => client.catalog(slug, signal));
   const views = useLoad(`reporting-views|${slug}`, (signal) => client.views(slug, signal));
+  const [localSection, setLocalSection] = useState<ReportingSection>(asSection(section));
+  const active = onSection ? asSection(section) : localSection;
+  const go = (next: ReportingSection) => (onSection ? onSection(next) : setLocalSection(next));
+  const [dashboard, setDashboard] = useState<DashboardSettings>(DASHBOARD_DEFAULTS);
   const [settings, setSettings] = useState<ReportSettings | null>(null);
+  // Bumped whenever Explore's settings are replaced from outside (a drill-down or an opened report), so its
+  // controls start again from the new values.
+  const [generation, setGeneration] = useState(0);
   const [open, setOpen] = useState<SavedView | null>(null);
-  const [dialog, setDialog] = useState<null | 'save' | 'edit' | 'delete'>(null);
+  const [dialog, setDialog] = useState<null | { kind: 'save' | 'edit' | 'delete'; view?: SavedView }>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const frame = (children: ReactNode) => (
@@ -88,7 +106,7 @@ export function ReportingZone({ client, context, userLabel, onHome, onSwitch, on
     );
   }
   const cat = catalog.state.outcome.data;
-  const runnable = cat.metrics.filter((m) => m.availability === 'available' && m.accessible);
+  const runnable = runnableMetrics(cat.metrics);
   if (runnable.length === 0) {
     return frame(
       <ZonePage title="Reporting" description="Trusted figures from the Zones you work in."
@@ -104,6 +122,11 @@ export function ReportingZone({ client, context, userLabel, onHome, onSwitch, on
   const dirty = Boolean(open && metric && !same(configOf(current, metric), savedConfig));
   const savedList = views.state.status === 'done' && views.state.outcome.kind === 'ok' ? views.state.outcome.data : [];
 
+  const replaceExplore = (next: ReportSettings | null, view: SavedView | null) => {
+    setOpen(view);
+    setSettings(next);
+    setGeneration((g) => g + 1);
+  };
   const openView = async (id: string) => {
     if (!id) {
       setOpen(null);
@@ -111,55 +134,20 @@ export function ReportingZone({ client, context, userLabel, onHome, onSwitch, on
     }
     const out = await client.view(slug, id);
     if (out.kind === 'ok') {
-      setOpen(out.data);
-      setSettings(settingsOf(out.data));
+      replaceExplore(settingsOf(out.data), out.data);
       setNotice(null);
+      go('explore');
     } else setNotice(out.kind === 'not_found' ? 'That report is no longer available to you.' : 'That report could not be opened. Try again.');
   };
-
-  return frame(
-    <ZonePage
-      title={open ? open.title : 'Reporting'}
-      eyebrow={open ? 'Saved report' : undefined}
-      description={open?.description ?? 'Trusted figures from the Zones you work in. Each number is calculated by the Zone that owns the records.'}
-      primaryActions={can.save && metric?.accessible ? (
-        open?.isOwner
-          ? <Button onClick={() => setDialog('save')} disabled={!dirty}>{dirty ? 'Save changes' : 'Saved'}</Button>
-          : <Button onClick={() => setDialog('save')}>Save report</Button>
-      ) : undefined}
-      secondaryActions={
-        <>
-          {open?.isOwner ? <Button variant="outline" onClick={() => setDialog('edit')}>Rename or share</Button> : null}
-          {open && (open.isOwner || (open.visibility === 'BUSINESS' && can.manage)) ? <Button variant="ghost" onClick={() => setDialog('delete')}>Delete</Button> : null}
-          {open ? <Button variant="ghost" onClick={() => { setOpen(null); setSettings(null); }}>Close report</Button> : null}
-        </>
-      }
-    >
-      {notice ? <Alert tone="info"><AlertDescription>{notice}</AlertDescription></Alert> : null}
-      {views.state.status === 'done' && views.state.outcome.kind !== 'ok' && views.state.outcome.kind !== 'unauthenticated' ? (
-        <Alert tone="warning" className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <AlertTitle>Saved reports could not all be listed</AlertTitle>
-            <AlertDescription>{views.state.outcome.kind === 'incomplete' ? views.state.outcome.message : 'The list of saved reports did not load. Figures below are not affected.'}</AlertDescription>
-          </div>
-          <Button variant="outline" size="sm" onClick={views.reload}>Try again</Button>
-        </Alert>
-      ) : null}
-      <Toolbar
-        settings={current} update={update} zones={zones} metrics={runnable.filter(inZone)} saved={savedList} openId={open?.id ?? ''} onOpen={openView}
-        today={cat.today} metric={metric}
-      />
-      {open?.visibility === 'BUSINESS' ? (
-        <p className="text-xs text-muted-foreground">
-          <Badge tone="info">Shared</Badge> Shared with everyone in {name} who can read its data. Each person sees only what their own role allows.
-        </p>
-      ) : null}
-      <Kpis client={client} slug={slug} settings={current} catalog={cat.metrics} locale={locale} onSessionEnded={onSessionEnded} onPick={(id) => update({ metricId: id })} />
-      {metric ? (
-        <MetricSection key={metric.id} client={client} slug={slug} metric={metric} settings={current} locale={locale} timeZone={cat.timeZone}
-          businessCurrency={currency} viewId={open && !dirty ? open.id : null} update={update} onSessionEnded={onSessionEnded} />
-      ) : null}
-      {dialog === 'save' && metric ? (
+  // Dashboard → Explore keeps the metric, the dates, the comparison and the interval the dashboard used.
+  const drill = (d: DrillDown) => {
+    replaceExplore({ ...DEFAULTS, metricId: d.metricId, date: d.date, comparison: d.comparison, granularity: d.granularity }, null);
+    setNotice(null);
+    go('explore');
+  };
+  const dialogs = (
+    <>
+      {dialog?.kind === 'save' && metric ? (
         <SaveDialog
           client={client} slug={slug} canShare={can.share} existing={open?.isOwner ? open : null} config={configOf(current, metric)} metricName={metric.name}
           onClose={() => setDialog(null)}
@@ -172,39 +160,108 @@ export function ReportingZone({ client, context, userLabel, onHome, onSwitch, on
           }}
         />
       ) : null}
-      {dialog === 'edit' && open ? (
-        <SaveDialog client={client} slug={slug} canShare={can.share} existing={open} config={null} metricName={metric?.name ?? ''} onClose={() => setDialog(null)}
+      {dialog?.kind === 'edit' && dialog.view ? (
+        <SaveDialog client={client} slug={slug} canShare={can.share} existing={dialog.view} config={null} metricName="" onClose={() => setDialog(null)}
           onSaved={(view) => {
             setDialog(null);
-            setOpen(view);
+            if (open?.id === view.id) setOpen(view);
             setNotice(`Saved “${view.title}”.`);
             views.reload();
           }} />
       ) : null}
-      {dialog === 'delete' && open ? (
-        <DeleteDialog client={client} slug={slug} view={open} onClose={() => setDialog(null)}
+      {dialog?.kind === 'delete' && dialog.view ? (
+        <DeleteDialog client={client} slug={slug} view={dialog.view} onClose={() => setDialog(null)}
           onDeleted={() => {
+            const gone = dialog.view!;
             setDialog(null);
-            setOpen(null);
-            setSettings(null);
-            setNotice(`Deleted “${open.title}”. No business records were changed.`);
+            if (open?.id === gone.id) replaceExplore(null, null);
+            setNotice(`Deleted “${gone.title}”. No business records were changed.`);
             views.reload();
           }} />
       ) : null}
+    </>
+  );
+  const noticeBar = notice ? <Alert tone="info"><AlertDescription>{notice}</AlertDescription></Alert> : null;
+
+  if (active === 'dashboard') {
+    return frame(
+      <ZonePage title="Reporting" description="Trusted figures from the Zones you work in. Each number is calculated by the Zone that owns the records."
+        primaryActions={<Button onClick={() => go('explore')}>Explore figures</Button>}
+        secondaryActions={<Button variant="outline" onClick={() => go('saved')}>Saved reports</Button>}>
+        {noticeBar}
+        <Dashboard client={client} slug={slug} catalog={cat} settings={dashboard} onSettings={setDashboard} locale={locale} businessCurrency={currency}
+          onExplore={drill} onSessionEnded={onSessionEnded} />
+      </ZonePage>,
+    );
+  }
+
+  if (active === 'saved') {
+    return frame(
+      <ZonePage title="Saved reports" eyebrow="Reporting"
+        description="Saved reports keep their settings, not their figures: each one recalculates from current records, with the access of whoever opens it."
+        primaryActions={can.save ? <Button onClick={() => { replaceExplore(null, null); go('explore'); }}>New report</Button> : undefined}>
+        {noticeBar}
+        <SavedReports state={views.state} reload={views.reload} catalog={cat.metrics} can={can} timeZone={cat.timeZone} locale={locale} client={client} slug={slug}
+          onOpen={(id) => void openView(id)} onNew={can.save ? () => { replaceExplore(null, null); go('explore'); } : undefined}
+          onRename={(view) => setDialog({ kind: 'edit', view })} onDelete={(view) => setDialog({ kind: 'delete', view })} onSessionEnded={onSessionEnded} />
+        {dialogs}
+      </ZonePage>,
+    );
+  }
+
+  const actions = open ? savedActions(open, can) : null;
+  return frame(
+    <ZonePage
+      title={open ? open.title : 'Explore'}
+      eyebrow={open ? 'Saved report' : 'Reporting'}
+      description={open?.description ?? 'One figure at a time, with its periods and the records behind it.'}
+      primaryActions={can.save && metric?.accessible ? (
+        open?.isOwner
+          ? <Button onClick={() => setDialog({ kind: 'save' })} disabled={!dirty}>{dirty ? 'Save changes' : 'Saved'}</Button>
+          : <Button onClick={() => setDialog({ kind: 'save' })}>Save report</Button>
+      ) : undefined}
+      secondaryActions={
+        <>
+          {open && actions?.rename ? <Button variant="outline" onClick={() => setDialog({ kind: 'edit', view: open })}>{can.share ? 'Rename or share' : 'Rename'}</Button> : null}
+          {open && actions?.delete ? <Button variant="ghost" onClick={() => setDialog({ kind: 'delete', view: open })}>Delete</Button> : null}
+          {open ? <Button variant="ghost" onClick={() => replaceExplore(null, null)}>Close report</Button> : null}
+        </>
+      }
+    >
+      {noticeBar}
+      {views.state.status === 'done' && views.state.outcome.kind !== 'ok' && views.state.outcome.kind !== 'unauthenticated' ? (
+        <Alert tone="warning" className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <AlertTitle>Saved reports could not all be listed</AlertTitle>
+            <AlertDescription>{views.state.outcome.kind === 'incomplete' ? views.state.outcome.message : 'The list of saved reports did not load. Figures below are not affected.'}</AlertDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={views.reload}>Try again</Button>
+        </Alert>
+      ) : null}
+      <Toolbar key={generation}
+        settings={current} update={update} zones={zones} metrics={runnable.filter(inZone)} saved={savedList} openId={open?.id ?? ''} onOpen={(id) => void openView(id)}
+        today={cat.today} maxRangeDays={cat.limits.maxRangeDays} metric={metric}
+      />
+      {open ? (
+        <p className="text-xs text-muted-foreground">
+          <Badge tone={ownership(open).tone}>{ownership(open).label}</Badge> {open.visibility === 'BUSINESS' ? `Shared with everyone in ${name} who can read its data. Each person sees only what their own role allows.` : ownership(open).help}
+        </p>
+      ) : null}
+      <Kpis client={client} slug={slug} date={current.date} comparison={current.comparison} metrics={pick(cat.metrics, KPI_METRICS).filter(inZone)} locale={locale}
+        onSessionEnded={onSessionEnded} onPick={(id) => update({ metricId: id })} />
+      {metric ? (
+        <MetricSection key={metric.id} client={client} slug={slug} metric={metric} settings={current} locale={locale} timeZone={cat.timeZone}
+          businessCurrency={currency} viewId={open && !dirty ? open.id : null} update={update} onSessionEnded={onSessionEnded} />
+      ) : null}
+      {dialogs}
     </ZonePage>,
   );
 }
 
-function Toolbar({ settings, update, zones, metrics, saved, openId, onOpen, today, metric }: {
+function Toolbar({ settings, update, zones, metrics, saved, openId, onOpen, today, maxRangeDays, metric }: {
   settings: ReportSettings; update: (p: Partial<ReportSettings>) => void; zones: string[]; metrics: ReportingMetricDefinition[]; saved: SavedViewListItem[];
-  openId: string; onOpen: (id: string) => void; today: string; metric: ReportingMetricDefinition | null;
+  openId: string; onOpen: (id: string) => void; today: string; maxRangeDays: number; metric: ReportingMetricDefinition | null;
 }) {
-  const custom = settings.date.kind === 'fixed';
-  const [from, setFrom] = useState(settings.date.kind === 'fixed' ? settings.date.from : today.slice(0, 8) + '01');
-  const [to, setTo] = useState(settings.date.kind === 'fixed' ? settings.date.to : today);
-  const applyCustom = (f: string, t: string) => {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t) && f <= t) update({ date: { kind: 'fixed', from: f, to: t } });
-  };
   const snapshot = metric?.temporal === 'snapshot';
   return (
     <section aria-label="Report settings" className="grid gap-4 rounded-xl border bg-card p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -212,7 +269,7 @@ function Toolbar({ settings, update, zones, metrics, saved, openId, onOpen, toda
         {(c) => (
           <Select {...c} value={openId} onChange={(e) => onOpen(e.target.value)}>
             <option value="">{saved.length ? 'Choose a saved report' : 'No saved reports yet'}</option>
-            {saved.map((v) => <option key={v.id} value={v.id}>{v.title}{v.visibility === 'BUSINESS' ? ' (shared)' : ''}{v.issues.length ? ' — needs attention' : ''}</option>)}
+            {saved.map((v) => <option key={v.id} value={v.id}>{v.title} ({ownership(v).label.toLowerCase()}){v.issues.length ? ' — needs attention' : ''}</option>)}
           </Select>
         )}
       </Field>
@@ -224,15 +281,7 @@ function Toolbar({ settings, update, zones, metrics, saved, openId, onOpen, toda
           </Select>
         )}
       </Field>
-      <Field label="Date range">
-        {(c) => (
-          <Select {...c} value={custom ? 'custom' : settings.date.kind === 'relative' ? settings.date.preset : ''}
-            onChange={(e) => update({ date: e.target.value === 'custom' ? { kind: 'fixed', from, to } : { kind: 'relative', preset: e.target.value as never } })}>
-            {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-            <option value="custom">Custom range</option>
-          </Select>
-        )}
-      </Field>
+      <DateRangeControl date={settings.date} onChange={(date) => update({ date })} today={today} maxRangeDays={maxRangeDays} />
       <Field label="Interval" hint={snapshot ? 'Not used: this figure is a current balance.' : undefined}>
         {(c) => (
           <Select {...c} value={settings.granularity} disabled={snapshot} onChange={(e) => update({ granularity: e.target.value as ReportingGranularity })}>
@@ -240,12 +289,6 @@ function Toolbar({ settings, update, zones, metrics, saved, openId, onOpen, toda
           </Select>
         )}
       </Field>
-      {custom ? (
-        <div className="grid grid-cols-2 gap-3 sm:col-span-2">
-          <Field label="From">{(c) => <Input {...c} type="date" value={from} max={to} onChange={(e) => { setFrom(e.target.value); applyCustom(e.target.value, to); }} />}</Field>
-          <Field label="To">{(c) => <Input {...c} type="date" value={to} min={from} onChange={(e) => { setTo(e.target.value); applyCustom(from, e.target.value); }} />}</Field>
-        </div>
-      ) : null}
       <Field label="Chart" hint="A saved report keeps this one figure; the headline figures are always shown.">
         {(c) => (
           <Select {...c} value={metrics.some((m) => m.id === settings.metricId) ? settings.metricId : ''} onChange={(e) => update({ metricId: e.target.value })}>
@@ -275,49 +318,6 @@ function Toolbar({ settings, update, zones, metrics, saved, openId, onOpen, toda
   );
 }
 
-/** One request for every headline figure the person may read, totals only, with the previous period. */
-function Kpis({ client, slug, settings, catalog, locale, onSessionEnded, onPick }: {
-  client: ReportingClient; slug: string; settings: ReportSettings; catalog: ReportingMetricDefinition[]; locale?: string; onSessionEnded: () => void;
-  onPick: (id: string) => void;
-}) {
-  const defs = KPI_METRICS.map((id) => catalog.find((m) => m.id === id)).filter((m): m is ReportingMetricDefinition =>
-    Boolean(m && m.accessible && m.availability === 'available' && (settings.zone === 'all' || m.zone === settings.zone)));
-  const body = { metrics: defs.map((m) => ({ id: m.id, version: m.version })), date: settings.date, granularity: 'none', comparison: settings.comparison ? 'previous_period' : 'none' };
-  const load = useLoad(`reporting-kpis|${slug}|${JSON.stringify(body)}`, (signal) =>
-    defs.length ? client.query(slug, body, signal) : Promise.resolve({ kind: 'ok', data: null } as Outcome<ReportingQueryResult | null>));
-  if (defs.length === 0) return null;
-  if (load.state.status === 'done' && load.state.outcome.kind !== 'ok') {
-    return <Problem outcome={load.state.outcome} what="Headline figures" onRetry={load.reload} onSessionEnded={onSessionEnded} />;
-  }
-  const data = load.state.status === 'done' && load.state.outcome.kind === 'ok' ? load.state.outcome.data : null;
-  return (
-    <section aria-label="Headline figures" aria-live="polite" className="space-y-3">
-      <SectionHeader title="Headline figures" description={data ? rangeLabel(data.range.from, data.range.to, locale) : undefined} />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        {defs.map((m) => {
-          const r = data?.results.find((x) => x.metric.id === m.id);
-          if (!data || !r) return <KpiCard key={m.id} label={m.name} state="loading" />;
-          if (r.status !== 'ok') return <KpiCard key={m.id} label={m.name} state="unavailable" unavailableText={r.message} />;
-          const single = r.series.length === 1 ? r.series[0]! : null;
-          const change = single ? changeText(single.changePercent) : null;
-          return (
-            <KpiCard key={m.id} label={m.name}
-              values={r.series.map((s) => {
-                const text = formatValue(s.total, r.valueType, s.currencyCode, locale);
-                // Name the currency once: only when the locale's format does not already show its code.
-                return { key: s.key, text, caption: r.valueType === 'money' && s.currencyCode && !text.includes(s.currencyCode) ? s.currencyCode : undefined };
-              })}
-              change={change?.text} trend={change?.trend}
-              note={r.temporal === 'snapshot' ? `Current balance as of ${formatDate(r.asOf, locale)}. Not affected by the date range.` : m.dateField}
-              action={<Button size="sm" variant="ghost" onClick={() => onPick(m.id)} aria-label={`Show ${m.name} in the chart`}>Show in chart</Button>}
-            />
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 function MetricSection({ client, slug, metric, settings, locale, timeZone, businessCurrency, viewId, update, onSessionEnded }: {
   client: ReportingClient; slug: string; metric: ReportingMetricDefinition; settings: ReportSettings; locale?: string; timeZone: string; businessCurrency: string;
   viewId: string | null; update: (p: Partial<ReportSettings>) => void; onSessionEnded: () => void;
@@ -333,6 +333,10 @@ function MetricSection({ client, slug, metric, settings, locale, timeZone, busin
     return client.query(slug, { metrics: config.metrics, date: config.date, granularity: config.granularity, comparison: config.comparison }, signal);
   });
   const [currency, setCurrency] = useState<string | null>(null);
+  // A period picked in the table narrows the records to that period; it belongs to this exact configuration.
+  const configKey = JSON.stringify(config);
+  const [picked, setPicked] = useState<{ key: string; label: string; from: string; to: string } | null>(null);
+  const period = picked?.key === configKey ? picked : null;
 
   let body: ReactNode;
   if (!metric.accessible) {
@@ -354,7 +358,8 @@ function MetricSection({ client, slug, metric, settings, locale, timeZone, busin
       );
     } else {
       body = <ResultView result={r} data={data} settings={settings} locale={locale} currency={currency} setCurrency={setCurrency} businessCurrency={businessCurrency}
-        onSort={(sort) => update({ sort })} />;
+        onSort={(sort) => update({ sort })} canDrill={metric.hasDetail} picked={period?.from ?? null}
+        onPeriod={(label, range) => setPicked({ key: configKey, label, ...range })} />;
     }
   }
   return (
@@ -370,14 +375,20 @@ function MetricSection({ client, slug, metric, settings, locale, timeZone, busin
         </dl>
       </details>
       <div aria-live="polite">{body}</div>
-      {metric.accessible && metric.hasDetail ? <Records key={JSON.stringify(config.date)} client={client} slug={slug} metric={metric} date={config.date} locale={locale} timeZone={timeZone} onSessionEnded={onSessionEnded} /> : null}
+      {metric.accessible && metric.hasDetail ? (
+        <Records key={JSON.stringify([config.date, period])} client={client} slug={slug} metric={metric}
+          date={period ? { kind: 'fixed', from: period.from, to: period.to } : config.date} filters={config.filters}
+          period={period?.label ?? null} onAllPeriods={() => setPicked(null)} locale={locale} timeZone={timeZone} onSessionEnded={onSessionEnded} />
+      ) : null}
     </section>
   );
 }
 
-function ResultView({ result: r, data, settings, locale, currency, setCurrency, businessCurrency, onSort }: {
+function ResultView({ result: r, data, settings, locale, currency, setCurrency, businessCurrency, onSort, canDrill, picked, onPeriod }: {
   result: MetricResultOk; data: ReportingQueryResult; settings: ReportSettings; locale?: string; currency: string | null; setCurrency: (c: string) => void;
   businessCurrency: string; onSort: (sort: ReportSettings['sort']) => void;
+  /** Whether the metric has records behind it; each period row then offers them. */
+  canDrill: boolean; picked: string | null; onPeriod: (label: string, range: { from: string; to: string }) => void;
 }) {
   const currencies = [...new Set(r.series.map((s) => s.currencyCode).filter((c): c is string => c !== null))];
   const shownCurrency = r.valueType === 'money' ? (currency && currencies.includes(currency) ? currency : currencies.includes(businessCurrency) ? businessCurrency : currencies[0] ?? null) : null;
@@ -442,6 +453,7 @@ function ResultView({ result: r, data, settings, locale, currency, setCurrency, 
             <TableHead aria-sort={ariaSort('bucket')}><button type="button" className="uppercase" onClick={() => toggle('bucket')}>Period{arrow('bucket')}</button></TableHead>
             <TableHead aria-sort={ariaSort('value')} className="text-right"><button type="button" className="uppercase" onClick={() => toggle('value')}>{r.valueType === 'money' ? `Amount (${shownCurrency})` : 'Count'}{arrow('value')}</button></TableHead>
             {data.comparisonRange ? <TableHead className="text-right">Previous period</TableHead> : null}
+            {canDrill ? <TableHead><span className="sr-only">Records</span></TableHead> : null}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -450,6 +462,18 @@ function ResultView({ result: r, data, settings, locale, currency, setCurrency, 
               <TableCell>{row.label}</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(row.value, one.currencyCode)}</TableCell>
               {data.comparisonRange ? <TableCell className="text-right tabular-nums text-muted-foreground">{row.previous ? fmt(row.previous.value, one.currencyCode) : '—'}</TableCell> : null}
+              {canDrill ? (
+                <TableCell className="text-right">
+                  {(() => {
+                    const range = bucketRange(row.bucket, r.granularity, data.range);
+                    const current = picked === range.from;
+                    return (
+                      <Button size="sm" variant={current ? 'secondary' : 'ghost'} aria-pressed={current} aria-label={`Show records for ${row.label}`}
+                        onClick={() => onPeriod(row.label, range)}>Records</Button>
+                    );
+                  })()}
+                </TableCell>
+              ) : null}
             </TableRow>
           ))}
         </TableBody>
@@ -459,12 +483,16 @@ function ResultView({ result: r, data, settings, locale, currency, setCurrency, 
 }
 
 /** The records behind the figure, newest first, page by page (the API's stable order). */
-function Records({ client, slug, metric, date, locale, timeZone, onSessionEnded }: {
-  client: ReportingClient; slug: string; metric: ReportingMetricDefinition; date: ReportingDateConfig; locale?: string; timeZone: string; onSessionEnded: () => void;
+function Records({ client, slug, metric, date, filters, period, onAllPeriods, locale, timeZone, onSessionEnded }: {
+  client: ReportingClient; slug: string; metric: ReportingMetricDefinition; date: ReportingDateConfig; filters: SavedViewConfig['filters'];
+  /** The period picked in the table (its label), or null for the whole range. */
+  period: string | null; onAllPeriods: () => void;
+  locale?: string; timeZone: string; onSessionEnded: () => void;
 }) {
   const [pages, setPages] = useState<ReportingDetails[]>([]);
   const [more, setMore] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
-  const firstPage = useLoad(`reporting-details|${slug}|${metric.id}|${JSON.stringify(date)}`, (signal) => client.details(slug, { metric: { id: metric.id, version: metric.version }, date, limit: 25 }, signal));
+  const request = { metric: { id: metric.id, version: metric.version }, date, filters, limit: 25 };
+  const firstPage = useLoad(`reporting-details|${slug}|${JSON.stringify(request)}`, (signal) => client.details(slug, request, signal));
   const all = useMemo(() => (firstPage.state.status === 'done' && firstPage.state.outcome.kind === 'ok' ? [firstPage.state.outcome.data, ...pages] : []), [firstPage.state, pages]);
   if (firstPage.state.status === 'loading') return <div role="status" aria-busy="true"><span className="sr-only">Loading records</span><Skeleton className="h-32 w-full" /></div>;
   if (firstPage.state.outcome.kind !== 'ok') return <Problem outcome={firstPage.state.outcome} what="Records" onRetry={firstPage.reload} onSessionEnded={onSessionEnded} />;
@@ -482,7 +510,7 @@ function Records({ client, slug, metric, date, locale, timeZone, onSessionEnded 
   const loadMore = async () => {
     if (!next) return;
     setMore({ busy: true, error: null });
-    const out = await client.details(slug, { metric: { id: metric.id, version: metric.version }, date, limit: 25, cursor: next });
+    const out = await client.details(slug, { ...request, cursor: next });
     if (out.kind === 'ok') {
       setPages((p) => [...p, out.data]);
       setMore({ busy: false, error: null });
@@ -490,7 +518,10 @@ function Records({ client, slug, metric, date, locale, timeZone, onSessionEnded 
   };
   return (
     <div className="space-y-3">
-      <h3 className="text-base font-semibold">Records</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-base font-semibold">{period ? `Records for ${period}` : 'Records'}</h3>
+        {period ? <Button size="sm" variant="outline" onClick={onAllPeriods}>Show all periods</Button> : null}
+      </div>
       {rows.length === 0 ? <EmptyState title="No records in this period" /> : (
         <Table>
           <TableCaption>{rows.length} record{rows.length === 1 ? '' : 's'} behind {metric.name.toLowerCase()}, {rangeLabel(all[0]!.range.from, all[0]!.range.to, locale)}, newest first.</TableCaption>
