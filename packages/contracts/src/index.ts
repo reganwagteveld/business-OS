@@ -37,6 +37,7 @@ export * from './finance-statements.ts';
 export * from './finance-reminders.ts';
 export * from './finance-catalog.ts';
 export * from './people.ts';
+export * from './people-leave.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
 export * from './communications.ts';
@@ -109,6 +110,12 @@ import {
   ListLocationsResponse, ListOrgUnitsQuery, LocationResponse, PersonalDetailsResponse, UpdateDepartmentRequest, UpdateEmployeeRequest,
   UpdateLocationRequest, UpdatePersonalDetailsRequest,
 } from './people.ts';
+import {
+  AssignLeavePolicyRequest, AssignLeavePolicyResponse, CreateLeavePolicyRequest, CreateLeaveTypeRequest, EmployeeLeavePoliciesResponse,
+  EndLeavePolicyAssignmentRequest, LeaveConfigLifecycleRequest, LeavePolicyResponse, LeaveTypeResponse, ListLeavePoliciesQuery, ListLeavePoliciesResponse,
+  ListLeavePolicyRevisionsResponse, ListLeaveTypesQuery, ListLeaveTypesResponse, ListPolicyAssignmentsQuery, ListPolicyAssignmentsResponse,
+  UpdateLeavePolicyRequest, UpdateLeaveTypeRequest,
+} from './people-leave.ts';
 import {
   CreateSavedViewRequest, DeleteSavedViewResponse, ListSavedViewsQuery, ListSavedViewsResponse, ReportingCatalogResponse, ReportingDetailsRequest,
   ReportingDetailsResponse, ReportingQueryRequest, ReportingQueryResponse, RunSavedViewResponse, SavedViewResponse, UpdateSavedViewRequest,
@@ -469,6 +476,34 @@ export const endpoints = {
   updateLocation: { method: 'PATCH', path: '/api/v1/b/:slug/people/locations/:locationId', request: UpdateLocationRequest, response: LocationResponse },
   archiveLocation: { method: 'POST', path: '/api/v1/b/:slug/people/locations/:locationId/archive', response: LocationResponse },
   restoreLocation: { method: 'POST', path: '/api/v1/b/:slug/people/locations/:locationId/restore', response: LocationResponse },
+  // People P3-A (docs/people-leave-p3.md): leave configuration. Reading is people:read; types and policies
+  // are people:configure; assigning policies to employees is people:manage. No DELETE: types and policies
+  // are deactivated or archived, revisions are append-only, assignments are closed.
+  listLeaveTypes: { method: 'GET', path: '/api/v1/b/:slug/people/leave-types', query: ListLeaveTypesQuery, response: ListLeaveTypesResponse },
+  createLeaveType: { method: 'POST', path: '/api/v1/b/:slug/people/leave-types', request: CreateLeaveTypeRequest, response: LeaveTypeResponse },
+  getLeaveType: { method: 'GET', path: '/api/v1/b/:slug/people/leave-types/:leaveTypeId', response: LeaveTypeResponse },
+  updateLeaveType: { method: 'PATCH', path: '/api/v1/b/:slug/people/leave-types/:leaveTypeId', request: UpdateLeaveTypeRequest, response: LeaveTypeResponse },
+  /** 409 in_use while the type has a policy that is not archived. */
+  archiveLeaveType: { method: 'POST', path: '/api/v1/b/:slug/people/leave-types/:leaveTypeId/archive', request: LeaveConfigLifecycleRequest, response: LeaveTypeResponse },
+  restoreLeaveType: { method: 'POST', path: '/api/v1/b/:slug/people/leave-types/:leaveTypeId/restore', request: LeaveConfigLifecycleRequest, response: LeaveTypeResponse },
+  listLeavePolicies: { method: 'GET', path: '/api/v1/b/:slug/people/leave-policies', query: ListLeavePoliciesQuery, response: ListLeavePoliciesResponse },
+  createLeavePolicy: { method: 'POST', path: '/api/v1/b/:slug/people/leave-policies', request: CreateLeavePolicyRequest, response: LeavePolicyResponse },
+  getLeavePolicy: { method: 'GET', path: '/api/v1/b/:slug/people/leave-policies/:policyId', response: LeavePolicyResponse },
+  updateLeavePolicy: { method: 'PATCH', path: '/api/v1/b/:slug/people/leave-policies/:policyId', request: UpdateLeavePolicyRequest, response: LeavePolicyResponse },
+  /** 409 in_use while any employee is currently assigned. */
+  archiveLeavePolicy: { method: 'POST', path: '/api/v1/b/:slug/people/leave-policies/:policyId/archive', request: LeaveConfigLifecycleRequest, response: LeavePolicyResponse },
+  restoreLeavePolicy: { method: 'POST', path: '/api/v1/b/:slug/people/leave-policies/:policyId/restore', request: LeaveConfigLifecycleRequest, response: LeavePolicyResponse },
+  listLeavePolicyRevisions: { method: 'GET', path: '/api/v1/b/:slug/people/leave-policies/:policyId/revisions', response: ListLeavePolicyRevisionsResponse },
+  listLeavePolicyAssignments: {
+    method: 'GET', path: '/api/v1/b/:slug/people/leave-policies/:policyId/assignments', query: ListPolicyAssignmentsQuery, response: ListPolicyAssignmentsResponse,
+  },
+  assignLeavePolicy: {
+    method: 'POST', path: '/api/v1/b/:slug/people/leave-policies/:policyId/assignments', request: AssignLeavePolicyRequest, response: AssignLeavePolicyResponse,
+  },
+  getEmployeeLeavePolicies: { method: 'GET', path: '/api/v1/b/:slug/people/employees/:employeeId/leave-policies', response: EmployeeLeavePoliciesResponse },
+  endEmployeeLeavePolicy: {
+    method: 'POST', path: '/api/v1/b/:slug/people/employees/:employeeId/leave-policies/end', request: EndLeavePolicyAssignmentRequest, response: EmployeeLeavePoliciesResponse,
+  },
   // Scheduling S1 (docs/scheduling-s1.md). No DELETE: calendars and events are archived, events cancelled.
   listCalendars: { method: 'GET', path: '/api/v1/b/:slug/scheduling/calendars', query: ListCalendarsQuery, response: ListCalendarsResponse },
   createCalendar: { method: 'POST', path: '/api/v1/b/:slug/scheduling/calendars', request: CreateCalendarRequest, response: CalendarResponse },

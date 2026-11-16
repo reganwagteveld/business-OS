@@ -48,6 +48,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   // People (migration 20261118000000_people, docs/people-data-model.md §4).
   PE001: [409, 'invalid_transition'], PE002: [409, 'manager_cycle'], PE003: [400, 'invalid_manager'], PE004: [409, 'immutable'],
   PE005: [409, 'has_direct_reports'], PE006: [409, 'terminated'], PE007: [409, 'archived_reference'], PE008: [409, 'in_use'],
+  // People P3-A (migration 20261204000000_people_leave_policies, docs/people-leave-p3.md).
+  PE009: [409, 'stale'], PE010: [409, 'archived'], PE011: [400, 'effective_date_order'], PE012: [409, 'inactive_reference'],
   // Communications C1 (migration 20261119300000_communications): history guards.
   CM001: [409, 'immutable'], CM002: [409, 'immutable'], CM003: [409, 'immutable'], CM004: [400, 'invalid_date'],
   // Communications C2-A (migration 20261121000000_communications_providers): connections and sync jobs.
@@ -78,6 +80,8 @@ const FINANCE_CONSTRAINTS: [RegExp, string][] = [
   [/people_employees_number_key/, 'duplicate_employee_number'],
   [/people_employees_user_key/, 'user_already_linked'],
   [/people_departments_active_name_key|people_locations_active_name_key/, 'duplicate_name'],
+  [/people_leave_types_active_name_key|people_leave_policies_active_name_key/, 'duplicate_name'],
+  [/people_leave_policy_assignments_open_key/, 'stale'],
   [/people_department_assignments_open_key|people_manager_assignments_open_key|people_employee_personal_details_pkey/, 'stale'],
 ];
 

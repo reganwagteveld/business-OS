@@ -185,6 +185,13 @@ jobs:
         env:
           DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
           PEOPLE_TEST_IP_BLOCK: '94'
+      # People P3-A (docs/people-leave-p3.md §4.5): assignment, archive and termination races rely on row locks
+      # (FOR SHARE / FOR UPDATE) inside one transaction, so the suite runs again behind the transaction-mode pooler.
+      - name: People leave suite behind the pooler
+        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/people-leave.test.ts
+        env:
+          DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
+          LEAVE_TEST_IP_BLOCK: '151'
       # Finance F6-1 (docs/finance-billing-f6.md §5): the billing worker's claims, leases and concurrent passes
       # again through the transaction-mode pooler.
       - name: Finance billing suite behind the pooler

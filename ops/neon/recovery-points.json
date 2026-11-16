@@ -362,19 +362,19 @@
       "name": "pre-p3a-migration",
       "kind": "recovery",
       "migrations": [
-        "People P3-A migration"
+        "20261204000000_people_leave_policies"
       ],
       "prs": [
         68
       ],
-      "appliedAt": null,
+      "appliedAt": "2026-11-16T11:21:50Z",
       "migration": {
-        "status": "pending",
-        "evidence": "cut 11:20 UTC; PR #68 still open"
+        "status": "verified",
+        "evidence": "cut 11:20:03 UTC from production at LSN 0/2CCF328; applied as bos_owner 11:21:22-11:21:51 UTC, checksum matches; RLS forced, grants and 5 triggers verified 11:22:10 UTC"
       },
       "deployment": {
         "status": "pending",
-        "evidence": "PR #68 not merged"
+        "evidence": "PR #68 merging after migration; post-deploy check pending"
       },
       "restoreDrill": {
         "status": "not-run"
