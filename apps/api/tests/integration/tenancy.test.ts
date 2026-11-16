@@ -225,10 +225,12 @@ describe('role changes: no privilege escalation, last owner kept', () => {
     // Two owners: one may demote the other, after which the remaining one is protected.
     expect((await changeRole(owner, slug, membershipOf(people.ADMIN!), 'OWNER')).status).toBe(200);
     expect((await changeRole(people.ADMIN!, slug, membershipOf(owner), 'MEMBER')).status).toBe(200);
-    // Database layer: as bos_app inside a tenant context, deleting the last owner fails at commit.
+    // Database layer: as bos_app inside a tenant context, deleting the last owner fails at commit. The
+    // session user is that last owner (A2-B: only an active owner may delete an owner row, and the
+    // former owner is a MEMBER now).
     const { rows } = await admin.query('SELECT business_id FROM memberships WHERE id = $1', [membershipOf(owner)]);
     await app.query('BEGIN');
-    await app.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [rows[0].business_id, owner.id]);
+    await app.query("SELECT set_config('app.business_id', $1, true), set_config('app.user_id', $2, true)", [rows[0].business_id, people.ADMIN!.id]);
     await app.query("DELETE FROM memberships WHERE role = 'OWNER'");
     await expect(app.query('COMMIT')).rejects.toThrow(/at least one owner/);
   });

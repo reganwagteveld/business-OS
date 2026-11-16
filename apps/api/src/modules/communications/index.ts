@@ -14,7 +14,7 @@ export type { CallbackFailure, ConnectionViewer, MailboxKind, PendingAuthorizati
 export { purposeOf } from './server/connections';
 export {
   addDomain, designateAddress, dnsHasToken, domainToVerify, listAddresses, listDomains, listMembers, recordDomainVerification, removeAddress, removeDomain,
-  removeMember, setMember,
+  recordMailboxAccessEnded, removeMember, setMember,
 } from './server/business-mailboxes';
 export type { BusinessMailboxActor } from './server/business-mailboxes';
 export { getRetention, setRetention } from './server/retention';
@@ -23,8 +23,8 @@ export {
   purgeExpired, recordErasureFailure, releaseLegalHold, requestErasure, retentionEligibility, stepErasure,
 } from './server/erasure';
 export type { StepOutcome } from './server/erasure';
-export { obtainAccessToken } from './server/credentials';
-export type { TenantRun } from './server/credentials';
+export { holderKeepsAuthority, obtainAccessToken, revokeHeldConnections } from './server/credentials';
+export type { HolderCutoffCause, TenantRun } from './server/credentials';
 export { claimSyncJob, completeSyncJob, failSyncJob, heartbeatSyncJob } from './server/sync-jobs';
 export type { ClaimedJob, SyncFailureCode } from './server/sync-jobs';
 export { oauthRedirectUri, ProviderError, providerAdapter } from './server/providers';

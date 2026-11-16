@@ -14,8 +14,8 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { MailSyncJob as JobDto } from '@business-os/contracts';
 import type { AppTenantDb } from '@/core/db';
-import { permissionsFor, type Role } from '@/modules/access';
-import { markReauthRequired } from './credentials';
+import type { Role } from '@/modules/access';
+import { holderKeepsAuthority, markReauthRequired } from './credentials';
 
 export type SyncKind = JobDto['kind'];
 
@@ -72,7 +72,7 @@ export interface ClaimedJob {
  */
 async function holderActive(db: AppTenantDb, holderId: string, kind: string): Promise<boolean> {
   const m = (await db.membership.findFirst({ where: { userId: holderId, status: 'ACTIVE' }, select: { role: true } })) as { role: Role } | null;
-  return Boolean(m && permissionsFor(m.role).includes(kind === 'BUSINESS' ? 'communications:manage_connections' : 'communications:connect'));
+  return holderKeepsAuthority(m?.role ?? null, kind);
 }
 
 /**

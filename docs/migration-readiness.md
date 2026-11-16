@@ -254,3 +254,20 @@ Approved by Regan in the E1 project thread at 08:53 UTC, naming the recovery bra
 | Health after deploy (09:07) | `GET /api/v1/health` 200; unauthenticated `GET /api/v1/b/x/communications/erasures`, `/legal-holds` and `/retention/eligibility` 401 (not 500); `/api/internal/jobs/communications-retention` 503 (disabled) |
 
 Not done, by instruction: no `CRON_SECRET`, no `COMMUNICATIONS_RETENTION_JOBS_ENABLED`, no cron entry, no mailbox connected, no erasure run, §13 policies unchanged. Keep `pre-e1-migration` until the next migration is verified.
+
+### A2-B membership lifecycle and invitations (2026-11-16)
+
+Approved by Regan in the A2-B project thread at 12:32 UTC (recovery branch, migration, `db:privileged`), and the merge separately at 12:35 UTC. Applied from PR #76's head `38502a4` **before** the merge.
+
+| Step | Result (UTC) |
+|---|---|
+| Preflight (read-only), 12:20 and again at 12:32 | 22 applied, newest `20261204000000_people_leave_policies`, none failed or rolled back, all checksums match; `20261205000000_membership_lifecycle` the only pending migration (`prisma migrate status`); 0 invitations (so no duplicate open ones), 2 ACTIVE and 0 SUSPENDED memberships; no `suspended_at`/`suspended_by`, `invitations_open_email_key` or `member_emails` yet |
+| Recovery branch | `pre-a2b-migration`, from production at 12:32:38, no compute |
+| `prisma migrate deploy` | Applied only `20261205000000_membership_lifecycle` (one transaction), finished 12:33:11, 1 step, no rollback. 23 applied, up to date |
+| `db:privileged` (from `apps/api`, project owner, region `us-east-1`) | Re-applied `001`–`004` (`001`'s `accept_invitation` now also requires `revoked_at IS NULL` and `expires_at > now()`) and applied `005_member_emails.sql` |
+| Schema | `memberships.suspended_at` (timestamptz) and `suspended_by` (uuid), nullable, column UPDATE for `bos_app`; CHECK `memberships_suspension_consistent`; trigger `memberships_stamp_suspension` (BEFORE UPDATE OF status); `memberships_no_self_role_change` now BEFORE UPDATE OR DELETE; `memberships_keep_an_owner` takes `pg_advisory_xact_lock`; index `invitations_open_email_key` |
+| Functions and grants | `app_private.member_emails()` SECURITY DEFINER, owner `bos_definer`, `search_path = pg_catalog, pg_temp`, EXECUTE for `bos_app` only (not PUBLIC, `bos_owner`, `bos_auth`, `bos_jobs`); policy `definer_member_emails_read` (SELECT, `bos_definer`); `bos_definer` cannot create in `app_private`; 43 `app_private` functions |
+| RLS and data | RLS enabled and forced on `memberships` and `invitations`; still 2 ACTIVE memberships, no suspension fields set |
+| Health | `GET /api/v1/health` 200 |
+
+Keep `pre-a2b-migration` until the next migration is verified.

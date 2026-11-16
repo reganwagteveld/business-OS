@@ -15,7 +15,6 @@
 
 | PR | Topic | Status | Owns / implication |
 |---|---|---|---|
-| #76 | Administration A2-B: membership lifecycle, invitations, owner lock, mailbox cutoff | **Draft**, awaiting ChatGPT audit | Membership and invitation services and routes, migration `20261205000000_membership_lifecycle`, privileged `005_member_emails.sql`, edits privileged `001`. Not applied to production. Avoid membership/RBAC files. |
 | #82 | R2-V2 operational dashboard on Home | **Draft** | Sales summary endpoint (`api/v1/b/[slug]/sales/summary`, `modules/sales/server/summary.ts`), `packages/app/src/shell/dashboard/*`, `shell/home.tsx`, `app.tsx`, `packages/contracts` (`sales.ts`, `index.ts`, `api-v1.json`), `docs/dashboard-r2.md`. No migration. Avoid Home, the shell dashboard and the contracts snapshot. |
 | #81 | A3 settings architecture | **Draft**, docs only | `docs/settings-a3-architecture.md`. |
 | #80 | N1 notifications architecture | **Draft**, docs only | `docs/notifications-n1-architecture.md`. No migrations or runtime. |
@@ -24,19 +23,19 @@
 | #53 | Claude and Codex delivery coordinator (`tooling/coordinator`) | Open, idle since 2026-11-16 04:00 UTC | Not part of the current workflow. Do not build on it without Regan. |
 | #48 | Docs: post-merge status and migration order (12–16) | Open, stale (superseded by `docs/migration-readiness.md` §9) | Ignore unless Regan asks. |
 
-Migration stamps: latest on `main` is `20261204000000` (P3-A); `20261205000000` is reserved by A2-B (#76). New migrations must sort after every stamp on `main` **and** in open PRs (CI `check-migration-order`).
+Migration stamps: latest on `main` is `20261205000000` (A2-B, #76). New migrations must sort after every stamp on `main` **and** in open PRs (CI `check-migration-order`).
 
 ## Recently merged (2026-11-16)
 
-#77 F8 banking architecture (docs), #68 People P3-A leave policies (migration applied first), #66 Neon housekeeping (audit-only), #74 UI V2-A spec, #71 invite-only beta admission (deployed), #70 A2-A business profile, #72 E1 migration record, #69 F7-B catalog in documents, #64 E1 retention/erasure (dormant), #67 F5 PDF preview fix, #63 F7-A catalog, #65 ADR 0008 and S2 migration record, #61 S2 resources, #62 R2 dashboards, #56 People P2, #54/#57/#59 F6-3 reminders.
+#76 A2-B membership lifecycle (migration and privileged 001–005 applied first), #77 F8 banking architecture (docs), #68 People P3-A leave policies (migration applied first), #66 Neon housekeeping (audit-only), #74 UI V2-A spec, #71 invite-only beta admission (deployed), #70 A2-A business profile, #72 E1 migration record, #69 F7-B catalog in documents, #64 E1 retention/erasure (dormant), #67 F5 PDF preview fix, #63 F7-A catalog, #65 ADR 0008 and S2 migration record, #61 S2 resources, #62 R2 dashboards, #56 People P2, #54/#57/#59 F6-3 reminders.
 
-**Production database (last recorded, verify before relying on it):** 22 migrations applied, through `20261204000000_people_leave_policies`, matching `main`.
+**Production database (last recorded, verify before relying on it):** 23 migrations applied, through `20261205000000_membership_lifecycle` (12:33 UTC), plus privileged SQL 001–005, matching `main`.
 
 ## Planned / concurrent task lanes
 
 | Lane | Assigned scope | Expected output | Reserved / avoid areas | State |
 |---|---|---|---|---|
-| A2-B | Membership lifecycle | Draft PR #76 | Membership, invitations, owner lock, privileged SQL 001/005 | In audit |
+| A2-B | Membership lifecycle | Merged (#76) | Membership, invitations, owner lock, privileged SQL 001/005 | Applied and merged; production smoke tests next. A2-D UI must show `delivery: failed` and the resend wait |
 | P3 | People leave management | P3-A merged (#68); next P3-C before P3-B | Leave schema, leave policy files, migration files | P3-C needs decisions D-P3-20/21/25 |
 | GS1 | Global search | Docs PR #75 | Search specs, command palette proposals | Waiting on Regan's decisions |
 | F8 | Bank connectivity and reconciliation | Architecture merged (#77) | Finance integration design | Implementation needs separate approval |
