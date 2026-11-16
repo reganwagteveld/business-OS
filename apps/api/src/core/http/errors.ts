@@ -43,7 +43,9 @@ export type StateConflictCode =
   // Communications E1 (docs/communications-e1.md §8): erased history; an erased provider id cannot be imported again.
   | 'erased' | 'legal_hold_rule' | 'erasure_in_progress'
   // Finance F7-A (docs/finance-catalog-f7a.md): a catalog item's code is already used in this business.
-  | 'duplicate_code';
+  | 'duplicate_code'
+  // Finance F7-B (docs/finance-catalog-f7b.md): an inactive catalog item cannot be added to a draft line.
+  | 'catalog_item_inactive';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

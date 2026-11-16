@@ -127,6 +127,10 @@ describe('Finance Zone permissions (docs/finance-data-model.md §7.1, owner deci
     // …and finance keys sit in their own namespace, so holding them implies nothing elsewhere.
     for (const key of FINANCE) expect(key.startsWith('finance:')).toBe(true);
   });
+
+  it('F7-B: whoever may edit drafts may also read the catalog (a catalog line is read under finance:write)', () => {
+    for (const role of ROLES) if (ROLE_PERMISSIONS[role].has('finance:write')) expect(ROLE_PERMISSIONS[role].has('finance:read')).toBe(true);
+  });
 });
 
 describe('People Zone permissions (docs/people-data-model.md §5, decision PD-1)', () => {
