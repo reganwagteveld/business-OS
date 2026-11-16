@@ -30,10 +30,11 @@ describe('enablement', () => {
     delete process.env.SEARCH_API_TEST_ENABLE;
     expect(searchApiEnabled()).toBe(false);
     process.env.SEARCH_API_TEST_ENABLE = '1';
-    const env = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    const env = process.env as Record<string, string | undefined>;
+    const nodeEnv = env.NODE_ENV;
+    env.NODE_ENV = 'production';
     expect(searchApiEnabled()).toBe(false); // the test opt-in never works outside the test runner
-    process.env.NODE_ENV = env;
+    env.NODE_ENV = nodeEnv;
     if (saved === undefined) delete process.env.SEARCH_API_TEST_ENABLE;
     else process.env.SEARCH_API_TEST_ENABLE = saved;
   });

@@ -149,7 +149,7 @@ export async function runSearch(db: AppTenantDb, principal: Principal, input: Se
   groups.sort((a, b) => a.best - b.best || TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type));
   const total = groups.reduce((n, g) => n + g.items.length, 0);
   logOutcome('search', 'ok', startedAt, total);
-  return { searchedTypes, groups: groups.map(({ best: _best, ...g }) => g) };
+  return { searchedTypes, groups: groups.map((g) => ({ type: g.type, zone: g.zone, items: g.items, hasMore: g.hasMore, nextCursor: g.nextCursor })) };
 }
 
 /** §7.3: re-authorises recent records. Items the caller can no longer see are silently left out. */
