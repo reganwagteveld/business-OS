@@ -10,9 +10,18 @@
 -- core/search) and a unit test checks every declared statement appears here verbatim. Prisma cannot
 -- express these expression indexes, like the existing hand-written ones (people_employees_number_key).
 --
--- Plain CREATE INDEX blocks writes to each table until COMMIT. lock_timeout makes a build that cannot get
--- its lock fail fast (and roll back whole) instead of queueing writes behind it; statement_timeout bounds
--- each build. Rolling back an index-only migration leaves nothing to undo.
+-- LOCKS ARE CUMULATIVE. Each plain CREATE INDEX takes a SHARE lock on its table, and inside this one
+-- transaction every lock is held until COMMIT. Writes to customers are therefore blocked from its first
+-- build until the LAST of the 22 builds finishes, not just for its own build time: a per-table "under 2 s"
+-- measurement does not bound user-facing impact (ChatGPT audit of PR #93, M2). Before any production
+-- approval, rehearse THIS WHOLE FILE through `prisma migrate deploy` on a representative Neon branch with
+-- concurrent writes, and record end-to-end lock waits and write latency. If that is not acceptable, the
+-- options are smaller groups (one migration per table or Zone) or separately approved CREATE INDEX
+-- CONCURRENTLY steps outside a transaction; that choice is Regan's.
+--
+-- lock_timeout makes a build that cannot get its lock fail fast (and roll back whole) instead of queueing
+-- writes behind it; statement_timeout bounds each build. Rolling back an index-only migration leaves
+-- nothing to undo.
 
 -- One transaction: a failure leaves nothing behind (docs/migration-readiness.md §7).
 BEGIN;

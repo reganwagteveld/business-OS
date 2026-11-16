@@ -254,6 +254,12 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
      * start in time, the route answers 503 search_busy instead of the generic 500. Only the search routes set it.
      */
     maxWaitMs?: number;
+    /**
+     * A route that is not switched on yet (global search, GS2 §12.1): while this returns false the route
+     * answers 404 not_found to every caller before any authentication, tenant or database work, exactly as
+     * if it did not exist.
+     */
+    available?: () => boolean;
   },
   handler: (args: {
     request: Request;
@@ -266,6 +272,7 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
   }) => Promise<Result<T>>,
 ) {
   return async (request: Request, context: RouteContext): Promise<Response> => {
+    if (opts.available && !opts.available()) return fail(request, 404, 'not_found');
     try {
       const resolved = await resolveTenant(request, context, opts.permission);
       if (resolved instanceof Response) return resolved;

@@ -12,7 +12,12 @@ const TENANT = rawSql(`nullif(current_setting('app.business_id', true), '')::uui
 
 /** Per-arm candidate cap for the word arm (§5.3). Caps rows, not the GIN work behind them. */
 export const WORD_ARM_CAP = 200;
-/** Deepest position "Show more" can reach in one type: prefix arms read at most this many rows plus one. */
+/**
+ * Deepest position "Show more" can reach in one type: each prefix arm reads at most this many rows, and
+ * the word arm at most WORD_ARM_CAP. Search is bounded discovery, not exhaustive retrieval: past these caps
+ * more records may match than search can reach, and `hasMore: false` only means nothing more is reachable.
+ * The Zone list screens remain the exhaustive view (ChatGPT audit of PR #93, M3).
+ */
 export const SINGLE_TYPE_DEPTH = 125;
 
 /** One request's normalised text (§9.1). `tsquery` is null when the word arm is disabled (< 3 chars, no tokens). */

@@ -174,10 +174,24 @@ afterEach(() => {
 });
 
 describe('enablement gate', () => {
-  it('answers 404 when the routes are not enabled (the default everywhere outside the test opt-in)', async () => {
+  it('answers the same 404 to every caller, before authentication, CSRF or tenant work, while disabled', async () => {
     delete process.env.SEARCH_API_TEST_ENABLE;
-    expect((await search(A.people.OWNER!, A.slug, { q: 'kelp' })).status).toBe(404);
-    expect((await resolve(A.people.OWNER!, A.slug, { items: [{ type: 'customer', id: a.kelp }] })).status).toBe(404);
+    const anonymous = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+      new Request(`${BASE}/api/v1/b/${A.slug}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN, ...headers }, body: JSON.stringify(body) });
+    const responses = [
+      await searchRoute.POST(anonymous('/search', { q: 'kelp' }), ctx({ slug: A.slug })),                              // no session
+      await searchRoute.POST(anonymous('/search', { q: 'kelp' }, { origin: 'https://evil.example' }), ctx({ slug: A.slug })), // would fail CSRF
+      await searchRoute.POST(anonymous('/search', 'not json'), ctx({ slug: 'no-such-business' })),                     // unknown slug, bad body
+      await searchRoute.POST(req('POST', `/api/v1/b/${A.slug}/search`, { cookie: B.people.OWNER!.cookie, body: { q: 'kelp' } }), ctx({ slug: A.slug })), // not a member
+      await searchRoute.POST(req('POST', `/api/v1/b/${A.slug}/search`, { cookie: A.people.MEMBER!.cookie, body: { q: 'kelp' } }), ctx({ slug: A.slug })), // member
+      await searchRoute.POST(req('POST', `/api/v1/b/${A.slug}/search`, { cookie: A.people.OWNER!.cookie, body: { q: 'kelp' } }), ctx({ slug: A.slug })),  // owner
+      await resolveRoute.POST(anonymous('/search/resolve', { items: [] }), ctx({ slug: A.slug })),
+      await resolveRoute.POST(req('POST', `/api/v1/b/${A.slug}/search/resolve`, { cookie: A.people.OWNER!.cookie, body: { items: [{ type: 'customer', id: a.kelp }] } }), ctx({ slug: A.slug })),
+    ];
+    for (const res of responses) {
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'not_found' });
+    }
   });
 });
 
@@ -366,6 +380,26 @@ describe('show more (single-type keyset cursor)', () => {
     expect((await search(owner, A.slug, { q: 'pager', types: ['customer'], limit: 10, includeArchived: true, cursor: first })).status).toBe(400);
     expect((await search(B.people.OWNER!, B.slug, { q: 'pager', types: ['customer'], limit: 10, cursor: first })).status).toBe(400);
     expect(body).toBeTruthy();
+  });
+});
+
+describe('bounded discovery (not exhaustive)', () => {
+  it('stops "Show more" at the bounded depth even when more records match; the Zone list stays the exhaustive view', async () => {
+    await admin.query(`INSERT INTO customers (id, business_id, display_name) SELECT gen_random_uuid(), $1, 'Deep ' || lpad(n::text, 3, '0') FROM generate_series(1, 140) n`, [A.businessId]);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let last: { hasMore: boolean } | undefined;
+    for (let page = 0; page < 10; page++) {
+      const group = ok(await search(A.people.OWNER!, A.slug, { q: 'de', types: ['customer'], limit: 25, cursor })).groups[0]!;
+      seen.push(...group.items.map((i) => i.title));
+      last = group;
+      if (!group.hasMore) break;
+      cursor = group.nextCursor;
+    }
+    // 140 records start with "de" (a 2-character query runs prefix arms only); search reaches the first 125
+    // in rank order and then reports no more reachable rows. Word matches are capped the same way at 200.
+    expect(seen).toEqual(Array.from({ length: 125 }, (_, i) => `Deep ${String(i + 1).padStart(3, '0')}`));
+    expect(last!.hasMore).toBe(false);
   });
 });
 

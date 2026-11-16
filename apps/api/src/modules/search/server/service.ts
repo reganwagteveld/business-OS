@@ -128,7 +128,7 @@ export async function runSearch(db: AppTenantDb, principal: Principal, input: Se
   const canReadCustomers = can(principal, 'customers:read');
   const branchInput: BranchInput = {
     mode: 'text', query, take: limit + 1, includeArchived: input.includeArchived, canReadCustomers,
-    prefixCap: single ? SINGLE_TYPE_DEPTH + 1 : limit + 1, after,
+    prefixCap: single ? SINGLE_TYPE_DEPTH : limit + 1, after,
   };
   const rows = await runBranches(db, providers.map((p) => p.branch(branchInput)), 'search', startedAt);
 
