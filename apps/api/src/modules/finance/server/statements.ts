@@ -165,9 +165,17 @@ export async function getReceivablesAgeing(
   const { timeZone, today } = await dateContext(db, q.asOf);
   const asOf = q.asOf ?? today;
   const list = 'finance:ageing';
-  // Keys must not be `k`: encodeCursor stores the list name under `k`.
-  const after = decodeCursor(q.cursor, list, ['c', 'u', 'd'] as const);
-  if (after && (!UUID.test(after.c) || !/^[A-Z]{3}$/.test(after.u) || after.d !== asOf)) invalidCursor();
+  // The cursor is bound to the normalized filters (date, customer, currency), so a cursor issued for one
+  // filter set is refused by another instead of silently skipping rows. The page size may change between
+  // pages. `*` stands for "no filter" (cursor values must be non-empty). Keys must not be `k`:
+  // encodeCursor stores the list name under `k`.
+  const filterCustomer = q.customerId ? q.customerId.toLowerCase() : '*';
+  const filterCurrency = q.currencyCode ? q.currencyCode.toUpperCase() : '*';
+  const after = decodeCursor(q.cursor, list, ['c', 'u', 'd', 'fc', 'fu'] as const);
+  if (after && (
+    !UUID.test(after.c) || !/^[A-Z]{3}$/.test(after.u)
+    || after.d !== asOf || after.fc !== filterCustomer || after.fu !== filterCurrency
+  )) invalidCursor();
   const records = await loadRecords(db, timeZone, asOf, { customerId: q.customerId, currencyCode: q.currencyCode });
   const positions = positionsAt(records, asOf).filter((p) => !isEmptyPosition(p));
   positions.forEach(logImbalance);
@@ -199,7 +207,7 @@ export async function getReceivablesAgeing(
   }));
   return {
     asOf, timeZone, totals: currencyTotals, rows,
-    nextCursor: more && last ? encodeCursor(list, { c: last.customerId, u: last.currencyCode, d: asOf }) : null,
+    nextCursor: more && last ? encodeCursor(list, { c: last.customerId, u: last.currencyCode, d: asOf, fc: filterCustomer, fu: filterCurrency }) : null,
   };
 }
 

@@ -299,6 +299,45 @@ describe('receivables ageing (D-F6-11)', () => {
     expect((await own.ageing(q({ asOf: '2026-04-30', cursor: first.nextCursor }))).status).toBe(400);
     expect((await own.ageing(q({ asOf: tomorrow() }))).body.error).toBe('invalid_dates');
   });
+
+  it('binds the cursor to the customer and currency filters; filtered paging still works', async () => {
+    const own = api(A.people.OWNER!, A.slug);
+    const key = (r: { customerId: string; currencyCode: string }) => `${r.customerId}${r.currencyCode}`;
+    const asOf = '2026-03-31';
+
+    // Currency filter: two AUD rows (acme, other), one per page; the page size may change.
+    const aud1 = (await own.ageing(q({ asOf, currencyCode: 'AUD', limit: '1' }))).body.ageing;
+    expect(aud1.nextCursor).not.toBeNull();
+    const aud2 = await own.ageing(q({ asOf, currencyCode: 'AUD', limit: '5', cursor: aud1.nextCursor }));
+    expect(aud2.status).toBe(200);
+    expect(aud2.body.ageing.nextCursor).toBeNull();
+    expect([...aud1.rows, ...aud2.body.ageing.rows].map(key).sort()).toEqual([`${acme}AUD`, `${other}AUD`].sort());
+    for (const changed of <Record<string, string>[]>[{}, { currencyCode: 'EUR' }, { currencyCode: 'AUD', customerId: acme }]) {
+      const res = await own.ageing(q({ asOf, limit: '1', ...changed, cursor: aud1.nextCursor }));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid_cursor');
+    }
+
+    // Customer filter: acme has AUD and EUR rows.
+    const acme1 = (await own.ageing(q({ asOf, customerId: acme, limit: '1' }))).body.ageing;
+    expect(acme1.nextCursor).not.toBeNull();
+    const acme2 = await own.ageing(q({ asOf, customerId: acme, limit: '1', cursor: acme1.nextCursor }));
+    expect(acme2.status).toBe(200);
+    expect([...acme1.rows, ...acme2.body.ageing.rows].map(key).sort()).toEqual([`${acme}AUD`, `${acme}EUR`].sort());
+    for (const changed of <Record<string, string>[]>[{}, { customerId: other }, { customerId: acme, currencyCode: 'EUR' }]) {
+      const res = await own.ageing(q({ asOf, limit: '1', ...changed, cursor: acme1.nextCursor }));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid_cursor');
+    }
+
+    // An unfiltered cursor is refused once a filter is added.
+    const all1 = (await own.ageing(q({ asOf, limit: '1' }))).body.ageing;
+    for (const changed of <Record<string, string>[]>[{ customerId: acme }, { currencyCode: 'AUD' }]) {
+      const res = await own.ageing(q({ asOf, limit: '1', ...changed, cursor: all1.nextCursor }));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid_cursor');
+    }
+  });
 });
 
 describe('access, audit and PDFs', () => {
