@@ -128,12 +128,30 @@ Options: (a) every member (grant `users.email` to `bos_app`), (b) **recommend:**
 business, (c) nobody (names only). (b) keeps MEMBER-role staff from harvesting colleagues' addresses and leaves the
 users-table column grant untouched.
 
-### 3.10 Mailbox credentials on removal or suspension (coordinate with C2)
-Recommend making invalidation **eager**: removal and suspension call a Communications public function in the same
-transaction that moves the person's held connections to NEEDS_REAUTH (deleting token ciphertext, the existing
-handover step), and records `communications.system.holder_departed`-style audit as the actor. The lazy check in the
-sync claim stays as the backstop. This is the "membership-event invalidation" the C2-B1 audit preferred. The approved
-30-day grace (D-C2) applies to purging PERSONAL mail content only, not to credentials.
+### 3.10 Mailbox credentials on removal, suspension or demotion (C2-reviewed 2026-11-16)
+Invalidation is **eager**, and the lazy holder check at sync claim stays as defence in depth. C2's review is in
+`/mnt/project-files/administration-a2/a2-b-mailbox-cutoff-review.md`. A2-B scope gate:
+
+- **Triggers:** removal, suspension, **and role demotion**. A demotion that drops the holder's authority counts: ADMIN
+  to MANAGER/MEMBER loses `manage_connections`, and MANAGER to MEMBER loses `connect`. The same `holderActive` rule
+  as the sync claim decides.
+- **Mechanism:** a Communications public function, `revokeHeldConnections(db, actorUserId, userId, cause)`.
+  - It runs in the membership transaction and locks the person's ACTIVE held connections `ORDER BY id FOR UPDATE`.
+  - Each connection moves to NEEDS_REAUTH. The status trigger deletes the token ciphertext, and QUEUED and RUNNING
+    sync jobs are cancelled.
+  - Existing fences then refuse any further heartbeat, completion, refresh store or `invalid_grant` write:
+    `credential_version` plus the exact `refresh_lease_id`.
+- **Audit:** recorded under the **acting administrator** with `recordAudit`, as
+  `communications.connection.holder_departed` with provider, user and cause. It is not a system event: the RLS policy
+  for system audit stays unchanged, and a system insert would fail inside a user transaction.
+- **Holder credentials vs shared access:** the person's *own* credentials are revoked. Their `mail_connection_members`
+  rows (access to other people's mailboxes) are **kept on suspension** for reactivation, since they grant nothing
+  while suspended. They still cascade on removal, and the lost access is recorded in the removal audit.
+- **Concurrency:** the membership transaction retries on 40P01/40001, because its lock order differs from C2's paths.
+  One concurrency test covers removal racing a sync claim or refresh.
+- **Out of A2 scope:** an access token already in a worker's memory stays usable until the next fence check.
+  C2-B3 must re-check the lease and the connection's ACTIVE state before every provider call.
+- The approved 30-day grace (D-C2) applies to purging PERSONAL mail content only, never to credentials.
 
 ### 3.11 Revalidating authority inside the transaction (G5)
 Every A2 mutation locks the actor's own membership `FOR SHARE` inside the unit of work and re-checks role and status
@@ -284,7 +302,7 @@ Errors follow the existing mapping: 400 `invalid_input` with field names, 403, 4
 | **A2-A** Business profile | schema + `GET/PATCH /business` + validation + audit + tests (API only) | yes | none | Opus |
 | **A2-B** Membership lifecycle | G1–G10, G14: owner lock, conditional revoke, one open invite, resend, delivery status, suspend/reactivate, transfer/step-down, leave, member emails, eager C2 invalidation, actor re-check | yes | A2-A merged (shared migration order), C2 ack on §3.10 | Opus |
 | **A2-C** Roles & permissions | matrix tests pinning §5, `GET /access/roles`, role descriptions; no grant changes | no | A2-B | Opus |
-| **A2-D** Administration UI | Settings Zone goes `built`: Business profile (A2-A API), Team members, Invitations, Roles & permissions; permission-denied, empty, loading, error states; confirmation dialogs; light/dark, 390 px | no | A2-A..C APIs | Sonnet |
+| **A2-D** Administration UI | Settings Zone goes `built`: Business profile (A2-A API), Team members, Invitations, Roles & permissions; permission-denied, empty, loading, error states; confirmation dialogs; light/dark, 390 px. **Required (audit of PR 70):** a confirmation before saving a currency, country or time zone change, saying that existing records keep their stored currency and document snapshots while "today", day boundaries and reporting periods change immediately | no | A2-A..C APIs | Sonnet |
 | **A2-E** Security & integration | concurrency suites (two connections), cross-business switching, revoked-member access across every Zone route, escalation attempts, audit viewer API, RLS regression proof | no | A2-B..D | Opus |
 
 All Settings UI, including the business profile screen, is A2-D (Sonnet, per Regan). Tests ship with every stage;
