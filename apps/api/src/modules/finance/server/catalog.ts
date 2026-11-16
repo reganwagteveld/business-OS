@@ -329,9 +329,8 @@ export async function resolveCatalogLines(db: AppTenantDb, lines: DraftLineInput
         : new RuleViolationError('catalog_price_required', `“${item.name}” has no default price. Enter a price.`);
     }
     catalogLines += 1;
-    const { catalogItemId: _, ...rest } = line;
     return {
-      ...rest,
+      ...(line.discountAmount !== undefined ? { discountAmount: line.discountAmount } : {}),
       description: line.description ?? defaults.description,
       quantity: line.quantity ?? '1',
       unitPrice,

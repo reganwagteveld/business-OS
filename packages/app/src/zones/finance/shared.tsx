@@ -49,7 +49,8 @@ export function financeMessage(code: string | undefined): string {
     case 'stale': return 'Someone else changed this record since you opened it. Reload it to see the latest version, then try again.';
     case 'immutable': return 'This record has been issued or recorded, so it can no longer be edited.';
     case 'invalid_state': return 'This record is no longer in a state that allows that. Reload it to see where it is now.';
-    case 'archived_reference': return 'The customer, tax rate, category or project you chose has been archived. Choose an active one.';
+    case 'archived_reference': return 'The customer, product or service, tax rate, category or project you chose has been archived. Choose an active one.';
+    case 'catalog_item_inactive': return 'A product or service on this draft has been marked inactive. Remove that line or keep it as a manual line.';
     case 'idempotency_conflict': return 'That request was already used for different details. Nothing was recorded twice. Close this form and start again.';
     case 'invoice_not_open': return 'That invoice is not open for settlement (it is a draft, void or already settled).';
     case 'payment_not_open': return 'That payment has been reversed, so it can no longer be allocated.';
