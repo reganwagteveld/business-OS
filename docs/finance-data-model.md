@@ -593,6 +593,7 @@ Recommendations are given; none is assumed in F1 code without approval. **F1 blo
 | F3 | Expenses and categories; payments made against expenses; expense and category screens (**implemented**, §19). Receipts deferred (FD-P6). |
 | F4 | Finance UI (web and desktop): quotes, invoices, credit notes, payments received (expenses are in F3) |
 | F5 | Reports (§9) and the customer and project finance tabs |
+| F7-A | Products and services catalog: items with code, unit, default price and tax treatment; no document changes ([finance-catalog-f7a.md](./finance-catalog-f7a.md)) |
 | Later | PDF rendering and email sending, online payment links, accounting export, e-invoicing modules, multi-currency conversion |
 
 ## 16. Reconciliation with open work

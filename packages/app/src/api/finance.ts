@@ -17,6 +17,7 @@ import {
   type ReceivablesAgeing, type ReceivablesAgeingDetail, type Statement,
   type CreditNoteCredit, type CustomerBalance, type ExpenseCategory, type ExpensePayment, type FinanceDocument, type FinanceDocumentKind,
   type FinanceDocumentListItem, type FinanceExpense, type FinanceExpenseListItem, type FinancePayment, type InvoiceReceivables, type InvoiceSettlement,
+  CatalogItemLifecycleRequest, CatalogItemResponse, CreateCatalogItemRequest, ListCatalogItemsResponse, UpdateCatalogItemRequest, type CatalogItem,
 } from '@business-os/contracts';
 import type { z } from 'zod';
 import type { AuthTransport } from './auth';
@@ -67,6 +68,14 @@ export interface ExpensePaymentPage { payments: ExpensePaymentListItem[]; nextCu
 export interface BalancePage { balances: CustomerBalance[]; asOf: string; nextCursor: string | null }
 type QuoteAction = 'accept' | 'decline' | 'expire';
 
+// ---- F7-A: the products and services catalog (docs/finance-catalog-f7a.md) -------------------------
+export type { CatalogItem };
+export interface CatalogQuery {
+  q?: string; code?: string; type?: 'PRODUCT' | 'SERVICE'; status: 'current' | 'active' | 'inactive' | 'archived' | 'all'; taxRateId?: string;
+  currencyCode?: string; cursor?: string; limit?: number;
+}
+export interface CatalogPage { items: CatalogItem[]; nextCursor: string | null }
+
 // ---- F5: generated documents (docs/finance-documents-f5.md) ----------------------------------------
 export type { DocumentBranding, DocumentPdfVersion };
 export interface PdfVersionList { eligible: boolean; versions: DocumentPdfVersion[] }
@@ -96,6 +105,15 @@ export interface FinanceClient {
   createCategory(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<ExpenseCategory>>;
   updateCategory(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<ExpenseCategory>>;
   taxRates(slug: string, signal?: AbortSignal): Promise<Outcome<TaxRateOption[]>>;
+
+  // ---- F7-A: products and services catalog (finance:read to read, finance:catalog to change) -----
+  catalogItems(slug: string, query: CatalogQuery, signal?: AbortSignal): Promise<Outcome<CatalogPage>>;
+  catalogItem(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<CatalogItem>>;
+  createCatalogItem(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<CatalogItem>>;
+  /** `patch` must include the `version` the edit was based on; a stale one comes back as conflict `stale`. */
+  updateCatalogItem(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<CatalogItem>>;
+  archiveCatalogItem(slug: string, id: string, version: number, signal?: AbortSignal): Promise<Outcome<CatalogItem>>;
+  restoreCatalogItem(slug: string, id: string, version: number, signal?: AbortSignal): Promise<Outcome<CatalogItem>>;
 
   // ---- F4: documents (F1), settlement (F2), settings, payments made (F3) --------------------------
   documents(slug: string, path: DocumentPath, query: DocumentQuery, signal?: AbortSignal): Promise<Outcome<DocumentPage>>;
@@ -274,6 +292,28 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
     async taxRates(slug, signal) {
       const raw = await http.request('GET', p(endpoints.listTaxRates.path, { slug }) + qs({ archived: 'all' }), undefined, signal);
       return settle(raw, ListTaxRatesResponse, (d) => d.taxRates);
+    },
+
+    async catalogItems(slug, query, signal) {
+      return get(p(endpoints.listCatalogItems.path, { slug }) + qs({
+        q: query.q?.trim(), code: query.code?.trim(), type: query.type, status: query.status, taxRateId: query.taxRateId, currencyCode: query.currencyCode,
+        cursor: query.cursor, limit: query.limit,
+      }), ListCatalogItemsResponse, (d) => d, signal);
+    },
+    async catalogItem(slug, id, signal) {
+      return get(p(endpoints.getCatalogItem.path, { slug, itemId: id }), CatalogItemResponse, (d) => d.item, signal);
+    },
+    async createCatalogItem(slug, input, signal) {
+      return pick(await send('POST', p(endpoints.createCatalogItem.path, { slug }), CreateCatalogItemRequest, input, CatalogItemResponse, signal), 'item');
+    },
+    async updateCatalogItem(slug, id, patch, signal) {
+      return pick(await send('PATCH', p(endpoints.updateCatalogItem.path, { slug, itemId: id }), UpdateCatalogItemRequest, patch, CatalogItemResponse, signal), 'item');
+    },
+    async archiveCatalogItem(slug, id, version, signal) {
+      return pick(await send('POST', p(endpoints.archiveCatalogItem.path, { slug, itemId: id }), CatalogItemLifecycleRequest, { version }, CatalogItemResponse, signal), 'item');
+    },
+    async restoreCatalogItem(slug, id, version, signal) {
+      return pick(await send('POST', p(endpoints.restoreCatalogItem.path, { slug, itemId: id }), CatalogItemLifecycleRequest, { version }, CatalogItemResponse, signal), 'item');
     },
 
     async documents(slug, path, query, signal) {

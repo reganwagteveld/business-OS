@@ -37,7 +37,9 @@ export type StateConflictCode =
   // Communications C2-B1 (docs/communications-c2.md §16): business mailbox identity, members and retention.
   | 'retention_not_set' | 'not_personal' | 'not_business' | 'consumer_domain' | 'domain_exists' | 'domain_not_verified' | 'domain_in_use'
   | 'already_verified' | 'dns_record_not_found' | 'dns_unavailable' | 'removed' | 'attestation_required' | 'attestation_not_applicable'
-  | 'already_designated' | 'personal_connection_exists' | 'address_in_use';
+  | 'already_designated' | 'personal_connection_exists' | 'address_in_use'
+  // Finance F7-A (docs/finance-catalog-f7a.md): a catalog item's code is already used in this business.
+  | 'duplicate_code';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

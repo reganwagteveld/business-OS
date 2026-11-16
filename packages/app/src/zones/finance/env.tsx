@@ -28,13 +28,17 @@ export type FinanceView =
   | { name: 'recurring-edit'; id: string }
   // F6-2: receivables ageing and customer statements as of a date.
   | { name: 'receivables' }
-  | { name: 'statement'; customerId?: string; currencyCode?: string };
+  | { name: 'statement'; customerId?: string; currencyCode?: string }
+  // F7-A: the products and services catalog.
+  | { name: 'catalog' }
+  | { name: 'catalog-item'; id: string }
+  | { name: 'catalog-new' };
 
 export type SettingsTab = 'business' | 'numbering' | 'tax-rates' | 'categories' | 'documents';
 export interface PaymentPrefill { customerId: string; currencyCode: string; invoiceId?: string; amount?: string }
 
 /** The Zone's sections, the same ids as the registry's children (secondary navigation). */
-export type FinanceSection = 'overview' | 'quotes' | 'invoices' | 'credit-notes' | 'payments' | 'receivables' | 'expenses' | 'settings';
+export type FinanceSection = 'overview' | 'quotes' | 'invoices' | 'credit-notes' | 'payments' | 'receivables' | 'expenses' | 'catalog' | 'settings';
 
 export function sectionOf(view: FinanceView): FinanceSection {
   switch (view.name) {
@@ -45,6 +49,7 @@ export function sectionOf(view: FinanceView): FinanceSection {
     case 'settings': return 'settings';
     case 'recurring-list': case 'recurring': case 'recurring-new': case 'recurring-edit': return 'invoices';
     case 'receivables': case 'statement': return 'receivables';
+    case 'catalog': case 'catalog-item': case 'catalog-new': return 'catalog';
     default: return 'expenses';
   }
 }
@@ -55,6 +60,7 @@ export function viewOfSection(section: string | undefined): FinanceView {
     case 'payments': return { name: 'payments' };
     case 'receivables': return { name: 'receivables' };
     case 'expenses': return { name: 'expenses' };
+    case 'catalog': return { name: 'catalog' };
     case 'settings': return { name: 'settings' };
     default: return { name: 'overview' };
   }
@@ -75,6 +81,8 @@ export interface FinanceCan {
   manage: boolean;
   /** finance:billing (F6): create and change recurring invoice schedules. */
   billing: boolean;
+  /** finance:catalog (F7-A): create, edit, deactivate, archive and restore catalog items. */
+  catalog?: boolean;
   /** customers:read: search and name customers (held separately from any finance key). */
   readCustomers: boolean;
   /** F5 finance:documents_preview: preview a PDF (a draft's watermarked preview, or a stored version). */

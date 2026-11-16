@@ -62,6 +62,7 @@ model Business {
   financeReminderCustomers  FinanceReminderCustomerPolicy[]
   financeReminderHolds      FinanceReminderHold[]
   financeReminders          FinanceReminder[]
+  financeCatalogItems       FinanceCatalogItem[]
   peopleDepartments         PeopleDepartment[]
   peopleLocations           PeopleLocation[]
   peopleEmployees           PeopleEmployee[]

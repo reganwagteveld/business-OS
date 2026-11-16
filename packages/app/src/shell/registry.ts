@@ -61,6 +61,7 @@ export const ZONES: readonly ZoneDefinition[] = [
       { id: 'payments', label: 'Payments', route: '/finance/payments' },
       { id: 'receivables', label: 'Receivables', route: '/finance/receivables' },
       { id: 'expenses', label: 'Expenses', route: '/finance/expenses' },
+      { id: 'catalog', label: 'Products & services', route: '/finance/catalog' },
       { id: 'settings', label: 'Settings', route: '/finance/settings' },
     ],
   },
