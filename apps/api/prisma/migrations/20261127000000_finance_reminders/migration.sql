@@ -411,6 +411,9 @@ CREATE TRIGGER finance_reminders_guard BEFORE INSERT OR UPDATE ON "finance_remin
 
 REVOKE ALL ON FUNCTION finance_reminder_policies_guard(), finance_reminder_customer_policies_guard(), finance_reminder_holds_guard(),
   finance_reminders_guard() FROM PUBLIC;
+-- The stage validator backs a CHECK on rows bos_app writes, so bos_app keeps EXECUTE; PUBLIC does not.
+REVOKE ALL ON FUNCTION finance_reminder_stages_valid(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION finance_reminder_stages_valid(jsonb) TO bos_app;
 
 -- ---- least privilege ---------------------------------------------------------------------------
 -- No DELETE anywhere: policies are archived, assignments point back to the default, holds are
