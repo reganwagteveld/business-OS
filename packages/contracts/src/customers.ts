@@ -183,6 +183,8 @@ export const Activity = z
     /** Set only for message.recorded: the recorded message this timeline entry stands for. */
     conversationId: Uuid.nullable(),
     messageId: Uuid.nullable(),
+    /** E1: set when an erasure removed this entry's subject and body. Optional for older servers. */
+    erasedAt: isoOrNull.optional(),
   })
   .strict();
 export type Activity = z.infer<typeof Activity>;

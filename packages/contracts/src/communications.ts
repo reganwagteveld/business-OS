@@ -42,6 +42,8 @@ export const Conversation = z
     createdById: Uuid,
     lastMessageAt: z.string().datetime().nullable(),
     createdAt: z.string().datetime(),
+    /** E1: set when the subject was removed by an erasure; such a conversation takes no new messages (409 erased). Optional for older servers. */
+    erasedAt: z.string().datetime().nullable().optional(),
   })
   .strict();
 export type Conversation = z.infer<typeof Conversation>;
@@ -110,6 +112,8 @@ export const Message = z
     externalSource: z.string().nullable(),
     externalMessageId: z.string().nullable(),
     participants: z.array(MessageParticipant),
+    /** E1: set when the message was erased; subject, body, provider ids and participant details are then gone. */
+    erasedAt: z.string().datetime().nullable().optional(),
   })
   .strict();
 export type Message = z.infer<typeof Message>;

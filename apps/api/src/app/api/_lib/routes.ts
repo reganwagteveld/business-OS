@@ -53,6 +53,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   // Communications C2-A (migration 20261121000000_communications_providers): connections and sync jobs.
   CM005: [409, 'immutable'], CM006: [409, 'disconnected'], CM007: [409, 'invalid_transition'],
   CM008: [409, 'holder_change_not_allowed'], CM009: [409, 'retention_not_set'], CM010: [409, 'business_mailbox_rule'],
+  // Communications E1 (migration 20261201000000_communications_erasure): erased history, legal holds, the ledger.
+  CM011: [409, 'erased'], CM012: [409, 'legal_hold_rule'], CM013: [409, 'immutable'],
 };
 
 /**
@@ -198,11 +200,20 @@ async function resolveTenant(request: Request, context: RouteContext, permission
  * unknown slug and a business the caller does not belong to both answer 404.
  */
 export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodType | undefined = undefined>(
-  opts: { permission: Permission; input?: S; query?: Q; response: z.ZodType<T>; /** Unit-of-work timeout; default 5 s (F5 rendering: 15 s). */ timeoutMs?: number },
+  opts: {
+    permission: Permission; input?: S; query?: Q; response: z.ZodType<T>; /** Unit-of-work timeout; default 5 s (F5 rendering: 15 s). */ timeoutMs?: number;
+    /**
+     * E1 (docs/communications-e1.md §8): hand the raw session token to the handler, which passes it to a
+     * privileged database function that verifies the caller itself. Only the erasure routes set it
+     * (boundary rule); every other handler never sees the token.
+     */
+    sessionToken?: true;
+  },
   handler: (args: {
     request: Request;
     actor: Actor;
     db: AppTenantDb;
+    sessionToken: string | null;
     params: Record<string, string>;
     input: S extends z.ZodType ? z.infer<S> : undefined;
     query: Q extends z.ZodType ? z.infer<Q> : undefined;
@@ -222,7 +233,7 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
         query = parsed.data;
       }
       const result = await withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) =>
-        handler({ request, actor, db, params, input: input.data as never, query: query as never }),
+        handler({ request, actor, db, params, input: input.data as never, query: query as never, sessionToken: opts.sessionToken ? auth.sessionToken : null }),
       opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
       await result.afterCommit?.();
       return json(request, result.status ?? 200, opts.response.parse(result.body));
