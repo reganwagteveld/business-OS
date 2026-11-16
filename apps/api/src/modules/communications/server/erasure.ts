@@ -116,7 +116,11 @@ export async function getErasure(db: AppTenantDb, id: string): Promise<{ erasure
 export async function listErasures(
   db: AppTenantDb, query: { status?: string; kind?: string; cursor?: string; limit: number },
 ): Promise<{ erasures: ErasureDto[]; nextCursor: string | null }> {
-  const after = decodeCursor(query.cursor, 'erasures', ['t', 'i'] as const);
+  // The cursor is bound to the filters it was issued under (audit E1-02): replaying it with another status or
+  // kind would silently skip rows, so a mismatch is refused (400 invalid_cursor). The page size may change.
+  const filters = `${query.status ?? '*'}|${query.kind ?? '*'}`;
+  const after = decodeCursor(query.cursor, 'erasures', ['t', 'i', 'f'] as const);
+  if (after && after.f !== filters) invalidCursor();
   const and: Record<string, unknown>[] = [];
   if (query.status) and.push({ status: query.status });
   if (query.kind) and.push({ kind: query.kind });
@@ -132,7 +136,7 @@ export async function listErasures(
   const last = page[page.length - 1];
   return {
     erasures: page.map(toErasure),
-    nextCursor: rows.length > query.limit && last ? encodeCursor('erasures', { t: last.requestedAt.toISOString(), i: last.id }) : null,
+    nextCursor: rows.length > query.limit && last ? encodeCursor('erasures', { t: last.requestedAt.toISOString(), i: last.id, f: filters }) : null,
   };
 }
 

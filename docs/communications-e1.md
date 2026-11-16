@@ -344,9 +344,14 @@ complete step.
 
 **Replaying erasures after a restore (D-E1-7).**
 
-- `app_private.communications_erasure_replay(business, limit)` re-applies every `ERASED` ledger item to rows
-  that came back with content: messages, participants, timeline entries and conversations.
-- Running it again changes nothing (a second run returns 0). This is tested.
+- `app_private.communications_erasure_replay(business, limit)` re-applies up to `limit` **pending** ledger
+  entries: entities the ledger records as `ERASED` whose row exists and is not erased now (messages,
+  participants, timeline entries and conversations). Because it works only on what is still pending, each call
+  makes progress through the whole ledger, however large (audit E1-01).
+- `app_private.communications_erasure_replay_remaining(business)` is the completion check: it counts what is
+  still pending. A return of 0 from `replay` is **not** the completion signal; `remaining = 0` is.
+- Tested with 31 ledger entities of all four types replayed in pages of 4, and with content restored only
+  for entries that sort last. Running replay again afterwards changes nothing.
 - Only the administrative role can run it. No runtime role can.
 
 **Restores are kept isolated until erasures are re-applied.** Every restore follows these steps, whether it
@@ -355,13 +360,15 @@ comes from a point-in-time restore, a Neon recovery branch that is promoted or c
 1. Restore into a branch or database that **no deployment points at**. No app `DATABASE_URL` may reference
    it, and no Vercel environment variable is switched to it.
 2. Re-apply erasures.
-   - In E1, run `communications_erasure_replay` for every business against the restored database, using the
+   - In E1, for every business, call `communications_erasure_replay` repeatedly until
+     `communications_erasure_replay_remaining` returns 0, against the restored database and using the
      **current** ledger.
    - If the live `communications_erasures` and `communications_erasure_items` rows are newer than the
      restored ones, copy them into the restored database first.
    - Once real mail exists, also replay the separate erasure record kept outside the database (open decision
      3, §13). A restore taken before an erasure has also lost that erasure's ledger rows.
-3. Check that no id in the ledger has `erased_at IS NULL`, and spot-check that content is NULL.
+3. **Gate:** `communications_erasure_replay_remaining` must return 0 for every business, and spot-checks must
+   show content is NULL. Until then no deployment, environment variable or person is pointed at it.
 4. Only then point anything at the restored database.
 
 **Recovery branches.**
@@ -466,7 +473,7 @@ D-E1-5 replaces the line "Retained AU records are kept 7 years" in the C2 regist
 
 ## 14. Tests
 
-`apps/api/tests/integration/communications-erasure.test.ts` holds 22 tests. They run against PostgreSQL with
+`apps/api/tests/integration/communications-erasure.test.ts` holds 24 tests. They run against PostgreSQL with
 the migrations and privileged SQL applied to a fresh database.
 
 - **Authorisation:**
@@ -500,7 +507,11 @@ the migrations and privileged SQL applied to a fresh database.
   - the raw id is gone everywhere;
   - another business is not affected;
   - once the marker expires and housekeeping runs, the message can be imported again.
-- **Replay:** content restored from a backup is erased again, and replaying twice changes nothing more.
+- **Replay:** content restored from a backup is erased again; replay in small pages walks the whole ledger
+  (including entries beyond the first page) until the completion check reports 0; replaying again changes
+  nothing.
+- **Listing:** the erasures cursor is bound to its filters (changed, added or removed filters refuse it) and
+  paging returns every row exactly once.
 - **Least privilege.** bos_app cannot:
   - update or delete message history, the ledger, holds, keys, markers or codes;
   - call the internal functions;

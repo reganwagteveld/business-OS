@@ -466,6 +466,49 @@ describe('erasure requests', () => {
     expect(await messageRow(record)).toMatchObject({ body: 'Seeded body' });
   });
 
+  it('the erasures cursor is bound to its filters; pagination is complete (audit E1-02)', async () => {
+    const t = await team('e1cursor');
+    const o = api(t.people.OWNER!, t.slug);
+    const ids: string[] = [];
+    for (let n = 0; n < 5; n++) {
+      const conv = await newConv(o, `cursor ${n}`);
+      ids.push((await erase(o, 'CONVERSATION', conv.id, 'BUSINESS_REQUEST')).body.erasure.id);
+    }
+    // a retention purge row too, so the kind filter matters
+    await o.setRetention({ ordinaryRetentionDays: 30, version: null });
+    const conv = await newConv(o, 'cursor purge');
+    await seedCopy(t, conv.id, { category: 'ORDINARY', daysAgo: 90 });
+    expect(await worker(t.businessId)((db) => purgeExpired(db, 50))).toMatchObject({ messages: 1 });
+
+    const first = await o.listErasures('?kind=REQUEST&limit=2');
+    expect(first.status).toBe(200);
+    const cursor = encodeURIComponent(first.body.nextCursor);
+    // changing, adding or removing a filter refuses the cursor
+    for (const qs of [`?kind=RETENTION&limit=2&cursor=${cursor}`, `?limit=2&cursor=${cursor}`, `?kind=REQUEST&status=COMPLETED&limit=2&cursor=${cursor}`]) {
+      expect(await o.listErasures(qs)).toMatchObject({ status: 400, body: { error: 'invalid_cursor' } });
+    }
+    // same filters with another page size is fine; walking every page returns each request exactly once
+    const seen: string[] = first.body.erasures.map((e: { id: string }) => e.id);
+    let next: string | null = first.body.nextCursor;
+    while (next) {
+      const page = await o.listErasures(`?kind=REQUEST&limit=1&cursor=${encodeURIComponent(next)}`);
+      expect(page.status).toBe(200);
+      seen.push(...page.body.erasures.map((e: { id: string }) => e.id));
+      next = page.body.nextCursor;
+    }
+    expect([...seen].sort()).toEqual([...ids].sort());
+    // unfiltered paging covers requests and the purge
+    const all: string[] = [];
+    next = null;
+    do {
+      const page = await o.listErasures(`?limit=4${next ? `&cursor=${encodeURIComponent(next)}` : ''}`);
+      all.push(...page.body.erasures.map((e: { id: string }) => e.id));
+      next = page.body.nextCursor;
+    } while (next);
+    expect(all).toHaveLength(6);
+    expect(new Set(all).size).toBe(6);
+  });
+
   it('cross-tenant: B cannot see, request or authorise anything about A', async () => {
     const conv = (await newConv(owner, 'A only'));
     expect((await ownerB.authorize('ERASE_CONVERSATION', conv.id)).status).toBe(201); // a code for an id it cannot see is useless
@@ -688,8 +731,60 @@ describe('ledger replay after a restore (D-E1-7)', () => {
     expect(JSON.stringify(await participantRows(msg.id))).not.toMatch(/pat@/);
     expect(await count('SELECT count(*) AS n FROM activities WHERE id = $1 AND body IS NULL AND erased_at IS NOT NULL', [note.id])).toBe(1);
     expect(await count('SELECT count(*) AS n FROM conversations WHERE id = $1 AND subject IS NULL AND erased_at IS NOT NULL', [conv.id])).toBe(1);
-    // replay is idempotent
+    // replay is idempotent, and the completion check agrees
     expect(Number((await admin.query('SELECT app_private.communications_erasure_replay($1, 1000) AS n', [t.businessId])).rows[0].n)).toBe(0);
+    expect(Number((await admin.query('SELECT app_private.communications_erasure_replay_remaining($1) AS n', [t.businessId])).rows[0].n)).toBe(0);
+  });
+
+  it('replay walks the whole ledger in small batches, including entries beyond the first page (audit E1-01)', async () => {
+    const t = await team('e1replay2');
+    const o = api(t.people.OWNER!, t.slug);
+    const pat = (await o.createContact({ firstName: 'Many', email: 'many@replay.example' })).body.contact;
+    const conv = (await o.createConversation({ channel: 'EMAIL', subject: 'many', contactId: pat.id })).body.conversation;
+    const msgs: string[] = [];
+    for (let d = 1; d <= 9; d++) {
+      msgs.push((await o.recordMessage(conv.id, { direction: 'INBOUND', occurredAt: `2026-10-0${d}T00:00:00Z`, body: `body ${d}`, participants: [{ role: 'FROM', address: 'many@replay.example', contactId: pat.id }, { role: 'TO', address: 'us@biz.example' }] })).body.message.id);
+    }
+    const notes: string[] = [];
+    for (let d = 1; d <= 3; d++) notes.push((await o.createActivity({ type: 'note', contactId: pat.id, body: `note ${d}` })).body.activity.id);
+    const res = await erase(o, 'CONTACT', pat.id);
+    if (res.body.erasure.status !== 'COMPLETED') expect(await finish(t.businessId, res.body.erasure.id)).toBe('completed');
+    const remaining = async () => Number((await admin.query('SELECT app_private.communications_erasure_replay_remaining($1) AS n', [t.businessId])).rows[0].n);
+    const replay = async (limit: number) => Number((await admin.query('SELECT app_private.communications_erasure_replay($1, $2) AS n', [t.businessId, limit])).rows[0].n);
+    expect(await remaining()).toBe(0);
+    // ledger: 9 messages + 18 participants + 3 activities + 1 conversation = 31 entities, far more than one page of 4
+    expect(await count("SELECT count(DISTINCT (entity_type, entity_id)) AS n FROM communications_erasure_items WHERE business_id = $1 AND action = 'ERASED'", [t.businessId])).toBe(31);
+
+    // 1. restore only entries that sort LAST (the final message and its participants), so the first pages hold
+    //    nothing to do: replay must still find them
+    const last = [...msgs].sort().at(-1)!;
+    await bypassTriggers("UPDATE messages SET body = 'restored', erased_at = NULL WHERE id = $1", [last]);
+    await bypassTriggers("UPDATE message_participants SET address = 'many@replay.example', erased_at = NULL WHERE message_id = $1", [last]);
+    expect(await remaining()).toBe(3);
+    expect(await replay(1)).toBe(1);
+    expect(await remaining()).toBe(0);
+    expect(await messageRow(last)).toMatchObject({ body: null });
+    expect(JSON.stringify(await participantRows(last))).not.toMatch(/many@/);
+
+    // 2. restore everything (all four entity types) and replay in pages of 4 until the check says done
+    await bypassTriggers("UPDATE messages SET body = 'restored', erased_at = NULL WHERE conversation_id = $1", [conv.id]);
+    await bypassTriggers("UPDATE message_participants SET address = 'many@replay.example', erased_at = NULL WHERE message_id = ANY($1::uuid[])", [msgs]);
+    await bypassTriggers("UPDATE activities SET body = 'restored note', erased_at = NULL WHERE id = ANY($1::uuid[])", [notes]);
+    await bypassTriggers("UPDATE conversations SET subject = 'many', erased_at = NULL WHERE id = $1", [conv.id]);
+    expect(await remaining()).toBe(31);
+    let calls = 0;
+    while ((await remaining()) > 0) {
+      expect(await replay(4)).toBeGreaterThan(0);
+      if (++calls > 20) throw new Error('replay did not converge');
+    }
+    expect(calls).toBeGreaterThanOrEqual(3);
+    expect(await count("SELECT count(*) AS n FROM messages WHERE conversation_id = $1 AND (erased_at IS NULL OR body IS NOT NULL)", [conv.id])).toBe(0);
+    expect(await count("SELECT count(*) AS n FROM message_participants WHERE message_id = ANY($1::uuid[]) AND (erased_at IS NULL OR address IS NOT NULL)", [msgs])).toBe(0);
+    expect(await count("SELECT count(*) AS n FROM activities WHERE id = ANY($1::uuid[]) AND (erased_at IS NULL OR body IS NOT NULL)", [notes])).toBe(0);
+    expect(await count("SELECT count(*) AS n FROM conversations WHERE id = $1 AND (erased_at IS NULL OR subject IS NOT NULL)", [conv.id])).toBe(0);
+    expect(await replay(4)).toBe(0);
+    // the completion check and replay are administrative only
+    await expect(asApp(app, t.businessId, t.people.OWNER!.id, 'SELECT app_private.communications_erasure_replay_remaining($1)', [t.businessId])).rejects.toBeTruthy();
   });
 });
 

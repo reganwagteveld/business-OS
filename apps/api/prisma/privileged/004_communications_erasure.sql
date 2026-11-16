@@ -872,6 +872,44 @@ END $$;
 -- Ledger replay (docs/communications-e1.md §10): after a restore of the content tables, re-applies every
 -- erasure the ledger records whose row came back with content. Run by the administrative role during the
 -- restore procedure, before the restored database serves traffic; no runtime role may execute it.
+--
+-- What is still pending: every entity the ledger records as ERASED whose row exists and is NOT erased now
+-- (one row per entity, the earliest erasure that recorded it). Replay works only on this set, so each call
+-- makes progress through the whole ledger whatever its size (audit E1-01), and
+-- communications_erasure_replay_remaining is the completion check: the restore is safe to serve only when it
+-- returns 0 for every business.
+CREATE OR REPLACE FUNCTION app_private.communications_erasure_replay_pending(p_business uuid)
+RETURNS TABLE (entity_type text, entity_id uuid, erasure_id uuid)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT DISTINCT ON (it.entity_type, it.entity_id) it.entity_type, it.entity_id, it.erasure_id
+    FROM public.communications_erasure_items it
+   WHERE it.business_id = p_business AND it.action = 'ERASED'
+     AND CASE it.entity_type
+           WHEN 'MESSAGE' THEN EXISTS (SELECT 1 FROM public.messages m WHERE m.business_id = p_business AND m.id = it.entity_id AND m.erased_at IS NULL)
+           WHEN 'PARTICIPANT' THEN EXISTS (SELECT 1 FROM public.message_participants p WHERE p.business_id = p_business AND p.id = it.entity_id AND p.erased_at IS NULL)
+           WHEN 'ACTIVITY' THEN EXISTS (SELECT 1 FROM public.activities a WHERE a.business_id = p_business AND a.id = it.entity_id AND a.erased_at IS NULL)
+           WHEN 'CONVERSATION' THEN EXISTS (SELECT 1 FROM public.conversations c WHERE c.business_id = p_business AND c.id = it.entity_id AND c.erased_at IS NULL)
+           ELSE false
+         END
+   ORDER BY it.entity_type, it.entity_id, it.erasure_id
+$$;
+
+CREATE OR REPLACE FUNCTION app_private.communications_erasure_replay_remaining(p_business uuid)
+RETURNS bigint LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v bigint;
+BEGIN
+  PERFORM pg_catalog.set_config('app.business_id', p_business::text, true);
+  SELECT pg_catalog.count(*) INTO v FROM app_private.communications_erasure_replay_pending(p_business);
+  RETURN v;
+END $$;
+
+-- Re-applies up to p_limit pending entities and returns how many it changed. Call until
+-- communications_erasure_replay_remaining(business) = 0.
 CREATE OR REPLACE FUNCTION app_private.communications_erasure_replay(p_business uuid, p_limit integer)
 RETURNS integer LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
@@ -882,8 +920,8 @@ DECLARE
   i record;
 BEGIN
   PERFORM pg_catalog.set_config('app.business_id', p_business::text, true);
-  FOR i IN SELECT it.erasure_id, it.entity_type, it.entity_id FROM public.communications_erasure_items it
-            WHERE it.business_id = p_business AND it.action = 'ERASED' ORDER BY it.entity_type, it.entity_id LIMIT v_limit LOOP
+  FOR i IN SELECT x.entity_type, x.entity_id, x.erasure_id FROM app_private.communications_erasure_replay_pending(p_business) x
+            ORDER BY x.entity_type, x.entity_id LIMIT v_limit LOOP
     IF i.entity_type = 'MESSAGE' THEN
       PERFORM 1 FROM public.messages m WHERE m.business_id = p_business AND m.id = i.entity_id AND m.erased_at IS NULL FOR UPDATE;
       IF FOUND AND app_private.communications_tombstone_message(p_business, i.entity_id, i.erasure_id) >= 0 THEN v_n := v_n + 1; END IF;
@@ -911,7 +949,8 @@ BEGIN
     'app_private.communications_remember_reference(uuid, text, text, text, timestamptz)',
     'app_private.communications_tombstone_message(uuid, uuid, uuid)', 'app_private.communications_tombstone_conversation(uuid, uuid, uuid)',
     'app_private.communications_tombstone_activity(uuid, uuid, uuid)', 'app_private.communications_erasure_plan(uuid, text, uuid, uuid[], integer)',
-    'app_private.communications_consume_grant(text, text, text, uuid)', 'app_private.communications_erasure_replay(uuid, integer)'] LOOP
+    'app_private.communications_consume_grant(text, text, text, uuid)', 'app_private.communications_erasure_replay(uuid, integer)',
+    'app_private.communications_erasure_replay_pending(uuid)', 'app_private.communications_erasure_replay_remaining(uuid)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', f);
   END LOOP;
   -- The application's entry points.
