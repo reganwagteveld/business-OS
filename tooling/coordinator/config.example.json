@@ -1,0 +1,19 @@
+{
+  "state_directory": "/tmp/business-os-coordinator-jobs",
+  "codex_model": "gpt-6.1-sol",
+  "claude_model": "opus",
+  "turn_timeout_seconds": 3600,
+  "max_audit_cycles": 4,
+  "max_turns": 12,
+  "qa_commands": [
+    ["pnpm", "contracts:check"],
+    ["pnpm", "typecheck"],
+    ["pnpm", "lint"],
+    ["pnpm", "boundaries"],
+    ["pnpm", "test"],
+    ["pnpm", "test:integration"],
+    ["pnpm", "test:isolation"],
+    ["pnpm", "db:check-migrations"],
+    ["pnpm", "build"]
+  ]
+}

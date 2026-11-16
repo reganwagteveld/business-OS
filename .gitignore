@@ -15,3 +15,8 @@ apps/api/tests/isolation/generated/
 
 # Local-only overrides (for example a different Postgres port). Never shared.
 docker-compose.override.yml
+
+# Local coordinator configuration and Python artifacts
+tooling/coordinator/config.local.json
+tooling/coordinator/__pycache__/
+.coordinator-local/

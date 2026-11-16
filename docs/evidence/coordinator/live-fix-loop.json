@@ -1,0 +1,9 @@
+{
+  "trial": "fix-loop-20261115-214210",
+  "result": "live audit \u2192 fixes \u2192 re-audit \u2192 independent QA passed",
+  "turns": 3,
+  "cycles": 1,
+  "background_supervisor": "verified by fresh heartbeat",
+  "scope": "only coordinator-trial.txt changed",
+  "production": "not configured or exercised"
+}

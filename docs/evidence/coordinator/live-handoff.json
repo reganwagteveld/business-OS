@@ -1,0 +1,12 @@
+{
+  "trial": "handoff-20261115-203825",
+  "agent_turns": 3,
+  "audit_cycles": 0,
+  "result": "live handoff and independent QA passed",
+  "changed_files": [
+    "coordinator-trial.txt"
+  ],
+  "release": "not configured",
+  "fix_loop": "not exercised live",
+  "evidence": "Local host-run agent results and independent content/scope verification"
+}

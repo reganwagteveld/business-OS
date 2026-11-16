@@ -118,6 +118,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-workspace
+      - name: Coordinator state, release gate and supervisor tests
+        run: python3 -m unittest discover -s tooling/coordinator -p 'test_*.py' -v
       - name: Unit, contract and architecture tests
         run: pnpm test
 
