@@ -9,6 +9,9 @@
 > reassignment policy (§6.1), exact quote billing totals and over-quote confirmation (§8.6), lock order checked
 > against the current code with a deadlock analysis (§9.2), `source_quote_id` constraint design and Prisma
 > feasibility (§8.2), finance-id redaction in generic reads (§10), new decision W1-D13.
+> **Revision 3:** summary corrected (WF-1 carries additive schema), `workflows` owns only the `workflow_requests`
+> infrastructure table (WF-2), over-quote checks split into draft and issue bases with serialisation of draft
+> creates and edits (§8.6).
 
 ## Contents
 
@@ -55,9 +58,10 @@ Verified on `main` (§3):
   issued** (database guard). A project created *after* a quote was issued can never be linked from that quote
   without a reviewed migration. This shapes the "start a job from an accepted quote" design (§8.2, W1-D3).
 
-Recommendation: deliver the chain in **eight small PRs** (§13), UI-only links first (no schema), then the
-two schema links (project source, event ↔ project), then orchestration, completion and invoicing, then
-reporting and timeline. Cross-Zone actions run as **synchronous calls between public module APIs inside one
+Recommendation: deliver the chain in **eight small PRs** (§13). WF-1 adds the missing link pickers and finance
+panels plus the customer-consistency keys and FKs of §6.1 (additive schema). WF-2 adds the project source links
+and the orchestration module's `workflow_requests` table; WF-4 the event ↔ project link; then completion,
+invoicing, reporting and timeline. Most of these PRs carry an additive migration; none is in this PR. Cross-Zone actions run as **synchronous calls between public module APIs inside one
 tenant transaction**, the same pattern Finance already uses for its C2-C reminder boundary. No event bus is
 proposed for this work; a transactional outbox is only proposed as the integration point for N1 notifications.
 
@@ -422,7 +426,7 @@ response says `opportunity: already_won` (not an error).
 
 ```
 POST workflows/projects/:projectId/invoice-draft     Idempotency-Key required
-{ source: 'quote', quoteId, portion?: { percent } | { amount }, overQuote?: { remainingNet, currencyCode } }
+{ source: 'quote', quoteId, portion?: { percent } | { amount }, overQuote?: { basis: 'draft', remainingNet } }
 | { source: 'blank', lines?: LineInput[] }                                   // W-B jobs without a quote
 → 201 { document, quoteBilling? }   (DRAFT invoice, projectId set, sourceQuoteId when from a quote)
 ```
@@ -457,24 +461,46 @@ against it; they appear in the project summary (§8.1) instead.
 
 **Over-quote rule (FD-P3 as recommended: no hard cap, explicit confirmation).**
 
-- At **draft creation** (convert or invoice-draft): if `billedNet + draftNet + newNet > quotedNet`, the request is
-  refused with `409 over_quote_unconfirmed` and the current figures, unless it carries
-  `overQuote: { remainingNet, currencyCode }` equal to the server's current `remainingNet`. A different value is
-  `409 over_quote_changed` (someone billed in between). The confirmation is about **those** figures; it is
-  never inferred from a generic action.
-- At **issue** of an invoice that has a `source_quote_id`: the same check with `billedNet + thisNet > quotedNet`
-  (drafts excluded, since only issued invoices bill). The issue request needs its own `overQuote` confirmation;
-  a confirmation given at draft time does not carry over, because other invoices may have been issued since.
-- **Repeat billing safeguards:** (1) the `Idempotency-Key` replays a retried create; (2) a second draft from the
-  same quote while one is still a draft returns `quoteBilling.draftNet > 0` and the UI says "a draft from this
-  quote already exists" with a link, before creating another; (3) the confirmation rule above catches a
-  second full conversion.
-- **Concurrency:** two invoices from one quote issued at the same moment must not both pass the check on the
-  same stale `billedNet`. Each issue takes a transaction-scoped advisory lock
-  `hashtextextended('finance.quote_billing:' || quote_id, 0)` after locking its own invoice and before the
-  number-series row (§9.2). The second issue waits, then re-reads `billedNet` (READ COMMITTED sees the first
-  commit) and is refused if it now goes over without a confirmation matching the new figure.
-- Voids and credit notes only lower `billedNet`, so they need no lock for this rule.
+Two checks, each with its own basis and its own confirmation field, so a figure confirmed for one is never reused
+for the other:
+
+| Check | When | Over quote if | Confirmation field must equal |
+|---|---|---|---|
+| Draft basis | creating a draft from the quote (convert, invoice-draft); **editing** a quote-sourced draft so its `subtotal` rises | `billedNet + draftNet(after the write) > quotedNet` | `overQuote: { basis: 'draft', remainingNet }` with `remainingNet = quotedNet − billedNet − draftNet(before the write)` |
+| Issue basis | issuing an invoice that has a `source_quote_id` | `billedNet + thisNet > quotedNet` (`billedNet` counts issued invoices only, so it excludes this one, which is still a draft) | `overQuote: { basis: 'issue', remainingBilledNet }` with `remainingBilledNet = quotedNet − billedNet` |
+
+- Missing confirmation: `409 over_quote_unconfirmed` with the current figures. A value that differs from the
+  server's current figure: `409 over_quote_changed`. The confirmation is about **those** figures and that basis;
+  it is never inferred from a generic action, and a draft-basis confirmation never satisfies the issue check.
+- **Writes that lower the figures** (discarding a draft, editing a draft down, voiding an issued invoice, issuing a
+  credit note against one) need no check. They can make a confirmation someone is about to send stale, which
+  yields `over_quote_changed` and a re-confirm: safe, never a silent over-bill.
+- **Re-issue** does not exist for invoices (`ISSUED → VOID` is final). Re-billing after a mistake is void (lowers
+  `billedNet`) and a new draft from the quote (checked as above). A credit note lowers `billedNet` by its subtotal;
+  a later invoice for the credited part is checked normally.
+
+**Serialisation.** Every write that can **raise** `draftNet` or `billedNet` for a quote takes the transaction-scoped
+advisory lock `hashtextextended('finance.quote_billing:' || quote_id, 0)` and computes the figures **after**
+acquiring it (READ COMMITTED, so every earlier commit is visible):
+
+| Write | Locks, in order (Finance class order, §9.2) |
+|---|---|
+| Create draft from quote | idempotency key lock → quote `FOR SHARE` → quote-billing lock → (invoice-draft only) project `FOR SHARE` → insert |
+| Edit a quote-sourced draft (lines) | the draft `FOR NO KEY UPDATE` → quote `FOR SHARE` → quote-billing lock → lines |
+| Issue a quote-sourced invoice | the invoice `FOR NO KEY UPDATE` → quote `FOR SHARE` → quote-billing lock → number series (trigger) |
+
+So two concurrent draft creates, two draft edits, or a draft create racing an issue on the same quote run one after
+the other: the second sees the first's committed figures and either passes or needs a confirmation of the new
+figure. The lock is held to commit, so no write commits on totals that another committing write has changed.
+Writes that only lower figures take no lock.
+
+Deadlock: while waiting for the quote-billing lock, a writer holds at most its own document and the quote
+`FOR SHARE` (which nobody upgrades). The holder then takes only its own lines, the series row or a project
+`FOR SHARE`, none of which a waiter holds, so no cycle (§9.2).
+
+**Repeat billing safeguards:** (1) the `Idempotency-Key` replays a retried create; (2) `quoteBilling.draftNet > 0`
+shows "a draft from this quote already exists" with a link before another is created; (3) the confirmation rules
+above catch a second full conversion at draft time and again at issue.
 
 ### 8.7 Domain events (proposal, no infrastructure)
 
@@ -551,7 +577,8 @@ later row's `version` under its lock (ADR 0008's own technique). A version chang
 | Visit create / edit with a project | project `FOR SHARE` (new, before ADR 0008 step 0) → ADR 0008 steps 0–6 |
 | Complete visit (+ close task) | read event (no lock) → project `FOR SHARE` → task `FOR UPDATE` → ADR 0008 step 5 event `FOR UPDATE` + version re-check → writes |
 | Invoice draft from project | idempotency lock → quote `FOR SHARE` (referenced) → quote-billing advisory → project `FOR SHARE` → invoice `INSERT` |
-| Issue an invoice with a source quote | invoice `FOR NO KEY UPDATE` → quote-billing advisory → series (trigger) |
+| Edit a quote-sourced draft | draft `FOR NO KEY UPDATE` → quote `FOR SHARE` → quote-billing advisory → lines |
+| Issue an invoice with a source quote | invoice `FOR NO KEY UPDATE` → quote `FOR SHARE` → quote-billing advisory → series (trigger) |
 
 **Deadlock analysis of the pairs that share rows:**
 
@@ -565,7 +592,7 @@ later row's `version` under its lock (ADR 0008's own technique). A version chang
 | Project archive vs visit create / task change | All take the project first (`NO KEY UPDATE` vs `FOR SHARE`): queue, no cycle. Same as the existing task-vs-archive rule. |
 | Complete visit vs task move | Both take the project `FOR SHARE`, then the task `FOR UPDATE`. Only the move takes the task-order advisory lock in between, so the two can only wait on the task row itself: no cycle. |
 | Complete visit vs visit edit (retime) | Edit: project `FOR SHARE` → calendars → resources → event. Completion: project `FOR SHARE` → task → event. Shared locks on the project do not conflict; the only exclusive lock both want is the event, taken last by both. |
-| Two issues of invoices from one quote | Each holds its own invoice, then queues on the quote-billing advisory lock, then the series row. Same shape as Finance's existing "two issues in one series" row. |
+| Two issues, two draft creates/edits, or a create racing an issue, on one quote | Each holds at most its own document and the quote `FOR SHARE`, then queues on the quote-billing advisory lock; the holder then takes only its own lines, the series row or a project `FOR SHARE`. Same shape as Finance's existing "two issues in one series" row. |
 | Invoice draft from project vs project archive | Draft takes the project `FOR SHARE` after Finance locks; archive takes only the project. No cycle. |
 
 **Evidence each PR must add** (the Finance K4/K8 and Scheduling ADR 0008 practice): a deterministic two-session
@@ -580,8 +607,8 @@ order with no `40P01` and all invariants holding. W1 asserts nothing here as tes
 - Every **create** in an orchestration endpoint requires `Idempotency-Key` and stores `request_hash`, reusing
   Finance's pattern (advisory lock on the key + unique index). Replays return the original result with 200; a
   different body with the same key is `409 idempotency_conflict`. Where the created row is a project, the key and
-  hash need a home: either columns on `projects` (as on `finance_documents`) or a small `workflow_requests` table
-  owned by the orchestration module (W1-D13).
+  hash need a home: the recommended `workflow_requests` table owned by the orchestration module (W1-D13, shipped
+  in WF-2). Finance-only creates (invoice drafts) keep using Finance's own key columns.
 - Uniqueness backstops: one project per source quote (§8.2); one completion per event (status column).
 - Pure state transitions (accept, win, complete) are idempotent by state: repeating with a stale version is a 409,
   never a second effect.
@@ -680,7 +707,7 @@ time, sorting after everything on `main` and in open PRs.
 | Order | PR | Scope | Owning Zone(s) | Schema | Blocked by |
 |---|---|---|---|---|---|
 | 1 | **WF-1** Link existing records | Opportunity and project pickers on quote/invoice/expense forms; "Quotes & invoices" panel on opportunity and project (embedded Finance component, `finance:read` only); `opportunityId` list filter; `GET finance/projects/:id/summary`; invariant I1 (§6.1) for finance documents, expenses and templates | Finance (owner), Projects (unique key, error handling), Sales/Projects host the panel | Yes (additive keys and FKs; pre-check for violating rows) | W1-D6 |
-| 2 | **WF-2** Job source | `projects.source_opportunity_id`, `source_quote_id`, `source_quote_kind` with the §8.2 constraints and guard triggers; Finance-owned unique key `(business_id, id, kind, customer_id)`; `from-quote`, `from-opportunity`; multi-key route helper; finance-id redaction in project reads | Projects (+ one Finance key) | Yes (additive, nullable) | W1-D1, W1-D3, W1-D10 |
+| 2 | **WF-2** Job source | `workflow_requests` (W1-D13); `projects.source_opportunity_id`, `source_quote_id`, `source_quote_kind` with the §8.2 constraints and guard triggers; Finance-owned unique key `(business_id, id, kind, customer_id)`; `from-quote`, `from-opportunity`; multi-key route helper; finance-id redaction in project reads | Projects (+ one Finance key) | Yes (additive, nullable) | W1-D1, W1-D3, W1-D10 |
 | 3 | **WF-3** Accept and win | Accept quote with optional opportunity win in one transaction; "Start a job" option wired to WF-2 | Orchestration per W1-D1 (Finance + Sales public APIs) | None | WF-2, W1-D2 |
 | 4 | **WF-4** Visits for jobs | `scheduling_events.project_id`, `task_id`, I1 FK; filters; project "Visits" panel; schedule-from-project | Scheduling (schema), Projects (panel) | Yes | D-S2-8 nav on |
 | 5 | **WF-5** Completion | Event `COMPLETED` (per W1-D5), complete endpoint, optional task close | Scheduling, Projects | Yes | WF-4, W1-D5 |
@@ -711,7 +738,7 @@ businesses, roles OWNER / MANAGER / MEMBER).
 
 **AT-B (job without quote, W-B)**: project from customer → visit → complete → `invoice-draft` blank with catalog lines → issue → pay. Margin includes linked expenses.
 
-**AT-C (deposit and progress, W-C)**: accepted quote net 1000.00 (two tax rates) → deposit 30% creates one line per tax rate summing exactly to 300.00 → progress 50% → balance; `billedNet` reaches 1000.00. A further invoice is refused without confirmation, accepted with the exact `remainingNet`, refused with a stale one. Voiding the progress invoice and crediting part of the deposit lower `billedNet` by exactly those subtotals. Two concurrent issues from the quote that together exceed it: one succeeds, the other gets `over_quote_changed`.
+**AT-C (deposit and progress, W-C)**: accepted quote net 1000.00 (two tax rates) → deposit 30% creates one line per tax rate summing exactly to 300.00 → progress 50% → balance; `billedNet` reaches 1000.00. A further invoice is refused without confirmation, accepted with the exact draft-basis `remainingNet`, refused with a stale one, and refused again at issue until the issue-basis figure is confirmed. Two concurrent draft creates that together exceed the quote: the second needs a new confirmation. Voiding the progress invoice and crediting part of the deposit lower `billedNet` by exactly those subtotals. Two concurrent issues from the quote that together exceed it: one succeeds, the other gets `over_quote_changed`.
 
 **AT-D (recurring, W-D)**: recurring template with `projectId` generates a draft via manual "generate now" (jobs remain off) → draft carries the project → appears in project summary.
 
@@ -739,7 +766,7 @@ businesses, roles OWNER / MANAGER / MEMBER).
 
 | Id | Question | Options | Recommendation |
 |---|---|---|---|
-| **W1-D1** | Where does cross-Zone orchestration code live? | (a) the Zone that starts the action calls the other Zone's public API (Finance calls Sales); (b) a thin `workflows` module that only composes public APIs and owns no tables | **(b)**: keeps Zone modules free of each other's imports, gives one place for lock order and multi-key checks; it owns routes like `workflows/quotes/:id/accept`. |
+| **W1-D1** | Where does cross-Zone orchestration code live? | (a) the Zone that starts the action calls the other Zone's public API (Finance calls Sales); (b) a thin `workflows` module that composes Zone public APIs and owns **no business records** | **(b)**: keeps Zone modules free of each other's imports, gives one place for lock order and multi-key checks; it owns routes like `workflows/quotes/:id/accept` and one infrastructure table, `workflow_requests` (W1-D13), which is never a source of truth for business data. |
 | **W1-D2** | Can a job start from an ISSUED (not yet accepted) quote? | ACCEPTED only / ISSUED or ACCEPTED | ACCEPTED only; for urgent work, accept first (one click). |
 | **W1-D3** | How does a project remember its quote? | §8.2 A / B / C | **A**: `source_quote_id` + `source_opportunity_id` on projects with composite FKs. |
 | **W1-D4** | Should issuing a quote move the opportunity's stage? | never / optional per business (A3) | Never by default; optional setting later via A3. |
@@ -752,7 +779,7 @@ businesses, roles OWNER / MANAGER / MEMBER).
 | **W1-D11** | Deposit / progress invoice shape | summary line(s) / scaled copy of quote lines | Summary line, split per tax rate when the quote has more than one (§8.5); scaled copy later. |
 | **W1-D12** | Is a project the "job" for trade businesses, or is a separate Job entity needed? | project = job / new entity | Project = job for now; industry wording via labels, not a new table. |
 | FD-P3 (existing) | Quote conversion limits | hard cap / warn / no check | No hard cap; over-quote needs an explicit confirmation of the exact current figures at draft and at issue (§8.6). Conversion stays allowed from ISSUED or ACCEPTED quotes. |
-| **W1-D13** | Where idempotency keys of orchestration creates live | columns on the created row / `workflow_requests` table in the orchestration module | `workflow_requests` (keeps Zone tables unchanged; one place for all orchestration replays). |
+| **W1-D13** | Where idempotency keys of orchestration creates live | columns on the created row / `workflow_requests` table in the orchestration module | **`workflow_requests`**: tenant table with forced RLS; unique `(business_id, operation, idempotency_key)`; `request_hash`; a reference to the result (record type and id) for replay, read back through the owning Zone with the caller's permissions; inserted in the same transaction as the action, so a rolled-back action leaves no key; retained like the audit log (no purge until a retention decision); same key and hash replays, a different hash is `409 idempotency_conflict`; insert-only for `bos_app`. Its migration ships in **WF-2**, the first PR with an orchestration create. |
 | FD-P4 (existing) | Automatic opportunity → document conversion | — | Superseded by WF-3's explicit, confirmed action; nothing automatic. |
 
 ---
