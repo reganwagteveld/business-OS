@@ -55,10 +55,17 @@ function applyMove(rows: ProjectTask[], id: string, status: TaskStatus, afterId:
 
 type Pending = { id: string; status: TaskStatus; afterId: string | null };
 
-export function TaskBoard({ project, client, slug, locale, timeZone, members, canManage, viewSwitch, onTasksChanged, onDraftChange, confirmLeave, onSessionEnded, board = DEFAULT_TASK_BOARD }: {
+export function TaskBoard({ project, client, slug, locale, timeZone, members, canManage, viewSwitch, onTasksChanged, onDraftChange, confirmLeave, onSessionEnded, initialTaskId, onInitialTaskSettled, board = DEFAULT_TASK_BOARD }: {
   project: Project; client: ProjectsClient; slug: string; locale?: string; timeZone: string; members: Member[] | null; canManage: boolean;
   viewSwitch: ReactNode; onTasksChanged: () => void; onDraftChange: (key: string, dirty: boolean) => void; confirmLeave: (action: () => void) => void;
-  onSessionEnded: () => void; board?: readonly BoardStage[];
+  onSessionEnded: () => void;
+  /**
+   * GS2-A: a task whose panel opens once the board's tasks load (a `<projectId>:task:<taskId>` target).
+   * Only a task in this board's own list opens; anything else (removed, archived or another project's)
+   * leaves the board as it is with a note. `onInitialTaskSettled` is called once it has been handled.
+   */
+  initialTaskId?: string; onInitialTaskSettled?: () => void;
+  board?: readonly BoardStage[];
 }) {
   const uid = useId();
   const layout = useLayout();
@@ -88,7 +95,7 @@ export function TaskBoard({ project, client, slug, locale, timeZone, members, ca
   const today = todayIn(timeZone);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [announce, setAnnounce] = useState('');
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(initialTaskId ?? null);
   // A card to put focus on once it is rendered (after a keyboard move, a refused move, or closing its
   // panel). Consumed once, so a later refresh never steals focus.
   const focusNext = useRef<string | null>(null);
@@ -98,6 +105,20 @@ export function TaskBoard({ project, client, slug, locale, timeZone, members, ca
   const [drop, setDrop] = useState<{ stage: string; index: number } | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
+
+  // The arrival task is settled against the first successful load: it stays open if the server's
+  // list has it, and otherwise is dropped with a note. A failed load keeps waiting for a retry.
+  const arrival = useRef(initialTaskId ?? null);
+  useEffect(() => {
+    const id = arrival.current;
+    if (!id || !fresh) return;
+    arrival.current = null;
+    if (!fresh.some((t) => t.id === id)) {
+      setOpenId((current) => (current === id ? null : current));
+      setMessage({ tone: 'ok', text: 'That task is no longer on this board. It may have been removed.' });
+    }
+    onInitialTaskSettled?.();
+  }, [fresh, onInitialTaskSettled]);
 
   const refresh = useCallback(() => {
     tasks.reload();
