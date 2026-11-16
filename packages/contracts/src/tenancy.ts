@@ -46,19 +46,47 @@ export const BusinessContextResponse = z
   })
   .strict();
 
+export const MembershipStatus = z.enum(['ACTIVE', 'SUSPENDED']);
 export const Member = z
-  .object({ id: z.string().uuid(), userId: z.string().uuid(), name: z.string().nullable(), role: Role, status: z.enum(['ACTIVE', 'SUSPENDED']), createdAt: z.string().datetime() })
+  .object({
+    id: z.string().uuid(),
+    userId: z.string().uuid(),
+    name: z.string().nullable(),
+    role: Role,
+    status: MembershipStatus,
+    createdAt: z.string().datetime(),
+    /** Administration A2-B: when the member was suspended, or null. */
+    suspendedAt: z.string().datetime().nullable(),
+    /** Present only for callers with members:invite (OWNER, ADMIN, MANAGER; D-A2-11); null if hidden. */
+    email: z.string().nullable().optional(),
+  })
   .strict();
 export const MembersResponse = z.object({ members: z.array(Member) }).strict();
 export const ChangeRoleRequest = z.object({ role: Role }).strict();
+/** A2-B: suspend or reactivate a member. */
+export const ChangeMemberStatusRequest = z.object({ status: MembershipStatus }).strict();
+/** PATCH /members/{id}: change either the role or the status, one at a time. */
+export const UpdateMemberRequest = z.union([ChangeRoleRequest, ChangeMemberStatusRequest]);
 export const MemberResponse = z.object({ member: Member }).strict();
+
+/**
+ * A2-B ownership transfer (§3.7, requirement 2). `confirm: true` is the explicit confirmation the
+ * client sends only after the person confirmed in the UI; with `stepDown` the caller becomes ADMIN.
+ */
+export const TransferOwnershipRequest = z.object({ stepDown: z.boolean(), confirm: z.literal(true) }).strict();
+/** A2-B: an owner steps down to ADMIN, or a member leaves the business. Both need explicit confirmation. */
+export const ConfirmRequest = z.object({ confirm: z.literal(true) }).strict();
 
 export const Invitation = z
   .object({ id: z.string().uuid(), email: z.string(), role: InvitableRole, expiresAt: z.string().datetime(), createdAt: z.string().datetime() })
   .strict();
 export const InvitationsResponse = z.object({ invitations: z.array(Invitation) }).strict();
 export const CreateInvitationRequest = z.object({ email: Email, role: InvitableRole }).strict();
-export const InvitationResponse = z.object({ invitation: Invitation }).strict();
+/**
+ * A2-B: `delivery` says whether the email went out. The invitation exists either way (it is committed
+ * before the email is sent); on "failed" the UI offers Resend.
+ */
+export const InvitationResponse = z.object({ invitation: Invitation, delivery: z.enum(['sent', 'failed']) }).strict();
 
 export const OkResponse = z.object({ ok: z.literal(true) }).strict();
 

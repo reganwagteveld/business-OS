@@ -8,7 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { getEnv } from '@/core/config/env';
 import { createSecretBox, type SecretBox } from '@/core/crypto/secret-box';
 import type { AppTenantDb } from '@/core/db';
-import { recordSystemAudit } from '@/core/audit';
+import { recordAudit, recordSystemAudit } from '@/core/audit';
+import { permissionsFor, type Permission, type Role } from '@/modules/access';
 import { StateConflictError } from '@/core/http/errors';
 import { ProviderError, providerAdapter, type MailProvider, type MailProviderAdapter, type TokenSet } from './providers';
 
@@ -103,12 +104,26 @@ async function step(db: AppTenantDb, connectionId: string, now: Date, tryLease: 
 }
 
 /**
- * The provider refused the refresh token (revoked, expired, policy): the connection needs the owner
- * to reconnect. Credentials go with the status change (trigger), pending jobs are cancelled.
+ * The permission a credential holder must keep for the grant to stay usable (D-C2-8): PERSONAL
+ * mailboxes need communications:connect, BUSINESS mailboxes communications:manage_connections. The
+ * one rule shared by the sync claim (holderActive) and membership changes (revokeHeldConnections).
  */
-export async function markReauthRequired(
-  db: AppTenantDb, connectionId: string, provider: string, code: 'reauth_required' | 'owner_inactive' | 'holder_inactive',
-): Promise<void> {
+export function holderPermission(kind: string): Permission {
+  return kind === 'BUSINESS' ? 'communications:manage_connections' : 'communications:connect';
+}
+
+/** Does a member with this role (null: no active membership) keep authority over a mailbox of this kind? */
+export function holderKeepsAuthority(role: Role | null, kind: string): boolean {
+  return role !== null && permissionsFor(role).includes(holderPermission(kind));
+}
+
+/**
+ * Stops a connection: ACTIVE becomes NEEDS_REAUTH (trigger mail_connections_drop_credentials deletes
+ * the credential row in the same transaction) and its QUEUED/RUNNING jobs are cancelled with their
+ * lease cleared, so heartbeat, complete and fail all refuse afterwards. Returns whether the status
+ * changed. No audit: the caller records the event it is allowed to write.
+ */
+async function stopConnection(db: AppTenantDb, connectionId: string, code: 'reauth_required' | 'owner_inactive' | 'holder_inactive'): Promise<boolean> {
   const changed = await db.mailConnection.updateMany({
     where: { id: connectionId, status: 'ACTIVE' },
     data: { status: 'NEEDS_REAUTH', lastErrorCode: code, updatedAt: new Date() },
@@ -117,9 +132,57 @@ export async function markReauthRequired(
     where: { connectionId, status: { in: ['QUEUED', 'RUNNING'] } },
     data: { status: 'CANCELLED', leaseId: null, leaseExpiresAt: null, finishedAt: new Date(), lastErrorCode: code },
   });
-  if (changed.count === 1) {
+  return changed.count === 1;
+}
+
+/**
+ * The provider refused the refresh token (revoked, expired, policy): the connection needs the owner
+ * to reconnect. Credentials go with the status change (trigger), pending jobs are cancelled. Runs
+ * with no session user (system audit event).
+ */
+export async function markReauthRequired(
+  db: AppTenantDb, connectionId: string, provider: string, code: 'reauth_required' | 'owner_inactive' | 'holder_inactive',
+): Promise<void> {
+  if (await stopConnection(db, connectionId, code)) {
     await recordSystemAudit(db, `communications.system.${code}`, { type: 'mail_connection', id: connectionId }, { provider });
   }
+}
+
+export type HolderCutoffCause = 'member_removed' | 'member_suspended' | 'member_left' | 'member_demoted';
+
+/**
+ * Administration A2-B (docs/administration-a2.md §3.10, C2 review 2026-11-16): eager credential
+ * cutoff when a member stops being able to hold a mailbox grant. Runs inside the membership
+ * transaction, as the acting member (so the audit is actor-attributed and passes
+ * audit_tenant_write; no policy change). `remainingRole` is the member's role after the change, or
+ * null when they keep no active membership (removed, suspended, left). Every ACTIVE connection they
+ * hold whose kind they no longer have authority for is stopped (credentials deleted, jobs
+ * cancelled), and each stop is audited as `communications.connection.holder_departed`.
+ *
+ * Lock order: the connections FIRST, in id order, then their jobs and credentials (via the status
+ * trigger). C2 paths take job → connection or credential → connection, so a deadlock with them is
+ * possible; PostgreSQL aborts one side with 40P01 and the membership routes retry the whole unit of
+ * work. The lazy holder check in claimSyncJob stays as the backstop.
+ */
+export async function revokeHeldConnections(
+  db: AppTenantDb, actorUserId: string, holderUserId: string, cause: HolderCutoffCause, remainingRole: Role | null,
+): Promise<string[]> {
+  const held = await db.$queryRaw<{ id: string; provider: string; kind: 'PERSONAL' | 'BUSINESS' }[]>`
+    SELECT id::text AS id, provider::text AS provider, kind::text AS kind FROM mail_connections
+     WHERE credential_holder_id = ${holderUserId}::uuid AND status = 'ACTIVE'
+       AND business_id = nullif(current_setting('app.business_id', true), '')::uuid
+     ORDER BY id FOR UPDATE`;
+  const stopped: string[] = [];
+  for (const c of held) {
+    if (holderKeepsAuthority(remainingRole, c.kind)) continue;
+    if (await stopConnection(db, c.id, c.kind === 'BUSINESS' ? 'holder_inactive' : 'owner_inactive')) {
+      await recordAudit(db, actorUserId, 'communications.connection.holder_departed', { type: 'mail_connection', id: c.id }, {
+        provider: c.provider, kind: c.kind, userId: holderUserId, cause,
+      });
+      stopped.push(c.id);
+    }
+  }
+  return stopped;
 }
 
 /**
