@@ -54,6 +54,8 @@ export interface DocumentQuery {
   customerId?: string; from?: string; to?: string; cursor?: string; limit?: number;
   /** Invoices only. */
   overdue?: boolean; settlement?: 'unpaid' | 'partially_paid' | 'paid' | 'open';
+  /** Invoices only. Omitted: newest created first. due_asc: oldest due date first, undated last. */
+  sort?: 'created_desc' | 'due_asc';
   /** Credit notes only. */
   invoiceId?: string;
 }
@@ -320,6 +322,7 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
       return get(`${base(slug)}/${path}` + qs({
         status: query.status, customerId: query.customerId, from: query.from, to: query.to, cursor: query.cursor, limit: query.limit,
         overdue: path === 'invoices' ? bool(query.overdue) : undefined, settlement: path === 'invoices' ? query.settlement : undefined,
+        sort: path === 'invoices' ? query.sort : undefined,
         invoiceId: path === 'credit-notes' ? query.invoiceId : undefined,
       }), ListFinanceDocumentsResponse, (d) => d, signal);
     },
