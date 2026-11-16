@@ -1,0 +1,201 @@
+// Seeds a LOCAL throwaway business through the real API (docker Postgres, bos_r1_shots), then screenshots
+// the Reporting Zone (R2) from a real production web build. Nothing here touches production.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright');
+import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+const pg = require(process.env.PG_PATH);
+
+const API = 'http://localhost:3000';
+const WEB = 'http://localhost:5173';
+const OUT = process.env.OUT;
+mkdirSync(OUT, { recursive: true });
+const PASSWORD = 'correct horse battery staple';
+const slug = 'harbour-studio';
+const B = `/api/v1/b/${slug}`;
+const F = `${B}/finance`;
+if (!/localhost:5432\/business_os$/.test(process.env.TEST_ADMIN_URL ?? '')) throw new Error('refusing: not the local docker database');
+const admin = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
+await admin.connect();
+
+let ipn = 1;
+function client() {
+  const me = { cookie: '' };
+  me.call = async (method, path, body, extra = {}) => {
+    const res = await fetch(`${API}${path}`, {
+      method, headers: { origin: WEB, 'content-type': 'application/json', 'x-forwarded-for': `10.9.${Math.floor(ipn / 250)}.${ipn++ % 250}`, ...(me.cookie ? { cookie: me.cookie } : {}), ...extra },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const sess = (res.headers.getSetCookie?.() ?? []).find((c) => /session_token=/.test(c));
+    if (sess) me.cookie = sess.split(';')[0];
+    const json = await res.json().catch(() => ({}));
+    if (res.status >= 400) throw new Error(`${method} ${path} ${res.status} ${JSON.stringify(json)}`);
+    return json;
+  };
+  return me;
+}
+async function user(email, name) {
+  const c = client();
+  if (!process.env.SKIP_SEED) await c.call('POST', '/api/v1/auth/sign-up/email', { email, password: PASSWORD, name });
+  await admin.query('UPDATE users SET email_verified = true WHERE email = $1', [email]);
+  await c.call('POST', '/api/v1/auth/sign-in/email', { email, password: PASSWORD });
+  return c;
+}
+const key = () => ({ 'idempotency-key': randomUUID() });
+
+const owner = await user('owner@example.com', 'Morgan Lee');
+const call = owner.call;
+if (!process.env.SKIP_SEED) {
+await owner.call('POST', '/api/v1/businesses', { name: 'Harbour Design Studio', slug, countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' });
+const cust = async (displayName) => (await call('POST', `${B}/customers`, { displayName })).customer.id;
+const names = ['Kelp & Co Seafood', 'Northshore Physio', 'Tidewater Brewing', 'Pacific Rim Tours', 'Saltbush Cafe', 'Granite Legal', 'Moonlight Yoga', 'Fremantle Cycles'];
+const ids = [];
+for (const n of names) ids.push(await cust(n));
+const created = ['2026-08-03', '2026-08-20', '2026-09-02', '2026-09-15', '2026-09-28', '2026-10-09', '2026-10-30', '2026-11-06'];
+for (let i = 0; i < ids.length; i++) await admin.query(`UPDATE customers SET created_at = ($2::date + time '02:00') AT TIME ZONE 'Australia/Perth' WHERE id = $1`, [ids[i], created[i]]);
+const gst = (await call('POST', `${F}/tax-rates`, { name: 'GST', ratePercent: '10' })).taxRate.id;
+const line = (description, unitPrice) => ({ description, quantity: '1', unitPrice, taxRateId: gst });
+const invoice = async (customerId, issueDate, price, extra = {}) => {
+  const d = (await call('POST', `${F}/invoices`, { customerId, lines: [extra.currencyCode ? { description: 'Design', quantity: '1', unitPrice: price } : line('Design work', price)], ...extra }, key())).document;
+  return (await call('POST', `${F}/invoices/${d.id}/issue`, { version: d.version, issueDate, dueDate: issueDate })).document;
+};
+const plan = [
+  [0, '2026-08-05', '2400'], [1, '2026-08-19', '1650'], [2, '2026-09-03', '3800'], [3, '2026-09-22', '1200'], [0, '2026-09-29', '950'],
+  [4, '2026-10-04', '2750'], [5, '2026-10-17', '4100'], [2, '2026-10-28', '1800'], [6, '2026-11-03', '2200'], [7, '2026-11-11', '3350'], [1, '2026-11-13', '600'],
+];
+const invs = [];
+for (const [c, d, p] of plan) invs.push(await invoice(ids[c], d, p));
+await invoice(ids[3], '2026-10-12', '1850', { currencyCode: 'USD' });
+const pay = (customerId, amount, receivedOn, invoiceId) => call('POST', `${F}/payments`, { customerId, amount, receivedOn, method: 'BANK_TRANSFER', ...(invoiceId ? { allocations: [{ invoiceId, amount }] } : {}) }, key());
+await pay(ids[0], '2640', '2026-08-25', invs[0].id);
+await pay(ids[1], '1815', '2026-09-08', invs[1].id);
+await pay(ids[2], '4180', '2026-09-30', invs[2].id);
+await pay(ids[4], '3025', '2026-10-20', invs[5].id);
+await pay(ids[5], '2000', '2026-11-02', invs[6].id);
+await pay(ids[6], '2420', '2026-11-12', invs[8].id);
+const opp = async (title, amount, customerId, closed) => {
+  const o = (await call('POST', `${B}/sales/opportunities`, { title, amount, customerId })).opportunity;
+  await call('POST', `${B}/sales/opportunities/${o.id}/win`, {});
+  await admin.query(`UPDATE opportunities SET closed_at = ($2::date + time '10:00') AT TIME ZONE 'Australia/Perth' WHERE id = $1`, [o.id, closed]);
+};
+await opp('Packaging range', '5200', ids[0], '2026-08-28');
+await opp('Clinic signage', '2900', ids[1], '2026-09-18');
+await opp('Taproom refit graphics', '7400', ids[2], '2026-10-06');
+await opp('Menu and website', '3100', ids[4], '2026-11-09');
+
+}
+// A MEMBER (no Finance access), added directly as a membership in the throwaway database.
+const member = await user('member@example.com', 'Sam Ortiz');
+if (process.env.SKIP_SEED) { await admin.end(); }
+else {
+const { rows: [{ bid }] } = await admin.query('SELECT id AS bid FROM businesses WHERE slug = $1', [slug]);
+const { rows: [{ uid }] } = await admin.query("SELECT id AS uid FROM users WHERE email = 'member@example.com'");
+await admin.query("INSERT INTO memberships (id, business_id, user_id, role) VALUES ($1, $2, $3, 'MEMBER')", [randomUUID(), bid, uid]);
+// Saved reports: one private and one shared by the owner, one shared by an ADMIN colleague.
+const cfg = (id, preset) => ({ metrics: [{ id, version: 1 }], date: { kind: 'relative', preset }, granularity: 'month', groupBy: null, filters: {}, comparison: 'previous_period', sort: { by: 'bucket', direction: 'asc' }, visualization: { chart: 'bar', showComparison: true } });
+await call('POST', `${B}/reporting/views`, { title: 'Quarterly invoicing', visibility: 'PRIVATE', config: cfg('finance.invoiced_amount', 'last_3_months') });
+await call('POST', `${B}/reporting/views`, { title: 'Sales wins this year', description: 'For the Monday team meeting.', visibility: 'BUSINESS', config: cfg('sales.won_value', 'year_to_date') });
+const colleague = await user('admin@example.com', 'Jo Park');
+const { rows: [{ cid }] } = await admin.query("SELECT id AS cid FROM users WHERE email = 'admin@example.com'");
+await admin.query("INSERT INTO memberships (id, business_id, user_id, role) VALUES ($1, $2, $3, 'ADMIN')", [randomUUID(), bid, cid]);
+await colleague.call('POST', `${B}/reporting/views`, { title: 'Cash received by week', visibility: 'BUSINESS', config: { ...cfg('finance.payments_received', 'last_90_days'), granularity: 'week' } });
+await admin.end();
+}
+
+
+const browser = await chromium.launch();
+async function session(who, viewport, scheme) {
+  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 2, colorScheme: scheme, ...(viewport.width < 500 ? { isMobile: true, hasTouch: true } : {}) });
+  const [name, value] = who.cookie.split('=');
+  await ctx.addCookies([{ name, value, domain: 'localhost', path: '/', httpOnly: true, sameSite: 'Lax' }]);
+  await ctx.addInitScript(([s]) => localStorage.setItem('bos.workspace', JSON.stringify({ slug: s })), [slug]);
+  await ctx.route('http://localhost:5173/api/**', async (route) => {
+    const r = route.request();
+    const res = await route.fetch({ url: r.url().replace('http://localhost:5173', API), headers: { ...r.headers(), origin: WEB, cookie: who.cookie } });
+    await route.fulfill({ response: res });
+  });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(15000);
+  const errors = [];
+  page.on('console', (m) => { if (m.type() === 'error' && !/favicon/.test(m.text())) errors.push(m.text()); });
+  page.on('response', (r) => { if (r.status() >= 400 && !/favicon/.test(r.url())) errors.push(`${r.request().method()} ${r.url()} ${r.status()}`); });
+  await page.goto(WEB);
+  try { await page.getByRole('button', { name: /Open the Reporting Zone/ }).first().click(); }
+  catch (e) { await page.screenshot({ path: `${OUT}/debug.png` }); console.log(errors); throw e; }
+  await page.getByRole('region', { name: 'Headline figures' }).waitFor();
+  await page.getByRole('figure').first().waitFor().catch(() => {});
+  await page.waitForTimeout(1000);
+  return { ctx, page, errors };
+}
+const shot = async (page, name, full = true) => {
+  await page.evaluate(() => { window.scrollTo(0, 0); for (const el of document.querySelectorAll('*')) if (el.scrollTop) el.scrollTop = 0; });
+  const size = page.viewportSize();
+  if (full) {
+    const h = await page.evaluate(() => Math.max(...[...document.querySelectorAll('*')].map((el) => el.scrollHeight)));
+    await page.setViewportSize({ width: size.width, height: Math.min(h + 40, 7000) });
+  }
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: full });
+  await page.setViewportSize(size);
+};
+const report = [];
+const overflow = (page) => page.evaluate(() => Math.max(...[...document.querySelectorAll('main, html')].map((el) => el.scrollWidth - el.clientWidth)));
+const tab = (page, label) => page.getByRole('navigation', { name: 'Reporting sections' }).getByRole('button', { name: label }).click();
+
+for (const scheme of ['light', 'dark']) {
+  const { ctx, page, errors } = await session(owner, { width: 1440, height: 1000 }, scheme);
+  await shot(page, `desktop-${scheme}-01-dashboard`);
+  if (scheme === 'light') {
+    await page.getByRole('button', { name: 'Explore Won opportunity value' }).click();
+    await page.getByRole('heading', { level: 1, name: 'Explore' }).waitFor();
+    await page.getByRole('figure').first().waitFor();
+    await page.waitForTimeout(900);
+    await shot(page, 'desktop-light-02-drilldown-explore');
+    await page.getByLabel('Chart', { exact: true }).selectOption({ label: 'Amount invoiced' });
+    await page.getByLabel('Interval').selectOption('month');
+    await page.getByRole('button', { name: /Show records for Oct/ }).click();
+    await page.getByRole('heading', { name: /Records for Oct/ }).waitFor();
+    await page.waitForTimeout(900);
+    await shot(page, 'desktop-light-03-period-records');
+    await tab(page, 'Saved reports');
+    await page.getByRole('table', { name: /saved report/ }).waitFor();
+    await page.waitForTimeout(600);
+    await shot(page, 'desktop-light-04-saved-reports');
+    await page.getByRole('button', { name: 'Delete Cash received by week' }).click();
+    await page.getByRole('dialog').waitFor();
+    await page.waitForTimeout(300);
+    await shot(page, 'desktop-light-05-delete-shared-confirm', false);
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+    await tab(page, 'Dashboard');
+    await page.getByLabel('Date range').selectOption('custom');
+    await page.getByLabel('From').fill('2026-12-01');
+    await page.waitForTimeout(500);
+    await shot(page, 'desktop-light-06-custom-range-invalid', false);
+  }
+  report.push(`desktop ${scheme}: console errors ${JSON.stringify(errors)}, horizontal overflow ${await overflow(page)}px`);
+  await ctx.close();
+}
+for (const scheme of ['light', 'dark']) {
+  const { ctx, page, errors } = await session(owner, { width: 390, height: 844 }, scheme);
+  await shot(page, `mobile-${scheme}-01-dashboard`);
+  if (scheme === 'light') {
+    await page.evaluate(() => {});
+  }
+  report.push(`mobile ${scheme}: console errors ${JSON.stringify(errors)}, horizontal overflow ${await overflow(page)}px`);
+  await ctx.close();
+}
+{
+  const { ctx, page, errors } = await session(member, { width: 1440, height: 1000 }, 'light');
+  await shot(page, 'desktop-light-07-member-no-finance');
+  await tab(page, 'Saved reports');
+  await page.getByRole('table', { name: /saved report/ }).waitFor();
+  await page.waitForTimeout(600);
+  await shot(page, 'desktop-light-08-member-saved-reports');
+  const html = await page.content();
+  report.push(`member: console errors ${JSON.stringify(errors)}, finance figures in saved list page: ${/Amount invoiced|Amount received/.test(html)}`);
+  await ctx.close();
+}
+await browser.close();
+console.log(report.join('\n'));
+console.log('shots done');

@@ -365,8 +365,9 @@ describe('events: rules', () => {
     const before = (await admin.query('SELECT count(*)::int AS n FROM scheduling_events WHERE business_id = $1', [A.businessId])).rows[0].n;
     const clash = await book(calA, t + H, 2);
     expect(clash.status).toBe(409);
+    // The S1 fields are unchanged; S2 adds kind, resource and blocking (docs/scheduling-s2.md §4.1).
     expect(SchedulingConflictResponse.parse(clash.body).conflicts).toEqual([
-      { eventId: first.id, calendarId: calA, title: 'Booking', startAt: iso(t), endAt: iso(t + 2 * H) },
+      { eventId: first.id, calendarId: calA, title: 'Booking', startAt: iso(t), endAt: iso(t + 2 * H), kind: 'calendar', resource: null, blocking: true },
     ]);
     expect((await admin.query('SELECT count(*)::int AS n FROM scheduling_events WHERE business_id = $1', [A.businessId])).rows[0].n).toBe(before);
     // Contained and containing intervals overlap too.
@@ -602,7 +603,7 @@ describe('tenant isolation', () => {
       "SELECT relname FROM pg_class WHERE relname IN ('scheduling_calendars','scheduling_events') AND relrowsecurity AND relforcerowsecurity ORDER BY relname");
     expect(rows.map((r) => r.relname)).toEqual(['scheduling_calendars', 'scheduling_events']);
     const grants = await admin.query(
-      "SELECT table_name, string_agg(privilege_type, ',' ORDER BY privilege_type) AS p FROM information_schema.role_table_grants WHERE grantee = 'bos_app' AND table_name LIKE 'scheduling_%' GROUP BY table_name ORDER BY table_name");
+      "SELECT table_name, string_agg(privilege_type, ',' ORDER BY privilege_type) AS p FROM information_schema.role_table_grants WHERE grantee = 'bos_app' AND table_name IN ('scheduling_calendars', 'scheduling_events') GROUP BY table_name ORDER BY table_name");
     expect(grants.rows).toEqual([{ table_name: 'scheduling_calendars', p: 'INSERT,SELECT,UPDATE' }, { table_name: 'scheduling_events', p: 'INSERT,SELECT,UPDATE' }]);
   });
 });

@@ -66,9 +66,11 @@ model SchedulingEvent {
   updatedAt          DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt         DateTime?             @map("archived_at") @db.Timestamptz
 
-  business Business           @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "scheduling_events_business_fkey")
-  calendar SchedulingCalendar @relation(fields: [businessId, calendarId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_calendar_fkey")
-  customer Customer?          @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_customer_fkey")
+  business  Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "scheduling_events_business_fkey")
+  calendar  SchedulingCalendar        @relation(fields: [businessId, calendarId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_calendar_fkey")
+  customer  Customer?                 @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_events_customer_fkey")
+  /// S2: resources assigned to this event (live and removed; live = removedAt null).
+  resources SchedulingEventResource[]
 
   @@unique([businessId, id])
   /// Calendar views and the conflict check: events on one calendar by start (end is bounded by the 31-day maximum duration).
@@ -77,4 +79,74 @@ model SchedulingEvent {
   @@index([businessId, startAt, id])
   @@index([businessId, customerId])
   @@map("scheduling_events")
+}
+
+// ---- Scheduling S2 (docs/scheduling-s2.md): resources and their assignments to events -------------
+
+/// Industry-neutral kinds of resource. The business's own words ("Chair 3", "Van 2") go in the name.
+enum SchedulingResourceType {
+  PERSON
+  ROOM
+  EQUIPMENT
+  OTHER
+}
+
+/// ACTIVE: bookable. INACTIVE: out of service, no new assignments, existing ones kept. ARCHIVED:
+/// retired and read-only (archived_at set, CHECK), existing assignments kept as history.
+enum SchedulingResourceStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+/// Something an event can occupy: a person, room, piece of equipment or anything else. Business-wide
+/// (not tied to a calendar). Exclusive: one occupying event at a time unless an overlap is accepted on
+/// purpose. PERSON resources are standalone in S2 (no People link, docs/scheduling-s2.md §9).
+model SchedulingResource {
+  id           String                   @id @db.Uuid
+  businessId   String                   @map("business_id") @db.Uuid
+  name         String
+  description  String?
+  resourceType SchedulingResourceType   @map("resource_type")
+  status       SchedulingResourceStatus @default(ACTIVE)
+  /// #RRGGBB or NULL (CHECK).
+  colour       String?
+  version      Int                      @default(1)
+  createdById  String                   @map("created_by_id") @db.Uuid
+  updatedById  String                   @map("updated_by_id") @db.Uuid
+  createdAt    DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  /// Set exactly while ARCHIVED (CHECK).
+  archivedAt   DateTime?                @map("archived_at") @db.Timestamptz
+
+  business    Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "scheduling_resources_business_fkey")
+  assignments SchedulingEventResource[]
+
+  @@unique([businessId, id])
+  /// The directory: by status, then name.
+  @@index([businessId, status, name, id])
+  @@index([businessId, name, id])
+  @@map("scheduling_resources")
+}
+
+/// One resource assigned to one event. Never deleted: removing it sets removed_at (and frees the time).
+/// At most one live row per (event, resource) (partial unique index in the migration). Times are not
+/// copied: occupancy is always read from the event itself.
+model SchedulingEventResource {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  eventId     String    @map("event_id") @db.Uuid
+  resourceId  String    @map("resource_id") @db.Uuid
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  /// Set together with removed_by_id (CHECK). The only columns bos_app may update.
+  removedAt   DateTime? @map("removed_at") @db.Timestamptz
+  removedById String?   @map("removed_by_id") @db.Uuid
+
+  business Business           @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "scheduling_event_resources_business_fkey")
+  event    SchedulingEvent    @relation(fields: [businessId, eventId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_event_resources_event_fkey")
+  resource SchedulingResource @relation(fields: [businessId, resourceId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduling_event_resources_resource_fkey")
+
+  @@unique([businessId, id])
+  @@map("scheduling_event_resources")
 }

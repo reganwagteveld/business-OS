@@ -67,7 +67,7 @@ describe('navigation into and out of the Customer Zone', () => {
   it('Zones not built yet stay honest "coming soon" cards, and Zones this role cannot open are not shown at all', async () => {
     mountApp(createFakeApi({ alpha: emptyBusiness() }));
     await screen.findByText('Welcome to Alpha Plumbing.');
-    for (const zone of ['People', 'Operations', 'Settings']) {
+    for (const zone of ['Operations', 'Settings']) {
       expect(screen.getByLabelText(`${zone} Zone — coming soon`)).toBeTruthy();
       expect(screen.queryByRole('button', { name: new RegExp(`Open the ${zone}`) })).toBeNull();
     }

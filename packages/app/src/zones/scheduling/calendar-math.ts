@@ -162,3 +162,42 @@ export function localParts(instant: string, timeZone: string): { date: string; t
   const w = wallTimeOf(Date.parse(instant), timeZone);
   return { date: dateIn(Date.parse(instant), timeZone), time: `${String(w.hour).padStart(2, '0')}:${String(w.minute).padStart(2, '0')}` };
 }
+
+// ---- resource timeline geometry (S2, docs/scheduling-s2.md) --------------------------------------
+
+/** Each shown day as [start, end) instants in the zone: 23, 24 or 25 hours long where the clocks change. */
+export function dayBounds(range: ViewRange, timeZone: string): { day: string; start: number; end: number }[] {
+  return range.days.map((day) => ({ day, start: startOfDay(day, timeZone), end: startOfDay(addDays(day, 1), timeZone) }));
+}
+
+/**
+ * Where an instant falls along the timeline, as a fraction 0–1. Every day gets the same width and an
+ * instant is placed by its share of its own local day, so a short or long daylight-saving day still lines
+ * up with its column. Instants outside the range are clamped.
+ */
+export function timelineFraction(instant: number, bounds: { start: number; end: number }[]): number {
+  if (bounds.length === 0) return 0;
+  if (instant <= bounds[0]!.start) return 0;
+  const n = bounds.length;
+  for (let i = 0; i < n; i++) {
+    const b = bounds[i]!;
+    if (instant < b.end) return (i + (instant - b.start) / (b.end - b.start)) / n;
+  }
+  return 1;
+}
+
+/** Ids of the occupying bookings in one resource row that overlap another (an accepted overlap, half-open). */
+export function overlappingIds(events: SchedulingEvent[]): Set<string> {
+  const occupying = events
+    .filter((e) => e.status === 'SCHEDULED' && !e.archivedAt && e.blocksAvailability)
+    .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+  const ids = new Set<string>();
+  for (let i = 0; i < occupying.length; i++) {
+    for (let j = i + 1; j < occupying.length; j++) {
+      if (Date.parse(occupying[j]!.startAt) >= Date.parse(occupying[i]!.endAt)) break;
+      ids.add(occupying[i]!.id);
+      ids.add(occupying[j]!.id);
+    }
+  }
+  return ids;
+}

@@ -5,6 +5,8 @@ import type { SchedulingClient } from '../../api/scheduling';
 import { Problem } from '../problem';
 import { useLoad } from '../use-load';
 import { formatDateTime } from './calendar-math';
+import { STATUS_LABEL, TYPE_LABEL } from './resource-labels';
+import { ConflictList } from './resource-picker';
 
 /** One event: when (in the calendar's zone), where, status, overlaps; edit, cancel and archive as permitted. */
 export function EventDetail({ client, slug, id, calendars, locale, canUpdate, canCancel, onEdit, onChanged, onClose, onSessionEnded }: {
@@ -62,6 +64,11 @@ export function EventDetail({ client, slug, id, calendars, locale, canUpdate, ca
             </DialogDescription>
             <dl className="mt-4 grid grid-cols-[8rem_1fr] gap-x-3 gap-y-2 text-sm">
               <dt className="text-muted-foreground">Calendar</dt><dd>{calendar?.name ?? 'Archived calendar'} ({zone})</dd>
+              {event.resources.length > 0 ? (
+                <><dt className="text-muted-foreground">Resources</dt><dd>
+                  <ul>{event.resources.map((r) => <li key={r.id}>{r.name} <span className="text-muted-foreground">({TYPE_LABEL[r.type]}{r.status !== 'ACTIVE' ? `, ${STATUS_LABEL[r.status].toLowerCase()}` : ''})</span></li>)}</ul>
+                </dd></>
+              ) : null}
               {event.location ? <><dt className="text-muted-foreground">Location</dt><dd>{event.location}</dd></> : null}
               {event.customer ? <><dt className="text-muted-foreground">Customer</dt><dd>{event.customer.displayName}</dd></> : null}
               {event.description ? <><dt className="text-muted-foreground">Notes</dt><dd className="whitespace-pre-wrap">{event.description}</dd></> : null}
@@ -70,7 +77,8 @@ export function EventDetail({ client, slug, id, calendars, locale, canUpdate, ca
             {data.conflicts.length > 0 ? (
               <Alert tone="warning" className="mt-4">
                 <AlertDescription>
-                  Overlaps {data.conflicts.map((c) => c.title).join(', ')} on this calendar.
+                  <p>This event overlaps other bookings (the overlap was kept on purpose):</p>
+                  <ConflictList conflicts={data.conflicts} calendarName={calendar?.name ?? 'this calendar'} locale={locale} timeZone={zone} />
                 </AlertDescription>
               </Alert>
             ) : null}

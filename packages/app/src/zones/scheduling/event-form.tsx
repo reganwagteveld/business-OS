@@ -1,8 +1,9 @@
-import type { SchedulingCalendar, SchedulingConflict, SchedulingEvent } from '@business-os/contracts';
+import { parseWallTime, resolveWallTime, type SchedulingCalendar, type SchedulingConflict, type SchedulingEvent, type SchedulingResourceRef } from '@business-os/contracts';
 import { Alert, AlertDescription, AlertTitle, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle, Field, Input, Select, Textarea } from '@business-os/ui';
 import { useState, type FormEvent } from 'react';
 import type { SchedulingClient, WriteOutcome } from '../../api/scheduling';
-import { formatDateTime, localParts } from './calendar-math';
+import { localParts } from './calendar-math';
+import { ConflictList, ResourcePicker } from './resource-picker';
 
 export interface EventDraft { date: string; start: string; endDate: string; end: string }
 
@@ -39,6 +40,8 @@ export function EventForm({ client, slug, calendars, initialCalendarId, draft, e
   const [fields, setFields] = useState<Record<string, string>>({});
   const [ambiguous, setAmbiguous] = useState(false);
   const [conflicts, setConflicts] = useState<SchedulingConflict[] | null>(null);
+  const [resources, setResources] = useState<SchedulingResourceRef[]>(event?.resources ?? []);
+  const resourcesChanged = !event || resources.map((r) => r.id).sort().join() !== event.resources.map((r) => r.id).sort().join();
 
   const setTime = (key: keyof EventDraft, value: string) => {
     setTimes((t) => ({ ...t, [key]: value }));
@@ -49,6 +52,19 @@ export function EventForm({ client, slug, calendars, initialCalendarId, draft, e
   const local = (date: string, time: string) => ({
     local: `${date}T${time}`, timeZone: calendar.timeZone, ...(disambiguation ? { disambiguation } : {}),
   });
+
+  /** The form's interval as instants, for the advisory availability check (the server resolves it again on save). */
+  const instant = (date: string, time: string): string | null => {
+    const wall = parseWallTime(`${date}T${time}`);
+    if (!wall) return null;
+    const r = resolveWallTime(wall, calendar.timeZone, disambiguation ?? undefined);
+    return r.ok ? new Date(r.instant).toISOString() : null;
+  };
+  const startInstant = instant(times.date, times.start);
+  const endInstant = instant(times.endDate, times.end);
+  const interval = startInstant && endInstant && Date.parse(endInstant) > Date.parse(startInstant)
+    ? { start: startInstant, end: endInstant }
+    : { problem: 'Enter a start and end time that exist in this time zone, with the end after the start.' };
 
   async function save(enforceConflicts: boolean) {
     setBusy(true);
@@ -68,6 +84,7 @@ export function EventForm({ client, slug, calendars, initialCalendarId, draft, e
       if (blocks !== event.blocksAvailability) patch.blocksAvailability = blocks;
       if (calendarId !== event.calendarId) patch.calendarId = calendarId;
       if (sendTimes) Object.assign(patch, { start: body.start, end: body.end });
+      if (resourcesChanged) patch.resourceIds = resources.map((r) => r.id);
       if (Object.keys(patch).length === 2) {
         setBusy(false);
         onClose();
@@ -75,12 +92,14 @@ export function EventForm({ client, slug, calendars, initialCalendarId, draft, e
       }
       outcome = await client.updateEvent(slug, event.id, patch);
     } else {
-      outcome = await client.createEvent(slug, { calendarId, ...body });
+      outcome = await client.createEvent(slug, { calendarId, ...body, ...(resources.length > 0 ? { resourceIds: resources.map((r) => r.id) } : {}) });
     }
     setBusy(false);
     switch (outcome.kind) {
       case 'ok':
-        onSaved(outcome.data.event, outcome.data.conflicts.length > 0 ? 'Saved. It overlaps other events on this calendar.' : event ? 'Changes saved.' : 'Event added.');
+        onSaved(outcome.data.event, outcome.data.conflicts.length > 0
+          ? outcome.data.conflicts.some((c) => c.kind === 'resource') ? 'Saved. It overlaps other bookings of the same resources or calendar.' : 'Saved. It overlaps other events on this calendar.'
+          : event ? 'Changes saved.' : 'Event added.');
         return;
       case 'scheduling_conflict':
         setConflicts(outcome.conflicts);
@@ -95,7 +114,8 @@ export function EventForm({ client, slug, calendars, initialCalendarId, draft, e
         return;
       case 'conflict':
         setError(outcome.code === 'stale' ? 'Someone else changed this event. Close and open it again to see the latest version.'
-          : outcome.code === 'archived_reference' ? 'That calendar has been archived. Choose another calendar.'
+          : outcome.code === 'archived_reference' ? 'A calendar or resource you chose has been archived. Choose another one.'
+          : outcome.code === 'resource_inactive' ? 'A resource you added is inactive and cannot be booked. Remove it or choose another.'
           : 'This event can no longer be changed.');
         return;
       case 'unauthenticated':
@@ -161,14 +181,14 @@ export function EventForm({ client, slug, calendars, initialCalendarId, draft, e
               <span className="block text-xs text-muted-foreground">Other blocking events on this calendar cannot overlap it unless you allow it.</span>
             </span>
           </label>
+          <ResourcePicker client={client} slug={slug} selected={resources} onChange={(next) => { setResources(next); setConflicts(null); }}
+            interval={interval} calendarId={calendarId} eventId={event?.id} locale={locale} timeZone={calendar.timeZone} />
           {conflicts ? (
             <Alert tone="warning" role="alert">
-              <AlertTitle>This overlaps {conflicts.length === 1 ? 'another event' : `${conflicts.length} other events`} on {calendar.name}</AlertTitle>
+              <AlertTitle>{conflicts.some((c) => c.kind === 'resource') ? 'This clashes with existing bookings' : `This overlaps ${conflicts.length === 1 ? 'another event' : `${conflicts.length} other events`} on ${calendar.name}`}</AlertTitle>
               <AlertDescription>
-                <ul className="mt-1 list-disc pl-5">
-                  {conflicts.map((c) => <li key={c.eventId}>{c.title}: {formatDateTime(c.startAt, locale, calendar.timeZone)}</li>)}
-                </ul>
-                Nothing was saved. Change the time, or keep the overlap.
+                <ConflictList conflicts={conflicts} calendarName={calendar.name} locale={locale} timeZone={calendar.timeZone} />
+                Nothing was saved. Change the time or the resources, or keep the overlap.
               </AlertDescription>
             </Alert>
           ) : null}
