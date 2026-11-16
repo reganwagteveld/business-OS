@@ -1,6 +1,7 @@
 # Administration A2: business settings, team access and roles
 
-Status: **A2-0 audit and plan, for Regan's approval.** Nothing here is applied to production.
+Status: **A2-0 audit and plan. Decisions D-A2-1..13 APPROVED by Regan on 2026-11-16 08:44Z as recommended**, with the six
+mandatory requirements in §12. Nothing here is applied to production.
 Audited against `main` at 81ff625 (2026-11-16). Branch for this document and A2-A: `claude/project-thread-ouwgnj`.
 
 The short version: most of the membership machinery A2 asks for **already exists** from Phase 1b (PR 5): four roles,
@@ -266,9 +267,8 @@ Errors follow the existing mapping: 400 `invalid_input` with field names, 403, 4
 ## 8. Migration dependencies and ordering
 
 - Newest on `main`: `20261130000000_finance_catalog` (applied to production per the F7-A thread).
-- Open branches: **PR 64 (E1) and PR 68 (P3-A) both use `20261201000000`** (`_communications_erasure` and
-  `_people_leave_policies`). Prisma orders by full folder name so this works, but it is a collision to resolve before
-  either merges. Flagged to the coordinator.
+- Open branches: PR 64 (E1) `20261201000000_communications_erasure`; PR 68 (P3-A) was renamed to
+  `20261204000000_people_leave_policies` after this audit flagged the collision (both had used `20261201000000`).
 - A2-A uses **`20261202000000_business_profile`**; A2-B reserves `20261203000000_membership_lifecycle` and its
   privileged file `005_member_emails.sql` (E1 already takes `004`). Re-check both before each PR leaves draft; rename
   if anything newer lands first.
@@ -281,14 +281,14 @@ Errors follow the existing mapping: 400 `invalid_input` with field names, 403, 4
 
 | Stage | Scope | Migration | Depends on | Model |
 |---|---|---|---|---|
-| **A2-A** Business profile | schema + `GET/PATCH /business` + validation + audit + tests; Settings → Business profile screen (small, uses existing form patterns) | yes | none | Opus build here (Sonnet later stages per brief) |
+| **A2-A** Business profile | schema + `GET/PATCH /business` + validation + audit + tests (API only) | yes | none | Opus |
 | **A2-B** Membership lifecycle | G1–G10, G14: owner lock, conditional revoke, one open invite, resend, delivery status, suspend/reactivate, transfer/step-down, leave, member emails, eager C2 invalidation, actor re-check | yes | A2-A merged (shared migration order), C2 ack on §3.10 | Opus |
 | **A2-C** Roles & permissions | matrix tests pinning §5, `GET /access/roles`, role descriptions; no grant changes | no | A2-B | Opus |
-| **A2-D** Administration UI | Settings Zone goes `built`: Business profile, Team members, Invitations, Roles & permissions; permission-denied, empty, loading, error states; confirmation dialogs; light/dark, 390 px | no | A2-A..C APIs | Sonnet |
+| **A2-D** Administration UI | Settings Zone goes `built`: Business profile (A2-A API), Team members, Invitations, Roles & permissions; permission-denied, empty, loading, error states; confirmation dialogs; light/dark, 390 px | no | A2-A..C APIs | Sonnet |
 | **A2-E** Security & integration | concurrency suites (two connections), cross-business switching, revoked-member access across every Zone route, escalation attempts, audit viewer API, RLS regression proof | no | A2-B..D | Opus |
 
-Change from the brief: business-profile UI ships with A2-A (one small screen) so A2-A is testable end to end; the rest
-of the Settings UI stays in A2-D. Tests ship with every stage; A2-E is the cross-cutting suite.
+All Settings UI, including the business profile screen, is A2-D (Sonnet, per Regan). Tests ship with every stage;
+A2-E is the cross-cutting suite. Each stage gets its own thread, branch and draft PR.
 
 ## 10. Risks
 
@@ -318,4 +318,19 @@ of the Settings UI stays in A2-D. Tests ship with every stage; A2-E is the cross
 | D-A2-12 | Eager mailbox-credential invalidation on removal/suspension (C2 coordination) | Yes |
 | D-A2-13 | Invitation expiry stays 7 days; resend throttle 60 s | Yes |
 
-A2-A proceeds on D-A2-2, -3 and -4 as recommended (draft, reversible). A2-B waits for D-A2-6..12.
+All approved 2026-11-16.
+
+## 12. Mandatory requirements added at approval (Regan, 2026-11-16)
+
+1. Fix the last-owner race (§6.1) and prove the invariant under simultaneous demotion, removal, suspension and
+   ownership transfer (A2-B, two-connection tests).
+2. Ownership transfer: transactional, explicitly confirmed, audited, active members only; no step-up auth in v1.
+3. Eager mailbox-credential invalidation coordinated with C2: in-flight jobs, refresh leases and credential-version
+   fencing must not allow provider operations after revocation (C2 review requested before A2-B builds it).
+4. Invitation acceptance and revocation mutually exclusive under concurrency; history and email protections kept.
+5. Re-validate the acting member's authority inside every A2 membership-changing transaction (`lockActor`, used
+   already by A2-A's profile update).
+6. Verify the complete migration order before requesting any migration approval.
+
+No merges, production migrations or deployments without separate approval. Existing grants and tenant isolation stay
+unchanged unless a separately reviewed change is necessary.

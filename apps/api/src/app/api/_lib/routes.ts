@@ -115,6 +115,8 @@ function errorResponse(request: Request, error: unknown): Response {
   const message = error instanceof Error ? error.message : '';
   const code = (error as { code?: string } | null)?.code;
   if (/at least one owner/.test(message)) return fail(request, 409, 'last_owner');
+  // Administration A2-A: the businesses time-zone guard (the API checks first; this is the backstop).
+  if (/unknown time zone/.test(message)) return fail(request, 400, 'invalid_input');
   // Database guarantees surfacing as client errors: a reference to another business's record (or a
   // primary contact that is not this customer's), or a CHECK the schema did not catch. Never details.
   if (code === 'P2003' || /foreign key constraint/i.test(message)) return fail(request, 400, 'invalid_reference');
