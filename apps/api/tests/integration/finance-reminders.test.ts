@@ -351,8 +351,9 @@ describe('pre-dispatch balance check (financial correctness)', () => {
     expect((await rowsOf(voided.id))[0]).toMatchObject({ status: 'SKIPPED', outcome_code: 'not_issued' });
     const skippedAudit = await audits((await rowsOf(settledLater.id))[0].id);
     expect(skippedAudit.map((a) => a.action)).toEqual(['finance.system.reminder.skipped']);
-    expect(skippedAudit[0].metadata).toMatchObject({ reason: 'settled' });
-    expect(JSON.stringify(skippedAudit[0].metadata)).not.toMatch(/80/); // no amounts in the audit log
+    // Exactly these keys: no amounts (or anything else) in the audit log. Matched exactly, not by grepping the
+    // JSON, which also contains a random invoice id.
+    expect(skippedAudit[0].metadata).toEqual({ invoiceId: settledLater.id, offsetDays: '7', reason: 'settled' });
     // A READY reminder whose invoice is then paid is skipped at its next check.
     await pay(A, c, partial.id, '66.67');
     await dueNow(A);
