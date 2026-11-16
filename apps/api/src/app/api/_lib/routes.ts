@@ -48,7 +48,7 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   // People (migration 20261118000000_people, docs/people-data-model.md §4).
   PE001: [409, 'invalid_transition'], PE002: [409, 'manager_cycle'], PE003: [400, 'invalid_manager'], PE004: [409, 'immutable'],
   PE005: [409, 'has_direct_reports'], PE006: [409, 'terminated'], PE007: [409, 'archived_reference'], PE008: [409, 'in_use'],
-  // People P3-A (migration 20261201000000_people_leave_policies, docs/people-leave-p3.md).
+  // People P3-A (migration 20261204000000_people_leave_policies, docs/people-leave-p3.md).
   PE009: [409, 'stale'], PE010: [409, 'archived'], PE011: [400, 'effective_date_order'], PE012: [409, 'inactive_reference'],
   // Communications C1 (migration 20261119300000_communications): history guards.
   CM001: [409, 'immutable'], CM002: [409, 'immutable'], CM003: [409, 'immutable'], CM004: [400, 'invalid_date'],

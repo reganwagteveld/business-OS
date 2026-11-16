@@ -1,7 +1,7 @@
 // People P3-A (docs/people-leave-p3.md): leave types, leave policies, their revision history and the
 // effective-dated assignment of a policy to an employee. Tenant tables with forced RLS and composite
 // (business_id, …) foreign keys; the CHECKs, guard triggers, partial unique indexes and column grants
-// that Prisma cannot express live in migration 20261201000000_people_leave_policies. No DELETE grant on
+// that Prisma cannot express live in migration 20261204000000_people_leave_policies. No DELETE grant on
 // any of them: types and policies are deactivated or archived, revisions are append-only, assignments
 // are closed once.
 //

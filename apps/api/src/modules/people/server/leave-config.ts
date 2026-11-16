@@ -5,7 +5,7 @@ import 'server-only';
 //
 // Every change is conditional on the version the caller read (`UPDATE … WHERE id = ? AND version = ?`),
 // so two administrators editing the same policy can never both win; the loser gets 409 stale. The
-// database holds every rule again (migration 20261201000000_people_leave_policies): the shapes and rule
+// database holds every rule again (migration 20261204000000_people_leave_policies): the shapes and rule
 // combinations, active-name uniqueness, the fixed leave type and unit, archived rows being read-only,
 // the version advancing by one, archive-while-in-use, and RLS.
 //

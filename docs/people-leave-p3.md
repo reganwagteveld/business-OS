@@ -1,7 +1,7 @@
 # People P3: Leave Management (audit, staged plan, decisions, P3-A)
 
 > Status: **P3-A draft PR for independent audit.** Not merged, not migrated, not deployed. Migration
-> `20261201000000_people_leave_policies` is **not applied** anywhere except local and CI test databases.
+> `20261204000000_people_leave_policies` is **not applied** anywhere except local and CI test databases.
 > P3-A decisions (§3.1) were built as proposed defaults and are **pending Regan's approval**. Decisions
 > for later stages (§3.2) are proposals only; nothing for P3-B to P3-E is built.
 
@@ -15,7 +15,7 @@
 | Scheduling S1/S2 | Business-wide calendars, events, resources (`PERSON`, `ROOM`, …). PERSON resources are standalone (D-S2-1): no employee link, and `people-boundaries.test.ts` forbids Scheduling reading People. Private events and busy-only privacy (ADR 0006 §4–§7) are **not built**. Conflicts show event titles to every `scheduling:read` holder. | Leave must not be written into Scheduling until P3-E is approved: a leave event today would expose its title (and so possibly a reason) to everyone. The People-owned link path in `docs/scheduling-s2.md` §9 is the integration boundary. |
 | Concurrency patterns | Optimistic `version` with conditional `updateMany`; guard triggers forcing version +1; `FOR SHARE` on referenced rows vs `FOR UPDATE` on archive; one-open-row unique indexes; ordered locks (ADR 0007, ADR 0008); deterministic race tests via `pg_blocking_pids`; pooler re-runs in CI. | P3-A reuses all of these. The P3-C balance ledger will lock one balance row per employee and leave type (`FOR UPDATE`) so two approvals cannot overspend (D-P3-20). |
 | Reusable pieces | Route wrapper (`tenantRoute`), cursor helpers bound to filters (F7-A), audit with references only, `effectiveDateOf`, People org-unit and assignment patterns, Finance F7-A catalog lifecycle (active/inactive + archive/restore). | Used as-is. No new shared component. |
-| Open PRs and migrations | Main's newest migration: `20261130000000_finance_catalog`. Open: PR 64 Communications E1 (`20261129000000_communications_erasure`), PR 66 Neon housekeeping (no new migration), PR 53 and 48 (docs/tooling). | P3-A migration `20261201000000_people_leave_policies` sorts after all of them and depends on none. Shared files touched: `tenancy.prisma` (four relation lines), `people.prisma` (one back-relation), `routes.ts` (error maps), `errors.ts`, `app-client.ts`, `contracts/src/index.ts`, `api-v1.json`, `ci.yml` (one step). Expect trivial merge conflicts only. |
+| Open PRs and migrations | Main's newest migration: `20261130000000_finance_catalog`. Open: PR 64 Communications E1 (`20261201000000_communications_erasure`); `20261202000000` and `20261203000000` are reserved for other open work, PR 66 Neon housekeeping (no new migration), PR 53 and 48 (docs/tooling). | P3-A migration `20261204000000_people_leave_policies` sorts after all of them and depends on none. Shared files touched: `tenancy.prisma` (four relation lines), `people.prisma` (one back-relation), `routes.ts` (error maps), `errors.ts`, `app-client.ts`, `contracts/src/index.ts`, `api-v1.json`, `ci.yml` (one step). Expect trivial merge conflicts only. |
 
 ## 2. Staged plan
 
@@ -23,7 +23,7 @@ Each stage: own branch, own draft PR, own tests, ChatGPT audit, owner approval b
 
 | Stage | Scope | Depends on | Migration |
 |---|---|---|---|
-| **P3-A** (this PR) | Leave types, leave policies (rules), policy revisions, effective-dated policy assignment to employees. Config API only, no UI. | — | `20261201000000_people_leave_policies` |
+| **P3-A** (this PR) | Leave types, leave policies (rules), policy revisions, effective-dated policy assignment to employees. Config API only, no UI. | — | `20261204000000_people_leave_policies` |
 | **P3-B** | Requests and approvals: submit, withdraw, approve, reject, cancel after approval; append-only transition history; overlap, notice, backdating, waiting-period and balance checks; deduction and reversal through the ledger under its lock. Self-service through the `user_id` link. | P3-A, P3-C, D-P3-12 to 19 | new |
 | **P3-C** | Balance ledger and accrual foundation: append-only ledger (opening balance, grant, accrual, deduction, reversal, adjustment, carry-over, expiry), one locked balance row per employee and type, as-of-date balances, explicit idempotent accrual run (no cron). | P3-A, D-P3-20/21 | new |
 | **P3-D** | Leave UI in the People Zone (Sonnet, on the established contracts): My Leave, Request Leave, Balances, Team Requests, Approval Queue, Leave Calendar, Leave Types & Policies. Role-aware tabs. | P3-A to C, D-P3-24 | none |
@@ -46,7 +46,7 @@ Each stage: own branch, own draft PR, own tests, ChatGPT audit, owner approval b
 | D-P3-8 | Termination | Assignments stay open as history; no new assignment while terminated; rehire allows them again. P1 lifecycle code is unchanged. What happens to a balance at termination is a P3-C decision (no payout calculation). |
 | D-P3-9 | Effective dates | Business calendar date, default today, never in the future (as P1); a replacement or end cannot precede the current assignment's start. |
 | D-P3-10 | Business purge | Leave rows cascade with the business, as every People table (PD-9). Nothing else deletes them. |
-| D-P3-11 | Migration | `20261201000000_people_leave_policies`, additive, no privileged SQL. |
+| D-P3-11 | Migration | `20261204000000_people_leave_policies`, additive, no privileged SQL. |
 
 ### 3.2 Later stages (proposals; need approval before that stage is built)
 

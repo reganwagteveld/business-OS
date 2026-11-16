@@ -6,7 +6,8 @@
 -- Ordering: depends on 20261118000000_people (people_employees, the PE SQLSTATE codes). It changes no
 -- existing table, column or row; it adds four tables. It sorts after Finance F7-A
 -- (20261130000000_finance_catalog, newest on main) and Communications E1
--- (20261129000000_communications_erasure, open PR 64) and depends on neither. No privileged SQL.
+-- (20261201000000_communications_erasure, open PR 64) and leaves 20261202000000-20261203000000 to other
+-- open work; it depends on none of them. No privileged SQL.
 --
 -- Configuration only: no leave requests, approvals or balances (P3-B, P3-C). No entitlement is derived
 -- from a country; every number is entered by the business.
