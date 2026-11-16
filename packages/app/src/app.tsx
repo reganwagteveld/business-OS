@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
 import { createCustomersClient, type CustomersClient } from './api/customers';
+import { createPeopleClient, type PeopleClient } from './api/people';
 import { createProjectsClient, type ProjectsClient } from './api/projects';
 import { createFinanceClient, type FinanceClient } from './api/finance';
 import { createReportingClient, type ReportingClient } from './api/reporting';
@@ -19,6 +20,7 @@ import { useLoad } from './zones/use-load';
 import type { BusinessContext } from './api/tenancy';
 import type { CurrentUser } from '@business-os/contracts';
 import { CustomerZone } from './zones/customers/customer-zone';
+import { PeopleZone } from './zones/people/people-zone';
 import { ProjectsZone } from './zones/projects/projects-zone';
 import { FinanceZone } from './zones/finance/finance-zone';
 import { ReportingZone } from './zones/reporting/reporting-zone';
@@ -43,6 +45,7 @@ export interface AppProps {
   customers?: CustomersClient;
   sales?: SalesClient;
   projects?: ProjectsClient;
+  people?: PeopleClient;
   finance?: FinanceClient;
   reporting?: ReportingClient;
   storage?: WorkspaceStorage;
@@ -60,12 +63,13 @@ type Mode = 'default' | 'choose' | 'new';
  * open the right one. Offline, server errors and an ended session each get their own screen, and
  * the active business is only ever one the server lists for you.
  */
-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, finance: financeOverride, reporting: reportingOverride, storage: storageOverride }: AppProps) {
+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, storage: storageOverride }: AppProps) {
   const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
   const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
   const customers = useMemo(() => customersOverride ?? createCustomersClient(apiBaseUrl, resolvedTransport), [customersOverride, apiBaseUrl, resolvedTransport]);
   const sales = useMemo(() => salesOverride ?? createSalesClient(apiBaseUrl, resolvedTransport), [salesOverride, apiBaseUrl, resolvedTransport]);
+  const people = useMemo(() => peopleOverride ?? createPeopleClient(apiBaseUrl, resolvedTransport), [peopleOverride, apiBaseUrl, resolvedTransport]);
   const projects = useMemo(() => projectsOverride ?? createProjectsClient(apiBaseUrl, resolvedTransport), [projectsOverride, apiBaseUrl, resolvedTransport]);
   const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
   const reporting = useMemo(() => reportingOverride ?? createReportingClient(apiBaseUrl, resolvedTransport), [reportingOverride, apiBaseUrl, resolvedTransport]);
@@ -210,6 +214,14 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         client={projects} customers={customers} context={active} userLabel={userLabel} initialProjectId={target} initialAction={intent}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
         onOpenCustomer={canReadCustomers ? (id) => open({ zone: 'customers', target: id }) : undefined}
+      />
+    );
+  } else if (active && current.zone === 'people') {
+    screen = (
+      <PeopleZone
+        key={`${slug}|${target ?? ''}|${intent ?? ''}`}
+        client={people} customers={customers} context={active} userLabel={userLabel} initialEmployeeId={target} initialAction={intent}
+        onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
   } else if (active && current.zone === 'finance') {
