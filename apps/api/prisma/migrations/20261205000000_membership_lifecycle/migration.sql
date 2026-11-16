@@ -3,6 +3,9 @@
 -- and one column grant. Row-Level Security on memberships and invitations is unchanged. Runs as bos_owner.
 -- The member-email function is in prisma/privileged/005_member_emails.sql (needs an administrative role).
 
+-- One transaction: a failure leaves nothing behind (docs/migration-readiness.md §7).
+BEGIN;
+
 -- AlterTable
 ALTER TABLE "memberships" ADD COLUMN     "suspended_at" TIMESTAMPTZ,
 ADD COLUMN     "suspended_by" UUID;
@@ -128,3 +131,5 @@ BEGIN
   END IF;
   RETURN NULL;
 END $$;
+
+COMMIT;
