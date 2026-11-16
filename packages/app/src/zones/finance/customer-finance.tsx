@@ -15,7 +15,7 @@ const SHOWN = 5;
  */
 export function CustomerFinance({ client, slug, customerId, locale, timeZone, onOpen, onSessionEnded }: {
   client: FinanceClient; slug: string; customerId: string; locale?: string; timeZone: string;
-  /** Opens a record in the Finance Zone (`invoice:<id>`, `quote:<id>` or `payment:<id>`). */
+  /** Opens a record in the Finance Zone (`invoice:<id>`, `quote:<id>`, `payment:<id>`, or F6-2 `statement:<customerId>:<currency>`). */
   onOpen: (target: string) => void; onSessionEnded: () => void;
 }) {
   const balances = useLoad(`cust-fin-bal|${slug}|${customerId}`, (signal) => client.balances(slug, { customerId, limit: 25 }, signal));
@@ -33,7 +33,12 @@ export function CustomerFinance({ client, slug, customerId, locale, timeZone, on
 
   return (
     <section aria-label="Finance" className="rounded-2xl border border-border bg-card p-6">
-      <h2 className="mb-4 text-sm font-semibold tracking-tight">Finance</h2>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold tracking-tight">Finance</h2>
+        {/* F6-2: a statement for this customer (finance:read, the same as this panel). */}
+        <button type="button" onClick={() => onOpen(`statement:${customerId}${bal.length === 1 ? `:${bal[0]!.currencyCode}` : ''}`)}
+          className="text-xs font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-ring">Statement</button>
+      </div>
       {loading ? <Skeleton rows={2} label="Loading finance…" /> : failed && failed.state.status === 'done' ? (
         <Problem outcome={failed.state.outcome} what="Finance for this customer" onRetry={() => [balances, invoices, quotes, payments].forEach((x) => x.reload())} onSessionEnded={onSessionEnded} />
       ) : (
@@ -44,6 +49,11 @@ export function CustomerFinance({ client, slug, customerId, locale, timeZone, on
                 <div key={b.currencyCode} className="rounded-xl border p-3">
                   <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Open on invoices ({b.currencyCode})</dt><dd className="font-semibold tabular-nums">{money(b.receivable, b.currencyCode)}</dd></div>
                   {isPositive(b.overdue) ? <div className="mt-1 flex justify-between gap-3 text-destructive"><dt>Overdue</dt><dd className="tabular-nums">{money(b.overdue, b.currencyCode)}</dd></div> : null}
+                  <div className="mt-2 text-right">
+                    <button type="button" onClick={() => onOpen(`statement:${customerId}:${b.currencyCode}`)} className="text-xs text-primary hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+                      {b.currencyCode} statement
+                    </button>
+                  </div>
                   {isPositive(b.creditAvailable) ? (
                     <div className="mt-1 flex justify-between gap-3"><dt className="text-muted-foreground">Credit not yet used</dt><dd className="tabular-nums">{money(b.creditAvailable, b.currencyCode)}</dd></div>
                   ) : null}

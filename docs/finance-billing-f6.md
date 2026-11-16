@@ -73,18 +73,104 @@ reminder sending (needs C2-C + owner approval).
   invoice of the template's customer and currency, attempts never decrease, no DELETE on either
   table. SQLSTATEs FN030–FN033.
 
-## 4. F6C design summary
+## 4. F6C design (as implemented in F6-2)
 
-- Statement for (customer, currency, from, to): opening balance = signed sum of all account events
-  before `from`; activity in range; closing balance = opening + activity. Events: invoice issued
-  (+total, issue date), credit note issued (−total), payment received (−amount, received date),
-  reversals and voids as offsetting entries on their own date. Allocations and credit applications
-  only match items, so they never move the account balance.
-- Outstanding invoices and ageing (current, 1-30, 31-60, 61-90, 90+ days past due) as of a date,
-  from the same counters as F2/F4. A consistency test proves closing balance = receivable −
-  unallocated payments − unapplied credit.
-- PDF via F5's renderer when F5 is merged; statements are regenerated on demand, the download is
-  audited with a content hash (D-F6-9).
+F6-2 adds customer statements and accounts-receivable ageing as of a date. It is read-only: no
+migration, no table, no stored balance and no second ledger. Every figure is computed on request from
+the F1–F3 records (`finance_documents`, `finance_payments`, `finance_payment_allocations`,
+`finance_credit_applications`), loaded in **one SQL statement** (one snapshot) by
+`finance/server/statements.ts`, and the pure functions in `finance/server/receivables-core.ts`. It
+changes nothing in F1–F5 or F6-1, sends nothing, and has no reminders, delivery states or schedule.
+
+### 4.1 Effective dates
+
+A record is in effect on calendar day D when `start ≤ D` and (`end` is null or `end > D`), in the
+business's time zone:
+
+| Record | start | end |
+|---|---|---|
+| Invoice / credit note (numbered only; discarded drafts never appear) | `issue_date` | void: `max(date(voided_at), issue_date)` |
+| Payment received (`direction = RECEIVED`) | `received_on` | reversal: `max(date(reversed_at), received_on)` |
+| Payment allocation | `max(date(created_at), payment received_on, invoice issue_date)` | `max(date(reversed_at), payment received_on, invoice issue_date)` |
+| Credit application | `max(date(created_at), credit note issue_date, invoice issue_date)` | `max(date(reversed_at), credit note issue_date, invoice issue_date)` |
+
+`date(t)` is `(t AT TIME ZONE business.time_zone)::date`. The "never before" rule guarantees that every
+allocation or application in effect links a payment, credit note and invoice that are themselves in
+effect. Together with the existing guards (an invoice can be voided only with no live allocations or
+credit, a credit note only with nothing applied, and reversing a payment reverses its allocations in the
+same instant), this makes the reconciliation below an identity on every day.
+
+### 4.2 Statement (D-F6-10)
+
+`GET /finance/statements?customerId&currencyCode&from&to` (inclusive range, `to` ≤ today). Account
+events: invoice issued (+total), credit note issued (−total), payment received (−amount), and each void
+or reversal as an offsetting entry on its own effective date. Allocations and credit applications are
+never entries and never move the balance. Opening balance = Σ events before `from`; closing = opening +
+Σ entries in range. Events after `to` never reach the statement. Within one day: invoices, credit notes,
+payments, then reversals and voids. One currency per statement, never converted. The response also
+carries the **position** at the end of `to` (aged buckets, unallocated payments, unapplied credit,
+`balanced`). More than 2,000 entries is refused (`409 statement_too_large`).
+
+### 4.3 Ageing (D-F6-11)
+
+`GET /finance/receivables-ageing?asOf&currencyCode&customerId&cursor&limit` (`asOf` defaults to today,
+may not be after it): per customer and currency, open invoice balances in **Current, 1–30, 31–60, 61–90,
+90+ days past due**, plus **No due date** (see 4.6), with unallocated payments and unapplied credit
+beside them, never netted into a bucket. Totals per currency cover every customer (not paginated); rows
+are keyset-paginated with a cursor bound to `asOf`. `GET /finance/receivables-ageing/detail` lists each
+open invoice (total, paid, credited, outstanding, days past due, bucket) and each credit separately.
+Outstanding = total − allocations in effect − credit applications in effect: the F2/F4 formula, applied
+to dated links instead of today's counters. Overdue = due date before the date, so due today is Current,
+as in F4 and R1.
+
+Reconciliation, per customer and currency and in the totals: `accountBalance` (Σ account events up to
+the date) = `receivable − unallocatedPayments − unappliedCredit`, returned as `balanced` (logged without
+amounts if it ever fails; the interface warns not to rely on the figures). As of today the ageing totals
+equal the Finance overview receivables (`invoiceReceivables`), and so R1's `finance.receivables_outstanding`
+and `finance.receivables_overdue` metrics, for every invoice not issued with a future date (tested).
+R1's registry is unchanged: its receivables metrics stay today-only snapshots.
+
+### 4.4 PDF and audit (D-F6-9)
+
+`GET /finance/statements/pdf?…` (same query) renders the statement on demand with the F5 template's
+fonts, margins, footer and branding (`pdf/statement.ts`, template `statement-standard@1`) and never
+stores it. Seller details are the current Finance settings and the customer's current billing details
+(a statement is not a sealed document). Characters the fonts cannot draw print as □ and are flagged
+(`X-Unsupported-Characters`), as in F5. Each download is audited as
+`finance.statement_pdf.downloaded` (target: the customer) with `currencyCode`, `from`, `to`,
+`fileSha256` of the bytes served and the template id. Never amounts, entries or customer details.
+
+### 4.5 Access and interface
+
+Statements and ageing: `finance:read` (OWNER, ADMIN, MANAGER; D-F6-3). PDF: `finance:documents_download`,
+the F5 download rule (MANAGER allowed, D3). All through the API under the existing tenant context and RLS;
+another business's customer is `404`. No client database access, no Tauri capability. The Finance Zone
+has a **Receivables** section (ageing with drill-down and a Statement action per row) and a statement
+screen; the customer page's Finance panel has a Statement action per currency.
+
+### 4.6 Ambiguities found in the existing code, and how F6-2 treats them
+
+1. **Voids, reversals, allocations and applications have no business date**, only database timestamps
+   stamped by triggers. They are dated in the business's *current* time zone; if the zone is changed
+   later, past timestamps re-date.
+2. **Effective time, not knowledge time.** Issue dates can be set in the future (no check refuses it) and
+   documents and payments can be back-dated. "As of" follows the dates on the records (D-F6-10), so a
+   back-dated record changes a statement that was produced earlier. Reproducing "as known at the time"
+   would need knowledge-time data and is not built.
+3. **The "never before the linked records" rule (4.1)** is F6-2's own choice, not an earlier decision.
+   Without it a future-dated invoice could show payments before it exists and the reconciliation would
+   not hold.
+4. A payment received on 1 March but allocated on 10 March is, as of 5 March, **unallocated credit**, and
+   the invoice is still fully open. The account balance is the same either way.
+5. **Conflict with the brief ("include invoices with a due date")**: F1 allows issued invoices without a
+   due date and F4/R1 count them as outstanding, never overdue. Excluding them would break the
+   reconciliation, so they are shown in a separate **No due date** column, inside the receivable total
+   and outside every aged bucket.
+6. **Future-dated invoices**: as of today they are not yet in effect, so ageing as of today can differ
+   from the F2/F4 counters (and R1) by exactly those invoices.
+7. **PDF hash**: F5 audits a stored file's recorded hash; a statement is never stored, so the audit carries
+   the hash of the bytes actually served (renders differ per request because the PDF records its
+   creation time).
 
 ## 5. Scheduler (implemented; inactive until the owner turns it on, §8)
 

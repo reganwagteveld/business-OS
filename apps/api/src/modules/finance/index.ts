@@ -2,6 +2,7 @@
 // F1: quotes, invoices, credit notes and their settings. F2: payments, allocations, reversals, credit
 // applications, settlement projections and reconciliation. F3: expense categories, expenses and payments made against expenses (direction PAID in the same payments ledger).
 // F6-1: recurring invoice schedules and the billing worker's steps (plan, claim, execute, fail).
+// F6-2: customer statements and accounts-receivable ageing as of a date.
 export {
   convertQuote, createCreditNote, createInvoice, createQuote, discardDraft, getDocument, issueDocument, listDocuments, transitionQuote, updateDraft,
   voidDocument,
@@ -29,6 +30,8 @@ export type {
   FinanceDetailQuery, FinancePeriodQuery, FinancePeriodRow, IssuedDocumentDetail, ReceivedPaymentDetail, ReportingUnit as FinanceReportingUnit,
 } from './server/reporting';
 // F5: generated documents (docs/finance-documents-f5.md): document branding, draft previews and immutable PDF versions.
+// F6-2: customer statements and receivables ageing as of a date (docs/finance-billing-f6.md §4). Read-only; statement PDFs are never stored.
+export { getReceivablesAgeing, getReceivablesAgeingDetail, getStatement, statementPdf } from './server/statements';
 export { currentLogo, getBranding, updateBranding, uploadLogo } from './server/branding';
 export type { BrandingInput } from './server/branding';
 export { contentDisposition, createPdfVersion, draftPreview, getPdfVersion, issueWithOriginal, listPdfVersions, pdfVersionFile } from './server/document-pdfs';

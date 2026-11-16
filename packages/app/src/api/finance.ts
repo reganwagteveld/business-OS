@@ -13,6 +13,8 @@ import {
   CancelRecurringInvoiceRequest, CreateRecurringInvoiceRequest, GenerateRecurringInvoiceResponse, ListRecurringInvoicesResponse, ListRecurringRunsResponse,
   RecurringInvoiceResponse, RecurringPreviewResponse, RecurringRunActionRequest, RecurringRunResponse, RecurringTransitionRequest, UpdateRecurringInvoiceRequest,
   type RecurringInvoice, type RecurringRun,
+  ReceivablesAgeingDetailResponse, ReceivablesAgeingResponse, StatementResponse,
+  type ReceivablesAgeing, type ReceivablesAgeingDetail, type Statement,
   type CreditNoteCredit, type CustomerBalance, type ExpenseCategory, type ExpensePayment, type FinanceDocument, type FinanceDocumentKind,
   type FinanceDocumentListItem, type FinanceExpense, type FinanceExpenseListItem, type FinancePayment, type InvoiceReceivables, type InvoiceSettlement,
 } from '@business-os/contracts';
@@ -38,6 +40,9 @@ export interface RecurringQuery { status: 'active' | 'paused' | 'cancelled' | 'e
 export interface RecurringPage { recurringInvoices: RecurringInvoice[]; nextCursor: string | null }
 export interface RecurringRunPage { runs: RecurringRun[]; nextCursor: string | null }
 export type { RecurringInvoice, RecurringRun };
+export type { ReceivablesAgeing, ReceivablesAgeingDetail, Statement };
+export interface StatementParams { customerId: string; currencyCode: string; from: string; to: string }
+export interface AgeingParams { asOf?: string; currencyCode?: string; customerId?: string; cursor?: string; limit?: number }
 export type { CreditNoteCredit, CustomerBalance, ExpensePayment, FinanceDocument, FinanceDocumentListItem, FinancePayment, InvoiceReceivables, InvoiceSettlement };
 
 /** The three document registers, as they appear in the API's paths. */
@@ -121,6 +126,12 @@ export interface FinanceClient {
   reversePayment(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<FinancePayment>>;
   balances(slug: string, query: { customerId?: string; currencyCode?: string; cursor?: string; limit?: number }, signal?: AbortSignal): Promise<Outcome<BalancePage>>;
   receivables(slug: string, signal?: AbortSignal): Promise<Outcome<InvoiceReceivables>>;
+  // ---- F6-2: statements and receivables ageing as of a date (read-only) --------------------------
+  statement(slug: string, params: StatementParams, signal?: AbortSignal): Promise<Outcome<Statement>>;
+  /** The statement as a PDF: rendered on demand, never stored, audited (finance:documents_download). */
+  statementPdf(slug: string, params: StatementParams, signal?: AbortSignal): Promise<Outcome<FetchedFile>>;
+  ageing(slug: string, params: AgeingParams, signal?: AbortSignal): Promise<Outcome<ReceivablesAgeing>>;
+  ageingDetail(slug: string, params: { asOf?: string; customerId: string; currencyCode: string }, signal?: AbortSignal): Promise<Outcome<ReceivablesAgeingDetail>>;
   settings(slug: string, signal?: AbortSignal): Promise<Outcome<FinanceSettingsData>>;
   updateSettings(slug: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<FinanceSettingsData>>;
   numberSeries(slug: string, signal?: AbortSignal): Promise<Outcome<NumberSeriesData[]>>;
@@ -341,6 +352,20 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
     },
     async receivables(slug, signal) {
       return get(`${base(slug)}/receivables`, InvoiceReceivablesResponse, (d) => d.receivables, signal);
+    },
+    async statement(slug, p, signal) {
+      return get(`${base(slug)}/statements` + qs({ customerId: p.customerId, currencyCode: p.currencyCode, from: p.from, to: p.to }), StatementResponse, (d) => d.statement, signal);
+    },
+    async statementPdf(slug, p, signal) {
+      const path = `${base(slug)}/statements/pdf` + qs({ customerId: p.customerId, currencyCode: p.currencyCode, from: p.from, to: p.to });
+      return file(await http.requestFile(path, 'application/pdf', signal), ['application/pdf']);
+    },
+    async ageing(slug, p, signal) {
+      return get(`${base(slug)}/receivables-ageing` + qs({ asOf: p.asOf, currencyCode: p.currencyCode, customerId: p.customerId, cursor: p.cursor, limit: p.limit }),
+        ReceivablesAgeingResponse, (d) => d.ageing, signal);
+    },
+    async ageingDetail(slug, p, signal) {
+      return get(`${base(slug)}/receivables-ageing/detail` + qs({ asOf: p.asOf, customerId: p.customerId, currencyCode: p.currencyCode }), ReceivablesAgeingDetailResponse, (d) => d.detail, signal);
     },
     async settings(slug, signal) {
       return get(`${base(slug)}/settings`, FinanceSettingsResponse, (d) => d.settings, signal);

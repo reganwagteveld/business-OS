@@ -32,7 +32,7 @@ const UNSUPPORTED = 'Some text uses characters the PDF fonts cannot show (for ex
 const STATUS_WORD: Record<string, string> = { ISSUED: 'issued', ACCEPTED: 'accepted', DECLINED: 'declined', EXPIRED: 'expired', VOID: 'void' };
 
 /** Failure wording for the file calls: a 503 means rendering failed and nothing was stored. */
-function fileFailure(out: Outcome<unknown>): string {
+export function fileFailure(out: Outcome<unknown>): string {
   if (out.kind === 'failed' && out.status === 503) return 'The PDF could not be made right now. Nothing was stored. Try again in a moment.';
   if (out.kind === 'invalid') return 'Business OS sent back something that is not a PDF. Nothing was saved. Try again.';
   if (out.kind === 'unreachable') return 'Business OS could not be reached. Check your connection and try again.';
@@ -61,7 +61,7 @@ export function useBlobSource<E extends HTMLImageElement>(blob: Blob | null) {
 }
 
 /** Saves the bytes under the server's file name. The browser shows its own download prompt or bar. */
-function saveFile(file: FetchedFile, fileName: string) {
+export function saveFile(file: FetchedFile, fileName: string) {
   const url = objectUrl(file.blob);
   if (!url) return;
   const a = document.createElement('a');

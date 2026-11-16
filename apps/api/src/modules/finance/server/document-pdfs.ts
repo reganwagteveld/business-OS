@@ -28,8 +28,8 @@ export type PdfReason = (typeof PDF_REASONS)[number];
 
 // ---- snapshot ---------------------------------------------------------------------------------------
 
-type Seller = { legalName: string; address: string | null; email: string | null; phone: string | null; identifiers: { label: string; value: string }[]; paymentInstructions: string | null };
-type BillTo = {
+export type Seller = { legalName: string; address: string | null; email: string | null; phone: string | null; identifiers: { label: string; value: string }[]; paymentInstructions: string | null };
+export type BillTo = {
   name: string; legalName: string | null; email: string | null; phone: string | null; addressLine1: string | null; addressLine2: string | null;
   city: string | null; region: string | null; postalCode: string | null; countryCode: string | null; taxNumber: string | null; taxNumberType: string | null;
   contact: { name: string; email: string | null } | null;
@@ -51,12 +51,12 @@ function countryName(code: string | null, locale: string): string | null {
   }
 }
 
-const sellerParty = (s: Seller): SnapshotParty => ({
+export const sellerParty = (s: Seller): SnapshotParty => ({
   name: s.legalName, lines: (s.address ?? '').split('\n').map((l) => l.trim()).filter(Boolean), identifiers: s.identifiers, email: s.email,
   phone: s.phone, attention: null,
 });
 
-const billToParty = (b: BillTo, locale: string): SnapshotParty => ({
+export const billToParty = (b: BillTo, locale: string): SnapshotParty => ({
   name: b.name,
   lines: [b.addressLine1, b.addressLine2, [b.city, b.region, b.postalCode].filter(Boolean).join(' '), countryName(b.countryCode, locale)]
     .filter((l): l is string => !!l && l.trim() !== ''),
