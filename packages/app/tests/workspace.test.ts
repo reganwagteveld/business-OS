@@ -21,6 +21,7 @@ function deps(opts: {
     listBusinesses: vi.fn(async () => opts.list ?? ({ kind: 'ok', data: [] } as Outcome<BusinessSummary[]>)),
     businessContext: vi.fn(async (slug: string) => (opts.context ? opts.context(slug) : ({ kind: 'ok', data: ctx(slug) } as Outcome<BusinessContext>))),
     createBusiness: vi.fn(async () => ({ kind: 'failed', status: 500 }) as Outcome<{ slug: string }>),
+    platformAccess: vi.fn(async () => ({ kind: 'ok', data: { canCreateBusiness: true } }) as Outcome<{ canCreateBusiness: boolean }>),
   };
   const storage = opts.storage ?? memoryStorage();
   return { auth, tenancy, storage, preferredSlug: opts.preferredSlug };

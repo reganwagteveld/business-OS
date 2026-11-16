@@ -127,6 +127,10 @@ export async function createBusinessFlow(tenancy: TenancyClient, input: { slug: 
       return { kind: 'rejected', message: 'Too many attempts. Please wait a minute and try again.' };
     case 'unauthenticated':
       return { kind: 'session-ended' };
+    case 'forbidden':
+      return result.code === 'business_creation_not_permitted'
+        ? { kind: 'rejected', message: 'Creating a business is not enabled for your account during the private beta.' }
+        : { kind: 'rejected', message: 'Business OS could not create your business. Please try again.' };
     case 'unreachable':
       return { kind: 'rejected', message: 'Cannot reach Business OS. Check your connection and try again.' };
     default:

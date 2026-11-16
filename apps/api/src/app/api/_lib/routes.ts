@@ -92,7 +92,7 @@ function errorResponse(request: Request, error: unknown): Response {
   if (error instanceof ServiceFailureError) return fail(request, error.status, error.code);
   if (error instanceof RuleViolationError) return json(request, 400, { error: error.code, message: error.detail });
   if (error instanceof TrustedPathError) {
-    const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400 }[error.reason];
+    const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400, business_creation_not_permitted: 403 }[error.reason];
     return fail(request, status, error.reason);
   }
   const state = sqlState(error);

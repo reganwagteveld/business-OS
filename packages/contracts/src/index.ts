@@ -98,7 +98,7 @@ import {
   UpdateContactRequest, UpdateCustomerRequest,
 } from './customers.ts';
 import {
-  AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, ChangeRoleRequest, CreateBusinessRequest, CreateBusinessResponse,
+  AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, ChangeRoleRequest, CreateBusinessRequest, CreateBusinessResponse, PlatformAccessResponse,
   CreateInvitationRequest, InvitationResponse, InvitationsResponse, ListBusinessesResponse, MemberResponse, MembersResponse, OkResponse,
 } from './tenancy.ts';
 
@@ -121,6 +121,7 @@ export const endpoints = {
   desktopToken: { method: 'POST', path: '/api/v1/auth/desktop/token', request: DesktopTokenRequest, response: DesktopTokenResponse },
   listBusinesses: { method: 'GET', path: '/api/v1/businesses', response: ListBusinessesResponse },
   createBusiness: { method: 'POST', path: '/api/v1/businesses', request: CreateBusinessRequest, response: CreateBusinessResponse },
+  platformAccess: { method: 'GET', path: '/api/v1/access', response: PlatformAccessResponse },
   acceptInvitation: { method: 'POST', path: '/api/v1/invitations/accept', request: AcceptInvitationRequest, response: AcceptInvitationResponse },
   businessContext: { method: 'GET', path: '/api/v1/b/:slug', response: BusinessContextResponse },
   listMembers: { method: 'GET', path: '/api/v1/b/:slug/members', response: MembersResponse },

@@ -97,6 +97,23 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   }, [location?.pathname, replaceLocation]);
 
   const user = 'user' in phase ? phase.user : null;
+
+  // Private beta: "create a business" is offered only with the explicit platform grant, read from the
+  // server for the signed-in user. Unknown, failed or denied all mean "not offered"; the server
+  // enforces the rule regardless of what the client shows.
+  const userId = user?.id ?? null;
+  const [access, setAccess] = useState<{ userId: string; canCreate: boolean } | null>(null);
+  const accessUser = userId && (phase.kind === 'no-workspace' || phase.kind === 'pick' || phase.kind === 'ready') ? userId : null;
+  useEffect(() => {
+    if (!accessUser) return;
+    const controller = new AbortController();
+    void tenancy.platformAccess(controller.signal).then((result) => {
+      if (!controller.signal.aborted) setAccess({ userId: accessUser, canCreate: result.kind === 'ok' && result.data.canCreateBusiness === true });
+    });
+    return () => controller.abort();
+  }, [accessUser, tenancy]);
+  const accessKnown = access !== null && access.userId === userId;
+  const canCreate = accessKnown && access.canCreate;
   useEffect(() => {
     if (user && next && SAFE_NEXT.test(next) && navigate) navigate(next);
   }, [user, next, navigate]);
@@ -157,8 +174,16 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     if (result.ok) setMode('default');
     return result;
   };
-  if (phase.kind === 'no-workspace') return <BusinessSetup onCreate={create} />;
-  if (mode === 'new') return <BusinessSetup onCreate={create} onBack={() => setMode('default')} />;
+  if (phase.kind === 'no-workspace') {
+    if (!accessKnown) return <Startup label="Checking your access" />;
+    if (!canCreate) return (
+      <Frame title="No workspace yet" subtitle="You are not a member of any business. Ask a business owner to invite you, then open the invitation link.">
+        <button type="button" onClick={signOut}>Sign out</button>
+      </Frame>
+    );
+    return <BusinessSetup onCreate={create} />;
+  }
+  if (mode === 'new' && canCreate) return <BusinessSetup onCreate={create} onBack={() => setMode('default')} />;
 
   const businesses = phase.businesses;
   if (phase.kind === 'pick' || mode === 'choose') {
@@ -169,7 +194,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
           setMode('default');
           workspace.select(slug);
         }}
-        onCreate={() => setMode('new')}
+        onCreate={canCreate ? () => setMode('new') : undefined}
         onSignOut={signOut}
         onBack={phase.kind === 'ready' ? () => setMode('default') : undefined}
         revoked={phase.kind === 'pick' ? phase.notice?.business : undefined}
@@ -273,10 +298,10 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         workspace.switchTo(next);
       }}
       onChooseBusiness={leaveToChooser}
-      onCreateBusiness={() => {
+      onCreateBusiness={canCreate ? () => {
         setRoute(HOME);
         setMode('new');
-      }}
+      } : undefined}
       onSignOut={signOut}
     >
       {screen}
