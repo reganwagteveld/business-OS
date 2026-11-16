@@ -97,6 +97,16 @@ export function serverViolations(files) {
       }
     }
 
+    // E1 (docs/communications-e1.md §8): only the privileged erasure routes receive the raw session token, and
+    // only the erasure service calls the bos_maint erasure functions.
+    if (/sessionToken:\s*true/.test(content) && !/^app\/api\/v1\/b\/\[slug\]\/communications\/(authorizations|erasures|legal-holds\/\[holdId\]\/release|retention\/apply-reduction)\/route\.ts$/.test(name)
+        && name !== 'app/api/_lib/routes.ts') {
+      errors.push(`session-token-only-for-erasure: ${name} asks for the raw session token; only the E1 privileged routes may`);
+    }
+    if (/app_private\.communications_(?!erasure_due)/.test(content) && name !== 'modules/communications/server/erasure.ts') {
+      errors.push(`erasure-functions-only-in-erasure-service: ${name} calls an E1 erasure function; only modules/communications/server/erasure.ts may`);
+    }
+
     // The bos_auth client can read password hashes and session data (data-model §5.1).
     if (name !== 'modules/identity/server/auth-adapter.ts' && importsOf(content).some((spec) => /(^|\/)core\/db\/auth-client(\.ts)?$/.test(spec))) {
       errors.push(`auth-client-only-in-identity: ${name} imports the bos_auth client; only modules/identity/server/auth-adapter.ts may`);

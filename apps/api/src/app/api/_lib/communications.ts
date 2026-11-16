@@ -54,3 +54,12 @@ export const memberUserIdOf = idOf('userId');
 export function businessMailboxActor(actor: Actor): BusinessMailboxActor {
   return { ...connectionViewer(actor), canAttest: canAttestBusinessMailbox(actor) };
 }
+
+export const erasureIdOf = idOf('erasureId');
+export const holdIdOf = idOf('holdId');
+
+/** The raw session token a privileged erasure route was handed (only those routes opt in; boundary rule). */
+export function sessionTokenOf(token: string | null): string {
+  if (!token) throw new Error('Privileged erasure route without a session token');
+  return token;
+}

@@ -70,10 +70,12 @@ type Row = {
   id: string; type: string; occurredAt: Date; actorType: 'USER' | 'SYSTEM' | 'AI'; actorUserId: string | null;
   customerId: string | null; contactId: string | null; subject: string | null; body: string | null; data: unknown; createdAt: Date;
   visibility: string; editedAt: Date | null; conversationId: string | null; messageId: string | null; deletedAt: Date | null;
+  erasedAt?: Date | null;
 };
 const select = {
   id: true, type: true, occurredAt: true, actorType: true, actorUserId: true, customerId: true, contactId: true,
   subject: true, body: true, data: true, createdAt: true, visibility: true, editedAt: true, conversationId: true, messageId: true, deletedAt: true,
+  erasedAt: true,
 } as const;
 
 export function toActivity(r: Row): ActivityDto {
@@ -82,7 +84,7 @@ export function toActivity(r: Row): ActivityDto {
     customerId: r.customerId, contactId: r.contactId, subject: r.subject, body: r.body,
     data: (r.data && typeof r.data === 'object' ? r.data : {}) as Record<string, unknown>, createdAt: r.createdAt.toISOString(),
     visibility: r.visibility === 'RESTRICTED' ? 'RESTRICTED' : 'STANDARD', editedAt: r.editedAt?.toISOString() ?? null,
-    conversationId: r.conversationId, messageId: r.messageId,
+    conversationId: r.conversationId, messageId: r.messageId, erasedAt: r.erasedAt?.toISOString() ?? null,
   };
 }
 
