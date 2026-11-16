@@ -7,19 +7,20 @@ The shared design system for the desktop (Tauri) and browser clients (architectu
 - `src/lib/utils.ts`: `cn()` for merging class names.
 - `showcase/`: a development-only page that shows the whole system. Run `pnpm --filter @business-os/ui showcase` and open http://localhost:5180 (add `?theme=dark` or `?theme=light`). It is not part of either app's build.
 
-## Visual identity
+## Visual identity and tokens (V2)
 
-Dark is the primary expression: midnight navy foundations, electric indigo, soft violet, lavender and dusty pink light, frosted glass and crisp white text with muted lavender secondary text. Light mode keeps the same identity on a lavender-mist canvas.
+The Pixa Design System V2 foundations (V2-B1, see `docs/ui/pixa-design-system-v2-a.md` §6–7 and `docs/ui/pixa-design-system-v2-b1.md`): neutral ink surfaces in dark, an indigo-tinted neutral canvas in light, one indigo accent, a violet focus ring, Inter bundled in `src/fonts` (OFL).
 
-## Tokens
+Layers in `src/styles.css`, and components only use semantic and scale tokens:
 
-Three layers, and components only use the last two:
+1. **Fonts**: Inter Variable (Latin, Latin Extended on demand) and a metric-matched fallback.
+2. **Palette** (`--pk-*`): raw colours, never mapped to Tailwind.
+3. **Scale tokens**: `--radius-{control,panel,dialog,pill}`, `--control-h-{sm,md,lg}`, `--row-h-{compact,default,comfortable}`, `--target-min`, layout (`--sidebar-w`, `--topbar-h`, `--content-max`), motion (`--duration-*`, `--ease-*`, 0 ms under reduced motion), type scale (`text-caption` … `text-display`).
+4. **Semantic tokens** with a light and dark value each: `--bg-{canvas,surface,sunken,raised,hover,selected}`, `--fg-{default,muted,subtle,accent,on-accent}`, `--border-{default,strong,input}`, `--accent-{solid,hover,subtle}`, `--focus-ring`, `--status-{success,warning,danger,info}-{fg,bg,border,solid,on-solid}`, `--disabled-{fg,bg}`, charts, overlay, shadows, glass and atmosphere. Tailwind names: `bg-canvas`, `text-fg-muted`, `border-line-strong`, `bg-accent-solid`, `text-status-danger-fg` …
+5. **Compatibility aliases**: every V1 name (`background`, `primary`, `muted-foreground`, `destructive` …) points at its V2 token, so existing screens keep working. `bg-accent` keeps its V1 meaning (selection tint); the V2 solid accent is `bg-accent-solid`. Aliases go in V2-E.
+6. **State recipes** (utilities): `focus-ring`, `focus-ring-inset`, `state-interactive`, `state-selected`, `state-disabled`, each with its forced-colours rule.
 
-1. **Palette** (`--pk-midnight`, `--pk-navy`, `--pk-indigo`, `--pk-electric`, `--pk-violet`, `--pk-lavender`, `--pk-pink`, `--pk-mist`, `--pk-ink`). Provisional approximations of the reference artwork. Not mapped to Tailwind on purpose, so components cannot use them.
-2. **Semantic tokens**, as Tailwind colours: `background`, `foreground`, `muted`, `muted-foreground`, `card`, `surface-raised`, `popover`, `primary` (+ `-hover`, `-foreground`), `secondary` (+ `-hover`, `-foreground`), `accent`, `ring`, `border`, `input`, `field`, `overlay`, and the status colours `success`, `warning`, `destructive`, `info`, each with a `-foreground` for solid fills.
-3. **Treatments**: `--glass-*` and `--atmo-*` variables used by `.bos-glass` and `.bos-atmosphere`.
-
-Theme selection is unchanged: the OS preference by default; a `.dark` or `.light` class on `<html>` overrides it. The dark tokens are written twice (OS preference and `.dark`); `tests/tokens.test.ts` fails if the two drift apart, and checks WCAG AA contrast for every text/background pair the components use in both themes.
+Theme selection is unchanged: the OS preference by default; a `.dark` or `.light` class on `<html>` overrides it. The dark tokens are written twice (OS preference and `.dark`); `tests/tokens.test.ts` fails if they drift, if a token is missing from either theme, if an alias stops resolving, or if any pair the components use falls below WCAG AA in either theme.
 
 ## Components
 
