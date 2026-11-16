@@ -659,10 +659,22 @@ describe('invoice list order (sort=due_asc)', () => {
     expect((await list(`status=all&limit=2&cursor=${byDue}`)).body.error).toBe('invalid_cursor');
     expect((await list(`status=all&sort=due_asc&limit=2&cursor=${byNew}`)).body.error).toBe('invalid_cursor');
     const forged = (v: Record<string, string>) => Buffer.from(JSON.stringify({ k: 'finance:INVOICE:due_asc', ...v }), 'utf8').toString('base64url');
-    for (const bad of [{ d: '2026-13-45', i: randomUUID() }, { d: 'later', i: randomUUID() }, { d: 'none', i: 'not-a-uuid' }]) {
+    const badCursors = [
+      { d: '2026-13-45', i: randomUUID() }, { d: 'later', i: randomUUID() }, { d: 'none', i: 'not-a-uuid' },
+      // Regex-shaped but not calendar dates (JavaScript would roll these into the next month).
+      { d: '2026-02-31', i: randomUUID() }, { d: '2026-04-31', i: randomUUID() }, { d: '2026-02-29', i: randomUUID() },
+      { d: '2100-02-29', i: randomUUID() }, { d: '2026-06-00', i: randomUUID() },
+    ];
+    for (const bad of badCursors) {
       const res = await list(`status=all&sort=due_asc&cursor=${forged(bad)}`);
       expect(res.status, JSON.stringify(bad)).toBe(400);
       expect(res.body.error).toBe('invalid_cursor');
+    }
+    // Real leap days are valid positions (2024 and 2000 are leap years).
+    for (const d of ['2024-02-29', '2000-02-29']) {
+      const res = await list(`status=all&sort=due_asc&limit=100&cursor=${forged({ d, i: randomUUID() })}`);
+      expect(res.status, d).toBe(200);
+      expect(res.body.documents.map((x) => x.id)).toEqual(expected);
     }
 
     // Unknown orders are refused; quotes and credit notes have no sort parameter.

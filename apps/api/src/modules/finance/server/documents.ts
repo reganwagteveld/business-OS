@@ -421,8 +421,9 @@ export async function listDocuments(db: AppTenantDb, kind: Kind, query: ListQuer
       if (!UUID.test(after.i) || (after.d !== 'none' && !DAY.test(after.d))) invalidCursor();
       if (after.d === 'none') where.push({ dueDate: null, id: { gt: after.i } });
       else {
+        // Strict calendar round-trip: Date normalises regex-shaped impossible days (2026-02-31 becomes 3 March).
         const d = dateOf(after.d);
-        if (Number.isNaN(d.getTime())) invalidCursor();
+        if (Number.isNaN(d.getTime()) || dayOf(d) !== after.d) invalidCursor();
         where.push({ OR: [{ dueDate: { gt: d } }, { dueDate: d, id: { gt: after.i } }, { dueDate: null }] });
       }
     }
