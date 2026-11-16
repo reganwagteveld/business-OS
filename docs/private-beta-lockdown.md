@@ -88,7 +88,7 @@ The rules are enforced in the database functions, not the script:
 Preconditions: CI green on PR 71's final commit, and Regan's production user id confirmed read-only (not inferred). The administrative connection must be available on the Mac (it is not saved there today).
 
 1. **Read-only preflight** (allowed without approval):
-   - Read `_prisma_migrations` and confirm the applied set is exactly the expected one with matching checksums. PR 71 adds no migration. As of 2026-11-16 10:09 UTC, production has 21: `main`'s 20 plus A2-A `20261202000000_business_profile`, applied ahead of PR 70. Stop on any unexpected or pending migration.
+   - Read `_prisma_migrations` and confirm the applied set is exactly the expected one with matching checksums. PR 71 adds no migration. As of 2026-11-16, production has 21, matching `main` after PR 70 (A2-A) merged. Stop on any unexpected or pending migration.
    - Confirm the 4 function hashes in §5 still match, and that `app_private.beta_admissions` does not exist.
    - Read `SELECT region FROM app_private.deployment_config`; the deploy must pass this exact value as `DEPLOYMENT_REGION`, because the script upserts it.
    - With the admin role, check `has_schema_privilege(current_user, 'app_private', 'CREATE')` and that it can read `public.users`. The operator functions run as the admin role and must see users through RLS: the Neon owner role normally has BYPASSRLS. Confirm this, and stop if not.
@@ -142,10 +142,8 @@ Preconditions: CI green on PR 71's final commit, and Regan's production user id 
 
 ### Fixture update needed by other open branches after PR 71 merges
 
-Any integration test that signs users up through `/api/v1/auth/sign-up/email` must invite before sign-up and admit after it. Otherwise sign-up stores no user and later steps fail. As of 2026-11-16 this applies to:
+PRs 69 (F7-B) and 70 (A2-A) merged before this PR; their suites are already updated here. Any integration test that signs users up through `/api/v1/auth/sign-up/email` must invite before sign-up and admit after it. Otherwise sign-up stores no user and later steps fail. As of 2026-11-16 this applies to:
 - PR 68 (People P3-A): `people-leave.test.ts`, `finance-catalog-lines.test.ts`
-- PR 69 (Finance F7-B): `finance-catalog-lines.test.ts`
-- PR 70 (Administration A2-A): `business-profile.test.ts`, `finance-catalog-lines.test.ts`
 - Any A2-B branch
 
 ```ts
