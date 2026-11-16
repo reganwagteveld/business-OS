@@ -3,4 +3,6 @@ export {
   changeRole, createInvitation, getBusiness, listInvitations, listMembers, NotFoundError, removeMember, revokeInvitation,
 } from './server/members';
 export type { Actor } from './server/members';
+export { getBusinessProfile, updateBusinessProfile } from './server/business-profile';
+export type { BusinessProfileInput } from './server/business-profile';
 export { validateNewBusiness } from './server/onboarding';
