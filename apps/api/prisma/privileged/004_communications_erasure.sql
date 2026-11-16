@@ -47,7 +47,7 @@ DROP POLICY IF EXISTS definer_retention_due_read ON public.mail_retention_settin
 CREATE POLICY definer_retention_due_read ON public.mail_retention_settings FOR SELECT TO bos_definer USING (true);
 DROP POLICY IF EXISTS definer_retention_due_read ON public.communications_legal_holds;
 CREATE POLICY definer_retention_due_read ON public.communications_legal_holds FOR SELECT TO bos_definer
-  USING (released_at IS NULL AND scope = 'BUSINESS');
+  USING (released_at IS NULL AND scope IN ('BUSINESS', 'CONNECTION'));
 
 GRANT bos_definer TO CURRENT_USER;
 GRANT CREATE ON SCHEMA app_private TO bos_definer;
@@ -96,7 +96,7 @@ AS $$
      WHERE m.erased_at IS NULL AND m.retention_category IS NOT NULL
        AND public.mail_retention_due_at(m.retention_category, m.occurred_at, m.recorded_at,
              public.mail_effective_ordinary_days(r.ordinary_retention_days, r.previous_retention_days, r.shortening_effective_at)) <= pg_catalog.now()
-       AND NOT EXISTS (SELECT 1 FROM public.communications_legal_holds h WHERE h.business_id = m.business_id AND h.scope = 'BUSINESS' AND h.released_at IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM public.communications_legal_holds h WHERE h.business_id = m.business_id AND h.scope IN ('BUSINESS', 'CONNECTION') AND h.released_at IS NULL)
      GROUP BY m.business_id
   )
   SELECT d.business_id
@@ -120,7 +120,7 @@ GRANT SELECT ("id", "business_id", "conversation_id", "retention_category", "occ
               "external_source", "external_message_id") ON public.messages TO bos_maint;
 GRANT UPDATE ("subject", "body", "external_source", "external_message_id", "content_hash", "erased_at") ON public.messages TO bos_maint;
 GRANT SELECT ("id", "business_id", "message_id", "role", "address", "contact_id", "user_id", "erased_at") ON public.message_participants TO bos_maint;
-GRANT UPDATE ("display_name", "address", "erased_at") ON public.message_participants TO bos_maint;
+GRANT UPDATE ("display_name", "address", "contact_id", "erased_at") ON public.message_participants TO bos_maint;
 GRANT SELECT ("id", "business_id", "contact_id", "external_source", "external_thread_id", "erased_at") ON public.conversations TO bos_maint;
 GRANT UPDATE ("subject", "external_source", "external_thread_id", "erased_at", "updated_at") ON public.conversations TO bos_maint;
 GRANT SELECT ("id", "business_id", "type", "contact_id", "erased_at", "subject", "body") ON public.activities TO bos_maint;
@@ -274,7 +274,7 @@ BEGIN
   INSERT INTO public.communications_erasure_items (business_id, erasure_id, entity_type, entity_id, action)
   VALUES (p_business, p_erasure, 'MESSAGE', p_message, 'ERASED') ON CONFLICT DO NOTHING;
   WITH changed AS (
-    UPDATE public.message_participants p SET display_name = NULL, address = NULL, erased_at = pg_catalog.now()
+    UPDATE public.message_participants p SET display_name = NULL, address = NULL, contact_id = NULL, erased_at = pg_catalog.now()
      WHERE p.business_id = p_business AND p.message_id = p_message AND p.erased_at IS NULL
     RETURNING p.id
   ), logged AS (
@@ -564,7 +564,7 @@ BEGIN
       IF v_n >= 0 THEN v_msgs := v_msgs + 1; v_parts := v_parts + v_n; END IF;
     ELSE
       WITH changed AS (
-        UPDATE public.message_participants mp SET display_name = NULL, address = NULL, erased_at = pg_catalog.now()
+        UPDATE public.message_participants mp SET display_name = NULL, address = NULL, contact_id = NULL, erased_at = pg_catalog.now()
          WHERE mp.business_id = v_business AND mp.message_id = p.message_id AND mp.erased_at IS NULL
            AND (mp.contact_id = v_target OR (mp.address IS NOT NULL AND pg_catalog.lower(mp.address) = v_email))
         RETURNING mp.id
@@ -888,7 +888,7 @@ BEGIN
       PERFORM 1 FROM public.messages m WHERE m.business_id = p_business AND m.id = i.entity_id AND m.erased_at IS NULL FOR UPDATE;
       IF FOUND AND app_private.communications_tombstone_message(p_business, i.entity_id, i.erasure_id) >= 0 THEN v_n := v_n + 1; END IF;
     ELSIF i.entity_type = 'PARTICIPANT' THEN
-      UPDATE public.message_participants p SET display_name = NULL, address = NULL, erased_at = pg_catalog.now()
+      UPDATE public.message_participants p SET display_name = NULL, address = NULL, contact_id = NULL, erased_at = pg_catalog.now()
        WHERE p.business_id = p_business AND p.id = i.entity_id AND p.erased_at IS NULL;
       IF FOUND THEN v_n := v_n + 1; END IF;
     ELSIF i.entity_type = 'ACTIVITY' THEN

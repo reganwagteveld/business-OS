@@ -425,6 +425,8 @@ describe('erasure requests', () => {
     expect((await member.getActivity(patNote.id)).body.activity.erasedAt).not.toBeNull();
     expect((await member.getActivity(samNote.id)).body.activity).toMatchObject({ body: 'Sam likes tea' });
     expect(JSON.stringify((await member.listActivities(`?contactId=${pat.id}`)).body)).not.toMatch(/diagnosis|Pat health|From Pat/);
+    // no participant row anywhere still links to Pat
+    expect(await count('SELECT count(*) AS n FROM message_participants WHERE contact_id = $1', [pat.id])).toBe(0);
     // the contact record itself is outside E1 and stays
     expect(await count('SELECT count(*) AS n FROM contacts WHERE id = $1', [pat.id])).toBe(1);
     // an erased timeline note cannot be edited back
@@ -615,6 +617,29 @@ describe('retention (D-E1-1, D-E1-3, D-E1-5)', () => {
   });
 });
 
+describe('mailbox (CONNECTION) holds before C2-B3', () => {
+  it('protect every copy in the business until copies record their mailbox (fail-safe)', async () => {
+    const t = await team('e1conn');
+    const o = api(t.people.OWNER!, t.slug);
+    await o.setRetention({ ordinaryRetentionDays: 30, version: null });
+    const conv = await newConv(o, 'connection hold');
+    const copy = await seedCopy(t, conv.id, { category: 'ORDINARY', daysAgo: 90 });
+    const connectionId = randomUUID();
+    await admin.query(`INSERT INTO mail_connections (id, business_id, provider, owner_user_id, credential_holder_id, provider_account_id, principal_account_id,
+      mailbox_address, granted_scopes) VALUES ($1, $2, 'GOOGLE', $3, $3, 'x', 'x', 'x@example.com', ARRAY['openid'])`, [connectionId, t.businessId, t.people.OWNER!.id]);
+    const placed = await o.placeHold({ scope: 'CONNECTION', connectionId, reasonCode: 'LITIGATION' });
+    expect(placed.status).toBe(201);
+    expect(await worker(t.businessId)((db) => purgeExpired(db, 50))).toBeNull();
+    expect(await messageRow(copy)).toMatchObject({ erased_at: null });
+    const code = (await o.authorize('RELEASE_LEGAL_HOLD', placed.body.hold.id)).body.authorization.code;
+    expect((await o.releaseHold(placed.body.hold.id, { authorization: code })).status).toBe(200);
+    expect(await worker(t.businessId)((db) => purgeExpired(db, 50))).toMatchObject({ messages: 1 });
+    // a hold naming another business's mailbox or contact is refused as not found
+    const otherContact = (await ownerB.createContact({ firstName: 'Other' })).body.contact;
+    expect((await o.placeHold({ scope: 'CONTACT', contactId: otherContact.id, reasonCode: 'OTHER' })).status).toBe(404);
+  });
+});
+
 describe('keyed re-import markers (D-E1-2)', () => {
   it('an erased provider id cannot be re-imported while its marker lives; markers hold no raw id and expire', async () => {
     const conv = (await newConv(owner, 'import'));
@@ -723,6 +748,9 @@ describe('worker and concurrency (docs/communications-e1.md §7, §9)', () => {
     const pid = await backendPid(app2);
     const step = finish(A.businessId, rows[0].erasure_id);
     await waitUntilBlocked(observer, pid);
+    // what recordMessage does next while the step waits: touch the conversation (KEY SHARE -> NO KEY UPDATE on a
+    // row the step is queued for). This must not deadlock (docs/communications-e1.md §9).
+    await app2.query('UPDATE conversations SET last_message_at = now() WHERE business_id = $1 AND id = $2', [A.businessId, conv.id]);
     await app2.query('COMMIT');
     expect(await step).toBe('completed');
     expect(await messageRow(late)).toMatchObject({ body: null });

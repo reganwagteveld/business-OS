@@ -203,7 +203,7 @@ ALTER TABLE "messages" DROP CONSTRAINT messages_has_content,
 ALTER TABLE "message_participants" DROP CONSTRAINT message_participants_identified,
   ADD CONSTRAINT message_participants_identified CHECK (
     "display_name" IS NOT NULL OR "address" IS NOT NULL OR "contact_id" IS NOT NULL OR "user_id" IS NOT NULL OR "erased_at" IS NOT NULL),
-  ADD CONSTRAINT message_participants_erased_empty CHECK ("erased_at" IS NULL OR ("display_name" IS NULL AND "address" IS NULL));
+  ADD CONSTRAINT message_participants_erased_empty CHECK ("erased_at" IS NULL OR ("display_name" IS NULL AND "address" IS NULL AND "contact_id" IS NULL));
 ALTER TABLE "conversations"
   ADD CONSTRAINT conversations_erased_empty CHECK ("erased_at" IS NULL OR ("subject" IS NULL AND "external_thread_id" IS NULL));
 ALTER TABLE "activities"
@@ -230,9 +230,11 @@ BEGIN
       END IF;
       RETURN NEW;
     ELSIF TG_TABLE_NAME = 'message_participants' THEN
-      IF (NEW.id, NEW.business_id, NEW.message_id, NEW.role, NEW.position, NEW.contact_id, NEW.user_id)
-         IS DISTINCT FROM (OLD.id, OLD.business_id, OLD.message_id, OLD.role, OLD.position, OLD.contact_id, OLD.user_id)
-         OR OLD.erased_at IS NOT NULL OR NEW.erased_at IS NULL OR NEW.display_name IS NOT NULL OR NEW.address IS NOT NULL THEN
+      -- Erasing a participant removes its name, address and contact link; the member link (user_id) stays.
+      IF (NEW.id, NEW.business_id, NEW.message_id, NEW.role, NEW.position, NEW.user_id)
+         IS DISTINCT FROM (OLD.id, OLD.business_id, OLD.message_id, OLD.role, OLD.position, OLD.user_id)
+         OR OLD.erased_at IS NOT NULL OR NEW.erased_at IS NULL OR NEW.display_name IS NOT NULL OR NEW.address IS NOT NULL
+         OR NEW.contact_id IS NOT NULL THEN
         RAISE EXCEPTION 'message history is read-only' USING ERRCODE = 'CM002';
       END IF;
       RETURN NEW;
@@ -472,7 +474,9 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = pg_catalog, public AS $$
   SELECT EXISTS (
     SELECT 1 FROM "communications_legal_holds" h
      WHERE h."business_id" = p_business_id AND h."released_at" IS NULL
-       AND (h."scope" = 'BUSINESS'
+       -- CONNECTION: until C2-B3 records which mailbox a copy came from, a mailbox hold protects everything
+       -- in the business (fail-safe: over-protect rather than miss a held copy).
+       AND (h."scope" IN ('BUSINESS', 'CONNECTION')
             OR (h."scope" = 'CONTACT' AND (
                   EXISTS (SELECT 1 FROM "messages" m JOIN "conversations" c ON c."business_id" = m."business_id" AND c."id" = m."conversation_id"
                            WHERE m."business_id" = p_business_id AND m."id" = p_message_id AND c."contact_id" = h."contact_id")
@@ -484,7 +488,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = pg_catalog, public AS $$
   SELECT EXISTS (
     SELECT 1 FROM "communications_legal_holds" h
      WHERE h."business_id" = p_business_id AND h."released_at" IS NULL
-       AND (h."scope" = 'BUSINESS' OR (h."scope" = 'CONTACT' AND h."contact_id" = p_contact_id)))
+       AND (h."scope" IN ('BUSINESS', 'CONNECTION') OR (h."scope" = 'CONTACT' AND h."contact_id" = p_contact_id)))
 $$;
 
 -- ---- erasure ledger ---------------------------------------------------------------------------------
