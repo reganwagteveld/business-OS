@@ -5,8 +5,9 @@ import { tenantRoute } from '../../../../_lib/routes';
 
 export const dynamic = 'force-dynamic';
 
-export const GET = tenantRoute({ permission: 'members:read', response: MembersResponse }, async ({ db }) => ({
-  body: { members: await listMembers(db) },
+/** Every member sees names, roles and status; emails only for holders of members:invite (D-A2-11). */
+export const GET = tenantRoute({ permission: 'members:read', response: MembersResponse }, async ({ db, actor }) => ({
+  body: { members: await listMembers(db, actor) },
 }));
 
 export const OPTIONS = preflight;

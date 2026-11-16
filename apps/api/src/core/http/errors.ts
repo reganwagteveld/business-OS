@@ -47,7 +47,9 @@ export type StateConflictCode =
   // Finance F7-A (docs/finance-catalog-f7a.md): a catalog item's code is already used in this business.
   | 'duplicate_code'
   // Finance F7-B (docs/finance-catalog-f7b.md): an inactive catalog item cannot be added to a draft line.
-  | 'catalog_item_inactive';
+  | 'catalog_item_inactive'
+  // Administration A2-B (docs/administration-a2.md §6, §7): memberships and invitations.
+  | 'invitation_exists' | 'already_member' | 'invitation_closed' | 'last_owner' | 'already_owner' | 'member_not_active';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {
@@ -67,6 +69,15 @@ export class ServiceFailureError extends Error {
   constructor(readonly status: 500 | 503, readonly code: 'generation_failed' | 'integrity_error') {
     super(code);
     this.name = 'ServiceFailureError';
+  }
+}
+
+/** Too many requests of this kind for now (A2-B: invitation resend throttle): 429, safe to retry later. */
+export class RateLimitedError extends Error {
+  readonly status = 429;
+  constructor() {
+    super('rate_limited');
+    this.name = 'RateLimitedError';
   }
 }
 
