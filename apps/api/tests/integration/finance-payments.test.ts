@@ -647,9 +647,12 @@ describe('invoice list order (sort=due_asc)', () => {
     expect((await list('status=all&sort=due_asc&limit=100')).body.documents.map((d) => d.id)).toEqual(expected);
     for (const limit of [1, 2, 3, 5]) expect(await all('status=all&sort=due_asc', limit), `limit ${limit}`).toEqual(expected);
 
-    // The default (and explicit created_desc) order is unchanged: newest created first.
-    const newest = [draft, paid, future, janB, feb, janA, mar];
-    expect((await list('status=all&limit=100')).body.documents.map((d) => d.id)).toEqual(newest);
+    // The default (and explicit created_desc) order is unchanged: newest created first, ties by id (descending).
+    // Derived from the returned created_at values, since sequential inserts can share a millisecond.
+    const created = (await list('status=all&limit=100')).body.documents as unknown as { id: string; createdAt: string }[];
+    expect(created.map((d) => d.id).sort()).toEqual([draft, paid, future, janA, janB, feb, mar].sort());
+    const newest = [...created].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).map((d) => d.id);
+    expect(created.map((d) => d.id)).toEqual(newest);
     expect((await list('status=all&sort=created_desc&limit=100')).body.documents.map((d) => d.id)).toEqual(newest);
     expect(await all('status=all', 2)).toEqual(newest);
 
@@ -684,6 +687,33 @@ describe('invoice list order (sort=due_asc)', () => {
     // Another business sees none of these invoices in either order.
     const b = api(B.people.OWNER!, B.slug);
     expect((await b.list('invoices', '?status=all&sort=due_asc&limit=100')).body.documents.map((d: { id: string }) => d.id)).not.toContain(janA);
+  });
+
+  it('rows sharing one created_at and one due date page by id in both orders, with nothing skipped or repeated', async () => {
+    const own = api(A.people.OWNER!, A.slug);
+    const cust = (await own.createCustomer({ displayName: 'Tied' })).body.customer.id as string;
+    // One INSERT statement: the database stamps every row with the same created_at (now() is per transaction).
+    const tied = (await admin.query<{ id: string; created_at: Date }>(
+      `INSERT INTO finance_documents (id, business_id, kind, customer_id, currency_code, currency_scale, due_date)
+       SELECT gen_random_uuid(), b.id, 'INVOICE', $2::uuid, 'AUD', 2, '2026-05-01'::date FROM businesses b, generate_series(1, 4) WHERE b.slug = $1
+       RETURNING id::text, created_at`, [A.slug, cust])).rows;
+    expect(tied).toHaveLength(4);
+    expect(new Set(tied.map((r) => r.created_at.toISOString())).size).toBe(1);
+    const ids = tied.map((r) => r.id);
+    const pages = async (qs: string) => {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const page: { status: number; body: { documents: { id: string }[]; nextCursor: string | null } } =
+          await own.list('invoices', `?customerId=${cust}&status=all&limit=1&${qs}${cursor ? `&cursor=${cursor}` : ''}`);
+        expect(page.status).toBe(200);
+        seen.push(...page.body.documents.map((d) => d.id));
+        cursor = page.body.nextCursor;
+      } while (cursor);
+      return seen;
+    };
+    expect(await pages('')).toEqual([...ids].sort().reverse());
+    expect(await pages('sort=due_asc')).toEqual([...ids].sort());
   });
 });
 
