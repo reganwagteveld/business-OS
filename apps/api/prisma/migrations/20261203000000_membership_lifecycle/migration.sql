@@ -16,6 +16,23 @@ ALTER TABLE "memberships"
 
 GRANT UPDATE ("suspended_at", "suspended_by") ON "memberships" TO bos_app;
 
+-- Status stays the source of truth: a change to SUSPENDED that does not say when gets the database
+-- time, and a change back to ACTIVE clears both fields, so the CHECK above holds for every writer
+-- (including administrative tooling that only sets the status). The API sets both itself.
+CREATE FUNCTION public.memberships_stamp_suspension() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.status = 'SUSPENDED' AND OLD.status IS DISTINCT FROM 'SUSPENDED' AND NEW.suspended_at IS NULL THEN
+    NEW.suspended_at := pg_catalog.now();
+  ELSIF NEW.status = 'ACTIVE' THEN
+    NEW.suspended_at := NULL;
+    NEW.suspended_by := NULL;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER memberships_stamp_suspension BEFORE UPDATE OF "status" ON "memberships"
+  FOR EACH ROW EXECUTE FUNCTION public.memberships_stamp_suspension();
+
 -- ---------------------------------------------------------------------------------------------
 -- G3 / D-A2-7: at most one OPEN invitation per email per business. Expired rows cannot be excluded
 -- by a partial-index predicate (now() is not immutable), so createInvitation revokes an expired open

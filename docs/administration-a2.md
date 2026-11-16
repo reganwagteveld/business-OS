@@ -361,7 +361,7 @@ Branch `claude/project-thread-dyn16d`, on `main` after A2-A (#70), E1 (#64) and 
 
 | Change | Detail |
 |---|---|
-| `memberships.suspended_at`, `suspended_by` | nullable; CHECK `memberships_suspension_consistent` (set exactly while SUSPENDED); `GRANT UPDATE` on both to `bos_app` |
+| `memberships.suspended_at`, `suspended_by` | nullable; CHECK `memberships_suspension_consistent` (set exactly while SUSPENDED); trigger `memberships_stamp_suspension` stamps `suspended_at` when only the status is set and clears both on ACTIVE (so tooling that sets only the status still satisfies the CHECK); `GRANT UPDATE` on both to `bos_app` |
 | `invitations_open_email_key` | partial unique `(business_id, email) WHERE accepted_at IS NULL AND revoked_at IS NULL` (G3) |
 | `memberships_keep_an_owner` | now takes `pg_advisory_xact_lock(hashtextextended('memberships.owners:' || business_id, 0))` before counting (G1); refuses an owner change under REPEATABLE READ |
 | `memberships_no_self_role_change` | now BEFORE UPDATE **or DELETE**; with a session user: no self status change (G14); only self role change is OWNER → ADMIN while ACTIVE; only an ACTIVE OWNER may promote to OWNER (invariant 2) or change/delete an OWNER row other than their own; without a session user `bos_app` may not touch an owner row |
@@ -422,6 +422,10 @@ every provider call.
 - Mailbox cutoff: removal, suspension (shared rows kept), reactivation, removal cascade audit, demotion of PERSONAL
   and BUSINESS holders, OWNER → ADMIN unaffected, and removal racing `failSyncJob` plus an in-flight refresh store
   (deadlock resolved by retry, no credential survives, a late fenced store writes nothing).
+
+Existing test changed: `tenancy.test.ts` "keeps at least one owner" deleted the remaining owner's row while the
+session user was the former owner (now a MEMBER). The new owner-protection rule refuses that before commit, so the
+test now acts as the remaining owner, which still proves the commit-time last-owner check.
 
 ### 13.5 Migration order (verified 2026-11-16 against `main` and open PRs)
 

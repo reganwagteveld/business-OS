@@ -277,8 +277,12 @@ describe('database actor rules (§6.3 invariants 2 and 3, G14)', () => {
     expect(await asAdmin('DELETE FROM memberships WHERE id = $1', [t.membershipOf(t.people.OWNER!)])).toMatch(/role change not allowed/);
     expect(await asAdmin("UPDATE memberships SET status = 'SUSPENDED', suspended_at = now() WHERE id = $1", [t.membershipOf(t.people.ADMIN!)])).toMatch(/status change not allowed/);
     expect(await asAdmin("UPDATE memberships SET role = 'MANAGER' WHERE id = $1", [t.membershipOf(t.people.ADMIN!)])).toMatch(/role change not allowed/);
-    // Suspension details must match the status.
-    expect(await asAdmin("UPDATE memberships SET status = 'SUSPENDED' WHERE id = $1", [t.membershipOf(t.people.MEMBER!)])).toMatch(/memberships_suspension_consistent/);
+    // Suspension details must match the status: a bare status change is stamped, inconsistent details are refused.
+    expect(await asAdmin("UPDATE memberships SET suspended_at = now() WHERE id = $1", [t.membershipOf(t.people.MEMBER!)])).toMatch(/memberships_suspension_consistent/);
+    await admin.query("UPDATE memberships SET status = 'SUSPENDED' WHERE id = $1", [t.membershipOf(t.people.MEMBER!)]);
+    expect((await admin.query('SELECT suspended_at IS NOT NULL AS stamped FROM memberships WHERE id = $1', [t.membershipOf(t.people.MEMBER!)])).rows[0].stamped).toBe(true);
+    await admin.query("UPDATE memberships SET status = 'ACTIVE' WHERE id = $1", [t.membershipOf(t.people.MEMBER!)]);
+    expect((await admin.query('SELECT suspended_at, suspended_by FROM memberships WHERE id = $1', [t.membershipOf(t.people.MEMBER!)])).rows[0]).toEqual({ suspended_at: null, suspended_by: null });
     // Without a session user, bos_app cannot touch an owner at all.
     const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await c.connect();
