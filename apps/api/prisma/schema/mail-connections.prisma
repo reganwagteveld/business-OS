@@ -49,6 +49,7 @@ model MailConnection {
   oauthStates     MailOAuthState[]
   syncJobs        MailSyncJob[]
   members         MailConnectionMember[]
+  legalHolds      CommunicationsLegalHold[]
 
   @@id([businessId, id])
   @@index([businessId, ownerUserId, createdAt(sort: Desc)])
@@ -208,12 +209,16 @@ model MailConnectionMember {
 /// period. There is no product default: until a row exists, BUSINESS mailboxes cannot sync and PERSONAL
 /// mailbox content cannot be shared with the business (guard CM009). It can be changed, never removed.
 model MailRetentionSetting {
-  businessId            String   @id @map("business_id") @db.Uuid
-  ordinaryRetentionDays Int      @map("ordinary_retention_days")
-  updatedById           String   @map("updated_by_id") @db.Uuid
-  version               Int      @default(1)
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  businessId            String    @id @map("business_id") @db.Uuid
+  ordinaryRetentionDays Int       @map("ordinary_retention_days")
+  /// E1 (D-E1-3): a shortened period takes effect only at shortening_effective_at (30 days after the change);
+  /// until then the longer previous period still applies. Stamped by trigger, never by the application.
+  previousRetentionDays Int?      @map("previous_retention_days")
+  shorteningEffectiveAt DateTime? @map("shortening_effective_at") @db.Timestamptz
+  updatedById           String    @map("updated_by_id") @db.Uuid
+  version               Int       @default(1)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "mail_retention_settings_business_fkey")
 

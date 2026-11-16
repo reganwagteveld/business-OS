@@ -31,3 +31,4 @@ export const policyIdOf = idOf('policyId');
 export const holdIdOf = idOf('holdId');
 export const reminderIdOf = idOf('reminderId');
 export const customerIdOf = idOf('customerId');
+export const catalogItemIdOf = idOf('itemId');

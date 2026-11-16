@@ -74,14 +74,14 @@ export function AuthScreens({ auth, initialView, resetToken, onSignedIn }: {
             <button className={button} type="submit" disabled={signIn.busy}>Sign in</button>
           </form>
           <div className="flex justify-between">
-            <button type="button" className={link} onClick={() => go('sign-up')}>Create an account</button>
+            <button type="button" className={link} onClick={() => go('sign-up')}>I have an invitation</button>
             <button type="button" className={link} onClick={() => go('forgot')}>Forgot password?</button>
           </div>
         </Frame>
       );
     case 'sign-up':
       return (
-        <Frame title="Create your account">
+        <Frame title="Create your account" description="Pixa OS is in private beta. Use the email address on your invitation, verify it, then open your invitation link to join.">
           <form className="flex flex-col gap-3" onSubmit={signUp.submit}>
             <input className={field} name="name" autoComplete="name" placeholder="Your name" required aria-label="Your name" />
             <input className={field} name="email" type="email" autoComplete="email" placeholder="Email" required aria-label="Email" />
@@ -94,7 +94,7 @@ export function AuthScreens({ auth, initialView, resetToken, onSignedIn }: {
       );
     case 'check-email':
       return (
-        <Frame title="Check your email" description="We sent a link to confirm your address. Open it, then sign in.">
+        <Frame title="Check your email" description="If this address has a valid invitation, check your email for a verification link. Verify your address, sign in, then open your invitation link.">
           <button type="button" className={link} onClick={() => go('sign-in')}>Back to sign in</button>
         </Frame>
       );

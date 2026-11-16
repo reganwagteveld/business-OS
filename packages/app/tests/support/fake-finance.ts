@@ -8,7 +8,7 @@ import {
   AllocatePaymentRequest, ApplyCreditRequest, ConvertQuoteRequest, CreateCreditNoteRequest, CreateInvoiceRequest, CreateQuoteRequest, CreateTaxRateRequest,
   DiscardDraftRequest, IssueDocumentRequest, QuoteTransitionRequest, RecordExpensePaymentRequest, RecordPaymentRequest, ReverseAllocationRequest, ReversePaymentRequest, UpdateCreditNoteRequest,
   UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdatePaymentRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
-  type CreditApplication, type Customer, type ExpensePayment, type FinanceExpense, type FinanceDocument, type FinanceDocumentKind, type FinancePayment, type PaymentAllocation,
+  type CatalogItem, type CreditApplication, type Customer, type ExpensePayment, type FinanceExpense, type FinanceDocument, type FinanceDocumentKind, type FinancePayment, type PaymentAllocation,
 } from '@business-os/contracts';
 import { randomUUID } from 'node:crypto';
 import { fromUnits, toUnits } from '../../src/zones/finance/decimal';
@@ -32,6 +32,8 @@ export interface FinanceData {
   expenses: FinanceExpense[];
   expensePayments: ExpensePayment[];
   payables: { currencyCode: string; currencyScale: number; outstanding: string; overdue: string; openCount: number; overdueCount: number }[];
+  /** F7-B: the products and services catalog, for the line picker (optional; empty when absent). */
+  catalog?: CatalogItem[];
 }
 export interface FinanceCall { method: string; slug: string; path: string; query: Record<string, string>; body: unknown; headers: Record<string, string> }
 
@@ -111,9 +113,34 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
     return { lines: out, subtotal: f(sub), taxTotal: f(tax), total: f(sub + tax) };
   };
 
+  type DraftLine = { catalogItemId?: string; description?: string; quantity?: string; unitPrice?: string; discountAmount?: string; taxRateId?: string | null };
+  type PlainLine = { description: string; quantity: string; unitPrice: string; discountAmount?: string; taxRateId?: string | null };
+  /** F7-B, as the server: a line naming a catalog item is checked and filled from it, then is a plain line. */
+  const resolveLines = (lines: DraftLine[], b: FinanceData, currency: string): PlainLine[] | Response => {
+    const out: PlainLine[] = [];
+    for (const l of lines) {
+      if (!l.catalogItemId) { out.push(l as PlainLine); continue; }
+      const item = (b.catalog ?? []).find((i) => i.id === l.catalogItemId);
+      if (!item) return json(400, { error: 'invalid_catalog_item', message: 'Choose a product or service of this business.' });
+      if (item.archivedAt) return json(409, { error: 'archived_reference' });
+      if (item.status !== 'ACTIVE') return json(409, { error: 'catalog_item_inactive' });
+      const price = l.unitPrice ?? (item.currencyCode === currency ? item.unitPrice : null);
+      if (price === null) return json(400, { error: 'catalog_currency_mismatch', message: `The price of “${item.name}” is in ${item.currencyCode}. Enter a price in ${currency}.` });
+      out.push({ ...(l.discountAmount !== undefined ? { discountAmount: l.discountAmount } : {}), description: l.description ?? item.name, quantity: l.quantity ?? '1', unitPrice: price, taxRateId: l.taxRateId !== undefined ? l.taxRateId : item.taxRateId });
+    }
+    return out;
+  };
+
   function handle(b: FinanceData, call: FinanceCall): Response {
     const { method, path, body, query } = call;
     let m: RegExpExecArray | null;
+    // ---- F7-B: catalog reads for the line picker ----
+    if (path === '/finance/catalog-items' && method === 'GET') {
+      const q = (query.q ?? '').toLowerCase();
+      const items = (b.catalog ?? []).filter((i) => (query.status === 'active' ? i.status === 'ACTIVE' && !i.archivedAt : true)
+        && (!q || i.name.toLowerCase().includes(q) || (i.code ?? '').toLowerCase().includes(q)));
+      return json(200, { items: items.slice(0, Number(query.limit ?? 25)), nextCursor: null });
+    }
     // ---- customers (read only) ----
     if (path === '/customers' && method === 'GET') {
       const q = (query.q ?? '').toLowerCase();
@@ -254,7 +281,9 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
       const input = schema.parse(body);
       const key = call.headers['idempotency-key'];
       if (key && keys.has(key)) return keys.get(key)!.body === JSON.stringify(input) ? json(200, keys.get(key)!.result) : json(409, { error: 'idempotency_conflict' });
-      const t = totals(input.lines ?? [], b);
+      const resolved = resolveLines(input.lines ?? [], b, input.currencyCode ?? 'AUD');
+      if (resolved instanceof Response) return resolved;
+      const t = totals(resolved, b);
       const d = doc(kind, { customerId: input.customerId, currencyCode: input.currencyCode ?? 'AUD', notes: input.notes ?? null, ...t,
         validUntil: 'validUntil' in input ? input.validUntil ?? null : null, dueDate: 'dueDate' in input ? input.dueDate ?? null : null });
       b.documents.unshift(d);
@@ -298,10 +327,12 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
       }
       if (!action && method === 'PATCH') {
         const schema = { QUOTE: UpdateQuoteRequest, INVOICE: UpdateInvoiceRequest, CREDIT_NOTE: UpdateCreditNoteRequest }[kind];
-        const input = schema.parse(body) as { version: number; lines?: { description: string; quantity: string; unitPrice: string }[]; notes?: string | null };
+        const input = schema.parse(body) as { version: number; lines?: DraftLine[]; notes?: string | null };
         if (d.status !== 'DRAFT') return json(409, { error: 'immutable' });
         if (input.version !== d.version) return json(409, { error: 'stale' });
-        Object.assign(d, input.lines ? totals(input.lines, b) : {}, { notes: input.notes ?? d.notes, version: d.version + 1 });
+        const resolved = input.lines ? resolveLines(input.lines, b, d.currencyCode) : null;
+        if (resolved instanceof Response) return resolved;
+        Object.assign(d, resolved ? totals(resolved, b) : {}, { notes: input.notes ?? d.notes, version: d.version + 1 });
         return json(200, { document: d });
       }
       if (action === 'issue') {

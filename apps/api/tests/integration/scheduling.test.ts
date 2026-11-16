@@ -1,3 +1,4 @@
+import { inviteForSignup, admitFixture } from './support/admission';
 /**
  * Scheduling S1 (docs/scheduling-s1.md): calendars and events through the real route handlers, against
  * PostgreSQL with the migrations and privileged SQL applied as in production. Two independent businesses
@@ -70,7 +71,9 @@ const ctx = (params: Record<string, string>) => ({ params: Promise.resolve(param
 
 async function newUser(prefix: string): Promise<User> {
   const email = `${prefix}-${randomUUID()}@example.com`;
+  await inviteForSignup(admin, email);
   await authRoute.POST(req('POST', '/api/v1/auth/sign-up/email', { body: { email, password: PASSWORD, name: prefix } }));
+  await admitFixture(admin, email);
   const mail = [...devOutbox].reverse().find((m) => m.to === email)!;
   const link = new URL(/(https?:\/\/\S+)/.exec(mail.text)![1]!);
   const verify = new Request(`${BASE}${link.pathname}${link.search}`, { method: 'GET', headers: { 'x-forwarded-for': `100.90.250.${ip++ % 250}` } });

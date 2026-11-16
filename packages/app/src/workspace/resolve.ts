@@ -14,6 +14,7 @@ export type Phase =
   | { kind: 'unreachable' }
   | { kind: 'failed' }
   | { kind: 'unverified'; user: CurrentUser }
+  | { kind: 'invite-required'; user: CurrentUser }
   | { kind: 'no-workspace'; user: CurrentUser }
   | { kind: 'pick'; user: CurrentUser; businesses: BusinessSummary[]; notice?: PickNotice }
   | { kind: 'ready'; user: CurrentUser; businesses: BusinessSummary[]; context: BusinessContext; notice?: SwitchNotice }
@@ -57,6 +58,10 @@ export async function resolveWorkspace(deps: ResolveDeps, attempt = 0): Promise<
   if (listed.kind === 'unauthenticated') return { kind: 'signed-out', expired: true };
   if (listed.kind === 'unverified') return { kind: 'unverified', user };
   if (listed.kind === 'unreachable') return { kind: 'unreachable' };
+  if (listed.kind === 'forbidden' && listed.code === 'invite_required') {
+    storage.clearSlug();
+    return { kind: 'invite-required', user };
+  }
   if (listed.kind !== 'ok') return { kind: 'failed' };
   const businesses = listed.data;
 
@@ -122,6 +127,10 @@ export async function createBusinessFlow(tenancy: TenancyClient, input: { slug: 
       return { kind: 'rejected', message: 'Too many attempts. Please wait a minute and try again.' };
     case 'unauthenticated':
       return { kind: 'session-ended' };
+    case 'forbidden':
+      return result.code === 'business_creation_not_permitted'
+        ? { kind: 'rejected', message: 'Creating a business is not enabled for your account during the private beta.' }
+        : { kind: 'rejected', message: 'Business OS could not create your business. Please try again.' };
     case 'unreachable':
       return { kind: 'rejected', message: 'Cannot reach Business OS. Check your connection and try again.' };
     default:

@@ -173,13 +173,40 @@ export const FinanceLineInput = z
   .strict();
 const Lines = z.array(FinanceLineInput).max(200, 'A document has at most 200 lines');
 
+/**
+ * F7-B (docs/finance-catalog-f7b.md): a quote or invoice draft line may start from a catalog item.
+ * With `catalogItemId`, every other field is optional: the server reads the item (this business,
+ * active, not archived) and fills what was not sent from it (description, price in the document's
+ * currency only, tax), with quantity 1. Fields that are sent always win. The line is then an ordinary
+ * line: the item id is not stored, and a later change to the item never changes the document.
+ * Without `catalogItemId` this is exactly `FinanceLineInput`.
+ */
+export const FinanceDraftLineInput = z
+  .object({
+    catalogItemId: Uuid.optional(),
+    description: FinanceLineInput.shape.description.optional(),
+    quantity: Quantity.optional(),
+    unitPrice: UnitPrice.optional(),
+    discountAmount: Money.optional(),
+    taxRateId: Uuid.nullable().optional(),
+  })
+  .strict()
+  .superRefine((line, ctx) => {
+    if (line.catalogItemId) return;
+    if (line.description === undefined) ctx.addIssue({ code: 'custom', path: ['description'], message: 'Describe the line' });
+    if (line.quantity === undefined) ctx.addIssue({ code: 'custom', path: ['quantity'], message: 'Enter a quantity such as 1, 2.5 or 0.125' });
+    if (line.unitPrice === undefined) ctx.addIssue({ code: 'custom', path: ['unitPrice'], message: 'Enter a price such as 120 or 0.0125' });
+  });
+export type FinanceDraftLineInput = z.infer<typeof FinanceDraftLineInput>;
+const DraftLines = z.array(FinanceDraftLineInput).max(200, 'A document has at most 200 lines');
+
 const linkFields = {
   contactId: Uuid.nullable().optional(),
   opportunityId: Uuid.nullable().optional(),
   projectId: Uuid.nullable().optional(),
   notes: optionalText(5000),
   taxMode: TaxMode.optional(),
-  lines: Lines.optional(),
+  lines: DraftLines.optional(),
 };
 
 /** Currency defaults to the business's. The customer is required and must be active. */

@@ -25,7 +25,7 @@ const TENANT_MODELS = {
   financeExpenseAllocation: 'businessId',
   financeRecurringTemplate: 'businessId', financeRecurringRun: 'businessId',
   financeReminderPolicy: 'businessId', financeReminderCustomerPolicy: 'businessId', financeReminderHold: 'businessId', financeReminder: 'businessId',
-  financeExpenseCategory: 'businessId', financeExpense: 'businessId',
+  financeExpenseCategory: 'businessId', financeExpense: 'businessId', financeCatalogItem: 'businessId',
   financeDocumentBranding: 'businessId', financeBrandingAsset: 'businessId', financeDocumentPdf: 'businessId',
   peopleDepartment: 'businessId', peopleLocation: 'businessId', peopleEmployee: 'businessId', peopleEmployeePersonalDetails: 'businessId',
   peopleDepartmentAssignment: 'businessId', peopleManagerAssignment: 'businessId', peopleEmploymentStatusHistory: 'businessId',
@@ -34,6 +34,7 @@ const TENANT_MODELS = {
   mailConnection: 'businessId', mailConnectionCredential: 'businessId', mailOAuthState: 'businessId', mailSyncJob: 'businessId',
   reportingSavedView: 'businessId',
   mailBusinessDomain: 'businessId', mailBusinessAddress: 'businessId', mailConnectionMember: 'businessId', mailRetentionSetting: 'businessId',
+  communicationsErasure: 'businessId', communicationsErasureItem: 'businessId', communicationsLegalHold: 'businessId',
 } as const;
 type AppTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;
 export type AppTenantDb = TenantDb<AppTx, keyof typeof TENANT_MODELS>;
@@ -76,10 +77,21 @@ export async function businessesWithDueReminders(limit: number): Promise<string[
   return rows.map((r) => r.business_id);
 }
 
+/**
+ * Communications retention worker (docs/communications-e1.md §7): ids of businesses with due erasure work
+ * (expired copies or pending/deferred requests), from app_private.communications_erasure_due. Ids only; every
+ * erasure then runs as bos_app inside withTenant through the bos_maint functions.
+ */
+export async function businessesWithDueErasure(limit: number): Promise<string[]> {
+  const rows = await appPrisma().$queryRaw<{ business_id: string }[]>`
+    SELECT business_id::text FROM app_private.communications_erasure_due(${limit}::int)`;
+  return rows.map((r) => r.business_id);
+}
+
 export interface NewBusiness { name: string; slug: string; countryCode: string; timeZone: string; locale: string; currency: string }
 
 export class TrustedPathError extends Error {
-  constructor(readonly reason: 'not_allowed' | 'invalid' | 'slug_unavailable' | 'rate_limited' | 'invitation_invalid') {
+  constructor(readonly reason: 'not_allowed' | 'invalid' | 'slug_unavailable' | 'rate_limited' | 'invitation_invalid' | 'business_creation_not_permitted') {
     super(reason);
     this.name = 'TrustedPathError';
   }
@@ -115,4 +127,27 @@ export async function acceptInvitation(sessionToken: string, inviteToken: string
   } catch {
     throw new TrustedPathError('invitation_invalid');
   }
+}
+
+/** Admission queries return booleans only. Runtime roles cannot edit the admission ledger. */
+export async function betaCanRegister(email: string): Promise<boolean> {
+  const rows = await appPrisma().$queryRaw<{ allowed: boolean }[]>`
+    SELECT app_private.beta_can_register(${email}) AS allowed`;
+  return rows[0]?.allowed === true;
+}
+export async function betaCanSignIn(userId: string): Promise<boolean> {
+  const rows = await appPrisma().$queryRaw<{ allowed: boolean }[]>`
+    SELECT app_private.beta_can_sign_in(${userId}::uuid) AS allowed`;
+  return rows[0]?.allowed === true;
+}
+/** Business creation is a separate platform grant on top of admission (never implied by membership or role). */
+export async function betaSessionCanCreateBusiness(token: string): Promise<boolean> {
+  const rows = await appPrisma().$queryRaw<{ allowed: boolean }[]>`
+    SELECT app_private.beta_session_can_create_business(${token}) AS allowed`;
+  return rows[0]?.allowed === true;
+}
+export async function betaSessionAdmitted(token: string): Promise<boolean> {
+  const rows = await appPrisma().$queryRaw<{ allowed: boolean }[]>`
+    SELECT app_private.beta_session_admitted(${token}) AS allowed`;
+  return rows[0]?.allowed === true;
 }

@@ -11,9 +11,10 @@ import 'server-only';
 // The desktop session is a normal row in `sessions`: hashed, expiring and revocable like any other.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { betaSessionAdmitted } from '@/core/db';
 import { getEnv } from '@/core/config/env';
 import { getAuth } from './auth-adapter';
-import { getCurrentSession, signSessionToken } from './session';
+import { getCurrentSession, getSessionToken, signSessionToken } from './session';
 
 const LOOPBACK = /^http:\/\/127\.0\.0\.1:(\d{4,5})\/callback$/;
 const CODE_TTL_MS = 2 * 60 * 1000;
@@ -144,6 +145,7 @@ export async function authorizeDesktop(request: Request): Promise<Response> {
     const next = `${url.pathname}${url.search}`;
     return Response.redirect(`${appBase}/sign-in?next=${encodeURIComponent(next)}`, 303);
   }
+  if (!await betaSessionAdmitted((await getSessionToken(request)) ?? '')) return html('<h1>Invitation required</h1><p>Accept your invitation in the browser first.</p>', 403);
   const fields = { ...params.data, csrf: createConfirmToken(current.sessionId, params.data) };
   const hidden = Object.entries(fields)
     .map(([k, v]) => `<input type="hidden" name="${k}" value="${escape(v)}">`)
@@ -163,6 +165,7 @@ export async function confirmDesktop(request: Request): Promise<Response> {
   const { csrf, ...params } = body.data;
   const current = await getCurrentSession(request);
   if (!current || !current.user.emailVerified) return html('<h1>Please sign in again</h1>', 401);
+  if (!await betaSessionAdmitted((await getSessionToken(request)) ?? '')) return html('<h1>Invitation required</h1>', 403);
   if (!verifyConfirmToken(csrf, current.sessionId, params)) return html('<h1>Request blocked</h1><p>Start again from the Business OS desktop app.</p>', 403);
 
   const code = randomBytes(32).toString('base64url');
@@ -195,8 +198,12 @@ export async function exchangeDesktopCode(request: Request): Promise<Response> {
 
   const user = await ctx.internalAdapter.findUserById(data.data.userId);
   if (!user || !user.emailVerified) return fail();
-  const session = await ctx.internalAdapter.createSession(user.id, false, { userAgent: 'Business OS desktop', ipAddress: '' });
+  const session = await ctx.internalAdapter.createSession(user.id, false, { userAgent: 'Business OS desktop', ipAddress: '' }).catch(() => null);
   if (!session) return fail();
+  if (!await betaSessionAdmitted(session.token)) {
+    await ctx.internalAdapter.deleteSession(session.token);
+    return fail();
+  }
   return Response.json(
     { token: signSessionToken(session.token), expiresAt: session.expiresAt.toISOString() },
     { headers: { 'Cache-Control': 'no-store' } },

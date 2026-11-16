@@ -4,6 +4,7 @@
 // F6-1: recurring invoice schedules and the billing worker's steps (plan, claim, execute, fail).
 // F6-2: customer statements and accounts-receivable ageing as of a date.
 // F6-3: payment reminder policies, holds, the reminder worker's steps (plan, claim, check, fail) and the C2-C outbox boundary.
+// F7-A: the products and services catalog, and lineDefaultsOf for future pickers that copy an item into a draft line.
 export {
   convertQuote, createCreditNote, createInvoice, createQuote, discardDraft, getDocument, issueDocument, listDocuments, transitionQuote, updateDraft,
   voidDocument,
@@ -52,3 +53,7 @@ export {
 export type { ClaimedReminder, ReminderOutcome } from './server/reminders';
 export { configuredReminderOutbox } from './server/reminder-outbox';
 export type { BeforeSendResult, EnqueueResult, ReminderDispatchRequest, ReminderOutbox, ReminderRecipient } from './server/reminder-outbox';
+export {
+  archiveCatalogItem, createCatalogItem, getCatalogItem, lineDefaultsOf, listCatalogItems, restoreCatalogItem, updateCatalogItem,
+} from './server/catalog';
+export type { CatalogItemInput, CatalogItemPatch, CatalogLineDefaults, ListCatalogQuery } from './server/catalog';

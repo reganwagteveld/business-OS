@@ -1,4 +1,4 @@
-import { BusinessContextResponse, CreateBusinessRequest, CreateBusinessResponse, endpointPath, endpoints, ListBusinessesResponse, type Role } from '@business-os/contracts';
+import { BusinessContextResponse, CreateBusinessRequest, CreateBusinessResponse, endpointPath, endpoints, ListBusinessesResponse, PlatformAccessResponse, type Role } from '@business-os/contracts';
 import { createRequester } from './http';
 import type { AuthTransport } from './auth';
 
@@ -10,7 +10,7 @@ export type Outcome<T> =
   | { kind: 'ok'; data: T }
   | { kind: 'unauthenticated' }
   | { kind: 'unverified' }
-  | { kind: 'forbidden' }
+  | { kind: 'forbidden'; code?: 'invite_required' | 'business_creation_not_permitted' }
   | { kind: 'not_found' }
   /** `code` is the server's reason when it gives one (archived, stale, not_open, …). */
   | { kind: 'conflict'; code?: string }
@@ -42,10 +42,17 @@ export interface TenancyClient {
    * `unreachable` here is ambiguous: the server may have committed, so callers re-read memberships.
    */
   createBusiness(input: unknown, signal?: AbortSignal): Promise<Outcome<{ slug: string }>>;
+  /**
+   * Platform capabilities (private beta). Only decides whether "create a business" is offered; the
+   * server enforces the rule itself. Anything but an explicit `true` means "not offered".
+   */
+  platformAccess(signal?: AbortSignal): Promise<Outcome<{ canCreateBusiness: boolean }>>;
 }
 
 export function classify(status: number, json: unknown): Outcome<never> | null {
   if (status === 401) return { kind: 'unauthenticated' };
+  if (status === 403 && (json as { error?: string } | undefined)?.error === 'invite_required') return { kind: 'forbidden', code: 'invite_required' };
+  if (status === 403 && (json as { error?: string } | undefined)?.error === 'business_creation_not_permitted') return { kind: 'forbidden', code: 'business_creation_not_permitted' };
   if (status === 403) return (json as { error?: string } | undefined)?.error === 'email_not_verified' ? { kind: 'unverified' } : { kind: 'forbidden' };
   if (status === 404) return { kind: 'not_found' };
   if (status === 409) {
@@ -87,6 +94,14 @@ export function createTenancyClient(baseUrl: string, transport: AuthTransport, f
       if (bad) return bad;
       const parsed = CreateBusinessResponse.safeParse(raw.json);
       return parsed.success ? { kind: 'ok', data: { slug: parsed.data.business.slug } } : { kind: 'invalid' };
+    },
+    async platformAccess(signal) {
+      const raw = await http.request('GET', endpoints.platformAccess.path, undefined, signal);
+      if (raw.kind === 'network') return { kind: 'unreachable' };
+      const bad = classify(raw.status, raw.json);
+      if (bad) return bad;
+      const parsed = PlatformAccessResponse.safeParse(raw.json);
+      return parsed.success ? { kind: 'ok', data: { canCreateBusiness: parsed.data.canCreateBusiness } } : { kind: 'invalid' };
     },
   };
 }

@@ -39,7 +39,13 @@ export type StateConflictCode =
   // Communications C2-B1 (docs/communications-c2.md §16): business mailbox identity, members and retention.
   | 'retention_not_set' | 'not_personal' | 'not_business' | 'consumer_domain' | 'domain_exists' | 'domain_not_verified' | 'domain_in_use'
   | 'already_verified' | 'dns_record_not_found' | 'dns_unavailable' | 'removed' | 'attestation_required' | 'attestation_not_applicable'
-  | 'already_designated' | 'personal_connection_exists' | 'address_in_use';
+  | 'already_designated' | 'personal_connection_exists' | 'address_in_use'
+  // Communications E1 (docs/communications-e1.md §8): erased history; an erased provider id cannot be imported again.
+  | 'erased' | 'legal_hold_rule' | 'erasure_in_progress'
+  // Finance F7-A (docs/finance-catalog-f7a.md): a catalog item's code is already used in this business.
+  | 'duplicate_code'
+  // Finance F7-B (docs/finance-catalog-f7b.md): an inactive catalog item cannot be added to a draft line.
+  | 'catalog_item_inactive';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

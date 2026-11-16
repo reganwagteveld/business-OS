@@ -4,6 +4,6 @@ import 'server-only';
 // imported only by the identity module's auth adapter.
 export { createWithTenant, TenantContextError, TenantScopeError } from './with-tenant';
 export type { TenantContext, TenantDb, TenantRole } from './with-tenant';
-export { acceptInvitation, businessesWithDueBilling, businessesWithDueReminders, createBusiness, myMemberships, TrustedPathError, withTenant } from './app-client';
+export { betaCanRegister, betaCanSignIn, betaSessionAdmitted, betaSessionCanCreateBusiness, acceptInvitation, businessesWithDueBilling, businessesWithDueErasure, businessesWithDueReminders, createBusiness, myMemberships, TrustedPathError, withTenant } from './app-client';
 export type { AppTenantDb, MembershipRow, NewBusiness } from './app-client';
 export { Decimal } from './decimal';

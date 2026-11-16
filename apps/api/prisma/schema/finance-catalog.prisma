@@ -1,0 +1,48 @@
+// Finance F7-A (docs/finance-catalog-f7a.md): the products and services catalog. A tenant table with
+// forced RLS and composite (business_id, …) foreign keys; the CHECKs, the guard trigger, the
+// case-insensitive code index and the column grants that Prisma cannot express live in migration
+// 20261130000000_finance_catalog. No DELETE grant: items are deactivated or archived and keep their
+// history.
+//
+// The catalog is a source of defaults only. Quotes and invoices never reference it in F7-A, and a
+// later picker copies an item's values into a draft line, so a catalog change can never alter a
+// document (issued documents keep their own sealed lines).
+
+/// One product or service the business sells. No stock, warehouse or valuation fields (Inventory is
+/// a later module that links to this row by id).
+model FinanceCatalogItem {
+  id           String    @id @db.Uuid
+  businessId   String    @map("business_id") @db.Uuid
+  /// PRODUCT | SERVICE (CHECK). Fixed once created (guard).
+  type         String
+  name         String
+  description  String?
+  /// Optional SKU or service code. Unique per business ignoring case, archived items included (index).
+  code         String?
+  /// A unit code from the fixed list in the contracts (CHECK keeps the shape only).
+  unit         String
+  /// Default unit price, tax-exclusive (FD-T1), in currency_code. NULL = no default price.
+  unitPrice    Decimal?  @map("unit_price") @db.Decimal(18, 6)
+  /// ISO 4217 code of the price. Never converted.
+  currencyCode String    @map("currency_code") @db.Char(3)
+  /// BUSINESS_DEFAULT | RATE | NONE (CHECK). RATE requires tax_rate_id and only RATE has one.
+  taxMode      String    @map("tax_mode")
+  taxRateId    String?   @map("tax_rate_id") @db.Uuid
+  /// ACTIVE | INACTIVE (CHECK).
+  status       String    @default("ACTIVE")
+  /// Stamped by the database when archived; an archived item is read-only until restored (guard).
+  archivedAt   DateTime? @map("archived_at") @db.Timestamptz
+  version      Int       @default(1)
+  createdById  String?   @map("created_by_id") @db.Uuid
+  updatedById  String?   @map("updated_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_catalog_items_business_fkey")
+  taxRate  FinanceTaxRate? @relation(fields: [businessId, taxRateId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_catalog_items_tax_rate_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, archivedAt, status, name, id])
+  @@index([businessId, taxRateId])
+  @@map("finance_catalog_items")
+}

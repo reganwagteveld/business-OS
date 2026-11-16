@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { ForbiddenError, authorize, permissionsFor, type Permission } from '@/modules/access';
 import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser } from '@/modules/identity';
 import { NotFoundError, type Actor } from '@/modules/tenancy';
-import { myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
+import { betaSessionAdmitted, myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
 import { apiHeaders } from '@/core/http';
 import { isUniqueViolation, RecordNotFoundError, RuleViolationError, ServiceFailureError, sqlState, StateConflictError } from '@/core/http/errors';
 
@@ -43,6 +43,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   FN016: [409, 'has_payments'], FN017: [409, 'archived_reference'], FN018: [409, 'expense_not_open'],
   // F5 (migration 20261122000000_finance_documents): generated documents and branding assets.
   FN019: [409, 'not_eligible'], FN020: [409, 'stale'], FN021: [409, 'immutable'],
+  // F7-A (migration 20261130000000_finance_catalog): catalog items.
+  FN050: [409, 'immutable'], FN051: [409, 'archived'], FN052: [409, 'stale'],
   // People (migration 20261118000000_people, docs/people-data-model.md §4).
   PE001: [409, 'invalid_transition'], PE002: [409, 'manager_cycle'], PE003: [400, 'invalid_manager'], PE004: [409, 'immutable'],
   PE005: [409, 'has_direct_reports'], PE006: [409, 'terminated'], PE007: [409, 'archived_reference'], PE008: [409, 'in_use'],
@@ -51,6 +53,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   // Communications C2-A (migration 20261121000000_communications_providers): connections and sync jobs.
   CM005: [409, 'immutable'], CM006: [409, 'disconnected'], CM007: [409, 'invalid_transition'],
   CM008: [409, 'holder_change_not_allowed'], CM009: [409, 'retention_not_set'], CM010: [409, 'business_mailbox_rule'],
+  // Communications E1 (migration 20261201000000_communications_erasure): erased history, legal holds, the ledger.
+  CM011: [409, 'erased'], CM012: [409, 'legal_hold_rule'], CM013: [409, 'immutable'],
 };
 
 /**
@@ -68,6 +72,8 @@ const FINANCE_CONSTRAINTS: [RegExp, string][] = [
   [/finance_expenses_paid/, 'over_payment'],
   [/finance_expense_allocations_active_key/, 'already_allocated'],
   [/finance_expense_categories_active_name_key/, 'duplicate_name'],
+  // F7-A.
+  [/finance_catalog_items_code_key/, 'duplicate_code'],
   // People: the unique indexes behind the service checks (a race the service lost).
   [/people_employees_number_key/, 'duplicate_employee_number'],
   [/people_employees_user_key/, 'user_already_linked'],
@@ -86,7 +92,7 @@ function errorResponse(request: Request, error: unknown): Response {
   if (error instanceof ServiceFailureError) return fail(request, error.status, error.code);
   if (error instanceof RuleViolationError) return json(request, 400, { error: error.code, message: error.detail });
   if (error instanceof TrustedPathError) {
-    const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400 }[error.reason];
+    const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400, business_creation_not_permitted: 403 }[error.reason];
     return fail(request, status, error.reason);
   }
   const state = sqlState(error);
@@ -111,6 +117,8 @@ function errorResponse(request: Request, error: unknown): Response {
   const message = error instanceof Error ? error.message : '';
   const code = (error as { code?: string } | null)?.code;
   if (/at least one owner/.test(message)) return fail(request, 409, 'last_owner');
+  // Administration A2-A: the businesses time-zone guard (the API checks first; this is the backstop).
+  if (/unknown time zone/.test(message)) return fail(request, 400, 'invalid_input');
   // Database guarantees surfacing as client errors: a reference to another business's record (or a
   // primary contact that is not this customer's), or a CHECK the schema did not catch. Never details.
   if (code === 'P2003' || /foreign key constraint/i.test(message)) return fail(request, 400, 'invalid_reference');
@@ -129,24 +137,25 @@ async function readInput<S extends z.ZodType>(request: Request, schema: S | unde
 }
 
 /** Authentication and CSRF shared by the wrappers. Returns the user, or a response to send. */
-async function authenticate(request: Request): Promise<{ user: CurrentUser; sessionToken: string } | Response> {
+async function authenticate(request: Request, invitationRedemption = false): Promise<{ user: CurrentUser; sessionToken: string } | Response> {
   const mode = classifyAuthRequest(request);
   if (mode.kind === 'reject') return fail(request, mode.status, mode.error);
   const user = await getCurrentUser(request);
   const sessionToken = await getSessionToken(request);
   if (!user || !sessionToken) return fail(request, 401, 'unauthenticated');
   if (!user.emailVerified) return fail(request, 403, 'email_not_verified');
+  if (!invitationRedemption && !await betaSessionAdmitted(sessionToken)) return fail(request, 403, 'invite_required');
   return { user, sessionToken };
 }
 
 /** Signed-in routes that do not belong to one business (list/create businesses, accept invitation). */
 export function publicRoute<S extends z.ZodType | undefined, T>(
-  opts: { input?: S; response: z.ZodType<T> },
+  opts: { input?: S; response: z.ZodType<T>; invitationRedemption?: boolean },
   handler: (args: { request: Request; user: CurrentUser; sessionToken: string; input: S extends z.ZodType ? z.infer<S> : undefined }) => Promise<Result<T>>,
 ) {
   return async (request: Request): Promise<Response> => {
     try {
-      const auth = await authenticate(request);
+      const auth = await authenticate(request, opts.invitationRedemption === true);
       if (auth instanceof Response) return auth;
       const input = await readInput(request, opts.input);
       if (!input.ok) return fail(request, 400, 'invalid_input');
@@ -194,11 +203,20 @@ async function resolveTenant(request: Request, context: RouteContext, permission
  * unknown slug and a business the caller does not belong to both answer 404.
  */
 export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodType | undefined = undefined>(
-  opts: { permission: Permission; input?: S; query?: Q; response: z.ZodType<T>; /** Unit-of-work timeout; default 5 s (F5 rendering: 15 s). */ timeoutMs?: number },
+  opts: {
+    permission: Permission; input?: S; query?: Q; response: z.ZodType<T>; /** Unit-of-work timeout; default 5 s (F5 rendering: 15 s). */ timeoutMs?: number;
+    /**
+     * E1 (docs/communications-e1.md §8): hand the raw session token to the handler, which passes it to a
+     * privileged database function that verifies the caller itself. Only the erasure routes set it
+     * (boundary rule); every other handler never sees the token.
+     */
+    sessionToken?: true;
+  },
   handler: (args: {
     request: Request;
     actor: Actor;
     db: AppTenantDb;
+    sessionToken: string | null;
     params: Record<string, string>;
     input: S extends z.ZodType ? z.infer<S> : undefined;
     query: Q extends z.ZodType ? z.infer<Q> : undefined;
@@ -218,7 +236,7 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
         query = parsed.data;
       }
       const result = await withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) =>
-        handler({ request, actor, db, params, input: input.data as never, query: query as never }),
+        handler({ request, actor, db, params, input: input.data as never, query: query as never, sessionToken: opts.sessionToken ? auth.sessionToken : null }),
       opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
       await result.afterCommit?.();
       return json(request, result.status ?? 200, opts.response.parse(result.body));

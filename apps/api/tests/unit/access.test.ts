@@ -106,10 +106,10 @@ describe('Finance Zone permissions (docs/finance-data-model.md §7.1, owner deci
   const FINANCE = [
     'finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage',
     'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download', 'finance:documents_branding',
-    'finance:billing',
+    'finance:billing', 'finance:catalog',
   ] as const;
 
-  it('grants exactly the approved default matrix (F5 document keys provisional, F5-D3)', () => {
+  it('grants exactly the approved default matrix (F5 document keys provisional, F5-D3; F7-A catalog provisional, D-F7A-2)', () => {
     const matrix = Object.fromEntries(ROLES.map((role) => [role, FINANCE.filter((p) => ROLE_PERMISSIONS[role].has(p))]));
     expect(matrix).toEqual({
       OWNER: [...FINANCE],
@@ -126,6 +126,10 @@ describe('Finance Zone permissions (docs/finance-data-model.md §7.1, owner deci
     for (const key of FINANCE) expect(member.has(key)).toBe(false);
     // …and finance keys sit in their own namespace, so holding them implies nothing elsewhere.
     for (const key of FINANCE) expect(key.startsWith('finance:')).toBe(true);
+  });
+
+  it('F7-B: whoever may edit drafts may also read the catalog (a catalog line is read under finance:write)', () => {
+    for (const role of ROLES) if (ROLE_PERMISSIONS[role].has('finance:write')) expect(ROLE_PERMISSIONS[role].has('finance:read')).toBe(true);
   });
 });
 
