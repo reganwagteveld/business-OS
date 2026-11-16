@@ -254,3 +254,20 @@ Approved by Regan in the E1 project thread at 08:53 UTC, naming the recovery bra
 | Health after deploy (09:07) | `GET /api/v1/health` 200; unauthenticated `GET /api/v1/b/x/communications/erasures`, `/legal-holds` and `/retention/eligibility` 401 (not 500); `/api/internal/jobs/communications-retention` 503 (disabled) |
 
 Not done, by instruction: no `CRON_SECRET`, no `COMMUNICATIONS_RETENTION_JOBS_ENABLED`, no cron entry, no mailbox connected, no erasure run, §13 policies unchanged. Keep `pre-e1-migration` until the next migration is verified.
+
+### PR 71 private beta admission (2026-11-16)
+
+Approved by Regan in the PR 71 project thread at 11:17 UTC, naming the recovery branch, the privileged SQL, admitting and granting business creation to `f712a4b7-f283-4f3c-a45e-ff73718d956a`, verification, the merge and smoke tests. PR 71 has no Prisma migration; only `001_trusted_paths.sql` changed. Applied from PR 71's head `c4b17e4` **before** the merge, following `docs/private-beta-lockdown.md` §6. Earlier, also with Regan's approval, the same steps were rehearsed on a disposable branch `tmp-pr71-rehearsal` (`br-bitter-leaf-bbhejp9m`), including rollback with `main`'s SQL. That branch was deleted.
+
+| Step | Result (UTC) |
+|---|---|
+| Preflight (read-only, project owner, production direct endpoint), 11:17 | 21 applied, newest `20261202000000_business_profile`, none failed or rolled back. Function md5s at baseline: `accept_invitation` `7e05fa34…`, `create_business` `053642cc…`, `my_memberships` `d168aafc…`, `session_user_id` `5f02e05e…`. No `app_private.beta_admissions`. Region `us-east-1`. Owner role has BYPASSRLS and CREATE on `app_private`. PR head `c4b17e4`, CI green, mergeable |
+| Recovery branch | `pre-pr71-beta-admission` = `br-broad-mountain-bbjk5eyg`, from production at 11:17:40 (LSN `0/2C78978`, equal to production's LSN at preflight), no compute |
+| `db:privileged` (from `apps/api`, project owner, `DEPLOYMENT_REGION=us-east-1`) | 11:17:58–11:18:05: applied `001`–`004`. `001` adds the admission ledger, events, operator and beta functions |
+| Admission (`db:beta-admission`) | `admit` at 11:18:07 and `allow-create` at 11:18:11, both with reason "PR71 initial beta roster (Regan approval 2026-11-16)". The old deployment showed no businesses to Regan for about 7 s between the SQL and `admit` |
+| Verify (read-only) | `list`: one row, Regan, `can_create_business` true. `history`: 2 events. New md5s match the rehearsal: `accept_invitation` `e5d29e0b…`, `create_business` `e4bb7cfa…`, `my_memberships` `b01326ee…`, `session_user_id` unchanged. `operator_*` not executable by `bos_app`, `bos_auth`, `bos_jobs`, `bos_owner` or PUBLIC. `bos_app` executes only the 4 `beta_session_*`/`beta_can_*` functions. No runtime role can read or write the ledger tables. Regan is still OWNER, ACTIVE in `gerry-s-bakery`. 21 migrations |
+| Roster | 2 users. Regan admitted. The account created 2026-11-13 is not admitted, has no creation grant, and is kept with its membership and 3 sessions (Regan's decision: no deletion without separate approval) |
+| Merge | PR 71 marked ready and squash-merged as `4bb1ae9` at 11:18:52. Vercel `business-os` and `business-os-web` succeeded by 11:19:45 |
+| Smoke (11:20) | `/` 200. `GET /api/v1/health` 200. Unauthenticated `GET /api/v1/access` 401 (the route is new in PR 71, so the new build is live). An email sign-up for an uninvited reserved `@example.com` address got the anti-enumeration 200 response. No `users` or `accounts` row was created (read-only check) |
+
+Not checked by me (needs Regan's own login): browser sign-in showing `gerry-s-bakery`, `GET /api/v1/access` → `canCreateBusiness: true`, desktop sign-in, and an OAuth first login. Rollback: `docs/private-beta-lockdown.md` §7. Use Vercel Instant Rollback of both projects to the pre-`4bb1ae9` deployment; the database can stay as is. Re-apply `cea8459`'s privileged SQL only if a database function is at fault, and keep the admission tables. Restore from `pre-pr71-beta-admission` only for data damage (it loses later writes). Keep `pre-pr71-beta-admission` until the next migration is verified.
