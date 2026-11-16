@@ -60,7 +60,7 @@ All under `/api/v1/b/:slug/finance`, strict bodies, decimal strings.
 | `POST /catalog-items/:itemId/archive`, `/restore` (with `version`) | `finance:catalog` |
 
 - `status`: `current` (default, not archived), `active`, `inactive`, `archived`, `all`. `q` searches name, code and description; `code` is an exact, case-insensitive match (scanners, imports).
-- Order: name, then id (database collation, as Customers); keyset cursor bound to this list.
+- Order: name, then id (database collation, as Customers). The keyset cursor is bound to this list and to its filters (q, code, type, status, tax rate, currency, normalized as the query applies them); a cursor replayed under different filters is refused with `400 invalid_cursor`. The page size may change between pages (audit finding F7A-01).
 - Errors: `400 invalid_input`/`invalid_query`, `invalid_tax_rate`, `invalid_currency`; `409 stale`, `duplicate_code`, `archived`, `not_archived`, `archived_reference`; another business's id is `404`.
 - No DELETE endpoint.
 
@@ -90,10 +90,10 @@ Finance gains a **Products & services** section (`packages/app/src/zones/finance
 
 ## 8. Tests
 
-- `apps/api/tests/integration/finance-catalog.test.ts` (25): permissions by key; validation; tax and currency; codes (case, archived, cross-business); edit, lifecycle; search, filters, paging, cursor tampering; tenant isolation through the API and raw SQL under RLS; four deterministic races (staged with `pg_blocking_pids`): same-version edits, edit vs archive, duplicate codes, linking a rate that is being archived; audit content; failed changes write nothing; documents unchanged after catalog edits; the guard on its own (G1–G6).
+- `apps/api/tests/integration/finance-catalog.test.ts` (26): permissions by key; validation; tax and currency; codes (case, archived, cross-business); edit, lifecycle; search, filters, paging, cursor tampering; cursor bound to filters (changed, added and removed filters refused; page size may change); tenant isolation through the API and raw SQL under RLS; four deterministic races (staged with `pg_blocking_pids`): same-version edits, edit vs archive, duplicate codes, linking a rate that is being archived; audit content; failed changes write nothing; documents unchanged after catalog edits; the guard on its own (G1–G6).
 - `finance-integrity.test.ts`: table, trigger and function inventories now include the catalog (T1, TR1–TR3).
 - `apps/api/tests/unit/access.test.ts`: permission matrix.
-- `packages/app/tests/finance-catalog.test.tsx` (8): formatting, registry, reader view, create, duplicate code, stale edit, lifecycle, filters and paging.
+- `packages/app/tests/finance-catalog.test.tsx` (8): formatting, registry, reader view, create, duplicate code, stale edit, lifecycle, filters and paging (a filter change drops the cursor).
 
 Local results: unit 133 (api) + 386 (app) + 24 (contracts) + 95 (ui) + 293 (root) passing; integration 603 run, 601 passing. The two failures are local environment only and pass in CI's setup: `customers` sort order (the local cluster uses C collation; CI uses en_US) and a `finance-documents` CORS test (it passed after setting CI's `CORS_ALLOWED_ORIGINS`). `test:isolation` needs PgBouncer and was not run locally (CI runs it).
 

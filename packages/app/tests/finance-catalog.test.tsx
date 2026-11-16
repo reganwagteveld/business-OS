@@ -205,5 +205,10 @@ describe('catalog screens', () => {
     await waitFor(() => expect(calls.some((c) => c.query.includes('q=alp'))).toBe(true));
     await user.click(await screen.findByRole('button', { name: 'Next' }));
     await waitFor(() => expect(calls.some((c) => c.query.includes('cursor=next-page'))).toBe(true));
+    // A cursor belongs to its filters: changing a filter goes back to the first page without it.
+    const before = calls.length;
+    await user.selectOptions(screen.getByLabelText('Type'), 'SERVICE');
+    await waitFor(() => expect(calls.slice(before).some((c) => c.query.includes('type=SERVICE'))).toBe(true));
+    expect(calls.slice(before).filter((c) => c.query.includes('type=SERVICE')).every((c) => !c.query.includes('cursor='))).toBe(true);
   });
 });

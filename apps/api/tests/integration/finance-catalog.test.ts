@@ -352,6 +352,58 @@ describe('search, filters and pagination', () => {
     expect((await c.list('?limit=101')).body.error).toBe('invalid_query');
     expect((await c.list('?status=deleted')).body.error).toBe('invalid_query');
   });
+
+  it('binds the cursor to the filters: a changed, added or removed filter is refused; the page size may change', async () => {
+    const C = await team('cat-cursor');
+    const c = api(C.people.OWNER!, C.slug);
+    const rate = (await c.createTaxRate({ name: 'VAT', ratePercent: '20' })).body.taxRate.id;
+    const ids: string[] = [];
+    for (const name of ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot']) {
+      ids.push((await c.create({ type: 'PRODUCT', unit: 'each', name, code: `K-${name}`, description: 'kit part', taxMode: 'RATE', taxRateId: rate })).body.item.id);
+    }
+    const base = `q=kit&type=PRODUCT&status=all&taxRateId=${rate}&currencyCode=AUD`;
+    const first = await c.list(`?${base}&limit=2`);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    const cursor: string = first.body.nextCursor;
+    expect(cursor).toBeTruthy();
+    // Same filters, written differently (case, order), are the same list.
+    const reordered = `currencyCode=AUD&taxRateId=${rate.toUpperCase()}&status=all&type=PRODUCT&q=kit`;
+    expect((await c.list(`?${reordered}&limit=2&cursor=${cursor}`)).status).toBe(200);
+    const refused = [
+      // changed
+      `q=kits&type=PRODUCT&status=all&taxRateId=${rate}&currencyCode=AUD`,
+      `q=kit&type=SERVICE&status=all&taxRateId=${rate}&currencyCode=AUD`,
+      `q=kit&type=PRODUCT&status=current&taxRateId=${rate}&currencyCode=AUD`,
+      `q=kit&type=PRODUCT&status=all&taxRateId=${randomUUID()}&currencyCode=AUD`,
+      `q=kit&type=PRODUCT&status=all&taxRateId=${rate}&currencyCode=EUR`,
+      // added
+      `${base}&code=K-Echo`,
+      // removed
+      `type=PRODUCT&status=all&taxRateId=${rate}&currencyCode=AUD`,
+      `q=kit&status=all&taxRateId=${rate}&currencyCode=AUD`,
+      `q=kit&type=PRODUCT&taxRateId=${rate}&currencyCode=AUD`,
+      `q=kit&type=PRODUCT&status=all&currencyCode=AUD`,
+      `q=kit&type=PRODUCT&status=all&taxRateId=${rate}`,
+      '',
+    ];
+    for (const qs of refused) {
+      const res = await c.list(`?${qs}${qs ? '&' : ''}limit=2&cursor=${cursor}`);
+      expect(res.status, qs).toBe(400);
+      expect(res.body.error, qs).toBe('invalid_cursor');
+    }
+    // Fixed filters with a changing page size: every row once, in order.
+    const seen: string[] = [...first.body.items.map((x: { id: string }) => x.id)];
+    let next: string | null = cursor;
+    for (const limit of [3, 1, 5]) {
+      if (!next) break;
+      const res: { status: number; body: { items: { id: string }[]; nextCursor: string | null } } = await c.list(`?${base}&limit=${limit}&cursor=${next}`);
+      expect(res.status).toBe(200);
+      seen.push(...res.body.items.map((x) => x.id));
+      next = res.body.nextCursor;
+    }
+    expect(next).toBeNull();
+    expect(seen).toEqual(ids);
+  });
 });
 
 describe('tenant isolation', () => {

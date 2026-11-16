@@ -12,7 +12,7 @@ import 'server-only';
 // same rates documents use) and never stores a percentage; prices are exact decimal strings with a
 // document line's precision. `lineDefaultsOf` is the one place a future picker (quotes, invoices,
 // recurring templates, POS) turns an item into the values it COPIES into a draft line.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { CatalogItem as ItemDto, CatalogItemStatus, CatalogItemType, CatalogTaxMode, CatalogUnit } from '@business-os/contracts';
 import { recordAudit } from '@/core/audit';
 import { Decimal, type AppTenantDb } from '@/core/db';
@@ -90,6 +90,18 @@ export interface ListCatalogQuery {
   currencyCode?: string; cursor?: string; limit: number;
 }
 
+/**
+ * A digest of the filters that shape the result set, normalized the way the query applies them: an empty
+ * search or code is no filter, codes and tax rate ids compare without case, currencies are upper case.
+ */
+function catalogFilterKey(query: ListCatalogQuery): string {
+  const canonical = JSON.stringify([
+    query.q || null, query.code ? query.code.toLowerCase() : null, query.type ?? null, query.status,
+    query.taxRateId ? query.taxRateId.toLowerCase() : null, query.currencyCode ? query.currencyCode.toUpperCase() : null,
+  ]);
+  return createHash('sha256').update(canonical).digest('base64url');
+}
+
 /** Search, filter and page (keyset on name, then id; the cursor is bound to this list). */
 export async function listCatalogItems(db: AppTenantDb, query: ListCatalogQuery) {
   const where: Record<string, unknown>[] = [];
@@ -110,10 +122,13 @@ export async function listCatalogItems(db: AppTenantDb, query: ListCatalogQuery)
     });
   }
   const list = 'finance:catalog-items';
-  // Cursor keys avoid `k`, which the cursor format uses for the list name.
-  const after = decodeCursor(query.cursor, list, ['n', 'i'] as const);
+  // The cursor is bound to the normalized filters (as the ageing list is), so a cursor issued for one
+  // filter set is refused by another instead of silently skipping rows. The page size may change between
+  // pages. Cursor keys avoid `k`, which the cursor format uses for the list name.
+  const filters = catalogFilterKey(query);
+  const after = decodeCursor(query.cursor, list, ['n', 'i', 'f'] as const);
   if (after) {
-    if (!UUID.test(after.i)) invalidCursor();
+    if (!UUID.test(after.i) || after.f !== filters) invalidCursor();
     where.push({ OR: [{ name: { gt: after.n } }, { name: after.n, id: { gt: after.i } }] });
   }
   const rows = (await db.financeCatalogItem.findMany({
@@ -123,7 +138,7 @@ export async function listCatalogItems(db: AppTenantDb, query: ListCatalogQuery)
   const last = page[page.length - 1];
   return {
     items: page.map(itemDto),
-    nextCursor: rows.length > query.limit && last ? encodeCursor(list, { n: last.name, i: last.id }) : null,
+    nextCursor: rows.length > query.limit && last ? encodeCursor(list, { n: last.name, i: last.id, f: filters }) : null,
   };
 }
 
