@@ -2,8 +2,9 @@
 
 > Status: **P3-A draft PR for independent audit.** Not merged, not migrated, not deployed. Migration
 > `20261204000000_people_leave_policies` is **not applied** anywhere except local and CI test databases.
-> P3-A decisions (§3.1) were built as proposed defaults and are **pending Regan's approval**. Decisions
-> for later stages (§3.2) are proposals only; nothing for P3-B to P3-E is built.
+> Regan approved D-P3-1 and D-P3-2 to D-P3-11 on 2026-11-16 (review on PR #68). That approval does not
+> cover D-P3-12 onward, the migration or merging. Decisions for later stages (§3.2) are proposals only;
+> nothing for P3-B to P3-E is built.
 
 ## 1. Architecture audit (main at 15f7746, 2026-11-16)
 
@@ -33,7 +34,7 @@ Each stage: own branch, own draft PR, own tests, ChatGPT audit, owner approval b
 
 ## 3. Decisions
 
-### 3.1 P3-A (built as defaults, pending approval)
+### 3.1 P3-A (approved by Regan, 2026-11-16)
 
 | # | Decision | Default built |
 |---|---|---|
@@ -52,7 +53,7 @@ Each stage: own branch, own draft PR, own tests, ChatGPT audit, owner approval b
 
 | # | Question | Recommendation |
 |---|---|---|
-| D-P3-1 | Stage order | Build P3-C (ledger) before P3-B (requests) (§2). |
+| D-P3-1 | Stage order | **Approved 2026-11-16.** Build P3-C (ledger) before P3-B (requests) (§2). |
 | D-P3-12 | Who is "the employee" when someone requests leave | The signed-in user linked to the employee record (`user_id`). New keys: `people:leave_self` (every role, own leave only), `people:leave_approve` (MANAGER and up), `people:leave_manage` (OWNER, ADMIN: any employee, on behalf, balance adjustments, overrides). MEMBER gains self-service only, not the directory. |
 | D-P3-13 | Who approves | The employee's current line manager (P1 reporting line) when that manager is linked to an active member holding `people:leave_approve`. Otherwise (no manager, manager unlinked or terminated) the request goes to `people:leave_manage` holders. This is the first record-scoped rule in People. |
 | D-P3-14 | Self-approval and overrides | Nobody approves their own request. A `people:leave_manage` holder may decide any request, recorded as an override. Exception for a business with no other approver (sole owner): self-approval allowed and flagged in the audit. |
@@ -65,6 +66,7 @@ Each stage: own branch, own draft PR, own tests, ChatGPT audit, owner approval b
 | D-P3-21 | Accrual | An explicit, idempotent "accrue up to date" operation (run on balance read and before approval), no scheduler. Part-time pro-rating via separate policies or manual adjustments, not automatic. |
 | D-P3-22 | Privacy | For sensitive types, notes and the type name are visible only to the employee, their approver and `people:read_sensitive` holders; everyone else sees "Away". No attachments or medical documents in P3. |
 | D-P3-23 | Scheduling (P3-E) | People-owned `employee_id` on PERSON resources (S2 §9), one-way busy-only blocks with no leave type or notes, retry from an outbox, sync disabled until private/busy-only Scheduling is built and approved. |
+| D-P3-25 | Which rules govern a past date | §4.7: each revision gets a business calendar date it takes effect from; every ledger entry records the policy version it used and is never recalculated. Gate for P3-C. |
 | D-P3-24 | Navigation | Leave as tabs inside People. MEMBER sees only My Leave. Needs People to open for self-service holders without `people:read`. |
 
 ## 4. P3-A specification
@@ -108,6 +110,8 @@ Assigning a policy closes the employee's current policy of the same type at the 
 
 Policy row `FOR SHARE` → employee rows `FOR SHARE` in ascending id order → assignment rows. Archiving a policy takes its row `FOR UPDATE`; terminating takes the employee row; archiving a type takes the type row `FOR UPDATE` against policy creation's `FOR SHARE`. No path takes these in the opposite order. Racing assignments for the same employee and type are settled by the one-open-row index (`409 stale`, nothing written).
 
+Ending an assignment takes the same locks in the same order (employee `FOR SHARE`, then the open row). An end and an assignment (or two ends) of the same employee and type race on the open row itself: each closes it with a conditional update (`ends_on IS NULL`), so whichever commits first wins and the other blocks on the row, finds it closed and gets `409 stale` with nothing written and no audit entry. The order is therefore serial and visible: an end never reports success while a replacement it did not see stays open, and an assignment never starts on top of a row someone else just closed. The client re-reads and retries. Same-day races leave a zero-length `[d, d)` row, which is allowed. Three deterministic tests stage each order (§5).
+
 ### 4.6 Audit
 
 | Action | Target | Metadata |
@@ -122,17 +126,35 @@ Policy row `FOR SHARE` → employee rows `FOR SHARE` in ascending id order → a
 
 Never names, descriptions or amounts (a test checks this). The full rule history is in the revisions table, readable with `people:read`.
 
+### 4.7 Which rules govern a past date (gate for P3-C, D-P3-25)
+
+Revisions carry `recorded_at` (an instant), not a calendar date, and the business time zone can change later, so P3-C must not derive "which rules applied on day D" from `recorded_at` at read time. Proposed rules, to be built in P3-C's migration and approved before it starts:
+
+1. **Effective date of a revision.** Add `effective_from DATE` to `people_leave_policy_revisions`, written by the database trigger as the business-local date at the moment of recording, and never changed. Revisions cannot be backdated or future-dated (as for assignments, D-P3-9). Existing rows are filled from `recorded_at` in the business's time zone when that migration runs; no business has leave data yet, so this is exact in practice.
+2. **Rules in force on day D** for an employee = the policy of their assignment covering D (`starts_on <= D < ends_on`), at its highest version whose `effective_from <= D`. Several edits on one day: the last one governs that whole day.
+3. **Every ledger entry is immutable and records `policy_id` and `policy_version`.** Posted entries are never recalculated or edited; a correction is a new, audited adjustment entry. A rule change only affects entries posted after it.
+4. **Accrual** ("accrue up to date", D-P3-21) posts one entry per completed period, using the rules in force on the period's last day. Catching up late gives the same result as running on time, because revisions are never backdated. A period split by an assignment change accrues per assignment, pro rata by days in each.
+5. **Grants** for a leave year use the rules in force on the year's first day (or the assignment's start, if later). A mid-year edit does not regrant the current year; a change to the leave year start takes effect from the next boundary under the new rules.
+6. **Approvals and backdated leave** (P3-B) deduct on the approval date, checking the negative limit and maximum balance with the rules in force on that date. Leave dates in the past (`allow_backdated`) do not reopen older rules. Counting days and hours uses the rules in force on approval, and the count is stored on the entry.
+7. **No legal rule is inferred** from `country_code` or anything else; every number comes from the business's own policy.
+
 ## 5. Tests
 
-- `apps/api/tests/integration/people-leave.test.ts` (34): permissions by key (including custom role sets); starter types and sensitive defaults; validation and unknown fields; name uniqueness, archive, restore; optimistic versions; list filters, paging and filter-bound cursors; untracked, granted, accruing and hourly policies; every invalid rule combination; fixed type and unit; clearing rules when switching to no balance; revisions; batch assignment, replacement, unchanged; effective dates in two time zones (Perth and New York) and history order; all-or-nothing batches; inactive and archived policies; termination and rehire; assignment paging; tenant isolation through every route and raw SQL under RLS; RLS, grants and DELETE inventory; guards on their own (PE004, 008, 009, 010, 011, CHECKs, composite FK); six deterministic races (same-version edits, archive vs assign both ways, termination vs assign, two policies for one employee, type archive vs policy create); audit content; failed changes write nothing.
+- `apps/api/tests/integration/people-leave.test.ts` (37): permissions by key (including custom role sets); starter types and sensitive defaults; validation and unknown fields; name uniqueness, archive, restore; optimistic versions; list filters, paging and filter-bound cursors; untracked, granted, accruing and hourly policies; every invalid rule combination; fixed type and unit; clearing rules when switching to no balance; revisions; batch assignment, replacement, unchanged; effective dates in two time zones (Perth and New York) and history order; all-or-nothing batches; inactive and archived policies; termination and rehire; assignment paging; tenant isolation through every route and raw SQL under RLS; RLS, grants and DELETE inventory; guards on their own (PE004, 008, 009, 010, 011, CHECKs, composite FK); nine deterministic races (same-version edits, archive vs assign both ways, termination vs assign, two policies for one employee, type archive vs policy create, end vs same-day replacement in both orders, two ends at once); audit content; failed changes write nothing.
 - `packages/contracts/tests/people-leave.test.ts` (3): the shared rule checker, starter types without numbers, strict create contract.
 - `apps/api/tests/unit/people-boundaries.test.ts`: the leave tables are People tables (no other module may touch them); non-People contracts cannot carry leave fields.
 - CI: the leave suite runs a second time behind PgBouncer in transaction mode.
 
-Local results (Postgres 16, ICU en-US): leave suite 34/34; unit 134 (api) + 461 (app) + 27 (contracts) + 95 (ui) + 317 (root) passing; typecheck, lint (two existing warnings), boundaries, contract snapshot and migration check pass. Full integration and the pooler runs: see the PR.
+Local results (Postgres 16, ICU en-US): leave suite 37/37; unit 134 (api) + 461 (app) + 27 (contracts) + 95 (ui) + 317 (root) passing; typecheck, lint (two existing warnings), boundaries, contract snapshot and migration check pass. Full integration and the pooler runs: see the PR.
 
 ## 6. Migration safety, rollout and rollback
 
 - **Additive only:** four tables, indexes, CHECKs, five functions and their triggers, grants and RLS policies. No existing table, column or row changes. One transaction. No privileged SQL.
 - **Order:** apply the migration just before merging (Vercel auto-deploys main), under the standing recovery-branch policy. A migrated-but-not-deployed state exposes nothing (no route uses the tables).
+- **Migration gate (ChatGPT audit, 2026-11-16).** Each step needs Regan's separate, explicit approval; the design approval and the audit are not migration or merge approval:
+  1. At execution time, recheck the migration order against current `main` and production history (no pending migration other than this one, no later timestamp already applied, checksums match). Stop on any mismatch.
+  2. Create and verify a fresh Neon recovery branch (standing policy; PITR is not a substitute).
+  3. Apply `20261204000000_people_leave_policies` only with Regan's written go-ahead.
+  4. Verify in production: the four tables have forced RLS and the tenant policy; `bos_app` has no DELETE or TRUNCATE and only the listed column UPDATEs; the guard triggers exist; a create, edit, archive and restore of a type and policy works through the API on a disposable test business (if Regan agrees to creating one), which is then archived.
+  5. Merge only the checked head, with required CI green, and only with Regan's merge approval.
 - **Rollback:** revert the code; the tables are then unused. Dropping them is destructive and needs explicit approval; it is not needed to roll back.

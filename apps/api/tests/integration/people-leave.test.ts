@@ -806,6 +806,86 @@ describe('concurrency (deterministic: each race is staged with pg_blocking_pids)
     expect(open.rows).toEqual([{ policy_id: p1.id }]);
   });
 
+  // End versus replacement (ChatGPT P3-A audit, item 1). Both sides read the open row, then close it with a
+  // conditional update; the holder plays whichever side commits first, on the same business day the row
+  // started (a same-day replacement leaves a zero-length [d, d) row, which the CHECK allows).
+  async function openToday(e: { id: string }, typeId: string, policyId: string) {
+    const id = randomUUID();
+    await admin.query(
+      `INSERT INTO people_leave_policy_assignments (id, business_id, employee_id, leave_type_id, policy_id, starts_on) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, A.businessId, e.id, typeId, policyId, todayIn(A.timeZone)],
+    );
+    return id;
+  }
+  const openRows = async (employeeId: string) =>
+    (await admin.query('SELECT policy_id FROM people_leave_policy_assignments WHERE employee_id = $1 AND ends_on IS NULL', [employeeId])).rows;
+
+  it('ending an assignment while a same-day replacement commits first: the end waits, then is refused (stale) and the replacement stays', async () => {
+    const t = await leaveType();
+    const p1 = await policy({}, t.id);
+    const p2 = await policy({}, t.id);
+    const e = await employee();
+    const first = await openToday(e, t.id, p1.id);
+    const holder = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
+    await holder.connect();
+    await holder.query('BEGIN');
+    // The replacement, mid-flight: the old row closed today and the new one open from today.
+    await holder.query(`UPDATE people_leave_policy_assignments SET ends_on = $2, ended_at = now() WHERE id = $1`, [first, todayIn(A.timeZone)]);
+    await holder.query(
+      `INSERT INTO people_leave_policy_assignments (id, business_id, employee_id, leave_type_id, policy_id, starts_on) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [randomUUID(), A.businessId, e.id, t.id, p2.id, todayIn(A.timeZone)],
+    );
+    const pid = await backendPid(holder);
+    const ending = own.end(e.id, { leaveTypeId: t.id });
+    await waitUntilBlocked(admin, pid, { count: 1 });
+    await holder.query('COMMIT');
+    await holder.end();
+    expect(await ending).toMatchObject({ status: 409, body: { error: 'stale' } });
+    expect(await openRows(e.id)).toEqual([{ policy_id: p2.id }]);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'people.leave_policy.unassigned' AND target_id = $1`, [e.id])).rows[0].n).toBe(0);
+    // Re-read and retry: the end now applies to the replacement.
+    expect((await own.end(e.id, { leaveTypeId: t.id })).status).toBe(200);
+    expect(await openRows(e.id)).toEqual([]);
+  });
+
+  it('replacing an assignment while a same-day end commits first: the assignment waits, then is refused (stale) and nothing is left open', async () => {
+    const t = await leaveType();
+    const p1 = await policy({}, t.id);
+    const p2 = await policy({}, t.id);
+    const e = await employee();
+    const first = await openToday(e, t.id, p1.id);
+    const holder = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
+    await holder.connect();
+    await holder.query('BEGIN');
+    await holder.query(`UPDATE people_leave_policy_assignments SET ends_on = $2, ended_at = now() WHERE id = $1`, [first, todayIn(A.timeZone)]);
+    const pid = await backendPid(holder);
+    const assigning = own.assign(p2.id, { employeeIds: [e.id] });
+    await waitUntilBlocked(admin, pid, { count: 1 });
+    await holder.query('COMMIT');
+    await holder.end();
+    expect(await assigning).toMatchObject({ status: 409, body: { error: 'stale' } });
+    expect(await openRows(e.id)).toEqual([]);
+    // Re-read and retry: with nothing open, the assignment simply starts.
+    expect((await own.assign(p2.id, { employeeIds: [e.id] })).body).toMatchObject({ assigned: 1 });
+    expect(await openRows(e.id)).toEqual([{ policy_id: p2.id }]);
+  });
+
+  it('two ends of the same assignment at once: one ends it, the other is stale', async () => {
+    const t = await leaveType();
+    const p1 = await policy({}, t.id);
+    const e = await employee();
+    const first = await openToday(e, t.id, p1.id);
+    const lock = await holdRow('people_leave_policy_assignments', first);
+    const one = own.end(e.id, { leaveTypeId: t.id });
+    const two = api(A.people.ADMIN!, A.slug).end(e.id, { leaveTypeId: t.id });
+    await waitUntilBlocked(admin, lock.pid, { count: 2 });
+    await lock.release();
+    const results = await Promise.all([one, two]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(results.find((r) => r.status === 409)!.body.error).toBe('stale');
+    expect(await openRows(e.id)).toEqual([]);
+  });
+
   it('archiving a leave type while a policy is being created under it: the create waits, then is refused (archived_reference)', async () => {
     const t = await leaveType();
     const holder = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });

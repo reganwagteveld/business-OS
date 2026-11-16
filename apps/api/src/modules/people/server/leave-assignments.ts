@@ -7,6 +7,12 @@ import 'server-only';
 // then the assignment rows. An archive of the policy takes the policy row FOR UPDATE, a termination
 // takes the employee row; neither then takes the other, so no cycle is possible. Two administrators
 // assigning at once are resolved by the one-open-row index (the loser gets 409 stale, nothing written).
+//
+// Ending and assigning race on the open row itself (§4.5): both take the employee FOR SHARE, read the
+// open row, then close it with a conditional update (`ends_on IS NULL`). Whichever closes it first wins;
+// the other blocks on that row, finds it already closed and gets 409 stale with nothing written. So an
+// end never reports success while a replacement it did not see stays open, and an assignment never
+// starts on top of a row someone else just closed. The client re-reads and retries if it still wants to.
 import { randomUUID } from 'node:crypto';
 import type { EmploymentStatus, LeaveCategory, LeavePolicyAssignment as AssignmentDto } from '@business-os/contracts';
 import { recordAudit } from '@/core/audit';
@@ -103,6 +109,9 @@ export async function endLeavePolicyAssignment(db: AppTenantDb, actorUserId: str
   const employee = await db.peopleEmployee.findFirst({ where: { id: employeeId }, select: { id: true } });
   if (!employee) throw new RecordNotFoundError();
   const date = await effectiveDateOf(db, input.effectiveDate);
+  // Same lock order as assignLeavePolicy (employee, then the assignment row), so a concurrent assign or
+  // end of this employee serialises on the open row and the loser gets 409 stale.
+  await lockEmployee(db, employeeId);
   const open = await db.peopleLeavePolicyAssignment.findFirst({
     where: { employeeId, leaveTypeId: input.leaveTypeId, endsOn: null }, select: { id: true, policyId: true, startsOn: true },
   });
