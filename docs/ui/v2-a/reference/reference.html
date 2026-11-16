@@ -1,0 +1,281 @@
+<!doctype html>
+<!-- UI V2-A reference-screen directions. A static concept, NOT application code: sample data, no live controls.
+     Render with ?screen=home|customers|customer|invoices|invoice-form|dashboard&theme=light|dark (width from the viewport).
+     Token names follow docs/ui/pixa-design-system-v2-a.md §6; values are provisional until V2-B validates them in tests. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pixa V2 reference screens</title>
+<style>
+:root{
+  /* raw (subset) */
+  --pk-indigo-600:#384eba;--pk-indigo-700:#2f42a6;--pk-violet-600:#6b57b3;
+  /* semantic: light */
+  --bg-canvas:#f7f7fb;--bg-surface:#ffffff;--bg-sunken:#f2f2f8;--bg-raised:#ffffff;--bg-hover:rgb(16 20 46 / .04);--bg-selected:#eef0fb;
+  --fg-default:#10142e;--fg-muted:#555a77;--fg-subtle:#646987;--fg-on-accent:#ffffff;--fg-accent:#2f42a6;
+  --border-default:#e4e4ee;--border-strong:#d3d3e2;--border-input:#8e90ad;
+  --accent:#384eba;--accent-hover:#2e42a3;--accent-subtle:#eef0fb;--focus-ring:#6b57b3;
+  --success-fg:#1a7354;--success-bg:#e8f5ef;--warning-fg:#855400;--warning-bg:#fbf2e1;--danger-fg:#b4234a;--danger-bg:#fcebef;--info-fg:#2b53c7;--info-bg:#ebf0fd;
+  --chart-1:#384eba;--chart-2:#8a3f8f;--chart-cmp:#7d73a6;--chart-grid:#ebebf3;
+  --shadow-raised:0 1px 2px rgb(16 20 46 / .06),0 8px 24px -12px rgb(16 20 46 / .18);
+  --atmo-a:rgb(121 102 187 / .14);--atmo-b:rgb(56 78 186 / .08);
+  --glass:rgb(255 255 255 / .72);
+  /* component */
+  --font-sans:"Inter","Inter Variable",ui-sans-serif,system-ui,sans-serif;
+  --control-h:32px;--row-h:40px;--radius-control:8px;--radius-panel:12px;--radius-dialog:16px;
+  --sidebar-w:232px;--topbar-h:48px;
+}
+[data-theme=dark]{
+  --bg-canvas:#0b0f1e;--bg-surface:#121729;--bg-sunken:#0e1324;--bg-raised:#181e33;--bg-hover:rgb(238 240 250 / .05);--bg-selected:rgb(91 110 224 / .18);
+  --fg-default:#eef0fa;--fg-muted:#a6abc6;--fg-subtle:#8a8faa;--fg-on-accent:#ffffff;--fg-accent:#aab6ff;
+  --border-default:#262c45;--border-strong:#323958;--border-input:#6b7193;
+  --accent:#4f63d6;--accent-hover:#5d70e0;--accent-subtle:rgb(91 110 224 / .18);--focus-ring:#c4a6d3;
+  --success-fg:#5fd3a6;--success-bg:rgb(95 211 166 / .12);--warning-fg:#f2c46d;--warning-bg:rgb(242 196 109 / .12);--danger-fg:#f27b93;--danger-bg:rgb(242 123 147 / .12);--info-fg:#8fb0ff;--info-bg:rgb(143 176 255 / .12);
+  --chart-1:#8fa0ff;--chart-2:#e3a6dc;--chart-cmp:#9d95c4;--chart-grid:#20263d;
+  --shadow-raised:0 1px 2px rgb(0 0 0 / .4),0 12px 32px -16px rgb(0 0 0 / .7);
+  --atmo-a:rgb(121 102 187 / .22);--atmo-b:rgb(56 78 186 / .18);
+  --glass:rgb(18 23 41 / .78);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:var(--font-sans);font-size:14px;line-height:20px;color:var(--fg-default);background:var(--bg-canvas);font-feature-settings:"cv11","ss01";-webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums}
+.app{display:flex;height:100vh;background:radial-gradient(40% 30% at 100% 0%,var(--atmo-a),transparent 70%),var(--bg-canvas)}
+/* sidebar */
+.side{width:var(--sidebar-w);flex:none;display:flex;flex-direction:column;background:var(--glass);border-right:1px solid var(--border-default);backdrop-filter:blur(16px)}
+.brand{display:flex;align-items:center;gap:10px;height:var(--topbar-h);padding:0 16px;font-weight:700;font-size:13px;letter-spacing:-.01em}
+.mark{width:22px;height:22px;border-radius:6px;background:conic-gradient(#8674FB 0 25%,#FDD237 0 50%,#3F4051 0 75%,#EEEFF4 0);outline:3px solid #080812;outline-offset:-3px}
+.biz{margin:4px 10px 10px;display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:var(--radius-control);border:1px solid var(--border-default);background:var(--bg-surface)}
+.biz .av{width:24px;height:24px;border-radius:6px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center}
+.biz b{font-size:13px;display:block;line-height:16px}.biz small{color:var(--fg-muted);font-size:12px}
+.nav{padding:4px 10px;flex:1}
+.nav .lbl{font-size:11px;font-weight:600;color:var(--fg-subtle);padding:12px 8px 4px;letter-spacing:.02em}
+.nav a{display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;border-radius:var(--radius-control);color:var(--fg-muted);text-decoration:none;font-weight:500;position:relative}
+.nav a svg{width:16px;height:16px;flex:none}
+.nav a[aria-current]{background:var(--bg-selected);color:var(--fg-default)}
+.nav a[aria-current]::before{content:"";position:absolute;left:-10px;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--accent)}
+.nav .sub{margin:2px 0 4px 26px;border-left:1px solid var(--border-default);padding-left:6px}
+.nav .sub a{height:28px;font-size:13px}
+.nav .sub a[aria-current]::before{left:-7px;top:6px;bottom:6px}
+.side .foot{padding:10px;border-top:1px solid var(--border-default);display:flex;gap:8px;align-items:center;color:var(--fg-muted);font-size:13px}
+/* main */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{height:var(--topbar-h);flex:none;display:flex;align-items:center;gap:12px;padding:0 20px;border-bottom:1px solid var(--border-default);background:color-mix(in oklab,var(--bg-canvas) 80%,transparent)}
+.crumbs{display:flex;gap:6px;align-items:center;color:var(--fg-muted);font-size:13px;min-width:0}
+.crumbs b{color:var(--fg-default);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crumbs i{font-style:normal;color:var(--fg-subtle)}
+.cmd{margin-left:auto;display:flex;align-items:center;gap:8px;height:30px;padding:0 8px 0 10px;border:1px solid var(--border-default);border-radius:var(--radius-control);background:var(--bg-surface);color:var(--fg-muted);font-size:13px;min-width:220px}
+.kbd{margin-left:auto;font-size:11px;border:1px solid var(--border-strong);border-radius:4px;padding:0 5px;color:var(--fg-muted);background:var(--bg-sunken)}
+.me{width:28px;height:28px;border-radius:50%;background:var(--bg-sunken);border:1px solid var(--border-default);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--fg-muted)}
+.page{flex:1;overflow:auto;padding:20px 24px 40px}
+.wrap{max-width:1240px;margin:0 auto}
+.ph{display:flex;align-items:flex-end;gap:12px;margin-bottom:16px}
+.ph h1{margin:0;font-size:22px;line-height:28px;font-weight:650;letter-spacing:-.015em}
+.ph p{margin:2px 0 0;color:var(--fg-muted);font-size:13px}
+.ph .acts{margin-left:auto;display:flex;gap:8px}
+.btn{height:var(--control-h);padding:0 12px;border-radius:var(--radius-control);font:inherit;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--fg-default);white-space:nowrap}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--fg-on-accent)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--fg-muted)}
+.btn svg{width:14px;height:14px}
+.focus{outline:2px solid var(--focus-ring);outline-offset:2px}
+/* filter bar */
+.fbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.search{flex:1 1 260px;max-width:360px;height:var(--control-h);border:1px solid var(--border-input);border-radius:var(--radius-control);background:var(--bg-surface);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--fg-subtle);font-size:13px}
+.chip{height:28px;padding:0 10px;border-radius:999px;border:1px dashed var(--border-strong);display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--fg-muted);background:transparent;font-weight:500}
+.chip.on{border-style:solid;border-color:var(--accent);background:var(--accent-subtle);color:var(--fg-accent)}
+.seg{display:inline-flex;border:1px solid var(--border-default);border-radius:var(--radius-control);padding:2px;background:var(--bg-sunken)}
+.seg span{height:26px;padding:0 10px;display:inline-flex;align-items:center;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--fg-muted)}
+.seg span[aria-pressed=true]{background:var(--bg-surface);color:var(--fg-default);box-shadow:0 0 0 1px var(--border-strong)}
+.count{margin-left:auto;color:var(--fg-subtle);font-size:12.5px}
+/* panel + table */
+.panel{background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-panel)}
+.panel h2{margin:0;font-size:13px;font-weight:600}
+.panel .hd{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border-default)}
+table{width:100%;border-collapse:collapse}
+th{height:34px;text-align:left;font-size:12px;font-weight:600;color:var(--fg-muted);padding:0 12px;background:var(--bg-sunken);border-bottom:1px solid var(--border-default);white-space:nowrap}
+th:first-child{border-top-left-radius:var(--radius-panel)}th:last-child{border-top-right-radius:var(--radius-panel)}
+td{height:var(--row-h);padding:0 12px;border-bottom:1px solid var(--border-default);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+tr.sel td{background:var(--bg-hover)}
+td.r,th.r{text-align:right}
+td .sub{color:var(--fg-muted)}
+.link{font-weight:550}
+.badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;font-size:12px;font-weight:550;border:1px solid transparent}
+.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.b-ok{color:var(--success-fg);background:var(--success-bg)}.b-warn{color:var(--warning-fg);background:var(--warning-bg)}.b-bad{color:var(--danger-fg);background:var(--danger-bg)}.b-info{color:var(--info-fg);background:var(--info-bg)}.b-neu{color:var(--fg-muted);background:var(--bg-sunken);border-color:var(--border-default)}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px}
+.pager{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--border-default);color:var(--fg-subtle);font-size:12.5px}
+.pager .btn{height:28px;margin-left:auto}.pager .btn+.btn{margin-left:0}
+/* kpis */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{padding:12px 14px}
+.kpi small{display:block;color:var(--fg-muted);font-size:12.5px}
+.kpi b{display:block;font-size:20px;line-height:28px;font-weight:650;letter-spacing:-.01em;margin-top:2px}
+.kpi em{font-style:normal;font-size:12px;color:var(--fg-subtle)}
+.up{color:var(--success-fg)!important}.down{color:var(--danger-fg)!important}
+.grid2{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);gap:16px}
+.kv{display:grid;grid-template-columns:120px minmax(0,1fr);gap:0;padding:4px 16px 8px}
+.kv dt{color:var(--fg-muted);padding:7px 0;border-bottom:1px solid var(--border-default)}
+.kv dd{margin:0;padding:7px 0;border-bottom:1px solid var(--border-default)}
+.kv dt:nth-last-of-type(1),.kv dd:last-of-type{border-bottom:0}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border-default);margin-bottom:16px}
+.tabs span{height:34px;padding:0 10px;display:inline-flex;align-items:center;font-weight:500;color:var(--fg-muted);position:relative}
+.tabs span[aria-current]{color:var(--fg-default)}
+.tabs span[aria-current]::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;background:var(--accent);border-radius:2px}
+.row{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border-default)}
+.row:last-child{border-bottom:0}
+.row .grow{flex:1;min-width:0}
+.row small{display:block;color:var(--fg-muted);font-size:12.5px}
+.zgrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.zone{display:flex;gap:10px;align-items:center;padding:10px 12px}
+.zone .ic{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;background:var(--accent-subtle);color:var(--fg-accent)}
+.zone .ic svg{width:16px;height:16px}
+.zone b{font-size:13px;display:block}.zone small{color:var(--fg-muted);font-size:12px}
+.hero{padding:16px 20px;margin-bottom:16px;border-radius:var(--radius-panel);background:radial-gradient(60% 120% at 100% 0%,var(--atmo-a),transparent 70%),radial-gradient(50% 120% at 0% 100%,var(--atmo-b),transparent 70%),var(--glass);border:1px solid var(--border-default);display:flex;align-items:center;gap:16px}
+.hero h1{margin:0;font-size:22px;line-height:28px;font-weight:650;letter-spacing:-.015em}
+.hero p{margin:2px 0 0;color:var(--fg-muted);font-size:13px}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:12.5px;font-weight:550}
+.input{height:var(--control-h);border:1px solid var(--border-input);border-radius:var(--radius-control);background:var(--bg-surface);padding:0 10px;display:flex;align-items:center;font-size:13px}
+.input.ph{color:var(--fg-subtle)}
+.form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px;padding:16px}
+.note{font-size:12px;color:var(--fg-subtle)}
+.concept{position:fixed;right:10px;bottom:10px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--warning-bg);color:var(--warning-fg);border:1px solid currentColor;opacity:.95}
+/* chart */
+.chart{padding:12px 16px 14px}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--fg-muted);margin-top:8px}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+/* mobile */
+.m .side{display:none}
+.m .top{height:52px;padding:0 8px 0 4px;gap:4px}
+.m .page{padding:12px 16px 32px}
+.m .ph h1{font-size:20px}
+.m .ph{flex-wrap:wrap}
+.m .cmd{min-width:0;width:36px;padding:0;justify-content:center}
+.m .cmd span,.m .cmd .kbd{display:none}
+.m .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+.m .zgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.m .grid2{grid-template-columns:1fr}
+.m .form{grid-template-columns:1fr}
+.m .search{max-width:none;flex-basis:100%}
+.iconbtn{width:40px;height:40px;display:grid;place-items:center;border-radius:var(--radius-control);color:var(--fg-muted)}
+.sectsel{display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--border-default);border-radius:var(--radius-control);background:var(--bg-surface);font-weight:550;font-size:13px;margin-bottom:12px;width:max-content}
+.cards .row{align-items:flex-start}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const screen = q.get('screen') || 'home';
+document.documentElement.dataset.theme = q.get('theme') || 'light';
+const mobile = innerWidth < 640;
+const I = {
+  home:'M3 10.5 12 3l9 7.5M5.5 8.5V20a1 1 0 0 0 1 1H10v-6h4v6h3.5a1 1 0 0 0 1-1V8.5',
+  customers:'M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM20 20v-1.5a3.5 3.5 0 0 0-2.5-3.35M15.5 4.65a3.5 3.5 0 0 1 0 6.7',
+  sales:'M3 17l6-6 4 4 8-8M15 7h6v6', projects:'M4 4h6v7H4zM14 4h6v4h-6zM14 12h6v8h-6zM4 15h6v5H4z', finance:'M3 7h18v12H3zM3 11h18M7 15h3',
+  people:'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1', scheduling:'M4 5h16v15H4zM4 9h16M8 3v4M16 3v4', insights:'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  search:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM20 20l-4-4', plus:'M12 5v14M5 12h14', menu:'M4 6h16M4 12h16M4 18h16', chev:'M6 9l6 6 6-6', filter:'M4 6h16M7 12h10M10 18h4', more:'M5 12h.01M12 12h.01M19 12h.01'
+};
+const svg = (n, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${I[n]}"/></svg>`;
+const ZONES = [['customers','Customers'],['sales','Sales'],['projects','Projects'],['finance','Finance'],['people','People'],['insights','Reporting']];
+const FIN = ['Overview','Quotes','Invoices','Credit notes','Payments','Receivables','Expenses','Products & services','Settings'];
+const REP = ['Dashboard','Explore','Saved reports'];
+const zoneOf = { home:null, customers:'customers', customer:'customers', invoices:'finance', 'invoice-form':'finance', dashboard:'insights' }[screen];
+const childOf = { invoices:'Invoices', 'invoice-form':'Invoices', dashboard:'Dashboard' }[screen];
+function sidebar() {
+  const items = ZONES.map(([id, label]) => {
+    const cur = zoneOf === id;
+    const kids = cur && id === 'finance' ? FIN : cur && id === 'insights' ? REP : null;
+    return `<a href="#" ${cur && !kids ? 'aria-current="page"' : ''}>${svg(id)}${label}</a>` + (kids ? `<div class="sub">${kids.map((k) => `<a href="#" ${k === childOf ? 'aria-current="page"' : ''}>${k}</a>`).join('')}</div>` : '');
+  }).join('');
+  return `<aside class="side"><div class="brand"><span class="mark"></span>Business OS</div>
+  <div class="biz"><span class="av">HS</span><span style="min-width:0;flex:1"><b>Harbour Design Studio</b><small>Owner</small></span>${svg('chev',14)}</div>
+  <nav class="nav" aria-label="Zones"><a href="#" ${screen === 'home' ? 'aria-current="page"' : ''}>${svg('home')}Home</a><div class="lbl">Zones</div>${items}</nav>
+  <div class="foot"><span class="me">ML</span>Morgan Lee</div></aside>`;
+}
+function topbar(crumbs) {
+  const c = crumbs.map((x, i) => i === crumbs.length - 1 ? `<b>${x}</b>` : `<span>${x}</span><i>/</i>`).join('');
+  return `<header class="top">${mobile ? `<span class="iconbtn">${svg('menu',20)}</span>` : ''}<nav class="crumbs" aria-label="Breadcrumb">${mobile ? `<b>${crumbs[crumbs.length - 1]}</b>` : c}</nav>
+  <span class="cmd">${svg('search',14)}<span>Jump to…</span><span class="kbd">⌘K</span></span>${mobile ? '' : '<span class="me">ML</span>'}</header>`;
+}
+const B = (t, k) => `<span class="badge b-${k}">${t}</span>`;
+const S = {};
+S.home = () => [['Home'], `
+  <section class="hero"><div><h1>Good morning, Morgan</h1><p>Harbour Design Studio · Thursday 19 November</p></div>
+   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap"><span class="btn pri">${svg('plus',14)}New invoice</span><span class="btn">${svg('plus',14)}Add customer</span>${mobile ? '' : `<span class="btn">${svg('plus',14)}New project</span>`}</div></section>
+  <div class="kpis">
+   <div class="panel kpi"><small>Outstanding (AUD)</small><b class="num">$9,950.00</b><em>3 open invoices</em></div>
+   <div class="panel kpi"><small>Overdue (AUD)</small><b class="num down">$1,800.00</b><em>1 invoice · oldest 35 days</em></div>
+   <div class="panel kpi"><small>Open pipeline (AUD)</small><b class="num">$21,950.00</b><em>4 opportunities</em></div>
+   <div class="panel kpi"><small>Active customers</small><b class="num">9</b><em>1 archived</em></div></div>
+  <div class="zgrid">${ZONES.map(([id, l]) => `<div class="panel zone"><span class="ic">${svg(id)}</span><span><b>${l}</b><small>${{customers:'9 active',sales:'4 open',projects:'1 active',finance:'3 open invoices',people:'5 people',insights:'Dashboard'}[id]}</small></span></div>`).join('')}</div>
+  <div class="grid2">
+   <section class="panel"><div class="hd"><h2>Needs attention</h2><span class="count">From Finance lists you can already open</span></div>
+    <div class="row"><span class="grow"><b class="link">INV-0001 · Kelp & Co Seafood</b><small>Due 15 Oct · $1,800.00 open</small></span>${B('Overdue','bad')}</div>
+    <div class="row"><span class="grow"><b class="link">QUO-0002 · Northshore Physio</b><small>Valid until 10 Dec · $9,200.00</small></span>${B('Awaiting reply','info')}</div>
+    <div class="row"><span class="grow"><b class="link">Draft invoice · Northshore Physio</b><small>Not issued · $1,500.00</small></span>${B('Draft','neu')}</div>
+    <div class="row"><span class="grow note">Tasks and opportunities join this list only once a cross-Zone summary endpoint exists (§9.1).</span></div></section>
+   <section class="panel"><div class="hd"><h2>Recent activity</h2></div>
+    <div class="row"><span class="grow note">Shown here only to mark the space. A combined feed needs a cross-Zone backend, so V2 does not ship this panel until one exists; each customer's own timeline stays on their page.</span></div></section></div>`];
+const CUST = [['Avery Collins','Individual','avery@example.com','0412 555 019','Perth, WA'],['Bluegum Landscaping','Company','office@bluegum.example','08 9221 4400','Subiaco, WA'],['Coastal Dental Group','Company','practice@coastaldental.example','—','Scarborough, WA'],['Driftwood Cafe','Company','hi@driftwood.example','08 9430 7788','Fremantle, WA'],['Elm Street Architects','Company','studio@elmstreet.example','—','Leederville, WA'],['Kelp & Co Seafood','Company','accounts@kelpco.example','08 9430 1122','Fremantle, WA'],['Northshore Physio','Company','admin@northshore.example','08 9335 0101','Cottesloe, WA'],['Pacific Rim Tours','Company','billing@pacificrim.example','—','Honolulu, US'],['Tidewater Brewing','Company','hello@tidewater.example','—','Margaret River, WA']];
+S.customers = () => [['Home','Customers'], `
+  <div class="ph"><div><h1>Customers</h1><p>Companies and people you do business with.</p></div><div class="acts"><span class="btn pri">${svg('plus',14)}Add customer</span></div></div>
+  <div class="fbar"><span class="search">${svg('search',14)}Search name, email or phone<span class="kbd">/</span></span><span class="seg" role="group"><span aria-pressed="true">Active</span><span>Archived</span><span>All</span></span>${mobile ? '' : `<span class="chip">${svg('plus',12)}Type</span><span class="chip">${svg('plus',12)}Location</span>`}<span class="count">9 customers · A–Z</span></div>
+  ${mobile ? `<div class="panel cards">${CUST.map((c) => `<div class="row"><span class="grow"><b>${c[0]}</b><small>${c[1]} · ${c[4]}</small><small>${c[2]}</small></span></div>`).join('')}</div>` :
+  `<div class="panel"><table><caption class="sr" hidden>Customers</caption><thead><tr><th>Name ↑</th><th>Type</th><th>Email</th><th>Phone</th><th>Location</th><th class="r">Open invoices</th></tr></thead><tbody>
+  ${CUST.map((c, i) => `<tr ${i === 5 ? 'class="sel"' : ''}><td class="link">${c[0]}</td><td class="sub">${c[1]}</td><td class="sub">${c[2]}</td><td class="sub num">${c[3]}</td><td class="sub">${c[4]}</td><td class="r num">${{5:'$1,800.00',6:'—',8:'$8,150.00',7:'USD 1,350.00'}[i] ?? '—'}</td></tr>`).join('')}
+  </tbody></table><div class="pager">Page 1<span class="btn">Previous</span><span class="btn">Next</span></div></div>
+  <p class="note" style="margin-top:8px">"Open invoices" is shown only if an existing endpoint provides it per row; otherwise the column is omitted (see §9.2).</p>`}`];
+S.customer = () => [['Home','Customers','Kelp & Co Seafood'], `
+  <div class="ph"><div><h1>Kelp & Co Seafood</h1><p>Company · Fremantle, WA · Customer since 14 Nov 2026</p></div><div class="acts"><span class="btn">Edit</span><span class="btn pri">${svg('plus',14)}New invoice</span><span class="btn ghost">${svg('more',16)}</span></div></div>
+  <div class="tabs"><span aria-current="page">Overview</span><span>Activity</span><span>Finance</span><span>Projects</span></div>
+  <div class="grid2"><div style="display:grid;gap:16px">
+   <section class="panel"><div class="hd"><h2>Details</h2></div><dl class="kv"><dt>Email</dt><dd>accounts@kelpco.example</dd><dt>Phone</dt><dd class="num">08 9430 1122</dd><dt>Website</dt><dd style="color:var(--fg-subtle)">Not set</dd><dt>Address</dt><dd>Fremantle WA, Australia</dd><dt>Owner</dt><dd style="color:var(--fg-subtle)">No owner</dd></dl></section>
+   <section class="panel"><div class="hd"><h2>Recent activity</h2><span style="margin-left:auto;display:flex;gap:6px"><span class="btn">Add note</span><span class="btn">Log activity</span></span></div>
+    <div class="row"><span class="grow"><b>Packaging brief</b><small>Note · Morgan Lee · 13 Nov</small><small>New compostable trays from February. Needs print-ready art by 20 Jan.</small></span></div>
+    <div class="row"><span class="grow"><b>Invoice query</b><small>Call · outgoing · 10 Nov</small><small>Asked to split INV-0001 across two cost centres.</small></span></div></section></div>
+   <div style="display:grid;gap:16px;align-content:start">
+   <section class="panel"><div class="hd"><h2>Balance</h2></div><div class="row"><span class="grow"><small>Open (AUD)</small><b class="num" style="font-size:18px">$1,800.00</b></span>${B('1 overdue','bad')}</div></section>
+   <section class="panel"><div class="hd"><h2>Contacts</h2><span class="btn ghost" style="margin-left:auto">${svg('plus',14)}Add</span></div><div class="row"><span class="me">JM</span><span class="grow"><b>Jo Marsh</b> ${B('Primary','info')}<small>Operations manager · jo@kelpco.example</small></span></div></section>
+   <section class="panel"><div class="hd"><h2>Projects</h2></div><div class="row"><span class="grow"><b>Kelp packaging</b><small>1 of 3 tasks done</small></span>${B('On hold','warn')}</div></section></div></div>`];
+const INV = [['INV-0004','Pacific Rim Tours','2 Nov','30 Nov',['Partly paid','info'],'USD 1,850.00','USD 1,350.00'],['INV-0003','Tidewater Brewing','5 Nov','1 Dec',['Unpaid','neu'],'$8,150.00','$8,150.00'],['INV-0002','Northshore Physio','12 Oct','26 Oct',['Paid','ok'],'$2,400.00','$0.00'],['INV-0001','Kelp & Co Seafood','1 Oct','15 Oct',['Overdue','bad'],'$3,800.00','$1,800.00'],['Draft','Northshore Physio','—','—',['Draft','neu'],'$1,500.00','—']];
+S.invoices = () => [['Home','Finance','Invoices'], `
+  ${mobile ? `<span class="sectsel">Invoices ${svg('chev',14)}</span>` : ''}
+  <div class="ph"><div><h1>Invoices</h1><p>What customers have been billed and what is still open.</p></div><div class="acts">${mobile ? '' : '<span class="btn">Recurring</span>'}<span class="btn pri">${svg('plus',14)}New invoice</span></div></div>
+  <div class="kpis"><div class="panel kpi"><small>Outstanding (AUD)</small><b class="num">$9,950.00</b></div><div class="panel kpi"><small>Overdue (AUD)</small><b class="num down">$1,800.00</b></div>${mobile ? '' : '<div class="panel kpi"><small>Outstanding (USD)</small><b class="num">USD 1,350.00</b></div><div class="panel kpi"><small>Drafts</small><b class="num">1</b></div>'}</div>
+  <div class="fbar"><span class="search">${svg('search',14)}Customer</span><span class="chip on">Status: Issued ×</span><span class="chip">${svg('plus',12)}Payment</span><span class="chip">${svg('plus',12)}Issue date</span><span class="chip">${svg('plus',12)}Overdue only</span>${mobile ? '' : '<span class="btn ghost">Clear</span>'}<span class="count">5 invoices</span></div>
+  ${mobile ? `<div class="panel cards">${INV.map((r) => `<div class="row"><span class="grow"><b class="mono">${r[0]}</b> <span style="color:var(--fg-muted)">· ${r[1]}</span><small>Due ${r[3]} · open <span class="num">${r[6]}</span></small></span>${B(...r[4])}</div>`).join('')}</div>` :
+  `<div class="panel"><table><thead><tr><th>Number</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th class="r">Total</th><th class="r">Open</th><th></th></tr></thead><tbody>
+  ${INV.map((r, i) => `<tr ${i === 3 ? 'class="sel"' : ''}><td class="mono link">${r[0]}</td><td>${r[1]}</td><td class="sub">${r[2]}</td><td class="sub">${r[3]}</td><td>${B(...r[4])}</td><td class="r num">${r[5]}</td><td class="r num"><b>${r[6]}</b></td><td class="r" style="color:var(--fg-subtle)">${svg('more')}</td></tr>`).join('')}
+  </tbody></table><div class="pager">Most recent first · amounts in each document's own currency<span class="btn">Previous</span><span class="btn">Next</span></div></div>`}`];
+S['invoice-form'] = () => [['Home','Finance','Invoices','New invoice'], `
+  <div class="ph"><div><h1>New invoice</h1><p>Drafts are not numbered. The number is assigned when you issue it.</p></div><div class="acts"><span class="btn ghost">Cancel</span><span class="btn">Save draft</span><span class="btn pri">Save and preview</span></div></div>
+  <div class="grid2"><div style="display:grid;gap:16px">
+   <section class="panel"><div class="hd"><h2>Customer and dates</h2></div><div class="form">
+    <div class="field" style="grid-column:span 2"><label>Customer</label><div class="input focus">Kelp & Co Seafood</div></div><div class="field"><label>Currency</label><div class="input">AUD</div></div>
+    <div class="field"><label>Issue date</label><div class="input ph">On issue</div></div><div class="field"><label>Due date</label><div class="input num">29 Nov 2026</div><span class="note">14 days, from Finance settings</span></div><div class="field"><label>Tax</label><div class="input">Prices exclude tax</div></div></div></section>
+   <section class="panel"><div class="hd"><h2>Lines</h2><span class="btn ghost" style="margin-left:auto">${svg('plus',14)}From catalog</span></div>
+    <table><thead><tr><th style="width:44%">Description</th><th class="r">Qty</th><th class="r">Unit price</th><th>Tax</th><th class="r">Amount</th></tr></thead><tbody>
+    <tr><td>Packaging design</td><td class="r num">1</td><td class="r num">3,200.00</td><td class="sub">GST 10%</td><td class="r num">3,200.00</td></tr>
+    <tr><td>Print management</td><td class="r num">1</td><td class="r num">600.00</td><td class="sub">GST 10%</td><td class="r num">600.00</td></tr>
+    <tr><td colspan="5"><span class="btn ghost" style="padding-left:0">${svg('plus',14)}Add line</span></td></tr></tbody></table></section></div>
+   <aside class="panel" style="align-self:start"><div class="hd"><h2>Summary</h2></div><dl class="kv"><dt>Subtotal</dt><dd class="r num" style="text-align:right">$3,800.00</dd><dt>GST</dt><dd class="num" style="text-align:right">$380.00</dd><dt><b style="color:var(--fg-default)">Total</b></dt><dd class="num" style="text-align:right;font-size:18px;font-weight:650">$4,180.00</dd></dl>
+    <div class="row note">Totals are calculated by the server when you save. This panel shows the last saved figures.</div></aside></div>`];
+S.dashboard = () => [['Home','Reporting','Dashboard'], `
+  ${mobile ? `<span class="sectsel">Dashboard ${svg('chev',14)}</span>` : ''}
+  <div class="ph"><div><h1>Dashboard</h1><p>1 Sep – 15 Nov 2026 · Australia/Perth · compared with the previous period</p></div><div class="acts"><span class="btn">Last 3 months ${svg('chev',14)}</span>${mobile ? '' : `<span class="btn">Week ${svg('chev',14)}</span>`}</div></div>
+  <div class="kpis">${[['Amount invoiced','$6,545.00','+75.3%','up'],['Amount received','$4,400.00','No change',''],['Outstanding receivables','$9,950.00','As of 15 Nov',''],['Overdue receivables','$1,800.00','As of 15 Nov',''],['Invoices issued','4','+100%','up'],['Won opportunity value','$1,200.00','−20.0%','down'],['Opportunities won','2','No change',''],['New customers','3','+200%','up']].slice(0, mobile ? 4 : 8).map(([l, v, c, t]) => `<div class="panel kpi"><small>${l}</small><b class="num">${v}</b><em class="${t}">${c}${t ? ' vs previous' : ''}</em></div>`).join('')}</div>
+  <div class="grid2"><section class="panel"><div class="hd"><h2>Amount invoiced, AUD, by week</h2><span class="count">USD shown separately</span></div><div class="chart">
+   <svg viewBox="0 0 640 200" width="100%" height="200" role="img" aria-label="Amount invoiced by week">${[0,1,2,3,4].map((i) => `<line x1="44" x2="636" y1="${16 + i * 40}" y2="${16 + i * 40}" stroke="var(--chart-grid)"/><text x="38" y="${20 + i * 40}" text-anchor="end" font-size="11" fill="var(--fg-subtle)">${['4k','3k','2k','1k','0'][i]}</text>`).join('')}
+   ${[1.2,0.4,2.6,1.1,0,3.1,0.8,1.9,0.5,2.2,1.4].map((v, i) => `<rect x="${56 + i * 53}" width="18" y="${176 - v * 40}" height="${v * 40}" rx="3" fill="var(--chart-1)"/><rect x="${76 + i * 53}" width="18" y="${176 - [0.8,1,1.5,0.6,0.9,1.2,0.4,1.1,0.9,1,0.7][i] * 40}" height="${[0.8,1,1.5,0.6,0.9,1.2,0.4,1.1,0.9,1,0.7][i] * 40}" rx="3" fill="none" stroke="var(--chart-cmp)" stroke-dasharray="3 2"/>`).join('')}</svg>
+   <div class="legend"><span><i style="background:var(--chart-1)"></i>This period</span><span><i style="background:repeating-linear-gradient(90deg,var(--chart-cmp) 0 3px,transparent 3px 5px)"></i>Previous period</span></div></div></section>
+   <section class="panel"><div class="hd"><h2>Largest open invoices</h2></div>
+    ${INV.slice(0,4).filter((r) => r[6] !== '$0.00').map((r) => `<div class="row"><span class="grow"><b class="mono">${r[0]}</b><small>${r[1]}</small></span><b class="num">${r[6]}</b></div>`).join('')}</section></div>`];
+const [crumbs, body] = S[screen]();
+document.getElementById('root').innerHTML = `<div class="app ${mobile ? 'm' : ''}">${mobile ? '' : sidebar()}<div class="main">${topbar(crumbs)}<main class="page"><div class="wrap">${body}</div></main></div></div><span class="concept">Concept · sample data</span>`;
+</script>
+</body>
+</html>
