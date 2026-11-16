@@ -87,14 +87,15 @@ model PeopleEmployee {
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  business              Business                        @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_employees_business_fkey")
-  location              PeopleLocation?                 @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_employees_location_fkey")
-  member                Membership?                     @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "people_employees_user_fkey")
-  personalDetails       PeopleEmployeePersonalDetails?
-  departmentAssignments PeopleDepartmentAssignment[]
-  managerAssignments    PeopleManagerAssignment[]       @relation("employee")
-  reportAssignments     PeopleManagerAssignment[]       @relation("manager")
-  statusHistory         PeopleEmploymentStatusHistory[]
+  business               Business                        @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_employees_business_fkey")
+  location               PeopleLocation?                 @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_employees_location_fkey")
+  member                 Membership?                     @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "people_employees_user_fkey")
+  personalDetails        PeopleEmployeePersonalDetails?
+  departmentAssignments  PeopleDepartmentAssignment[]
+  managerAssignments     PeopleManagerAssignment[]       @relation("employee")
+  reportAssignments      PeopleManagerAssignment[]       @relation("manager")
+  statusHistory          PeopleEmploymentStatusHistory[]
+  leavePolicyAssignments PeopleLeavePolicyAssignment[]
 
   @@unique([businessId, id])
   @@index([businessId, familyName, givenName, id])

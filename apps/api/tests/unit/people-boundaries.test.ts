@@ -33,7 +33,8 @@ describe('people boundaries', () => {
   });
 
   it('no code outside the people module reads People models or tables', () => {
-    const touches = /\bpeople(Employee|Department|Location|EmployeePersonalDetails|DepartmentAssignment|ManagerAssignment|EmploymentStatusHistory)\b|\bpeople_(employees|departments|locations|employee_personal_details|department_assignments|manager_assignments|employment_status_history)\b/;
+    // P3-A adds the leave configuration tables (docs/people-leave-p3.md): the same rule applies to them.
+    const touches = /\bpeople(Employee|Department|Location|EmployeePersonalDetails|DepartmentAssignment|ManagerAssignment|EmploymentStatusHistory|LeaveType|LeavePolicy|LeavePolicyRevision|LeavePolicyAssignment)\b|\bpeople_(employees|departments|locations|employee_personal_details|department_assignments|manager_assignments|employment_status_history|leave_types|leave_policies|leave_policy_revisions|leave_policy_assignments)\b/;
     const offenders = sources
       .filter(([name, text]) => !PEOPLE_MODULE.test(name) && name !== 'core/db/app-client.ts' && touches.test(text))
       .map(([name]) => name);
@@ -52,7 +53,7 @@ describe('people boundaries', () => {
 
   it('no API contract outside /people can carry employee fields', () => {
     const doc = JSON.parse(readFileSync(SCHEMA, 'utf8')) as { endpoints: Record<string, { path: string }> };
-    const employeeKeys = /"(employeeNumber|employeeId|managerEmployeeId|personalEmail|personalPhone|homeAddress|emergencyContact\w*|employmentType)"/;
+    const employeeKeys = /"(employeeNumber|employeeId|employeeIds|managerEmployeeId|personalEmail|personalPhone|homeAddress|emergencyContact\w*|employmentType|leaveTypeId|entitlementMethod)"/;
     const leaks = Object.entries(doc.endpoints)
       .filter(([, e]) => !e.path.startsWith('/api/v1/b/:slug/people/'))
       .filter(([, e]) => employeeKeys.test(JSON.stringify(e)))
