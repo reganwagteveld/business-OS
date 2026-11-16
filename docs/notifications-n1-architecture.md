@@ -5,6 +5,11 @@ until Regan approves it. No tables, migrations, queues, workers, schedules or em
 the PR that carries this document.
 **Base:** `main` at `b2f308b` (2026-11-16).
 **Owner decisions:** §20 (D-N1-1 to D-N1-18).
+**Revision 2 (2026-11-16):** answers the ChatGPT audit on PR #80 (head `c7424bc`): explicit `notify`
+outcomes and failure policy (§7.1.1), an ACL-exact badge (§5.4), N1-A limited to producers whose hooks
+and transaction context exist today (§18.1), a trusted write path for `user_notices` (§11.2), mandatory
+notices exempt from caps and failing closed (§16.1), bounded cleanup without a scheduler (§13.1), and
+business export separated from personal-data access (§13.3). Audit response table: §23.
 
 ---
 
@@ -176,13 +181,13 @@ rules of §5.
 | `people.leave.submitted` | people | ACTION / PEOPLE | request submitted | Resolved approver (D-P3-13) | No (P3-B) | With P3-B |
 | `people.leave.decided` | people | UPDATE / PEOPLE | approved, rejected, cancelled | The employee's linked user | No (P3-B) | With P3-B |
 | `people.leave.withdrawn` | people | UPDATE / PEOPLE | employee withdraws | The approver who held it | No (P3-B) | With P3-B |
-| `communications.mailbox.reconnect_required` | communications (system) | ACTION / MAILBOX | refresh fails permanently / grant revoked | Mailbox owner | Yes (C2-A system audit) | N1-A |
+| `communications.mailbox.reconnect_required` | communications (system) | ACTION / MAILBOX | refresh fails permanently / grant revoked | Mailbox owner | Trigger yes, but runs on a system path (no session user) during refresh/sync, and no sync worker runs | With C2-B3 (sync worker), via the system write path (§18.1) |
 | `communications.mailbox.access_removed` | communications (system) | ACCESS / MAILBOX | A2-B mailbox cutoff on suspend/remove/demote | Mailbox owner (if still a member) and `communications:manage_connections` holders | No (A2-B #76) | With A2-B |
 | `tenancy.membership.role_changed` | tenancy | ACCESS / SECURITY | role changed | The member | Yes | N1-A |
-| `tenancy.membership.suspended` / `.removed` | tenancy | ACCESS / SECURITY | A2-B | The member: **email only**, they can no longer open the business (§11.3) | No (A2-B #76) | N1-D (email) |
-| `tenancy.invitation.accepted` | tenancy | UPDATE / STANDARD | invitee joins | Inviter, if still a member | Yes | N1-A |
+| `tenancy.membership.suspended` / `.removed` | tenancy | ACCESS / SECURITY | A2-B | The member: a `user_notices` row (§11.3); email in N1-D | No (A2-B #76) | N1-U, after A2-B |
+| `tenancy.invitation.accepted` | tenancy | UPDATE / STANDARD | invitee joins | Inviter, if still a member | Yes, but acceptance runs in the pre-tenant `app_private.accept_invitation` SECURITY DEFINER function, outside any tenant unit of work | Later: needs a privileged-SQL change (§18.1) |
 | `tenancy.ownership.transferred` | tenancy | ACCESS / SECURITY | owner transfer or step-down | Every OWNER | No (A2-B) | With A2-B |
-| `account.password.changed` | identity | SECURITY / SECURITY | password changed or reset | The user | Hook not written | N1-A (user-level, §11) |
+| `account.password.changed` | identity | SECURITY / SECURITY | password changed or reset | The user | Hook not written | N1-U (user-level, §11, §18) |
 | `account.email.changed` | identity | SECURITY / SECURITY | email changed | The user, at **old and new** address | Hook not written | N1-D (email) |
 | `account.session.new_device` | identity | SECURITY / SECURITY | sign-in from an unrecognised client | The user | No device tracking | Later (D-N1-14) |
 | `reporting.view.shared` | reporting | UPDATE / STANDARD | a view is shared with the business | Opt-in only | Yes | N1-B (opt-in) |
@@ -302,9 +307,10 @@ Then the notifications module applies the same filter to every spec, in this ord
 4. **Record check**, if the type declares one (§5.3).
 5. **Not the actor**, unless the type opts in (security notices about your own action do).
 6. **Preferences** (§10): mandatory types skip this step.
-7. **Cap.** At most 100 recipients per event (D-N1-6). A spec that resolves to more is refused in
-   N1-A (the producer's write still succeeds, the notification is dropped and logged as a counter);
-   from N1-C larger fan-outs go through the outbox (§7.2).
+7. **Cap.** At most 100 recipients per event (D-N1-6), for **non-mandatory** types only. What happens
+   when the cap is exceeded is defined once, in §7.1.1 (outcome `SKIPPED_CAP`). Mandatory types are
+   never capped: their recipient spec is bounded by registration instead (§16.1). From N1-C, larger
+   non-mandatory fan-outs go through the outbox (§7.2).
 
 A recipient dropped by any step gets nothing, not a redacted copy.
 
@@ -353,10 +359,22 @@ Rows that fail are **hidden, not deleted**, and not counted in the badge. If the
 later restored, they reappear. This is the rule that makes a stored title snapshot acceptable: losing
 access hides the snapshot immediately.
 
-The unread badge count uses the permission filter (cheap: it is a set of type keys per role) but
-**not** record checks. Types with a record check therefore count as "1 or more" in the badge and are
-filtered exactly when the list is opened (D-N1-7). The alternative, running record checks for the
-count, costs a query per unread row.
+**The unread badge is exact and never counts a row the reader could not open** (D-N1-7, revised after
+audit). It is computed in two parts:
+
+1. **Types without a record check:** a SQL count over the reader's unread rows, filtered by the set of
+   type keys their role currently permits. Exact and cheap.
+2. **Types with a record check** (People, mailbox, restricted activity, anything registered with
+   `recordCheck`): the newest 20 unread rows of those types are loaded and passed through each type's
+   **batch** record check (`(db, userId, subjectIds[]) => Set<subjectId>`, one query per type, not
+   per row). Only rows that pass are counted. Older unread rows of these types beyond the newest 20 are
+   **not counted** in the badge (they still appear, checked, when the list is opened).
+
+So the badge can under-count, never over-count: it never reveals that a restricted event exists for
+someone who cannot open it. The `unread-count` response says `{ count, complete: false }` when part 2
+was truncated, and the client then shows the number without implying it is the total ("20+" is not
+used, because it would itself hint at hidden rows). Tested by revoking record access (manager link,
+mailbox share, restricted note) after the notification was written, with the coarse key kept.
 
 ### 5.5 Users in several businesses
 
@@ -398,11 +416,40 @@ Zone service (inside withTenant, row locked)
 
 - **No queue, no worker, no cron, no provider.** Nothing has to be activated.
 - Cost: one bounded insert per event, a few rows. Small businesses (5–50 people) make this cheap.
-- Failure: if `notify` throws, the producer's change rolls back. That is deliberate in N1-A: a
-  half-applied change (assignment saved, assignee never told) is worse than a retried request. To keep
-  the blast radius small, `notify` does no network I/O and has a hard recipient cap.
+- Failure: see §7.1.1. In short, **errors** roll the producer's change back; **intentional skips**
+  do not; a **mandatory** notice that cannot be written always rolls the change back. `notify` does no
+  network I/O and its work is bounded, so errors should only come from bugs or the database.
 - Alternative considered: write after commit (fire and forget). Rejected: a crash between commit and
   insert loses the notification silently, and it would need a second transaction outside the lock.
+
+#### 7.1.1 `notify` outcomes and failure policy
+
+`notify` returns a typed result or throws. Every case is listed; there is no other path.
+
+| Outcome | Examples | `notify` | Producer's change | Recorded |
+|---|---|---|---|---|
+| `WRITTEN` | One or more rows inserted | returns `{ outcome: 'WRITTEN', count }` | commits | nothing extra |
+| `SKIPPED_NO_RECIPIENT` | Recipient is the actor; recipient not ACTIVE; lacks the permission; fails the record check | returns | commits | debug counter |
+| `SKIPPED_PREFERENCE` | Recipient muted the type (N1-B); never possible for mandatory types | returns | commits | nothing |
+| `SKIPPED_DUPLICATE` | `ON CONFLICT DO NOTHING` hit | returns | commits | nothing |
+| `SKIPPED_CAP` | **Non-mandatory** type over the recipient cap (§5.1) or the per-business daily cap (§16) | returns | commits | warning counter with type and business id; an alert if it repeats |
+| `ERROR_CONTRACT` | Unknown type; params fail the schema; a sensitivity rule fails; a mandatory type with an unbounded recipient spec | **throws** | **rolls back** | error log (type and code only) |
+| `ERROR_DATABASE` | Insert fails (FK, RLS, timeout, serialization) | **throws** | **rolls back** (the transaction is already aborted) | as any DB error |
+| `ERROR_MANDATORY` | A mandatory type resolves to **zero** recipients when its registration says it must reach at least one (for example a role change whose member is not found) | **throws** | **rolls back** | error log; alert |
+
+Rules that follow from the table:
+
+1. **Skips are decisions, not failures.** They are expected and the producer's change stands.
+2. **Mandatory notices fail closed.** No skip outcome applies to a mandatory type except
+   `SKIPPED_DUPLICATE` (the notice already exists) and `SKIPPED_NO_RECIPIENT` for "is the actor" where
+   the type allows it. A role, ownership or security change therefore **cannot commit** having silently
+   discarded its mandatory notice.
+3. **Caps never decide whether a mandatory notice is written** (§16.1).
+4. Producers do not catch `notify` errors. A contract test checks that no producer wraps `notify` in a
+   `try`.
+5. Tests: rollback on each `ERROR_*`; commit on each `SKIPPED_*`; a role change with a forced insert
+   failure leaves the role unchanged; cap exhaustion on a non-mandatory type commits the producer
+   change and writes nothing; cap pressure from non-mandatory rows never blocks a mandatory one.
 
 ### 7.2 N1-C/N1-D: a Postgres outbox drained by the existing job pattern
 
@@ -503,7 +550,7 @@ RLS `user_id = app.user_id`, reached only through `/api/v1/me`.
 | Endpoint | Permission | Notes |
 |---|---|---|
 | `GET /api/v1/b/:slug/notifications?cursor&filter=unread|all|archived&category` | any active member | Own rows only; read-time re-check (§5.4); cursor on `(created_at, id)`; page size 25, max 50 |
-| `GET /api/v1/b/:slug/notifications/unread-count` | any active member | `{ count, capped: boolean }`; count capped at 99 (D-N1-7) |
+| `GET /api/v1/b/:slug/notifications/unread-count` | any active member | `{ count, complete: boolean }`; ACL-exact (§5.4), displayed as 99+ beyond 99 (D-N1-7) |
 | `POST /api/v1/b/:slug/notifications/read` | any active member | `{ ids: [...] }` (max 100) or `{ all: true, before: <created_at> }`; idempotent |
 | `POST /api/v1/b/:slug/notifications/unread` | any active member | `{ ids }`; idempotent |
 | `POST /api/v1/b/:slug/notifications/archive` / `unarchive` | any active member | `{ ids }`; idempotent |
@@ -580,8 +627,25 @@ tenant inbox would either duplicate them per business or hide them from users wi
 
 ### 11.2 Model
 
-- `user_notices` (§8.1), not tenant-scoped, RLS `user_id = app.user_id`, written by the identity
-  module through its existing trusted path (`bos_auth` for the auth adapter's hooks).
+- `user_notices` (§8.1) is not tenant-scoped. **Reads:** only through `/api/v1/me/notices`, as
+  `bos_app` with `app.user_id` set from the verified session, under RLS `user_id = app.user_id`;
+  `bos_app` has `SELECT` and column `UPDATE (read_at)` only, never `INSERT` or `DELETE`.
+- **Writes** go only through `SECURITY DEFINER` functions in `apps/api/prisma/privileged/`, owned by
+  `bos_definer`, each for one allowlisted purpose, so tenant code cannot write a notice to an arbitrary
+  user:
+  - `app_private.record_account_notice(user_id, type, params)`: `EXECUTE` for `bos_auth` only (the
+    identity module's auth adapter, which already runs password and email changes). Types limited in
+    SQL to `account.*`.
+  - `app_private.record_access_notice(target_user_id, type)`: `EXECUTE` for `bos_app`, called inside
+    the admin's tenant unit of work **before** the membership row is suspended or deleted. The function
+    checks, in SQL, that `app.business_id` and `app.user_id` are set, that the caller has an ACTIVE
+    membership in that business with a role that holds `members:manage` (OWNER, ADMIN, MANAGER), that
+    the target has a membership in the same business, and that the type is `tenancy.membership.suspended`
+    or `.removed`. Params are fixed by the function (no caller text). The notice row has no foreign key
+    to the membership, so it survives the removal cascade.
+- Tests: user A cannot read or mark user B's notices; `bos_app` cannot insert directly; the access
+  function refuses a caller from another business, a non-manager caller, a target outside the business
+  and any other type; the account function is not executable by `bos_app`.
 - Shown in the same notification panel in a "Your account" section, above business items.
 - **Email is the primary channel** for security notices because the account itself may be
   compromised: the in-app copy is a record, the email is the alert. Email already exists for
@@ -594,8 +658,9 @@ tenant inbox would either duplicate them per business or hide them from users wi
 ### 11.3 Suspension and removal
 
 A suspended or removed member cannot open the business, so an in-app notice in that business is
-pointless and would also be hidden by §5.4. N1-A records a `user_notices` row ("Your access to a
-business changed") **without the business name** (D-N1-15: naming the business is useful but tells a
+pointless and would also be hidden by §5.4. N1-U (after A2-B) records a `user_notices` row through
+`record_access_notice` in the admin's transaction ("Your access to a business changed") **without the
+business name** (D-N1-15: naming the business is useful but tells a
 removed person something about a tenant they no longer belong to; the owner decides). Email for this
 is N1-D.
 
@@ -681,10 +746,18 @@ interface EmailTransport {
 | `user_notices` | 1 year (security history the user can see) | Deleted |
 | Preferences | While the membership exists | Cascade with membership |
 
-Deletion is a retention job (N1-C pattern, dormant until approved). Until it runs, `expires_at` is
-also applied at read time, so expired rows are hidden even if they still exist. This means N1-A ships
-correct behaviour without any scheduler, and storage growth is the only cost of the job being off
-(bounded and small for the beta).
+**Enforcement without a scheduler (N1-A).** Expired rows are hidden at read time, and are also
+**physically deleted opportunistically**: each `notify` call deletes up to 20 expired or past-retention
+rows of the same recipient in the same business, and each "mark all as read" deletes up to 50 of the
+caller's own. Both are bounded, use the `(business_id, expires_at)` index and need no cron.
+
+**Residual exposure until the N1-C retention job is approved:** rows of recipients who receive nothing
+new and never open the inbox stay stored after expiry. They are invisible to users and the API, but
+remain in the database and in Neon backups and PITR history (whose own retention applies) until
+deleted. They are bounded by business size, contain only the minimal text of §14.1, and are removed
+by membership removal, business purge and subject erasure as usual. Gate: before N1-A's migration is
+applied, Regan either accepts this residual exposure for the beta or requires the retention job
+(N1-C pattern, dormant behind its switch) to ship and be enabled first (D-N1-18).
 
 ### 13.2 Membership and business lifecycle
 
@@ -704,8 +777,14 @@ correct behaviour without any scheduler, and storage growth is the only cost of 
   a sole trader). They are bounded by the 90-day expiry and removed by subject erasure.
 - Notifications are excluded from legal holds by default; a hold on a record does not need its
   pointers. If counsel decides otherwise, that is an E1 §13 decision, not an N1 one.
-- Data export (`data-model.md` §7): notifications are not business records and are excluded
-  (D-N1-18).
+- **Two different exports** (D-N1-18, revised after audit):
+  - *Business data export* (`data-model.md` §7, an owner exporting the business's records): N1
+    recommends excluding notifications, because they are pointers to records that are already
+    exported, not records themselves. This is a product choice, not a legal exemption.
+  - *Personal-data access requests* (a person asking for the data held about them, under GDPR, the
+    Australian Privacy Act, CCPA/CPRA or similar): a person's own notifications and `user_notices`
+    may well be in scope. N1 does not claim they are exempt. Proposal: include them in a per-user
+    export from `/api/v1/me` when that feature is built, subject to the legal assessment in D-N1-17.
 
 ### 13.4 Logs
 
@@ -802,9 +881,10 @@ UI implementation is a V2 follow-on and uses the design system; N1 specifies beh
 - **Per-recipient cap:** at most 50 notifications per recipient per type per hour; beyond that, new
   rows are folded into a single "and N more" summary row for the group (counter on the latest row).
   Mandatory types are never folded.
-- **Per-business cap:** 5 000 notification rows per business per day; beyond that new non-mandatory
-  rows are dropped and an operational counter is raised (protects against a runaway import or loop).
-  Values are proposals (D-N1-6).
+- **Per-business cap:** 5 000 non-mandatory notification rows per business per day; beyond that new
+  non-mandatory rows are skipped (`SKIPPED_CAP`, §7.1.1) and an operational counter is raised
+  (protects against a runaway import or loop). Mandatory rows are not counted towards it. Values are
+  proposals (D-N1-6).
 - **Bulk operations:** imports and bulk edits pass `suppressNotifications: true` and the producer emits
   one summary notification instead (for example "12 tasks were assigned to you").
 - **Email:** at most one email per recipient per type per 15 minutes; others are batched into the next
@@ -812,6 +892,27 @@ UI implementation is a V2 follow-on and uses the design system; N1 specifies beh
   notices.
 - **Time-based reminders:** one per stage per subject (§6), never repeated daily unless a type
   explicitly defines repeating stages.
+
+### 16.1 Mandatory notices and caps
+
+- **Exempt from every cap, fold, preference and quiet-hours rule.** Caps and folding apply only to
+  non-mandatory types, and non-mandatory volume is counted separately, so one tenant flooding ordinary
+  notifications cannot push a security or access notice out.
+- **Bounded by registration instead of by cap.** A mandatory type must declare a bounded recipient
+  spec: explicit `users` (at most 10) or a fixed role set such as "every OWNER". A registration that
+  could fan out without bound is a contract error (`ERROR_CONTRACT`).
+- **Fail closed** (§7.1.1): if a mandatory notice cannot be written, the change that triggered it does
+  not happen.
+- **Durable fallback for email (N1-D):** the delivery row for a mandatory email is created in the same
+  transaction as the notice, so it cannot be lost between commit and send; retries follow §7.4 and a
+  `DEAD` mandatory delivery raises an operator alert (counts and codes only).
+- **Spam resistance:** a mandatory notice is only produced by a real, audited change (a role change, a
+  suspension, an ownership transfer, a password change), so its rate is bounded by the rate of those
+  changes. N1 proposes a rate limit on the endpoints that produce them (for example 30 membership
+  changes per actor per hour), and email for mandatory notices is coalesced (one email summarising
+  several changes within 15 minutes) while every in-app row is still written.
+- **Monitoring:** counters for `ERROR_MANDATORY`, mandatory rows written, and mandatory email
+  deliveries by state, with an alert on any `ERROR_MANDATORY` or `DEAD` mandatory delivery.
 
 ---
 
@@ -839,7 +940,8 @@ PRs at the time; none is reserved by this document.
 
 | Stage | Scope | Depends on | Production effect when merged |
 |---|---|---|---|
-| **N1-A** | `notifications` module, registry, `notify`, `resolveNotifications`, `eraseNotificationsForSubject`; `notifications` table (one migration); `user_notices` table; inbox API and contracts; first producers: task assigned/unassigned, project/customer/opportunity owner assigned, quote accepted/declined, overlap kept, invitation accepted, role changed, mailbox reconnect required, password changed (in-app only); bell, panel and full page | Regan's approval of this design; V2 bell slot | Tables exist; notifications appear in-app. No email, no cron |
+| **N1-A** | `notifications` module, registry, `notify` (§7.1.1), `resolveNotifications`, `eraseNotificationsForSubject`, opportunistic cleanup (§13.1); `notifications` table (one migration); inbox API and contracts; **only the producers in §18.1 marked N1-A**; bell, panel and full page | Regan's approval of this design; V2 bell slot | Table exists; notifications appear in-app. No email, no cron, no privileged SQL |
+| **N1-U** | `user_notices` table and the two privileged write functions (§11.2); `/api/v1/me/notices`; `account.password.changed` hook in the auth adapter; `tenancy.membership.suspended/removed` | A2-B merged (suspend/remove exist); privileged SQL review | In-app account notices. No email |
 | **N1-B** | Preferences and business defaults; mute record; grouping refinements; opt-in types; cross-business unread counts (if D-N1-8) | N1-A; A3 settings placement | In-app only |
 | **N1-C** | Time-based producers (task due/overdue, quote expired, invoice overdue); retention job; `app_private.notifications_due`; job route behind `NOTIFICATIONS_JOBS_ENABLED` | N1-A; Vercel plan cron limits checked; Regan approves turning the job on | **None** until Regan enables the job |
 | **N1-D** | Email channel: delivery rows, worker, `EmailTransport` extension, templates, suppression, optional bounce webhook, security notice emails | N1-A, N1-C job pattern; browser URL routing for links; legal check (D-N1-17); Regan approves enabling | **None** until Regan enables email |
@@ -848,7 +950,29 @@ PRs at the time; none is reserved by this document.
 | With A2-B | `tenancy.membership.suspended/removed`, `ownership.transferred`, `communications.mailbox.access_removed` | A2-B merged | In-app (+ email in N1-D) |
 | With C2-C | `finance.reminder.delivery_*` | C2-C | In-app |
 
-### 18.1 MVP (N1-A) acceptance criteria
+### 18.1 Which producers ship in N1-A, and how they run
+
+Only producers whose trigger exists on `main` **and** runs in an ordinary tenant unit of work with a
+verified session user. Every one of them calls `notify` inside the same `withTenant` transaction that
+makes the change, after the row lock the service already takes.
+
+| Producer | Ships in | Transaction / identity path | Notes |
+|---|---|---|---|
+| `projects.task.assigned` / `.unassigned`, `projects.project.owner_assigned` | N1-A | Projects service, session user, task/project row locked (existing version check) | Member removal clears assignees without notifying (removal is not reassignment) |
+| `customers.customer.owner_assigned` | N1-A | Customers service, session user | |
+| `sales.opportunity.owner_assigned` | N1-A | Sales service, session user | |
+| `finance.quote.accepted` / `.declined` | N1-A | Finance F1 transition service, session user holding `finance:issue`, document row `FOR NO KEY UPDATE` | Expiry is time-based: N1-C |
+| `scheduling.event.overlap_kept` | N1-A | Scheduling S1 write path, session user, inside the S1 lock protocol (notify runs after the locks, adds no new lock) | D-N1-10 |
+| `tenancy.membership.role_changed` | N1-A, **mandatory** | Members PATCH, session user with `members:manage`, membership row locked | Fails closed (§7.1.1) |
+| `account.password.changed` | N1-U | Identity auth adapter → `record_account_notice` (`bos_auth`) | Hook to be written in N1-U |
+| `tenancy.membership.suspended` / `.removed` | N1-U | A2-B service → `record_access_notice` before the status change or delete | Needs A2-B |
+| `tenancy.ownership.transferred` | With A2-B | A2-B transfer service, session user; recipients = every OWNER (bounded) | Mandatory |
+| `tenancy.invitation.accepted` | Later | Acceptance runs inside `app_private.accept_invitation` (pre-tenant SECURITY DEFINER), which cannot call `notify`. Needs either a privileged-SQL insert (reviewed) or a follow-up tenant unit of work after acceptance | Not in N1-A |
+| `communications.mailbox.reconnect_required` | With C2-B3 | System path (`withTenant({ userId: null })`) in refresh/sync. Needs an additive RLS insert policy for system notifications limited to registered `communications.system`-sourced types, mirroring `audit_system_write`; agreed with the C2 thread | Not in N1-A; no sync worker runs today |
+| `finance.billing.run_failed` | When F6 jobs are enabled | Billing worker system path, same additive policy for `finance.system`-sourced types | |
+| `people.leave.*` | With P3-B | People request/decision services, session user; approver from the People resolver | |
+
+### 18.2 MVP (N1-A) acceptance criteria
 
 1. A notification is written only inside the producer's transaction; a rolled-back change leaves no
    notification (tested).
@@ -861,6 +985,10 @@ PRs at the time; none is reserved by this document.
 6. Duplicate events produce one row.
 7. The bell, panel and page meet §15 (keyboard and screen reader pass recorded).
 8. No email, cron, queue or provider is added.
+9. Every `notify` outcome in §7.1.1 has a test: errors roll the producer back, skips commit, a role
+   change cannot commit without its mandatory notice.
+10. The badge never counts a row whose record check fails for the reader (§5.4).
+11. Opportunistic cleanup deletes only the recipient's own expired rows, bounded per call.
 
 ---
 
@@ -870,8 +998,8 @@ PRs at the time; none is reserved by this document.
 |---|---|
 | Contracts (`packages/contracts/tests`) | Every registered `(type, schemaVersion)` has a schema; sensitivity rules (no strings for sensitive classes, no money fields in `FINANCIAL`); snapshot test of the registry so changes are reviewed; unknown-version fallback renders |
 | Unit (module) | Recipient resolution order; preferences resolution (mandatory beats everything, locked defaults); grouping and folding; `dedupe_key` builders per producer |
-| Integration (`tests/integration/notifications.test.ts`) | Each N1-A producer writes the right rows for the right recipients and none for the actor; rollback leaves nothing; `ON CONFLICT` dedupe; recipient cap; read/unread/archive idempotency; mark-all with `before`; read-time re-check after role change, suspension and record-check failure; expiry hidden at read; erasure deletes by subject |
-| Isolation (`tests/isolation`) | New tables have RLS forced, `business_id`-leading indexes, composite FKs; user A cannot list or update user B's rows in the same business; cross-business ids ignored; `bos_app` cannot delete; `user_notices` visible only to its user |
+| Integration (`tests/integration/notifications.test.ts`) | Each N1-A producer writes the right rows for the right recipients and none for the actor; every §7.1.1 outcome (rollback on each error, commit on each skip, mandatory fail-closed with a forced insert failure); `ON CONFLICT` dedupe; recipient cap on non-mandatory types only; badge exactness after record access is revoked with the coarse key kept; opportunistic cleanup bounds; read/unread/archive idempotency; mark-all with `before`; read-time re-check after role change, suspension and record-check failure; expiry hidden at read; erasure deletes by subject |
+| Isolation (`tests/isolation`) | New tables have RLS forced, `business_id`-leading indexes, composite FKs; user A cannot list or update user B's rows in the same business; cross-business ids ignored; `bos_app` cannot delete; `user_notices` visible only to its user, not insertable by `bos_app`, privileged write functions refuse wrong caller, business, target or type (N1-U) |
 | Concurrency | Assignment racing member removal (removal first: no row; assignment first: row then cascade); suspend racing a notify (`FOR SHARE` on membership) using the `pg_blocking_pids` deterministic pattern |
 | Boundaries | dependency-cruiser: notifications module imports no Zone module; Zone modules import only `@/modules/notifications` index; record checks wired only in `app` |
 | Jobs (N1-C/D) | 503 without secret or switch; claim with `SKIP LOCKED` and lease; lost lease changes nothing; backoff; `UNKNOWN` never resent; pre-dispatch re-check suppresses; counts-only response |
@@ -886,12 +1014,12 @@ PRs at the time; none is reserved by this document.
 | # | Decision | Recommendation |
 |---|---|---|
 | D-N1-1 | Approve the two boundaries: inbox row is the single source of truth; notifications are pointers with read-time permission re-checks | **Yes** |
-| D-N1-2 | N1-A writes in the producer's transaction (a `notify` failure rolls back the change) vs after commit | **Same transaction** (§7.1) |
+| D-N1-2 | N1-A writes in the producer's transaction, with the outcome table of §7.1.1 (errors and mandatory failures roll back; skips, including non-mandatory cap, commit) | **Yes** |
 | D-N1-3 | MVP scope: event-driven, in-app only, no scheduler, no email | **Yes** |
-| D-N1-4 | First producer set (§18 N1-A row) | **Yes**; add or remove types as you prefer |
+| D-N1-4 | First producer set: only the N1-A rows of §18.1; account and access notices in N1-U after A2-B; invitation accepted and mailbox reconnect deferred | **Yes** |
 | D-N1-5 | Sensitivity classes and text rules (§3.3, §14.1), including "no People text at all" | **Yes** |
-| D-N1-6 | Caps: 100 recipients per event, 50 per recipient per type per hour, 5 000 per business per day | **Yes**, revisit with real usage |
-| D-N1-7 | Badge counts exclude record checks (approximate for record-scoped types), capped at 99 | **Yes** |
+| D-N1-6 | Caps for non-mandatory types: 100 recipients per event, 50 per recipient per type per hour, 5 000 per business per day; mandatory types uncapped but bounded by registration and fail closed (§16.1) | **Yes**, revisit with real usage |
+| D-N1-7 | Badge is ACL-exact: record-scoped types counted only after a batch record check on the newest 20 unread; may under-count, never over-count (§5.4) | **Yes** |
 | D-N1-8 | Cross-business unread indicator (counts only) | **N1-B**, not MVP |
 | D-N1-9 | Who hears about an overdue invoice: creator only, or also all `finance:billing` holders | **Creator plus `finance:billing` holders**, each can mute |
 | D-N1-10 | Notify creators of events overlapped by "Keep the overlap" | **Yes**, `UPDATE`, can be turned off |
@@ -902,7 +1030,7 @@ PRs at the time; none is reserved by this document.
 | D-N1-15 | Name the business in the suspension/removal notice | **No in-app; yes in email** (the user was a member when it happened) |
 | D-N1-16 | Business name and `STANDARD` record titles in email | **Business name yes; titles off by default, business can enable** |
 | D-N1-17 | Legal check that notification emails are transactional in target markets (US, AU, EU/UK, CA) | **Get advice before N1-D**; unverified here |
-| D-N1-18 | Retention: 90 days, archived 30 days, `user_notices` 1 year, excluded from data export | **Yes** |
+| D-N1-18 | Retention 90 days (archived 30, `user_notices` 1 year) with opportunistic cleanup; accept the residual storage of untouched expired rows for the beta, or require the retention job first (§13.1); exclude notifications from business export but not from personal-data access, subject to D-N1-17 (§13.3) | **Accept the residual exposure for the beta** (small, hidden, minimal text); include in personal-data access |
 
 ---
 
@@ -927,3 +1055,15 @@ PRs at the time; none is reserved by this document.
 §7, §13; `docs/people-leave-p3.md` §3.2; `docs/scheduling-s1.md` §4.2; `docs/scheduling-s2.md` §9;
 `docs/administration-a2.md` §3.8–3.10 (and PR #76); `docs/ui/app-shell.md`;
 `docs/ui/pixa-design-system-v2-a.md` §8, D-V2A-6.
+
+---
+
+## 23. Audit response (ChatGPT audit on PR #80, head `c7424bc`)
+
+| # | Finding | Change |
+|---|---|---|
+| 1 | HIGH: cap drop vs rollback contradiction | §7.1.1 outcome table: errors and mandatory failures roll back; intentional skips (including non-mandatory cap) commit; mandatory never capped; tests listed; §5.1 step 7, §16, D-N1-2 aligned |
+| 2 | MEDIUM/HIGH: approximate badge leaks restricted events | §5.4: badge counts record-scoped rows only after a batch record check (newest 20), may under-count, never over-count; D-N1-7 revised; tests added |
+| 3 | MEDIUM: missing hooks and transaction contexts | §18.1 lists every producer with its stage and identity path; N1-A ships only session-user tenant producers; password notice and suspension/removal move to N1-U; invitation accepted and mailbox reconnect deferred with reasons; §11.2 defines the privileged write functions and isolation tests for `user_notices` |
+| 4 | MEDIUM: mandatory vs caps | §16.1: mandatory exempt from caps and folding, bounded by registration, fail closed, durable email fallback, endpoint rate limits, monitoring |
+| 5 | MEDIUM: retention and export | §13.1: opportunistic bounded deletion without a scheduler, residual exposure stated, gate in D-N1-18; §13.3 separates business export from personal-data access and makes no legal-exemption claim |
