@@ -1,7 +1,7 @@
 # Settings A3: architecture for the Pixa OS Settings experience
 
 Status: **Proposal, documentation only.** Nothing here is implemented, and nothing here changes code, the schema, RLS,
-grants, admission, secrets, migrations or production. Owner decisions D-A3-1 to D-A3-17 (§14) are **pending**.
+grants, admission, secrets, migrations or production. Owner decisions D-A3-1 to D-A3-17 (§14) were **approved by Regan on 2026-11-16**, with the gates in §15–§16.
 
 Revision 2 (2026-11-16): addresses ChatGPT architecture audit round 1 on PR #81 (conditional approval, docs
 only). The nine required amendments are in the new §15, which sets the gates. §9, §14, §16 and §17 changed to match.
