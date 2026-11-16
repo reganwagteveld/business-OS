@@ -188,7 +188,7 @@ module's public API, which applies the People permissions.
 
 ## 9. Out of scope / later
 
-Client screens; self-service (an employee viewing their own record); record-scoped visibility for line
+Leave management is People P3 (`docs/people-leave-p3.md`; P3-A adds leave types, policies and policy assignments). Client screens; self-service (an employee viewing their own record); record-scoped visibility for line
 managers; department hierarchy; multiple concurrent departments; future-dated changes; per-employee
 erasure and retention rules; custom fields; scheduling (`docs/scheduling-data-model.md`) linking to
 employees.
