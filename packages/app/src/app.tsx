@@ -230,6 +230,8 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       <ReportingZone
         key={slug}
         client={reporting} context={active} userLabel={userLabel}
+        // Moving between Dashboard, Explore and Saved reports keeps the Zone mounted, so its settings survive.
+        section={current.child} onSection={(child) => setRoute({ ...current, child })}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
