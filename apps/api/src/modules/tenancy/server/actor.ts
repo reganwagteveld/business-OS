@@ -4,9 +4,14 @@ import 'server-only';
 // administrative change re-reads that membership here and holds a FOR SHARE lock on it until commit,
 // so a concurrent demotion, suspension or removal of the actor either waits for this change or makes
 // it fail. Other Zones keep per-request resolution.
-import { authorize, ForbiddenError, permissionsFor, type Permission, type Role } from '@/modules/access';
+import { authorize, ForbiddenError, permissionsFor, type Permission, type Principal, type Role } from '@/modules/access';
 import type { AppTenantDb } from '@/core/db';
-import type { Actor } from './members';
+
+/** Who is acting: the verified membership of the signed-in user in the current business. */
+export interface Actor extends Principal {
+  readonly userId: string;
+  readonly membershipId: string;
+}
 
 export async function lockActor(db: AppTenantDb, actor: Actor, permission: Permission): Promise<Actor> {
   const rows = await db.$queryRaw<{ role: Role; status: string; user_id: string }[]>`

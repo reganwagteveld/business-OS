@@ -489,7 +489,8 @@ describe('permissions', () => {
     expect(events.map((x) => x.metadata)).toEqual([
       { fields: ['emergencyContactName', 'emergencyContactPhone', 'homeAddress', 'personalEmail'] }, { fields: ['homeAddress'] },
     ]);
-    expect(JSON.stringify(await audits(emp.id))).not.toMatch(/hidden|home\.example|0400/i);
+    // '0400 ' with the space: every fixture phone has it, and a random uuid can contain the bare digits '0400'.
+    expect(JSON.stringify(await audits(emp.id))).not.toMatch(/hidden|home\.example|0400 /i);
     // Two first saves racing: exactly one wins.
     const other = (await a.create({ givenName: 'Race', familyName: 'Personal' })).body.employee;
     const results = await Promise.all([1, 2, 3].map((n) => a.setPersonal(other.id, { version: 0, personalPhone: `0400 000 00${n}` })));
@@ -761,8 +762,9 @@ describe('audit log hygiene', () => {
     const { rows } = await admin.query("SELECT action, metadata FROM audit_events WHERE action LIKE 'people.%' AND business_id = ANY($1)", [[A.businessId, B.businessId]]);
     expect(rows.length).toBeGreaterThan(50);
     const text = JSON.stringify(rows);
+    // Phone fixtures are matched as '0400 ' (with the space) so a random uuid containing '0400' cannot trip it.
     for (const secret of [
-      'EMP-0', 'RACE-1', 'Priya', 'Ramanathan', 'example.com', 'home.example', 'Hidden Lane', '0400', 'Resigned', 'Medical', 'Offer withdrawn', 'Zq',
+      'EMP-0', 'RACE-1', 'Priya', 'Ramanathan', 'example.com', 'home.example', 'Hidden Lane', '0400 ', 'Resigned', 'Medical', 'Offer withdrawn', 'Zq',
     ]) expect(text, secret).not.toContain(secret);
     // Every metadata value is an id, a known enum/date token, a field-name list, or null.
     const allowed = /^([0-9a-f-]{36}|\d{4}-\d{2}-\d{2}|PENDING|ACTIVE|ON_LEAVE|TERMINATED|set|changed|cleared|member_removed|[a-zA-Z]+)$/;
