@@ -12,6 +12,7 @@ Zones get their data only from the cloud API through the typed clients in `src/a
 - **Finance** (`finance/`, F3): expenses (list with server-side search, filters and paging; draft form; detail with record, pay-in-full and void; no receipt attachments, FD-P6) and expense categories. The first Zone laid out with `ZonePage` and the `@business-os/ui` components. Quotes, invoices and payments screens come later.
 
 - **Reporting** (`reporting/`, R1): headline KPIs, one chart with its period table and records, date range, Zone filter and saved reports (docs/reporting-r1.md). Figures come from the API's registered metrics; the screen never calculates. Shared `KpiCard`, `LineChart` and `BarChart` live in `@business-os/ui` for other Zones.
+- **People** (`people/`, P2): employee directory, profile, create/edit, status changes, departments and locations (docs/people-p2.md). Personal details only with `people:read_sensitive`.
 
 ## Conventions for a new Zone
 

@@ -114,7 +114,10 @@ describe('Zone registry', () => {
   it('filters by the server\'s permissions: unauthorised Zones are omitted, planned ones never openable, nothing listed while loading or failed', () => {
     const nav = resolveNavigation({ state: 'ready', permissions: ['customers:read', 'projects:read'] });
     expect(nav.available.map((z) => z.id)).toEqual(['customers', 'projects']);
-    expect(nav.planned.map((z) => z.id)).toEqual(['people', 'operations', 'settings']);
+    expect(nav.planned.map((z) => z.id)).toEqual(['operations', 'settings']);
+    // People P2: built, opened by people:read only.
+    expect(canOpen({ zone: 'people' }, nav)).toBe(false);
+    expect(canOpen({ zone: 'people' }, resolveNavigation({ state: 'ready', permissions: ['people:read'] }))).toBe(true);
     expect(canOpen({ zone: 'reporting' }, nav)).toBe(false); // built, but reporting:read is not held
     expect(canOpen({ zone: 'reporting' }, resolveNavigation({ state: 'ready', permissions: ['reporting:read'] }))).toBe(true);
     expect(canOpen({ zone: 'sales' }, nav)).toBe(false);
