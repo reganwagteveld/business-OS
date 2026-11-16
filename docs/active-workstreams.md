@@ -1,7 +1,7 @@
 # Pixa OS — Active Workstreams Registry
 
 **Purpose:** Prevent cross-agent file collisions and repeated PR archaeology.
-**Status snapshot:** 2026-11-16 ~12:00 UTC (re-checked 12:00 UTC), checked against `main` at `b2f308b` and GitHub's open PR list at that time. **Update before every new agent starts** (see "Keeping this file current").
+**Status snapshot:** 2026-11-16 12:00 UTC, checked against `main` at `b2f308b` and GitHub's open PR list at that time. **Update before every new agent starts** (see "Keeping this file current").
 
 ## Important rules
 
