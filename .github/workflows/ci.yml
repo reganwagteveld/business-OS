@@ -204,6 +204,12 @@ jobs:
         env:
           DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
           SCHEDULING_RESOURCES_TEST_IP_BLOCK: '92'
+      # Administration A2-B (docs/administration-a2.md §13): last-owner, actor re-check, invitation and mailbox
+      # cutoff races rely on transaction-scoped advisory and row locks, so the suite runs again behind the pooler.
+      - name: Membership lifecycle suite behind the pooler
+        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/membership-lifecycle.test.ts
+        env:
+          DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
       - name: Migrations match schema
         run: pnpm db:check-migrations
 
