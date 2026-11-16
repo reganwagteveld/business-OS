@@ -109,6 +109,10 @@ model Business {
   communicationsErasedReferences CommunicationsErasedReference[]
   communicationsPrivilegedGrants CommunicationsPrivilegedGrant[]
   financeCatalogItems            FinanceCatalogItem[]
+  peopleLeaveTypes               PeopleLeaveType[]
+  peopleLeavePolicies            PeopleLeavePolicy[]
+  peopleLeaveRevisions           PeopleLeavePolicyRevision[]
+  peopleLeaveAssignments         PeopleLeavePolicyAssignment[]
 
   @@map("businesses")
 }
