@@ -63992,6 +63992,418 @@
         "additionalProperties": false
       }
     },
+    "search": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/search",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "types": {
+            "minItems": 1,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "customer",
+                "contact",
+                "opportunity",
+                "project",
+                "task",
+                "quote",
+                "invoice",
+                "credit_note",
+                "catalog_item",
+                "employee"
+              ]
+            }
+          },
+          "limit": {
+            "default": 5,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25
+          },
+          "includeArchived": {
+            "default": false,
+            "type": "boolean"
+          },
+          "cursor": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "q"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "searchedTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "customer",
+                "contact",
+                "opportunity",
+                "project",
+                "task",
+                "quote",
+                "invoice",
+                "credit_note",
+                "catalog_item",
+                "employee"
+              ]
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "customer",
+                    "contact",
+                    "opportunity",
+                    "project",
+                    "task",
+                    "quote",
+                    "invoice",
+                    "credit_note",
+                    "catalog_item",
+                    "employee"
+                  ]
+                },
+                "zone": {
+                  "type": "string",
+                  "enum": [
+                    "customers",
+                    "sales",
+                    "projects",
+                    "finance",
+                    "people"
+                  ]
+                },
+                "items": {
+                  "maxItems": 25,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "customer",
+                          "contact",
+                          "opportunity",
+                          "project",
+                          "task",
+                          "quote",
+                          "invoice",
+                          "credit_note",
+                          "catalog_item",
+                          "employee"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "title": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "subtitle": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 160
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "badges": {
+                        "maxItems": 4,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "archived",
+                            "draft",
+                            "void",
+                            "former",
+                            "won",
+                            "lost",
+                            "completed",
+                            "cancelled",
+                            "accepted",
+                            "declined",
+                            "expired",
+                            "done",
+                            "inactive"
+                          ]
+                        }
+                      },
+                      "route": {
+                        "type": "object",
+                        "properties": {
+                          "zone": {
+                            "type": "string",
+                            "enum": [
+                              "customers",
+                              "sales",
+                              "projects",
+                              "finance",
+                              "people"
+                            ]
+                          },
+                          "child": {
+                            "type": "string",
+                            "maxLength": 40
+                          },
+                          "target": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          }
+                        },
+                        "required": [
+                          "zone",
+                          "target"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id",
+                      "title",
+                      "subtitle",
+                      "badges",
+                      "route"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "hasMore": {
+                  "type": "boolean"
+                },
+                "nextCursor": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "zone",
+                "items",
+                "hasMore",
+                "nextCursor"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "searchedTypes",
+          "groups"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "resolveSearchRecords": {
+      "method": "POST",
+      "path": "/api/v1/b/:slug/search/resolve",
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "customer",
+                    "contact",
+                    "opportunity",
+                    "project",
+                    "task",
+                    "quote",
+                    "invoice",
+                    "credit_note",
+                    "catalog_item",
+                    "employee"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "items": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "customer",
+                    "contact",
+                    "opportunity",
+                    "project",
+                    "task",
+                    "quote",
+                    "invoice",
+                    "credit_note",
+                    "catalog_item",
+                    "employee"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "subtitle": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 160
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "badges": {
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "archived",
+                      "draft",
+                      "void",
+                      "former",
+                      "won",
+                      "lost",
+                      "completed",
+                      "cancelled",
+                      "accepted",
+                      "declined",
+                      "expired",
+                      "done",
+                      "inactive"
+                    ]
+                  }
+                },
+                "route": {
+                  "type": "object",
+                  "properties": {
+                    "zone": {
+                      "type": "string",
+                      "enum": [
+                        "customers",
+                        "sales",
+                        "projects",
+                        "finance",
+                        "people"
+                      ]
+                    },
+                    "child": {
+                      "type": "string",
+                      "maxLength": 40
+                    },
+                    "target": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    }
+                  },
+                  "required": [
+                    "zone",
+                    "target"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "type",
+                "id",
+                "title",
+                "subtitle",
+                "badges",
+                "route"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    },
     "getDocumentBranding": {
       "method": "GET",
       "path": "/api/v1/b/:slug/finance/document-branding",

@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { ForbiddenError, authorize, permissionsFor, type Permission } from '@/modules/access';
 import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser } from '@/modules/identity';
 import { NotFoundError, type Actor } from '@/modules/tenancy';
-import { betaSessionAdmitted, myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
+import { betaSessionAdmitted, myMemberships, TenantScopeError, TransactionStartTimeoutError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
 import { apiHeaders } from '@/core/http';
 import {
   isUniqueViolation, RateLimitedError, RecordNotFoundError, RuleViolationError, SearchBusyError, SearchTimeoutError, ServiceFailureError, sqlState, StateConflictError,
@@ -278,17 +278,15 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
         if (!parsed.success) return fail(request, 400, 'invalid_query');
         query = parsed.data;
       }
-      let started = false;
-      const attempt = () => withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) => {
-        started = true;
-        return handler({ request, actor, db, params, input: input.data as never, query: query as never, sessionToken: opts.sessionToken ? auth.sessionToken : null });
-      }, opts.timeoutMs || opts.maxWaitMs ? { timeoutMs: opts.timeoutMs, maxWaitMs: opts.maxWaitMs } : undefined);
+      const attempt = () => withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) =>
+        handler({ request, actor, db, params, input: input.data as never, query: query as never, sessionToken: opts.sessionToken ? auth.sessionToken : null }),
+      opts.timeoutMs || opts.maxWaitMs ? { timeoutMs: opts.timeoutMs, maxWaitMs: opts.maxWaitMs } : undefined);
       let result: Result<T>;
       try {
         result = opts.retryOnConflict ? await withConflictRetry(attempt) : await attempt();
       } catch (error) {
-        // The unit of work never started: no pooled connection within maxWait (search routes only).
-        if (opts.maxWaitMs && !started && !(error instanceof TenantScopeError)) throw new SearchBusyError('pool');
+        // The unit of work never started: no pooled connection within maxWait (only routes that set it: search).
+        if (opts.maxWaitMs && error instanceof TransactionStartTimeoutError) throw new SearchBusyError('pool');
         throw error;
       }
       await result.afterCommit?.();

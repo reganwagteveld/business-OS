@@ -26,7 +26,7 @@ import * as invitationsRoute from '@/app/api/v1/b/[slug]/invitations/route';
 import * as searchRoute from '@/app/api/v1/b/[slug]/search/route';
 import * as resolveRoute from '@/app/api/v1/b/[slug]/search/resolve/route';
 import { devOutbox } from '@/core/email';
-import { joinSql, sql, withTenant } from '@/core/db';
+import { joinSql, sql, TransactionStartTimeoutError, withTenant } from '@/core/db';
 import { SearchTimeoutError } from '@/core/http/errors';
 import type { SearchProvider } from '@/core/search';
 import { permissionsFor } from '@/modules/access';
@@ -419,12 +419,32 @@ describe('server-side controls', () => {
       branch: () => sql`(SELECT 'customer'::text AS type, gen_random_uuid()::text AS id, 1 AS tier, 0 AS demote, ''::text AS sort_key,
         ''::text AS title, NULL::text AS subtitle, ARRAY[]::text[] AS badges, ''::text AS target FROM pg_sleep(2))`,
     };
-    const principal = { permissions: new Set(permissionsFor('OWNER')) };
+    const principal = { role: 'OWNER' as const, permissions: new Set(permissionsFor('OWNER')) };
     const owner = A.people.OWNER!;
     await expect(withTenant({ businessId: A.businessId, userId: owner.id }, (db) =>
       runSearch(db, principal, { q: 'kelp', limit: 5, includeArchived: false, cursor: null }, { providers: [slow] }), { timeoutMs: 3000 }))
       .rejects.toBeInstanceOf(SearchTimeoutError);
     const after = await withTenant({ businessId: A.businessId, userId: owner.id }, (db) => db.$queryRaw<{ t: string }[]>`SELECT current_setting('statement_timeout') AS t`);
     expect(after[0]!.t).toBe('0');
+  });
+});
+
+describe('connection pool', () => {
+  // The bounded pool wait covers the search unit of work. (Authentication's own membership lookups run before
+  // it, on the same pool, and wait as they do for every route: see the PR's known limitations.)
+  it('abandons a unit of work that cannot get a pooled connection within maxWait, without running it', async () => {
+    const owner = A.people.OWNER!;
+    const tenant = { businessId: A.businessId, userId: owner.id };
+    const holders = Array.from({ length: 5 }, () => withTenant(tenant, (db) => db.$queryRaw`SELECT 1 AS slept FROM pg_sleep(2)`, { timeoutMs: 5000 }));
+    await new Promise((r) => setTimeout(r, 300));
+    let ran = false;
+    const t0 = Date.now();
+    await expect(withTenant(tenant, async () => { ran = true; }, { timeoutMs: 3000, maxWaitMs: 500 })).rejects.toBeInstanceOf(TransactionStartTimeoutError);
+    expect(Date.now() - t0).toBeLessThan(1500);
+    await Promise.all(holders);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(ran).toBe(false);
+    // The pool is usable again afterwards.
+    expect((await search(owner, A.slug, { q: 'kelp' })).status).toBe(200);
   });
 });
