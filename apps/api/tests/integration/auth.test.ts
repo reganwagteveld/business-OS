@@ -424,6 +424,83 @@ describe('desktop sign-in (system browser + PKCE, bearer session, D9a)', () => {
   });
 });
 
+describe('emailed links end to end (A3-0 allow-list)', () => {
+  it('the reset link redirects to the app with the token, and that token resets the password', async () => {
+    const email = await signUpAndVerify();
+    await call('POST', '/api/v1/auth/request-password-reset', { body: { email, redirectTo: '/reset-password' }, ip: newIp() });
+    const link = new URL(linkIn(lastEmailTo(email)!.text));
+    expect(link.pathname).toMatch(/^\/api\/v1\/auth\/reset-password\/[A-Za-z0-9]+$/);
+    const opened = await call('GET', `${link.pathname}${link.search}`, { origin: null });
+    expect(opened.status).toBe(302);
+    const target = new URL(opened.headers.get('location')!, BASE);
+    expect(target.pathname).toBe('/reset-password');
+    const token = target.searchParams.get('token')!;
+    expect(token).toBe(link.pathname.split('/').pop());
+    const reset = await call('POST', '/api/v1/auth/reset-password', { body: { token, newPassword: 'reset through the emailed link 2026' }, ip: newIp() });
+    expect(reset.status).toBe(200);
+    expect((await call('POST', '/api/v1/auth/sign-in/email', { body: { email, password: 'reset through the emailed link 2026' }, ip: newIp() })).status).toBe(200);
+  });
+
+  it('the verification link verifies the address, and resending a verification email still works', async () => {
+    const email = `resend-${randomUUID()}@example.com`;
+    await call('POST', '/api/v1/auth/sign-up/email', { body: { email, password: PASSWORD, name: 'R' }, ip: newIp() });
+    const resend = await call('POST', '/api/v1/auth/send-verification-email', { body: { email }, ip: newIp() });
+    expect(resend.status).toBe(200);
+    const link = new URL(linkIn(lastEmailTo(email)!.text));
+    expect(link.pathname).toBe('/api/v1/auth/verify-email');
+    expect((await call('GET', `${link.pathname}${link.search}`, { origin: null })).status).toBeLessThan(400);
+    const { rows } = await admin.query('SELECT email_verified FROM users WHERE email = $1', [email]);
+    expect(rows).toEqual([{ email_verified: true }]);
+  });
+});
+
+describe('non-allowed Better Auth endpoints (A3-0 probes, settings-a3 §15.1 item 6)', () => {
+  // Every identity table, hashed in full, so a probe that wrote anything at all would show.
+  async function identitySnapshot() {
+    const out: Record<string, string | null> = {};
+    for (const table of ['users', 'sessions', 'accounts', 'verifications', 'rate_limits']) {
+      const { rows } = await admin.query(`SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t::text), '')) AS h FROM ${table} t`);
+      out[table] = rows[0].h;
+    }
+    return out;
+  }
+
+  const probes: Array<['GET' | 'POST', string, unknown?]> = [
+    ['POST', '/api/v1/auth/update-user', { name: 'Changed By Probe' }],
+    ['POST', '/api/v1/auth/change-password', { currentPassword: PASSWORD, newPassword: 'changed by a probe 2026', revokeOtherSessions: true }],
+    ['POST', '/api/v1/auth/change-email', { newEmail: 'probe@example.com' }],
+    ['POST', '/api/v1/auth/delete-user', { password: PASSWORD }],
+    ['GET', '/api/v1/auth/list-sessions'],
+    ['POST', '/api/v1/auth/revoke-session', { token: 'x' }],
+    ['POST', '/api/v1/auth/revoke-sessions', {}],
+    ['POST', '/api/v1/auth/revoke-other-sessions', {}],
+    ['POST', '/api/v1/auth/set-password', { newPassword: 'set by a probe 2026 x' }],
+    ['POST', '/api/v1/auth/link-social', { provider: 'google' }],
+    ['GET', '/api/v1/auth/get-session'],
+    ['POST', '/api/v1/auth/update-session', {}],
+    ['POST', '/api/v1/auth/no-such-endpoint', {}],
+  ];
+
+  it('answer 404 with a cookie and with a bearer, and write nothing', async () => {
+    const email = await signUpAndVerify();
+    const { cookie } = await signIn(email);
+    const bearer = decodeURIComponent(cookie!.pair.split('=')[1]!); // the desktop bearer is the same signed token
+    const before = await identitySnapshot();
+    for (const [method, path, body] of probes) {
+      for (const auth of [{ cookie: cookie!.pair }, { bearer, origin: null }] as const) {
+        const res = await call(method, path, { ...auth, body: method === 'POST' ? body : undefined, ip: '198.51.100.250' });
+        expect(res.status, `${method} ${path}`).toBe(404);
+        expect(await res.json()).toEqual({ error: 'not_found' });
+        expect(res.headers.get('cache-control')).toBe('no-store');
+      }
+    }
+    expect(await identitySnapshot()).toEqual(before);
+    // The session and password are untouched.
+    expect((await getCurrentUser(new Request(`${BASE}/x`, { headers: { cookie: cookie!.pair } })))?.email).toBe(email);
+    expect((await signIn(email)).res.status).toBe(200);
+  });
+});
+
 describe('database roles for identity data (data-model §5.1, §5.6)', () => {
   it('tenant code (bos_app) cannot read sessions, accounts, verifications or rate limits', async () => {
     for (const table of ['sessions', 'accounts', 'verifications', 'rate_limits']) {
