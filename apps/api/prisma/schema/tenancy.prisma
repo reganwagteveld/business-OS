@@ -31,6 +31,23 @@ model Business {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz
 
+  /// Administration A2-A business profile (docs/administration-a2.md §3.2). Registration and tax
+  /// identifiers stay in finance_settings.seller_identifiers; they are not duplicated here.
+  tradingName          String? @map("trading_name")
+  contactEmail         String? @map("contact_email")
+  contactPhone         String? @map("contact_phone")
+  website              String?
+  addressLine1         String? @map("address_line1")
+  addressLine2         String? @map("address_line2")
+  addressCity          String? @map("address_city")
+  addressRegion        String? @map("address_region")
+  addressPostalCode    String? @map("address_postal_code")
+  addressCountryCode   String? @map("address_country_code") @db.Char(2)
+  /// 1–12; null = not set (calendar year). Nothing computes with it yet.
+  fiscalYearStartMonth Int?    @map("fiscal_year_start_month") @db.SmallInt
+  /// Optimistic concurrency for profile edits: every update must name the version it was based on.
+  version              Int     @default(1)
+
   memberships                    Membership[]
   invitations                    Invitation[]
   customers                      Customer[]
