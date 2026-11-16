@@ -1,6 +1,6 @@
 # People Zone data model (People P1: Workforce Foundation)
 
-Status: backend only (no client screens yet; the People Zone stays `planned` in the client registry).
+Status: backend (P1). Client screens arrived in People P2: see `docs/people-p2.md`.
 Migration: `20261118000000_people` (additive; must follow the Finance F1–F3 migrations).
 
 ## 1. Principles

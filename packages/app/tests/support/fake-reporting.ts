@@ -27,8 +27,13 @@ export const METRICS = [
   def({ id: 'finance.invoiced_amount', name: 'Amount invoiced', zone: 'finance', valueType: 'money', requires: ['finance:read'] }),
   def({ id: 'finance.payments_received', name: 'Amount received', zone: 'finance', valueType: 'money', requires: ['finance:read'] }),
   def({ id: 'finance.receivables_outstanding', name: 'Outstanding receivables', zone: 'finance', valueType: 'money', requires: ['finance:read'], temporal: 'snapshot', granularities: ['none'], hasDetail: false, defaultChart: 'kpi' }),
+  def({ id: 'finance.receivables_overdue', name: 'Overdue receivables', zone: 'finance', valueType: 'money', requires: ['finance:read'], temporal: 'snapshot', granularities: ['none'], hasDetail: false, defaultChart: 'kpi' }),
+  def({ id: 'finance.invoices_issued', name: 'Invoices issued', zone: 'finance', valueType: 'count', requires: ['finance:read'] }),
   def({ id: 'sales.won_value', name: 'Won opportunity value', zone: 'sales', valueType: 'money', requires: ['sales:read'] }),
+  def({ id: 'sales.won_count', name: 'Opportunities won', zone: 'sales', valueType: 'count', requires: ['sales:read'] }),
   def({ id: 'customers.new_customers', name: 'New customers', zone: 'customers', valueType: 'count', requires: ['customers:read'] }),
+  def({ id: 'finance.expenses_recorded', name: 'Expenses recorded', zone: 'finance', valueType: 'money', requires: ['finance:read'], availability: 'planned', plannedNote: 'Waits for Finance expense reporting rules.' }),
+  def({ id: 'projects.tasks_completed', name: 'Tasks completed', zone: 'projects', valueType: 'count', requires: ['projects:read'], availability: 'planned', plannedNote: 'Projects has no completion time yet.' }),
   def({ id: 'people.headcount', name: 'Headcount', zone: 'people', valueType: 'count', requires: ['people:read'], availability: 'planned', plannedNote: 'Planned.' }),
 ];
 
@@ -56,18 +61,31 @@ function bucketsOf(range: { from: string; to: string }, granularity: string): st
 export const FIGURES: Record<string, { currency: string | null; total: string; previous: string; change: string | null }[]> = {
   'finance.invoiced_amount': [{ currency: 'AUD', total: '350.50', previous: '200.00', change: '75.3' }, { currency: 'USD', total: '75.00', previous: '0.00', change: null }],
   'finance.payments_received': [{ currency: 'AUD', total: '85.50', previous: '85.50', change: '0.0' }],
+  'finance.receivables_overdue': [{ currency: 'AUD', total: '40.00', previous: '0', change: null }],
+  'finance.invoices_issued': [{ currency: null, total: '4', previous: '2', change: '100.0' }],
+  'sales.won_count': [{ currency: null, total: '2', previous: '2', change: '0.0' }],
   'finance.receivables_outstanding': [{ currency: 'AUD', total: '265.00', previous: '0', change: null }],
   'sales.won_value': [{ currency: 'AUD', total: '1200.00', previous: '1500.00', change: '-20.0' }],
   'customers.new_customers': [{ currency: null, total: '3', previous: '1', change: '200.0' }],
 };
 
-export interface ReportingCall { method: string; path: string; body: unknown }
+export interface ReportingCall { method: string; path: string; body: unknown; slug: string }
 
-export function createFakeReporting(o: { permissions: string[]; empty?: string[]; failQuery?: boolean; catalogStatus?: number; views?: SavedView[]; pageSize?: number }) {
+export function createFakeReporting(o: {
+  permissions: string[]; empty?: string[]; failQuery?: boolean; catalogStatus?: number; views?: SavedView[]; pageSize?: number;
+  /** Metrics that answer with a per-metric error (as the engine does for a retired version). */
+  metricErrors?: string[];
+  /** Holds every /query response until `release()` is called (to observe loading states). */
+  holdQueries?: boolean;
+  /** Figures to return instead of FIGURES (for example a second business's own numbers). */
+  figures?: Record<string, { currency: string | null; total: string; previous: string; change: string | null }[]>;
+}) {
   const held = new Set(o.permissions);
   const calls: ReportingCall[] = [];
   const views: SavedView[] = [...(o.views ?? [])];
   const metricOf = (id: string) => METRICS.find((m) => m.id === id);
+  let release: () => void = () => {};
+  const held$ = o.holdQueries ? new Promise<void>((resolve) => { release = resolve; }) : null;
   const can = (id: string) => (metricOf(id)?.requires ?? ['x']).every((k) => held.has(k));
 
   function result(q: { metrics: { id: string; version: number }[]; date: Parameters<typeof rangeOf>[0]; granularity: string; comparison: string }, lenient: boolean) {
@@ -81,8 +99,12 @@ export function createFakeReporting(o: { permissions: string[]; empty?: string[]
         results.push({ status: 'error', metric: ref, name: m?.name ?? null, code: 'forbidden_source', message: 'You do not have access to the data this metric uses.' });
         continue;
       }
+      if (o.metricErrors?.includes(m.id)) {
+        results.push({ status: 'error', metric: ref, name: m.name, code: 'metric_version_unsupported', message: 'This figure has changed since the report was set up. Choose it again.' });
+        continue;
+      }
       const buckets = m.temporal === 'snapshot' ? [] : bucketsOf(range, q.granularity);
-      const figures = o.empty?.includes(m.id) ? [] : FIGURES[m.id] ?? [];
+      const figures = o.empty?.includes(m.id) ? [] : (o.figures ?? FIGURES)[m.id] ?? [];
       const zero = (c: string | null) => (c === 'USD' || c === 'AUD' ? '0.00' : '0');
       results.push({
         status: 'ok', metric: { id: m.id, version: m.version }, name: m.name, valueType: m.valueType, unit: m.unit, temporal: m.temporal,
@@ -105,8 +127,9 @@ export function createFakeReporting(o: { permissions: string[]; empty?: string[]
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
     const method = init?.method ?? 'GET';
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    const slug = /^\/api\/v1\/b\/([^/]+)\//.exec(url.pathname)?.[1] ?? '';
     const path = url.pathname.replace(/^\/api\/v1\/b\/[^/]+\/reporting/, '');
-    calls.push({ method, path, body });
+    calls.push({ method, path, body, slug });
     if (!held.has('reporting:read')) return json(403, { error: 'forbidden' });
     if (method === 'GET' && path === '/metrics') {
       if (o.catalogStatus) return json(o.catalogStatus, { error: 'x' });
@@ -118,6 +141,7 @@ export function createFakeReporting(o: { permissions: string[]; empty?: string[]
     }
     if (method === 'POST' && path === '/query') {
       const q = ReportingQueryRequest.parse(body);
+      if (held$) await held$;
       if (o.failQuery) return json(500, { error: 'internal_error' });
       const r = result(q, false);
       return r ? json(200, r) : json(403, { error: 'forbidden' });
@@ -167,5 +191,5 @@ export function createFakeReporting(o: { permissions: string[]; empty?: string[]
     }
     return json(404, { error: 'not_found' });
   }
-  return { fetch: fetchImpl as typeof fetch, calls, views };
+  return { fetch: fetchImpl as typeof fetch, calls, views, release: () => release() };
 }
