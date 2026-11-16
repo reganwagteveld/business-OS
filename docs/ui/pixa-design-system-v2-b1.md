@@ -1,6 +1,6 @@
 # UI V2-B1: tokens and type
 
-**Status:** draft PR, awaiting audit. **Spec:** [`pixa-design-system-v2-a.md`](pixa-design-system-v2-a.md) §6.2, §7, §11 (V2-B1), §12, §13.2.
+**Status:** PR #91, ChatGPT audit PASS, owner decisions recorded (§9). **Spec:** [`pixa-design-system-v2-a.md`](pixa-design-system-v2-a.md) §6.2, §7, §11 (V2-B1), §12, §13.2.
 **Authorisation:** Regan approved V2-B foundation work on 2026-11-16, following the approved V2-A design. This PR is the first of the V2-B series (B1 to B5); B2 to B5 each get their own thread and draft PR.
 
 Nothing here touches the API, permissions, schema, money or Zone code. No migration, no deploy.
@@ -78,11 +78,11 @@ Tailwind names for V2 tokens: `bg-canvas`, `bg-surface`, `bg-sunken`, `bg-raised
 | Accessibility | Legible at 12–14 px, tabular figures for amounts, `font-display: swap` so text is never invisible, metric-matched fallback (`size-adjust` on Arial/Helvetica) so the swap does not shift layout |
 | Maintenance | Inter is actively maintained by its author; this copy is pinned and does not change unless a PR changes it |
 
-**Budget (§12.2).** CSS: 59 kB raw, 11.6 kB gzip for the whole web build (budget 60 kB gzip). The token sheet alone grows from 3.3 to 6.9 kB gzip. Font: the Latin file is 47 kB (budget "≤ 110 kB total WOFF2, Latin subset"). Latin Extended adds 83 kB on top, so all font files together are 130 kB; see decision D-V2B1-2.
+**Budget (§12.2).** CSS: 59 kB raw, 11.6 kB gzip for the whole web build (budget 60 kB gzip). The token sheet alone grows from 3.3 to 6.9 kB gzip. Font: the Latin file is 47 kB (budget "≤ 110 kB total WOFF2, Latin subset"). Latin Extended adds 83 kB on top, so all font files together are 130 kB, accepted as an explicit exception (D-V2B1-2).
 
 ## 7. Monospace (JetBrains Mono decision, carried from D-V2A-1)
 
-Recommendation: **do not add JetBrains Mono now.** Inter's tabular figures already align amounts, and document numbers read well in Inter. `--font-mono` is a system monospace stack (`ui-monospace`, SF Mono, Cascadia Mono, Menlo, Consolas) for the rare code-like value. Adding JetBrains Mono later would cost roughly another 40–90 kB per subset (not measured) and a separate dependency review. Decision D-V2B1-1.
+Decision D-V2B1-1 (accepted): **no JetBrains Mono now.** Inter's tabular figures already align amounts, and document numbers read well in Inter. `--font-mono` is a system monospace stack (`ui-monospace`, SF Mono, Cascadia Mono, Menlo, Consolas) for the rare code-like value. Adding JetBrains Mono later would cost roughly another 40–90 kB per subset (not measured) and a separate dependency review.
 
 ## 8. Compatibility matrix (D-V2A-10)
 
@@ -129,11 +129,15 @@ In the desktop app's Web Inspector console (or a browser's console), run:
 
 The WebKit version is in the user agent (`AppleWebKit/…`); on macOS the OS version is in "About This Mac". Paste the result into the table in the PR that sets the floor.
 
-## 9. Decisions for Regan
+## 9. Owner decisions (recorded 2026-11-16, PR #91)
 
-| ID | Question | Recommendation |
+Regan accepted all four on 2026-11-16, after the ChatGPT audit of `1bf6f3b` (PASS) recommended the same. None of them authorises anything beyond V2-B1.
+
+| ID | Decision | Outcome |
 |---|---|---|
-| D-V2B1-1 | Monospace face for document numbers and codes | No JetBrains Mono for now; Inter tabular figures plus a system monospace stack (§7) |
-| D-V2B1-2 | Font budget reading: is Latin Extended (83 kB, downloaded only when used) inside the "≤ 110 kB" budget? | Keep it. Without it, names with Māori macrons (ā, ē, ī, ō, ū) or Central European letters would mix in a system font. The file every screen downloads is the 47 kB Latin one |
-| D-V2B1-3 | Accept the four token deviations in §5 | Accept |
-| D-V2B1-4 | Real-machine compatibility check (§8) | Needed before the support floor is set; not needed to merge B1, because every feature it adds degrades safely except `@layer`/`@property`, which today's Tailwind 4 build already requires |
+| D-V2B1-1 | Monospace face for document numbers and codes | **Accepted:** no JetBrains Mono for now. Inter tabular figures plus the system monospace stack in `--font-mono` (§7). Adding a monospace face later is a new decision with its own dependency review |
+| D-V2B1-2 | Font budget | **Accepted as an explicit exception** to the §12.2 headline budget: the 47 kB Latin file every screen downloads is within the 110 kB budget; the 83 kB Latin Extended file is bundled too and downloads only when a page uses one of its characters (`unicode-range`). Total physical font payload about 130 kB |
+| D-V2B1-3 | Token deviations in §5 | **Accepted:** `--accent-solid` naming, dark accent hover `#4357c7`, light input border `#878aa8`, and the temporary V1-only neutral roles (`--muted`, `--secondary`, `--field`). V1 aliases stay until V2-E |
+| D-V2B1-4 | Real-machine compatibility check (§8) | **Accepted:** a hard gate before the minimum OS support floor (`minimumSystemVersion`, ADR 0005 amendment) is set; **not** a gate for merging V2-B1 |
+
+Follow-ups from the audit (non-blocking for B1): during V2-B2 visual QA, check the actual font requests and that a stored theme opens without a flash on a real desktop build. Unit checks of HTML and CSS cannot prove either.
