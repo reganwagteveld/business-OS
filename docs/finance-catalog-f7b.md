@@ -40,6 +40,8 @@ Concurrency: `resolveCatalogLines` (finance `catalog.ts`) runs after the documen
 
 The draft quote and invoice form has **Add from catalog** next to **Add line**. It opens a search over active, unarchived items (name, code, description; 8 results; labelled search box, polite live region, one button per item). Picking an item adds a line with the copied values, a "From catalog" chip and a **Keep as manual line** action. A price in another currency is left empty with a note; switching a new draft's currency re-applies the item price only if the person did not type their own. An item rate that is archived is left empty with a note. The server decides on save; its refusals are shown in words.
 
+**Copy at selection.** The form sends the description, price and tax it shows, so on save they are client values that win over the item's. The save-time re-read checks the item's identity and status (this business, active, not archived) but does **not** reprice a line: if someone changes the item's price after it was picked, the line keeps the price the person saw. Only an API client that leaves a field out gets the item's value as of the save.
+
 Screenshots (local run, fake data): `docs/evidence/finance-f7b/`.
 
 ## 5. Tests
