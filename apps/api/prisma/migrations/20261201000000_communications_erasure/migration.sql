@@ -10,7 +10,8 @@
 -- links), 20261121000000_communications_providers and 20261125000000_communications_mailbox_identity
 -- (mail_connections, mail_retention_settings) and 20261113150000_tenancy (audit_events). It references no
 -- finance, people, scheduling or reporting object, so it commutes with Scheduling S2
--- (20261128000000_scheduling_resources); its name sorts after that and after every migration on main.
+-- (20261128000000_scheduling_resources) and Finance F7-A (20261130000000_finance_catalog); its name sorts
+-- after both and after every migration on main (renamed from 20261129000000 when F7-A merged first).
 -- Additive: new nullable columns and new tables; relaxed CHECKs that still hold for every existing row;
 -- replaced guard functions that behave exactly as before for every role except bos_maint. No row changes.
 -- No content is deleted by this migration and nothing is scheduled.

@@ -7,7 +7,7 @@ C2-A migration: `20261121000000_communications_providers` (additive, new tables 
 audit policy).
 C2-B1 migration: `20261125000000_communications_mailbox_identity` (§16.10).
 **E1** (retention, privacy and erasure foundation) is specified in `docs/communications-e1.md`
-(migration `20261129000000_communications_erasure`), pending audit and owner approval. The roadmap
+(migration `20261201000000_communications_erasure`), pending audit and owner approval. The roadmap
 after E1 is in §17.
 
 C2 connects real mailboxes (Google Workspace/Gmail and Microsoft 365/Outlook) to a business, brings

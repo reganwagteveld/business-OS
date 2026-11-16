@@ -1,5 +1,5 @@
 -- Communications E1 erasure pathway (docs/communications-e1.md §5-§9). Applied by an ADMINISTRATIVE role with
--- `pnpm db:privileged`, after `prisma migrate deploy` has run 20261129000000_communications_erasure.
+-- `pnpm db:privileged`, after `prisma migrate deploy` has run 20261201000000_communications_erasure.
 -- Idempotent: safe to re-run.
 --
 -- Why privileged: message history is read-only for the application (no UPDATE/DELETE grant for bos_app,
@@ -24,7 +24,7 @@ BEGIN
     RAISE EXCEPTION 'apply 001_trusted_paths.sql first';
   END IF;
   IF to_regclass('public.communications_erasures') IS NULL THEN
-    RAISE EXCEPTION 'apply migration 20261129000000_communications_erasure first';
+    RAISE EXCEPTION 'apply migration 20261201000000_communications_erasure first';
   END IF;
 END $$;
 

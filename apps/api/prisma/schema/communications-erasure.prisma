@@ -2,7 +2,7 @@
 // never stored here: the ledger keeps ids, codes and counts only. Every write to erasures and items goes
 // through the bos_maint functions in prisma/privileged/004_communications_erasure.sql; bos_app may only
 // read them. Value sets are CHECK constraints; guards, grants and RLS live in migration
-// 20261129000000_communications_erasure.
+// 20261201000000_communications_erasure.
 
 /// One erasure: a request for a contact, conversation or message (kind REQUEST, created by a database-verified
 /// OWNER or ADMIN session), or one retention purge batch (kind RETENTION, no user).

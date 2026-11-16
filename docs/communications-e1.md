@@ -2,7 +2,7 @@
 
 Status: implemented on branch `claude/project-thread-du5otb`, **draft for independent audit**. Not merged,
 not migrated, not deployed, not activated.
-Migration: `20261129000000_communications_erasure` (additive). Privileged SQL:
+Migration: `20261201000000_communications_erasure` (additive). Privileged SQL:
 `apps/api/prisma/privileged/004_communications_erasure.sql`.
 
 E1 is the retention and erasure foundation that must exist before any real Gmail or Microsoft 365 mail is
@@ -383,13 +383,15 @@ comes from a point-in-time restore, a Neon recovery branch that is promoted or c
 
 ## 11. Privileged SQL and migration
 
-**The migration** `20261129000000_communications_erasure`:
+**The migration** `20261201000000_communications_erasure`:
 
 - **Ordering.**
-  - It sorts after the newest migration on main, `20261127000000_finance_reminders`.
-  - It also sorts after the name Scheduling S2 plans to use, `20261128000000_scheduling_resources`.
-  - Uniqueness and order were checked against main and against S2's planned name. S2's branch has not
-    been pushed.
+  - It sorts after the newest migration on main, `20261130000000_finance_catalog` (Finance F7-A), and after
+    `20261128000000_scheduling_resources` (Scheduling S2). Both merged before E1.
+  - It was first named `20261129000000`; it was renamed when F7-A merged ahead of it, because CI requires
+    a new migration to sort after main's newest. It has never been applied anywhere but local and CI
+    databases, so the rename changes no recorded checksum.
+  - It references no scheduling or finance object, so it commutes with both.
 - **Additive only.**
   - Six new tables.
   - Nullable columns added to existing tables:

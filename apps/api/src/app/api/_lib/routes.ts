@@ -53,7 +53,7 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   // Communications C2-A (migration 20261121000000_communications_providers): connections and sync jobs.
   CM005: [409, 'immutable'], CM006: [409, 'disconnected'], CM007: [409, 'invalid_transition'],
   CM008: [409, 'holder_change_not_allowed'], CM009: [409, 'retention_not_set'], CM010: [409, 'business_mailbox_rule'],
-  // Communications E1 (migration 20261129000000_communications_erasure): erased history, legal holds, the ledger.
+  // Communications E1 (migration 20261201000000_communications_erasure): erased history, legal holds, the ledger.
   CM011: [409, 'erased'], CM012: [409, 'legal_hold_rule'], CM013: [409, 'immutable'],
 };
 
