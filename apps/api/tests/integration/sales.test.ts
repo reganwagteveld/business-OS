@@ -29,6 +29,7 @@ import * as loseRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportuni
 import * as reopenRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportunityId]/reopen/route';
 import * as archiveRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportunityId]/archive/route';
 import * as restoreRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportunityId]/restore/route';
+import * as summaryRoute from '@/app/api/v1/b/[slug]/sales/summary/route';
 import { devOutbox } from '@/core/email';
 
 const BASE = process.env.APP_BASE_URL!;
@@ -97,6 +98,7 @@ const api = (who: User, slug: string) => {
   const o = (opportunityId: string) => ctx({ slug, opportunityId });
   const base = `/api/v1/b/${slug}/sales`;
   return {
+    summary: () => summaryRoute.GET(req('GET', `${base}/summary`, { cookie: who.cookie }), ctx({ slug })).then(json),
     pipelines: () => pipelinesRoute.GET(req('GET', `${base}/pipelines`, { cookie: who.cookie }), ctx({ slug })).then(json),
     createPipeline: (body: unknown) => pipelinesRoute.POST(req('POST', `${base}/pipelines`, { cookie: who.cookie, body }), ctx({ slug })).then(json),
     stages: (qs = '') => stagesRoute.GET(req('GET', `${base}/stages${qs}`, { cookie: who.cookie }), ctx({ slug })).then(json),
@@ -598,5 +600,110 @@ describe('PR 15 review: concurrent edits and outcome history', () => {
     expect((await member.archive(o.id)).status).toBe(200);
     expect((await member.restore(o.id)).status).toBe(200);
     expect((await member.createPipeline({ name: 'Not allowed' })).status).toBe(403);
+  });
+});
+
+describe('R2 dashboard: open pipeline summary', () => {
+  type Total = { currencyCode: string; amount: string; count: number };
+  type StageSum = { id: string; name: string; count: number; archived: boolean; totals: Total[] };
+
+  it('an uninitialised business has an empty summary; reading it creates nothing', async () => {
+    const fresh = await team('se');
+    const res = await api(fresh.people.MEMBER!, fresh.slug).summary();
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ summary: { open: { count: 0, totals: [] }, pipelines: [] } });
+    expect((await admin.query('SELECT count(*)::int AS n FROM sales_pipelines WHERE business_id = $1', [fresh.businessId])).rows[0].n).toBe(0);
+  });
+
+  it('totals only open, unarchived opportunities, per stage and per currency, exactly; unpriced ones count but add nothing', async () => {
+    const fresh = await team('sf');
+    const owner = api(fresh.people.OWNER!, fresh.slug);
+    await owner.init();
+    const stages = (await owner.stages()).body.stages as { id: string; name: string }[];
+    const [s1, s2] = [stages[0]!.id, stages[1]!.id];
+    const make = async (body: Record<string, unknown>) => (await owner.create(body)).body.opportunity as { id: string };
+    await make({ title: 'A', amount: '1000.10' });
+    await make({ title: 'B', amount: '0.20' });
+    await make({ title: 'Unpriced' });
+    await make({ title: 'USD', amount: '99.99', currencyCode: 'USD', stageId: s2 });
+    await make({ title: 'Big', amount: '12345678901234.5', stageId: s2 });
+    const won = await make({ title: 'Won', amount: '500' });
+    expect((await owner.win(won.id)).status).toBe(200);
+    const lost = await make({ title: 'Lost', amount: '500' });
+    expect((await owner.lose(lost.id)).status).toBe(200);
+    const archived = await make({ title: 'Archived', amount: '700' });
+    expect((await owner.archive(archived.id)).status).toBe(200);
+    const other = (await owner.createPipeline({ name: 'Renewals', stages: [{ name: 'Due' }] })).body;
+    await make({ title: 'Renewal', amount: '10', pipelineId: other.pipeline.id, stageId: other.stages[0].id });
+
+    const { status, body } = await api(fresh.people.MEMBER!, fresh.slug).summary();
+    expect(status).toBe(200);
+    expect(body.summary.open).toEqual({
+      count: 6,
+      totals: [{ currencyCode: 'AUD', amount: '12345678902244.80', count: 5 }, { currencyCode: 'USD', amount: '99.99', count: 1 }],
+    });
+    const [main, renewals] = body.summary.pipelines;
+    expect(main).toMatchObject({ isDefault: true, name: 'Sales pipeline', count: 5 });
+    expect(main.stages.map((s: StageSum) => [s.name, s.count, s.archived, s.totals])).toEqual([
+      ['New', 3, false, [{ currencyCode: 'AUD', amount: '1000.30', count: 3 }]],
+      ['Qualified', 2, false, [{ currencyCode: 'AUD', amount: '12345678901234.50', count: 1 }, { currencyCode: 'USD', amount: '99.99', count: 1 }]],
+      ['Proposal', 0, false, []],
+      ['Negotiation', 0, false, []],
+    ]);
+    expect(main.stages[0].id).toBe(s1);
+    expect(renewals).toMatchObject({ isDefault: false, name: 'Renewals', count: 1, totals: [{ currencyCode: 'AUD', amount: '10.00', count: 1 }] });
+
+    // Reopening the won one puts it back in the pipeline; it is the same calculation the board uses.
+    expect((await owner.reopen(won.id)).status).toBe(200);
+    expect((await owner.summary()).body.summary.open.count).toBe(7);
+  });
+
+  it('archived stages and pipelines that still hold open work are listed with mixed currencies and unpriced deals; counts match the board', async () => {
+    const fresh = await team('sh');
+    const owner = api(fresh.people.OWNER!, fresh.slug);
+    const stages = (await owner.init()).body.stages as { id: string }[];
+    const make = async (body: Record<string, unknown>) => (await owner.create(body)).body.opportunity as { id: string };
+    await make({ title: 'Kept AUD', amount: '10.05', stageId: stages[3]!.id });
+    await make({ title: 'Kept USD', amount: '1.10', currencyCode: 'USD', stageId: stages[3]!.id });
+    await make({ title: 'Kept unpriced', stageId: stages[3]!.id });
+    const old = (await owner.createPipeline({ name: 'Old', stages: [{ name: 'Held' }, { name: 'Empty' }] })).body;
+    await make({ title: 'Old KWD', amount: '3.333', currencyCode: 'KWD', pipelineId: old.pipeline.id, stageId: old.stages[0].id });
+    await make({ title: 'Old unpriced', pipelineId: old.pipeline.id, stageId: old.stages[0].id });
+    // Archive a stage holding open work, an empty stage, and a whole pipeline (no API for these yet; set directly).
+    await admin.query('UPDATE sales_stages SET archived_at = now() WHERE id = ANY($1::uuid[])', [[stages[3]!.id, stages[2]!.id]]);
+    await admin.query('UPDATE sales_pipelines SET archived_at = now() WHERE id = $1', [old.pipeline.id]);
+
+    const { body } = await owner.summary();
+    const [main, archived] = body.summary.pipelines;
+    // The empty archived stage and the empty stage of the archived pipeline are gone; the ones holding open work stay, marked.
+    expect(main.stages.map((s: StageSum) => [s.name, s.archived, s.count])).toEqual([['New', false, 0], ['Qualified', false, 0], ['Negotiation', true, 3]]);
+    // The unpriced deal takes the business currency: counted, adds nothing.
+    expect(main.stages[2].totals).toEqual([{ currencyCode: 'AUD', amount: '10.05', count: 2 }, { currencyCode: 'USD', amount: '1.10', count: 1 }]);
+    expect(archived).toMatchObject({ name: 'Old', count: 2, totals: [{ currencyCode: 'AUD', amount: '0.00', count: 1 }, { currencyCode: 'KWD', amount: '3.333', count: 1 }] });
+    expect(archived.stages.map((s: StageSum) => s.name)).toEqual(['Held']);
+    expect(body.summary.open.count).toBe(5);
+
+    // Every count agrees with the Sales board's own open list, per stage and overall.
+    const openList = (await owner.list('?status=open&limit=100')).body.opportunities as { stageId: string }[];
+    expect(openList).toHaveLength(body.summary.open.count);
+    for (const p of body.summary.pipelines) for (const st of p.stages as StageSum[])
+      expect(openList.filter((o) => o.stageId === st.id), st.name).toHaveLength(st.count);
+  });
+
+  it('every role with sales:read may read it; no session is 401; another business gets 404 and never sees these figures', async () => {
+    const fresh = await team('sg');
+    await api(fresh.people.OWNER!, fresh.slug).create({ title: 'Secret deal', amount: '4242' });
+    for (const role of ['OWNER', 'ADMIN', 'MANAGER', 'MEMBER']) {
+      const res = await api(fresh.people[role]!, fresh.slug).summary();
+      expect(res.status, role).toBe(200);
+      expect(res.body.summary.open.count, role).toBe(1);
+    }
+    const anon = await summaryRoute.GET(req('GET', `/api/v1/b/${fresh.slug}/sales/summary`), ctx({ slug: fresh.slug }));
+    expect(anon.status).toBe(401);
+    const outsider = await api(B.people.OWNER!, fresh.slug).summary();
+    expect(outsider.status).toBe(404);
+    expect(JSON.stringify(outsider.body)).not.toContain('4242');
+    const own = (await api(B.people.OWNER!, B.slug).summary()).body.summary;
+    expect(JSON.stringify(own)).not.toContain('4242');
   });
 });

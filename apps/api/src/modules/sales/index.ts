@@ -7,3 +7,5 @@ export {
 // Reporting R1 (docs/reporting-r1.md §4): the Sales Zone's own reporting read model.
 export { wonOpportunityDetails, wonOpportunityTotals } from './server/reporting';
 export type { SalesPeriodQuery, SalesPeriodRow, WonOpportunityDetail } from './server/reporting';
+// R2 operational dashboard (docs/dashboard-r2.md §3): the open pipeline as grouped totals.
+export { salesSummary } from './server/summary';

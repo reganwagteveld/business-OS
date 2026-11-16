@@ -135,11 +135,17 @@ describe('Home', () => {
     expect(reader).not.toMatch(/Add customer|Add opportunity|New project/);
   });
 
-  it('invents nothing: no links, no figures, and recent activity says it is not available yet', () => {
+  it('invents nothing: no links and no figures of its own; the operational dashboard is passed in by the app (R2)', () => {
     expect(html).not.toMatch(/<a /);
     expect(html).not.toMatch(/href=/);
     expect(html).not.toMatch(/revenue|\$\d|\b\d+ (new|open|overdue)/i);
-    expect(html).toContain('No combined activity feed yet');
+    // R2 replaced the "no combined activity feed yet" placeholder with real activity on the dashboard.
+    expect(html).not.toContain('No combined activity feed yet');
+    const withDashboard = renderToStaticMarkup(
+      <Home business="Acme Plumbing" timeZone="Australia/Sydney" user={user} role="OWNER" permissions={all}
+        navigation={resolveNavigation({ state: 'ready', permissions: all })} onOpen={noop} dashboard={<p>dashboard-slot</p>} />,
+    );
+    expect(withDashboard.indexOf('dashboard-slot')).toBeLessThan(withDashboard.indexOf('Your Zones'));
   });
 });
 

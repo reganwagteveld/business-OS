@@ -1,5 +1,6 @@
 import type { CurrentUser } from '@business-os/contracts';
-import { Button, Card, cn, EmptyState, SectionHeader } from '@business-os/ui';
+import { Button, SectionHeader } from '@business-os/ui';
+import type { ReactNode } from 'react';
 import { Icon } from './icons';
 import type { ResolvedNavigation, ShellRoute } from './registry';
 import { ZonePage } from './zone-page';
@@ -34,12 +35,12 @@ function Metrics({ id, metrics }: { id: string; metrics: CustomerMetrics }) {
 }
 
 /**
- * Home inside the shell: greeting and business, the Zones this person can open, common actions
- * their permissions allow, real summary figures where an API provides them, and a recent-activity
- * area. Nothing here is invented: Zones not built yet are labelled "coming soon", and there is no
- * cross-Zone activity feed yet, so that area says so instead of showing sample events.
+ * Home inside the shell: greeting and business, common actions their permissions allow, the
+ * operational dashboard (R2, `dashboard/operational-dashboard.tsx`, passed in by the app) and the Zones
+ * this person can open. Nothing here is invented: every figure comes from an API, and Zones not built
+ * yet are labelled "coming soon".
  */
-export function Home({ business, timeZone, role, user, permissions, navigation, customerMetrics, onOpen }: {
+export function Home({ business, timeZone, role, user, permissions, navigation, customerMetrics, dashboard, onOpen }: {
   business: string;
   timeZone?: string;
   role: string;
@@ -48,6 +49,8 @@ export function Home({ business, timeZone, role, user, permissions, navigation, 
   navigation: ResolvedNavigation;
   /** Omitted when the person cannot read customers: the card then shows no numbers. */
   customerMetrics?: CustomerMetrics;
+  /** The operational dashboard, shown above the Zone launcher. */
+  dashboard?: ReactNode;
   onOpen: (route: ShellRoute) => void;
 }) {
   const open = new Set(navigation.available.map((z) => z.id));
@@ -70,6 +73,7 @@ export function Home({ business, timeZone, role, user, permissions, navigation, 
         </Button>
       )) : undefined}
     >
+      {dashboard}
       <section aria-labelledby="home-zones" className="space-y-4">
         <SectionHeader id="home-zones" title="Your Zones" description={open.size ? 'Open a Zone to get to work. Zones marked coming soon are on the way.' : 'No Zones are open to your role in this business yet.'} />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -97,13 +101,6 @@ export function Home({ business, timeZone, role, user, permissions, navigation, 
             </section>
           ))}
         </div>
-      </section>
-      <section aria-labelledby="home-activity" className="space-y-4">
-        <SectionHeader id="home-activity" title="Recent activity" />
-        <Card className={cn('p-0')}>
-          <EmptyState className="border-0" icon={<Icon name="activity" />} title="No combined activity feed yet"
-            description="Activity across all your Zones will appear here in a later release. Each customer's own activity is on their page." />
-        </Card>
       </section>
     </ZonePage>
   );
