@@ -1,7 +1,7 @@
 # Scheduling S2: resources, availability and conflict-safe bookings
 
 > Status: **Implemented for audit** (S2, draft PR). Not merged, not deployed. The migration has been applied only to local, disposable databases.
-> Builds on [scheduling-s1.md](./scheduling-s1.md) (PR #38). [ADR 0006](./adr/0006-scheduling-conflicts-and-privacy.md) stays **Proposed**: S2 does not accept or reject it (§10).
+> Builds on [scheduling-s1.md](./scheduling-s1.md) (PR #38). Conflict prevention is recorded in [ADR 0008](./adr/0008-scheduling-ordered-lock-conflict-prevention.md), which supersedes [ADR 0006](./adr/0006-scheduling-conflicts-and-privacy.md) §2–§3. ADR 0006's privacy and erasure sections stay future requirements (§10).
 > Every S1 invariant is kept: half-open intervals, `enforceConflicts` per write, the S1 lock steps, optimistic versions, forced RLS, composite tenant keys, no DELETE grant.
 
 ## 0. Audit summary (main at 52de37f)
@@ -160,9 +160,29 @@ Viewing resources and availability uses `scheduling:read`; assigning or removing
 
 S2 keeps PERSON resources standalone (D-S2-1). Later path, owned by People: a nullable `employee_id` on `scheduling_resources` with a composite FK to `people_employees`, plus a People-module function that returns only a display name for an employee id, and an update to `people-boundaries.test.ts` that allows exactly that call. No S2 column has to change.
 
-## 10. ADR 0006 reconciliation
+## 10. ADR 0006 reconciliation (ADR 0008)
 
-S2 builds the resource and assignment model ADR 0006 anticipated, with S1's lock-based enforcement instead of variant A (exclusion constraint), because accepted overlaps must remain possible. Privacy (§4–5) and erasure (§7) remain unbuilt. ADR 0006 stays Proposed; this document records the differences, and the ADR carries an S2 note. One difference needs an explicit decision before the ADR is accepted: its "Alternatives considered" rejects per-resource locks as the *primary* guarantee, because every write path must remember to lock. S2 reduces that risk with one helper (`lockResources`) that every event write calls, a test that every resource-touching mutation waits on the resource lock, and mutation checks (§12.3), but the guarantee is still in application code, not in a constraint.
+ChatGPT's audit of PR #61 asked that ADR 0006 not be accepted unchanged, because it still names an exclusion constraint as the primary safeguard. [ADR 0008](./adr/0008-scheduling-ordered-lock-conflict-prevention.md) therefore supersedes ADR 0006 §2–§3. It records the lock protocol actually built, its guarantees, its limitations, and the rule every future write path must follow. ADR 0006 is marked "superseded in part"; its §1 (time) is implemented, and its §4–§7 stay future requirements.
+
+**Implemented in S1/S2:**
+- time model;
+- calendars and events;
+- resources and assignments;
+- calendar and resource conflicts with one override;
+- availability;
+- ordered locking;
+- permissions and audit.
+
+**Future, not built:**
+- **private events** (sensitive text behind a restrictive policy);
+- **busy-only visibility**: today every `scheduling:read` holder sees event titles, including in conflicts;
+- escalation guards;
+- privileged erasure;
+- a **database-enforced exclusion constraint** (`btree_gist`): not installed, kept as a future option for hard bookings;
+- the People link;
+- capacity > 1, working hours, recurrence.
+
+The full table is ADR 0008 §6.
 
 ## 11. Owner decisions
 
@@ -182,7 +202,7 @@ D-S2-1 to D-S2-6 were **approved by Regan on 2026-11-16**, with these additions,
 | D-S2-2 | Who manages resources | **Approved.** New `scheduling:manage_resources` for OWNER/ADMIN/MANAGER; MEMBER views and assigns. |
 | D-S2-3 | Inactive/archived resources with upcoming bookings | **Approved.** Bookings kept and still occupy time; no new assignments; the resource response lists upcoming bookings. |
 | D-S2-4 | Overrides | **Approved.** One `enforceConflicts` flag covers calendar and resource conflicts; every resource exclusive (capacity 1). |
-| D-S2-5 | Locking | **Approved.** Extended advisory protocol (§5), no `btree_gist`; ADR 0006 stays Proposed. |
+| D-S2-5 | Locking | **Approved.** Extended advisory protocol (§5), no `btree_gist`. Recorded in ADR 0008 (supersedes ADR 0006 §2–§3) after the PR #61 audit. |
 | D-S2-6 | Response contract | **Approved.** Conflict entries gain `kind`, `resource`, `blocking`; events gain `resources` (§11.1). |
 | D-S2-7 | Limits | Built as proposed, open to change: ≤ 20 resources per event, ≤ 50 per availability call, ≤ 20 conflicts listed per resource. |
 | D-S2-8 | Navigation | Still deferred. The S1 integration patch was regenerated against current main and covers S2 too. |
@@ -254,13 +274,13 @@ One app test (`finance-f5`, PDF card) failed once while the integration suite wa
 - No working hours, opening times or resource-specific time off; "available" means "not booked".
 - PERSON resources are not linked to People employees (§9).
 - Conflict titles are visible to every `scheduling:read` holder (as in S1); private entries and erasure (ADR 0006 §4–5, §7) remain unbuilt.
-- The guarantee is application-level locking, not a database constraint (§10).
+- The guarantee is application-level locking, not a database constraint. A future write path that skips the protocol could double-book (ADR 0008, "Risk").
 - The Zone is still not in navigation (D-S2-8); the timeline is a simple day/week table, without drag and drop.
 - The PgBouncer CI step for the S2 suite was added but could not be run locally (no pooler in this environment); CI runs it.
 
 ## 14. Migration and rollout
 
-- `20261128000000_scheduling_resources` is the only new migration. It sorts after main's newest (`20261127000000_finance_reminders`, applied to production on 2026-11-16) and no other branch has a migration with that name or later (checked 2026-11-16; `check-migration-order.sh` passes). If People P2 adds one, the later-merging PR renames its migration.
+- `20261128000000_scheduling_resources` is the only new migration. It sorts after main's newest (`20261127000000_finance_reminders`, applied to production on 2026-11-16); People P2 (#56, merged as `f91669e`) added no migration. Rechecked 2026-11-16 after the audit: the only other branch with a later migration is the Communications erasure branch (`claude/project-thread-du5otb`, `20261129000000_communications_erasure`). It sorts after this one, its header says it commutes with S2, and it touches no scheduling object. If that branch merges first, this migration must be renamed past it before merge, because CI requires new migrations to sort after main's newest. The only textual overlap between the two branches is the Business relation fields in `tenancy.prisma` (plus regenerated `api-v1.json`), a trivial merge for whichever lands second.
 - Additive only, one transaction, no extension, no privileged SQL file, no data backfill. Applied cleanly to a fresh database with all 18 migrations.
 - Order: merge, recovery branch (the Neon Free plan's 10-branch limit applies), `prisma migrate deploy`, verify RLS/grants as for F6-3, then deploy. Because the change is additive, the old API keeps working against the new schema, so either order is safe.
 - Rollback: redeploy the previous API; the two tables can stay. Dropping them needs a new forward migration.

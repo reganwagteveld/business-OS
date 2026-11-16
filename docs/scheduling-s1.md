@@ -224,7 +224,7 @@ The approved plan was to keep shared navigation untouched while People P1 is act
 - `packages/app/src/shell/registry.ts` gets a `scheduling` ZoneId and a registry entry: "Schedule", route `/schedule`, order 45, `requires: ['scheduling:read']`, and the existing `operations` icon, so no new icon is needed.
 - `packages/app/src/app.tsx` gets a `scheduling` client prop and override, and a `current.zone === 'scheduling'` branch that renders `<SchedulingZone>`.
 
-The patch applies cleanly on top of this branch. The screenshots in the PR were taken with it applied. It was regenerated in S2 (2026-11-16) against main at 52de37f, after Reporting R1 changed both files; with it applied, typecheck and the 386 app tests pass.
+The patch applies cleanly on top of this branch. The screenshots in the PR were taken with it applied. It was regenerated in S2 (2026-11-16) against main at `f91669e`, after People P2 (#56) changed both files. With it applied, app typecheck and all 430 app tests pass. It is **not applied**: navigation stays off until Regan approves switching it on.
 
 ## 8. Shared files touched (minimal, additive)
 
