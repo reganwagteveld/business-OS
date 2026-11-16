@@ -1,7 +1,7 @@
 # Pixa OS — Active Workstreams Registry
 
 **Purpose:** Prevent cross-agent file collisions and repeated PR archaeology.
-**Status snapshot:** 2026-11-16 12:00 UTC, checked against `main` at `b2f308b` and GitHub's open PR list at that time. **Update before every new agent starts** (see "Keeping this file current").
+**Status snapshot:** 2026-11-16 12:10 UTC, checked against `main` at `4dfdbe1` and GitHub's open PR list and changed-file lists at that time. Advisory only. **Update before every new agent starts** (see "Keeping this file current").
 
 ## Important rules
 
@@ -16,7 +16,10 @@
 | PR | Topic | Status | Owns / implication |
 |---|---|---|---|
 | #76 | Administration A2-B: membership lifecycle, invitations, owner lock, mailbox cutoff | **Draft**, awaiting ChatGPT audit | Membership and invitation services and routes, migration `20261205000000_membership_lifecycle`, privileged `005_member_emails.sql`, edits privileged `001`. Not applied to production. Avoid membership/RBAC files. |
-| #77 | F8 banking connectivity and reconciliation architecture | **Draft**, docs only | `docs/finance-banking-f8.md`. Nothing built; implementation needs separate approval. |
+| #82 | R2-V2 operational dashboard on Home | **Draft** | Sales summary endpoint (`api/v1/b/[slug]/sales/summary`, `modules/sales/server/summary.ts`), `packages/app/src/shell/dashboard/*`, `shell/home.tsx`, `app.tsx`, `packages/contracts` (`sales.ts`, `index.ts`, `api-v1.json`), `docs/dashboard-r2.md`. No migration. Avoid Home, the shell dashboard and the contracts snapshot. |
+| #81 | A3 settings architecture | **Draft**, docs only | `docs/settings-a3-architecture.md`. |
+| #80 | N1 notifications architecture | **Draft**, docs only | `docs/notifications-n1-architecture.md`. No migrations or runtime. |
+| #79 | W1 cross-Zone workflow mapping (enquiry to cash) | **Draft**, docs only | `docs/cross-zone-workflows-w1.md`. |
 | #75 | GS1 global search architecture and plan | **Draft**, docs only | `docs/global-search-gs1.md`. Decisions D-GS1-1..14 pending; nothing to implement yet. |
 | #53 | Claude and Codex delivery coordinator (`tooling/coordinator`) | Open, idle since 2026-11-16 04:00 UTC | Not part of the current workflow. Do not build on it without Regan. |
 | #48 | Docs: post-merge status and migration order (12–16) | Open, stale (superseded by `docs/migration-readiness.md` §9) | Ignore unless Regan asks. |
@@ -25,7 +28,7 @@ Migration stamps: latest on `main` is `20261204000000` (P3-A); `20261205000000` 
 
 ## Recently merged (2026-11-16)
 
-#68 People P3-A leave policies (migration applied first), #66 Neon housekeeping (audit-only), #74 UI V2-A spec, #71 invite-only beta admission (deployed), #70 A2-A business profile, #72 E1 migration record, #69 F7-B catalog in documents, #64 E1 retention/erasure (dormant), #67 F5 PDF preview fix, #63 F7-A catalog, #65 ADR 0008 and S2 migration record, #61 S2 resources, #62 R2 dashboards, #56 People P2, #54/#57/#59 F6-3 reminders.
+#77 F8 banking architecture (docs), #68 People P3-A leave policies (migration applied first), #66 Neon housekeeping (audit-only), #74 UI V2-A spec, #71 invite-only beta admission (deployed), #70 A2-A business profile, #72 E1 migration record, #69 F7-B catalog in documents, #64 E1 retention/erasure (dormant), #67 F5 PDF preview fix, #63 F7-A catalog, #65 ADR 0008 and S2 migration record, #61 S2 resources, #62 R2 dashboards, #56 People P2, #54/#57/#59 F6-3 reminders.
 
 **Production database (last recorded, verify before relying on it):** 22 migrations applied, through `20261204000000_people_leave_policies`, matching `main`.
 
@@ -36,11 +39,12 @@ Migration stamps: latest on `main` is `20261204000000` (P3-A); `20261205000000` 
 | A2-B | Membership lifecycle | Draft PR #76 | Membership, invitations, owner lock, privileged SQL 001/005 | In audit |
 | P3 | People leave management | P3-A merged (#68); next P3-C before P3-B | Leave schema, leave policy files, migration files | P3-C needs decisions D-P3-20/21/25 |
 | GS1 | Global search | Docs PR #75 | Search specs, command palette proposals | Waiting on Regan's decisions |
-| F8 | Bank connectivity and reconciliation | Docs PR #77 | Finance integration design docs | In review |
+| F8 | Bank connectivity and reconciliation | Architecture merged (#77) | Finance integration design | Implementation needs separate approval |
 | UI V2 | Design-system rollout | Phased implementation (V2-B, V2-C…) | Design tokens, shared navigation and shell components | Spec merged; V2-B waits for Regan's go-ahead |
-| A3 | Settings architecture | Documentation-only PR | No edits to live A2 APIs, RBAC or Settings UI | Ready to queue |
-| W1 | Cross-Zone workflow mapping | Documentation-only PR | No edits to Zone implementations | Ready to queue |
-| N1 | Notifications architecture | Documentation-only PR | No notification migrations or runtime framework | Ready to queue |
+| A3 | Settings architecture | Docs PR #81 | No edits to live A2 APIs, RBAC or Settings UI | In review |
+| W1 | Cross-Zone workflow mapping | Docs PR #79 | No edits to Zone implementations | In review |
+| N1 | Notifications architecture | Docs PR #80 | No notification migrations or runtime framework | In review |
+| R2-V2 | Operational dashboard on Home | Draft PR #82 | Home, shell dashboard, sales summary endpoint, contracts snapshot | In review |
 
 Switched off and not to be enabled without Regan: F6 billing and reminder scheduled jobs, E1 erasure/retention jobs, outbound email beyond existing auth and invitation mail, any worker or cron.
 
