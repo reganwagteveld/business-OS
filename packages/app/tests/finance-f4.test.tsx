@@ -97,7 +97,7 @@ describe('navigation', () => {
   it('the registry gives Finance its sections, readable with finance:read only', () => {
     const fin = ZONES.find((z) => z.id === 'finance')!;
     expect(fin.requires).toEqual(['finance:read']);
-    expect(fin.children?.map((c) => c.id)).toEqual(['overview', 'quotes', 'invoices', 'credit-notes', 'payments', 'receivables', 'expenses', 'settings']);
+    expect(fin.children?.map((c) => c.id)).toEqual(['overview', 'quotes', 'invoices', 'credit-notes', 'payments', 'receivables', 'expenses', 'catalog', 'settings']);
   });
 
   it('shell targets open the right record, and "new" respects permissions', () => {

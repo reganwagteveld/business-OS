@@ -25,7 +25,7 @@ const TENANT_MODELS = {
   financeExpenseAllocation: 'businessId',
   financeRecurringTemplate: 'businessId', financeRecurringRun: 'businessId',
   financeReminderPolicy: 'businessId', financeReminderCustomerPolicy: 'businessId', financeReminderHold: 'businessId', financeReminder: 'businessId',
-  financeExpenseCategory: 'businessId', financeExpense: 'businessId',
+  financeExpenseCategory: 'businessId', financeExpense: 'businessId', financeCatalogItem: 'businessId',
   financeDocumentBranding: 'businessId', financeBrandingAsset: 'businessId', financeDocumentPdf: 'businessId',
   peopleDepartment: 'businessId', peopleLocation: 'businessId', peopleEmployee: 'businessId', peopleEmployeePersonalDetails: 'businessId',
   peopleDepartmentAssignment: 'businessId', peopleManagerAssignment: 'businessId', peopleEmploymentStatusHistory: 'businessId',

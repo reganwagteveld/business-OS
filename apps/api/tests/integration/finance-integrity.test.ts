@@ -242,6 +242,8 @@ const FINANCE_TABLES = [
   'finance_recurring_templates', 'finance_recurring_runs',
   // F6-3
   'finance_reminder_policies', 'finance_reminder_customer_policies', 'finance_reminder_holds', 'finance_reminders',
+  // F7-A
+  'finance_catalog_items',
 ];
 
 describe('T: tenant isolation and composite FKs', () => {
@@ -618,6 +620,7 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
     expect(rows.map((r) => `${r.t}.${r.name}→${r.fn}`)).toEqual([
       'finance_branding_assets.finance_branding_assets_immutable→finance_document_files_immutable',
       'finance_branding_assets.finance_stamp_branding_asset→finance_stamp_branding_asset',
+      'finance_catalog_items.finance_catalog_items_guard→finance_catalog_items_guard',
       'finance_credit_applications.finance_apply_credit_application_insert→finance_apply_credit_application',
       'finance_credit_applications.finance_apply_credit_application_reversal→finance_apply_credit_application',
       'finance_credit_applications.finance_stamp_credit_application→finance_stamp_allocation',
@@ -653,7 +656,8 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
         has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname LIKE 'finance%' ORDER BY 1`);
     expect(rows.map((r) => r.name)).toEqual([
-      'finance_apply_allocation', 'finance_apply_credit_application', 'finance_apply_expense_allocation', 'finance_content_hash', 'finance_document_content',
+      'finance_apply_allocation', 'finance_apply_credit_application', 'finance_apply_expense_allocation', 'finance_catalog_items_guard', 'finance_content_hash',
+      'finance_document_content',
       'finance_document_files_immutable', 'finance_guard_document', 'finance_guard_document_pdf', 'finance_guard_expense', 'finance_guard_line', 'finance_guard_number_series',
       'finance_guard_payment', 'finance_recurring_runs_guard', 'finance_recurring_templates_guard_update', 'finance_recurring_templates_stamp_insert',
       'finance_reminder_customer_policies_guard', 'finance_reminder_holds_guard', 'finance_reminder_policies_guard', 'finance_reminder_stages_valid', 'finance_reminders_guard',

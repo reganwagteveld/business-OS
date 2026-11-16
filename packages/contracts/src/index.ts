@@ -17,6 +17,9 @@ import {
   UpdateCustomerReminderSettingsRequest, UpdateReminderPolicyRequest,
 } from './finance-reminders.ts';
 import {
+  CatalogItemLifecycleRequest, CatalogItemResponse, CreateCatalogItemRequest, ListCatalogItemsQuery, ListCatalogItemsResponse, UpdateCatalogItemRequest,
+} from './finance-catalog.ts';
+import {
   DesktopTokenRequest, DesktopTokenResponse, MeResponse, RequestPasswordResetRequest, ResetPasswordRequest, SignInRequest, SignUpRequest,
 } from './auth.ts';
 
@@ -32,6 +35,7 @@ export * from './finance-documents.ts';
 export * from './finance-billing.ts';
 export * from './finance-statements.ts';
 export * from './finance-reminders.ts';
+export * from './finance-catalog.ts';
 export * from './people.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
@@ -357,6 +361,18 @@ export const endpoints = {
   listReminders: { method: 'GET', path: '/api/v1/b/:slug/finance/reminders', query: ListRemindersQuery, response: ListRemindersResponse },
   dismissReminder: { method: 'POST', path: '/api/v1/b/:slug/finance/reminders/:reminderId/dismiss', request: DismissReminderRequest, response: ReminderResponse },
   getInvoiceReminders: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/reminders', response: InvoiceReminderScheduleResponse },
+  // Finance F7-A: the products and services catalog (docs/finance-catalog-f7a.md). No DELETE: items are
+  // deactivated or archived. Reading is finance:read; every change is finance:catalog.
+  listCatalogItems: { method: 'GET', path: '/api/v1/b/:slug/finance/catalog-items', query: ListCatalogItemsQuery, response: ListCatalogItemsResponse },
+  createCatalogItem: { method: 'POST', path: '/api/v1/b/:slug/finance/catalog-items', request: CreateCatalogItemRequest, response: CatalogItemResponse },
+  getCatalogItem: { method: 'GET', path: '/api/v1/b/:slug/finance/catalog-items/:itemId', response: CatalogItemResponse },
+  updateCatalogItem: { method: 'PATCH', path: '/api/v1/b/:slug/finance/catalog-items/:itemId', request: UpdateCatalogItemRequest, response: CatalogItemResponse },
+  archiveCatalogItem: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/catalog-items/:itemId/archive', request: CatalogItemLifecycleRequest, response: CatalogItemResponse,
+  },
+  restoreCatalogItem: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/catalog-items/:itemId/restore', request: CatalogItemLifecycleRequest, response: CatalogItemResponse,
+  },
   // Finance F3: expense categories, expenses, payments made against expenses. No DELETE:
   // categories are archived, drafts discarded, recorded expenses voided, payments reversed.
   listExpenseCategories: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-categories', query: ListExpenseCategoriesQuery, response: ListExpenseCategoriesResponse },

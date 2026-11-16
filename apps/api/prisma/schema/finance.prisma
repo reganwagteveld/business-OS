@@ -135,10 +135,12 @@ model FinanceTaxRate {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz
 
-  business   Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_tax_rates_business_fkey")
-  lines      FinanceDocumentLine[]
-  defaultFor FinanceSettings[]
-  expenses   FinanceExpense[]
+  business     Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_tax_rates_business_fkey")
+  lines        FinanceDocumentLine[]
+  defaultFor   FinanceSettings[]
+  expenses     FinanceExpense[]
+  /// F7-A: catalog items whose default tax is this rate.
+  catalogItems FinanceCatalogItem[]
 
   @@unique([businessId, id])
   @@index([businessId, archivedAt, name])
