@@ -3,6 +3,7 @@
 // applications, settlement projections and reconciliation. F3: expense categories, expenses and payments made against expenses (direction PAID in the same payments ledger).
 // F6-1: recurring invoice schedules and the billing worker's steps (plan, claim, execute, fail).
 // F6-2: customer statements and accounts-receivable ageing as of a date.
+// F6-3: payment reminder policies, holds, the reminder worker's steps (plan, claim, check, fail) and the C2-C outbox boundary.
 export {
   convertQuote, createCreditNote, createInvoice, createQuote, discardDraft, getDocument, issueDocument, listDocuments, transitionQuote, updateDraft,
   voidDocument,
@@ -42,3 +43,12 @@ export {
   retryRecurringRun, skipRecurringRun, TEMPLATES_PER_PLAN_BATCH, updateRecurringInvoice,
 } from './server/recurring';
 export type { ClaimedRun, RecurringInput, RecurringPatch, RunOutcome } from './server/recurring';
+export {
+  archiveReminderPolicy, claimReminder, confirmReminderBeforeSend, createReminderHold, createReminderPolicy, dismissReminder, executeReminder,
+  failReminder, getCustomerReminderSettings, getInvoiceReminders, getReminderPolicy, INVOICES_PER_PLAN_BATCH, listReminderHolds, listReminderPolicies,
+  listReminders, markRemindersPlanned, outstandingOf, planDueReminders, recordReminderOutboundState, releaseReminderHold, reminderOutboundKey,
+  updateCustomerReminderSettings, updateReminderPolicy,
+} from './server/reminders';
+export type { ClaimedReminder, ReminderOutcome } from './server/reminders';
+export { configuredReminderOutbox } from './server/reminder-outbox';
+export type { BeforeSendResult, EnqueueResult, ReminderDispatchRequest, ReminderOutbox, ReminderRecipient } from './server/reminder-outbox';

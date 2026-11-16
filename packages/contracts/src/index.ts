@@ -11,6 +11,12 @@ import {
   ReceivablesAgeingDetailQuery, ReceivablesAgeingDetailResponse, ReceivablesAgeingQuery, ReceivablesAgeingResponse, StatementQuery, StatementResponse,
 } from './finance-statements.ts';
 import {
+  ArchiveReminderPolicyRequest, CreateReminderHoldRequest, CreateReminderPolicyRequest, CustomerReminderSettingsResponse, DismissReminderRequest,
+  InvoiceReminderScheduleResponse, ListReminderHoldsQuery, ListReminderHoldsResponse, ListReminderPoliciesQuery, ListReminderPoliciesResponse,
+  ListRemindersQuery, ListRemindersResponse, ReleaseReminderHoldRequest, ReminderHoldResponse, ReminderPolicyResponse, ReminderResponse,
+  UpdateCustomerReminderSettingsRequest, UpdateReminderPolicyRequest,
+} from './finance-reminders.ts';
+import {
   DesktopTokenRequest, DesktopTokenResponse, MeResponse, RequestPasswordResetRequest, ResetPasswordRequest, SignInRequest, SignUpRequest,
 } from './auth.ts';
 
@@ -25,6 +31,7 @@ export * from './finance-expenses.ts';
 export * from './finance-documents.ts';
 export * from './finance-billing.ts';
 export * from './finance-statements.ts';
+export * from './finance-reminders.ts';
 export * from './people.ts';
 export * from './scheduling.ts';
 export * from './scheduling-time.ts';
@@ -323,6 +330,32 @@ export const endpoints = {
   skipRecurringRun: {
     method: 'POST', path: '/api/v1/b/:slug/finance/recurring-invoices/:recurringId/runs/:runId/skip', request: RecurringRunActionRequest, response: RecurringRunResponse,
   },
+  // Finance F6-3: payment reminders. Nothing is sent: a reminder stops at READY until Communications C2-C
+  // provides an outbox (D-F6-8). Managing is finance:billing; reading is finance:read. No DELETE.
+  listReminderPolicies: { method: 'GET', path: '/api/v1/b/:slug/finance/reminder-policies', query: ListReminderPoliciesQuery, response: ListReminderPoliciesResponse },
+  createReminderPolicy: { method: 'POST', path: '/api/v1/b/:slug/finance/reminder-policies', request: CreateReminderPolicyRequest, response: ReminderPolicyResponse },
+  getReminderPolicy: { method: 'GET', path: '/api/v1/b/:slug/finance/reminder-policies/:policyId', response: ReminderPolicyResponse },
+  updateReminderPolicy: {
+    method: 'PATCH', path: '/api/v1/b/:slug/finance/reminder-policies/:policyId', request: UpdateReminderPolicyRequest, response: ReminderPolicyResponse,
+  },
+  archiveReminderPolicy: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/reminder-policies/:policyId/archive', request: ArchiveReminderPolicyRequest, response: ReminderPolicyResponse,
+  },
+  getCustomerReminderSettings: {
+    method: 'GET', path: '/api/v1/b/:slug/finance/customers/:customerId/reminder-settings', response: CustomerReminderSettingsResponse,
+  },
+  updateCustomerReminderSettings: {
+    method: 'PUT', path: '/api/v1/b/:slug/finance/customers/:customerId/reminder-settings', request: UpdateCustomerReminderSettingsRequest,
+    response: CustomerReminderSettingsResponse,
+  },
+  listReminderHolds: { method: 'GET', path: '/api/v1/b/:slug/finance/reminder-holds', query: ListReminderHoldsQuery, response: ListReminderHoldsResponse },
+  createReminderHold: { method: 'POST', path: '/api/v1/b/:slug/finance/reminder-holds', request: CreateReminderHoldRequest, response: ReminderHoldResponse },
+  releaseReminderHold: {
+    method: 'POST', path: '/api/v1/b/:slug/finance/reminder-holds/:holdId/release', request: ReleaseReminderHoldRequest, response: ReminderHoldResponse,
+  },
+  listReminders: { method: 'GET', path: '/api/v1/b/:slug/finance/reminders', query: ListRemindersQuery, response: ListRemindersResponse },
+  dismissReminder: { method: 'POST', path: '/api/v1/b/:slug/finance/reminders/:reminderId/dismiss', request: DismissReminderRequest, response: ReminderResponse },
+  getInvoiceReminders: { method: 'GET', path: '/api/v1/b/:slug/finance/invoices/:documentId/reminders', response: InvoiceReminderScheduleResponse },
   // Finance F3: expense categories, expenses, payments made against expenses. No DELETE:
   // categories are archived, drafts discarded, recorded expenses voided, payments reversed.
   listExpenseCategories: { method: 'GET', path: '/api/v1/b/:slug/finance/expense-categories', query: ListExpenseCategoriesQuery, response: ListExpenseCategoriesResponse },

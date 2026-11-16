@@ -24,6 +24,7 @@ const TENANT_MODELS = {
   financeCreditApplication: 'businessId',
   financeExpenseAllocation: 'businessId',
   financeRecurringTemplate: 'businessId', financeRecurringRun: 'businessId',
+  financeReminderPolicy: 'businessId', financeReminderCustomerPolicy: 'businessId', financeReminderHold: 'businessId', financeReminder: 'businessId',
   financeExpenseCategory: 'businessId', financeExpense: 'businessId',
   financeDocumentBranding: 'businessId', financeBrandingAsset: 'businessId', financeDocumentPdf: 'businessId',
   peopleDepartment: 'businessId', peopleLocation: 'businessId', peopleEmployee: 'businessId', peopleEmployeePersonalDetails: 'businessId',
@@ -61,6 +62,17 @@ export async function myMemberships(sessionToken: string): Promise<MembershipRow
 export async function businessesWithDueBilling(limit: number): Promise<string[]> {
   const rows = await appPrisma().$queryRaw<{ business_id: string }[]>`
     SELECT business_id::text FROM app_private.finance_billing_due(${limit}::int)`;
+  return rows.map((r) => r.business_id);
+}
+
+/**
+ * Reminder scheduler (docs/finance-billing-f6.md §10.6): ids of businesses with reminder work, from
+ * app_private.finance_reminders_due. Ids only; it reads no invoice or amount. All real work then runs
+ * as bos_app inside withTenant.
+ */
+export async function businessesWithDueReminders(limit: number): Promise<string[]> {
+  const rows = await appPrisma().$queryRaw<{ business_id: string }[]>`
+    SELECT business_id::text FROM app_private.finance_reminders_due(${limit}::int)`;
   return rows.map((r) => r.business_id);
 }
 

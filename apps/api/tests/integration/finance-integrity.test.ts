@@ -240,6 +240,8 @@ const FINANCE_TABLES = [
   'finance_document_branding', 'finance_branding_assets', 'finance_document_pdfs',
   // F6-1
   'finance_recurring_templates', 'finance_recurring_runs',
+  // F6-3
+  'finance_reminder_policies', 'finance_reminder_customer_policies', 'finance_reminder_holds', 'finance_reminders',
 ];
 
 describe('T: tenant isolation and composite FKs', () => {
@@ -637,6 +639,10 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       'finance_recurring_runs.finance_recurring_runs_guard→finance_recurring_runs_guard',
       'finance_recurring_templates.finance_recurring_templates_guard_update→finance_recurring_templates_guard_update',
       'finance_recurring_templates.finance_recurring_templates_stamp_insert→finance_recurring_templates_stamp_insert',
+      'finance_reminder_customer_policies.finance_reminder_customer_policies_guard→finance_reminder_customer_policies_guard',
+      'finance_reminder_holds.finance_reminder_holds_guard→finance_reminder_holds_guard',
+      'finance_reminder_policies.finance_reminder_policies_guard→finance_reminder_policies_guard',
+      'finance_reminders.finance_reminders_guard→finance_reminders_guard',
       'finance_settings.finance_stamp_times→finance_stamp_times',
       'finance_tax_rates.finance_stamp_times→finance_stamp_times',
     ]);
@@ -650,6 +656,7 @@ describe('TR: trigger, function and constraint inventory (finance-data-model §1
       'finance_apply_allocation', 'finance_apply_credit_application', 'finance_apply_expense_allocation', 'finance_content_hash', 'finance_document_content',
       'finance_document_files_immutable', 'finance_guard_document', 'finance_guard_document_pdf', 'finance_guard_expense', 'finance_guard_line', 'finance_guard_number_series',
       'finance_guard_payment', 'finance_recurring_runs_guard', 'finance_recurring_templates_guard_update', 'finance_recurring_templates_stamp_insert',
+      'finance_reminder_customer_policies_guard', 'finance_reminder_holds_guard', 'finance_reminder_policies_guard', 'finance_reminder_stages_valid', 'finance_reminders_guard',
       'finance_stamp_allocation', 'finance_stamp_branding_asset', 'finance_stamp_times',
     ]);
     for (const r of rows) {
