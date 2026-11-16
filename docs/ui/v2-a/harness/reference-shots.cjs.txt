@@ -1,0 +1,19 @@
+const { chromium } = require('playwright');
+const OUT = process.argv[2]; const SRC = 'file://' + process.argv[3];
+(async () => {
+  const b = await chromium.launch(); const errs = [];
+  for (const theme of ['light', 'dark']) {
+    for (const s of ['home', 'customers', 'customer', 'invoices', 'invoice-form', 'dashboard']) {
+      const p = await b.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 }); p.on('pageerror', (e) => errs.push(e.message));
+      await p.goto(`${SRC}?screen=${s}&theme=${theme}`); await p.waitForTimeout(150);
+      await p.screenshot({ path: `${OUT}/v2-desktop-${theme}-${s}.png` }); await p.close();
+    }
+    for (const s of ['home', 'customers', 'invoices', 'dashboard']) {
+      const p = await b.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 }); p.on('pageerror', (e) => errs.push(e.message));
+      await p.goto(`${SRC}?screen=${s}&theme=${theme}`); await p.waitForTimeout(150);
+      const w = await p.evaluate(() => document.documentElement.scrollWidth); if (w > 390) errs.push(`${s} overflow ${w}`);
+      await p.screenshot({ path: `${OUT}/v2-mobile-${theme}-${s}.png` }); await p.close();
+    }
+  }
+  console.log('errors', errs); await b.close();
+})();
