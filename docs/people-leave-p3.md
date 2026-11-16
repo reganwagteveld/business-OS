@@ -1,7 +1,7 @@
 # People P3: Leave Management (audit, staged plan, decisions, P3-A)
 
-> Status: **P3-A draft PR for independent audit.** Not merged, not migrated, not deployed. Migration
-> `20261204000000_people_leave_policies` is **not applied** anywhere except local and CI test databases.
+> Status: **P3-A released 2026-11-16.** Migration `20261204000000_people_leave_policies` applied to production
+> 11:21 UTC (§6), then PR #68 merged.
 > Regan approved D-P3-1 and D-P3-2 to D-P3-11 on 2026-11-16 (review on PR #68). That approval does not
 > cover D-P3-12 onward, the migration or merging. Decisions for later stages (§3.2) are proposals only;
 > nothing for P3-B to P3-E is built.
@@ -162,4 +162,5 @@ Local results (Postgres 16, ICU en-US): leave suite 37/37; unit 134 (api) + 461 
   3. Apply `20261204000000_people_leave_policies` only with Regan's written go-ahead.
   4. Verify in production: the four tables have forced RLS and the tenant policy; `bos_app` has no DELETE or TRUNCATE and only the listed column UPDATEs; the guard triggers exist; a create, edit, archive and restore of a type and policy works through the API on a disposable test business (if Regan agrees to creating one), which is then archived.
   5. Merge only the checked head, with required CI green, and only with Regan's merge approval.
+- **Production record (2026-11-16, approved by Regan in the P3-A thread):** preflight 11:19:52 UTC read-only: 21 migrations applied (through `20261202000000_business_profile`), no failed or rolled-back rows, no checksum mismatch, only `20261204000000_people_leave_policies` pending. Recovery branch `pre-p3a-migration` (`br-odd-star-bbn70rm9`) created 11:20:03 UTC from production at LSN 0/2CCF328. Applied 11:21:22–11:21:51 UTC with `prisma migrate deploy` from branch head 9aa6c6b (this migration only, no privileged SQL). Verified 11:22:10 UTC: 22 migrations, checksum matches; all four tables have RLS forced with `tenant_isolation`; `bos_app` has SELECT and INSERT, no DELETE, TRUNCATE or table UPDATE, column UPDATE only on types, policies and assignments; all five guard triggers present; zero rows. Merged after, on green CI.
 - **Rollback:** revert the code; the tables are then unused. Dropping them is destructive and needs explicit approval; it is not needed to roll back.

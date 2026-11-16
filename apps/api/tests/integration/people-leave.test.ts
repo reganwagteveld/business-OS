@@ -39,6 +39,7 @@ import * as revisionsRoute from '@/app/api/v1/b/[slug]/people/leave-policies/[po
 import * as assignmentsRoute from '@/app/api/v1/b/[slug]/people/leave-policies/[policyId]/assignments/route';
 import { devOutbox } from '@/core/email';
 import { backendPid, waitUntilBlocked } from './support/locks';
+import { inviteForSignup, admitFixture } from './support/admission';
 
 const BASE = process.env.APP_BASE_URL!;
 const ORIGIN = new URL(BASE).origin;
@@ -71,7 +72,9 @@ const ctx = (params: Record<string, string>) => ({ params: Promise.resolve(param
 
 async function newUser(prefix: string): Promise<User> {
   const email = `${prefix}-${randomUUID()}@example.com`;
+  await inviteForSignup(admin, email);
   await authRoute.POST(req('POST', '/api/v1/auth/sign-up/email', { body: { email, password: PASSWORD, name: prefix } }));
+  await admitFixture(admin, email);
   const mail = [...devOutbox].reverse().find((m) => m.to === email)!;
   const link = new URL(/(https?:\/\/\S+)/.exec(mail.text)![1]!);
   await authRoute.GET(req('GET', `${link.pathname}${link.search}`, { origin: null }));
