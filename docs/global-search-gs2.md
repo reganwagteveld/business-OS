@@ -1,6 +1,6 @@
 # GS2: Global Search Experience, design and implementation plan
 
-**Status:** Draft for ChatGPT audit and Regan's approval. Documentation only: no code, migration, deployment or production change.
+**Status:** Revision 2, draft. ChatGPT audit of revision 1: CONDITIONAL PASS (findings GS2-01..03, addressed in §4.5, §5.7, §10.1 and §15). Regan accepted D-GS2-1..17 on 2026-11-16 (§15.1). Documentation only: no code, migration, deployment or production change.
 **Base:** `main` at `7eea955` (GS1 merged as a document).
 **Builds on:** [GS1](./global-search-gs1.md) (architecture, API, permission model; decisions D-GS1-1..18) and [UI V2-A](./ui/pixa-design-system-v2-a.md) §8 (shell, command palette, keyboard map).
 **Naming note:** GS1 §4.3 used "GS2" for a possible future design of excluded data (activities, messages, leave). This document takes the name GS2 for the user-facing search experience. The excluded-data design, if ever wanted, becomes **GS3** (D-GS2-17).
@@ -99,9 +99,10 @@ Modal dialog, top-aligned, 640 px wide on ≥ 1024 px (full-screen below 640 px)
 └─────────────────────────────────────────────────────┘
 ```
 
+- The wireframe is illustrative; §4.5 defines the exact fields.
 - **Order:** commands first (instant, local), then Records in a fixed Zone order that matches the sidebar (not by server rank, so the layout does not jump as groups arrive). Within a group, server order.
 - **Row:** Zone/type icon, title (query highlighted client-side in the title only), subtitle, badges (closed enum from GS1 §8: archived, draft, void, former, won, lost, overdue, completed…). No amounts, notes, addresses or timestamps beyond GS1's list.
-- **Group caps:** 5 rows per group; "Show more" (GS1 §7.2, `limit` up to 25 for one type) when `hasMore`.
+- **Group caps:** 5 rows per group; "Show more" when `hasMore`, using the single-type cursor protocol in §5.7.
 - **Footer:** key hints and "Searched: …" from `searchedTypes`, which reflects the person's own permissions only. This is honest scoping, not a disclosure (§8.3).
 - **Empty query:** "Recent" (session-only, re-authorised, §5.5) then command groups.
 
@@ -126,6 +127,31 @@ Both themes follow the OS preference, the stored preference and the `.dark`/`.li
 - No new runtime dependency. The ARIA pattern is implemented directly (D-V2A-12: Radix is only explored, each dependency reviewed in its own PR).
 - The search **client** lives in `packages/app/src/api/search.ts`, uses the shared fetch wrapper (credentials, CSRF, error mapping) and the contract types from `@business-os/contracts`. Clients never import server code (ADR 0005).
 - A pure **state machine** (`palette-state.ts`: idle → typing → loading → results | empty | error | offline | ended) is unit-tested without the DOM.
+
+### 4.5 Rendering rules and the result field allow-list
+
+**GS1 §8 is the normative source** for what a result may contain. The example in §4.2 is illustrative only; where it differs from GS1 §8, GS1 §8 wins. The only fields the client may read from a result are `type`, `id`, `title`, `subtitle`, `badges` and `route`, and what each type's `title` and `subtitle` may hold is exactly:
+
+| Type | title | subtitle |
+|---|---|---|
+| customer | display name | legal name if different, else email |
+| contact | display name | customer display name |
+| opportunity | title | customer display name · stage name |
+| project | name | customer display name · status |
+| task | title | project name · status |
+| quote / invoice / credit_note | number, or "Draft quote/invoice/credit note" | customer display name · issue or due date |
+| catalog_item | name | code · product or service |
+| employee | preferred or given name + family name | job title · department |
+
+GS1 §8 further states that results carry no amounts, notes, descriptions, addresses, owners, creators or timestamps other than the Finance dates above. Rules that follow:
+
+1. **Explicit per-type renderer, never generic.** Each `SearchType` has one renderer that outputs only the icon for that type, `title`, `subtitle` and the badge labels. There is no code path that iterates over the keys of a result, no "render unknown fields", no key/value or JSON fallback, no developer details panel, no tooltip or `title` attribute built from other properties.
+2. **Strict parse at the boundary.** The client parses the response with the contract's Zod schema in strict mode for the result object (unknown keys are an error, not passed through); a response that fails to parse is the generic error state (§5.4). Parsed results are copied into a view model that holds only the six fields above, so a server regression that adds a field (an amount, a note) cannot reach the DOM, logs, devtools-visible state or the recents list.
+3. **Closed enums.** `badges` is a closed enum mapped to fixed client labels; an unknown value is dropped, not displayed. `route` is used only to navigate (§5.1) and is never displayed or put into attributes (no `href`).
+4. **Plain text only.** `title` and `subtitle` are rendered as React text nodes; the highlighter splits the title into text segments and wraps matches in elements; no `dangerouslySetInnerHTML`, no markdown, no linkification. Length caps from the contract (200 / 160) are enforced with CSS truncation and the full text is available through the accessible name.
+5. **The client does not compose subtitles.** It never joins fields to build a subtitle (the "·" separators are produced by the server per GS1 §8) and never looks up related records to enrich a row.
+6. **Type-specific wording only from the table.** Employee rows show job title and department only; no email, phone, manager or status text beyond the "Former" badge.
+7. **Tests** (§13): a fake server returns results with extra hostile fields (amount, note, phone, ownerId, route details); the strict parser rejects them in the contract test, and a separate renderer test with a pre-cleaned view model asserts the DOM text contains only the six fields. A source-scan test fails the build if a palette file iterates `Object.keys/entries/values` over a result.
 
 ## 5. Interaction flows
 
@@ -171,7 +197,31 @@ Business switch, role/permission change, sign-out or session end: in the same re
 
 ### 5.7 Show more and Include archived
 
-"Show more" re-queries that one type with `limit: 25` and a cursor; results replace the group in place, focus stays on the activated control or moves to the first new row. Toggling "Include archived" re-runs the current query; the toggle state is not persisted.
+**Contract facts (GS1 §7.1, §7.2).** A `cursor` is valid only when exactly one type is requested; `nextCursor` is returned only for single-type requests (the palette's initial multi-type request never returns one); the cursor is opaque and keyset-based over `(rank_tier, sort_key, id)`; `limit` is 1..25. There is no server snapshot: rows can change between pages.
+
+**Expanding a group ("Show more")**
+
+1. **First expanded request: no cursor.** `{ q, types: [T], limit: 25, includeArchived, cursor: null }`. It starts again from the top of type T, so its first five rows normally equal the five already shown. The client must not try to pass a cursor taken from the initial multi-type response (none exists) or fabricate one.
+2. **Replacement, not append, for that first page.** The returned `items` (up to 25) replace the group's items in place. `nextCursor` and `hasMore` are stored for this group, and the row order is the server's.
+3. **Subsequent pages use the returned cursor.** If `hasMore` is true and `nextCursor` is set, the control remains and the next activation sends `{ q, types: [T], limit: 25, includeArchived, cursor: <nextCursor> }`. These pages are **appended**.
+4. **Deduplication.** Rows are keyed by `(type, id)`. On append, a key already present is dropped and the server position of the first occurrence is kept; a key that appears on the replacement page is not duplicated. Dedupe is a safety net for live data (a record can move between pages or be edited between requests), not a correctness guarantee: a row may be missed or shown late, and the UI makes no completeness claim.
+5. **Binding.** A stored cursor is bound to the exact `(contextKey, normalised q, includeArchived, type)` it was issued for. Any change to the query text, the archived toggle, or the context key (§5.6) discards the group's expanded state, cursor and rows, aborts any in-flight page request, and returns the group to the initial five-row view.
+6. **One in-flight page per group.** Activating the control while a page is loading is ignored (button disabled with `aria-disabled`). A newer keystroke aborts the page request; a response whose sequence, context key or binding no longer matches is dropped.
+7. **Termination.** When the response has no `nextCursor` or `hasMore` is false, the control is removed. A page that returns no new rows after dedupe also ends the group (guards against a cursor loop).
+8. **Errors.** Same fixed copy as §5.4, shown inside the group ("Couldn't load more. Try again."), rows already loaded stay. A `400` (for example an unusable cursor) discards the cursor and offers "Show more" again from step 1; it never loops automatically. `429/503` retry follows §5.4 at most once.
+9. **Cap.** The group stops offering "Show more" after 100 loaded rows and shows "Refine your search to see more." (a client rule, no server total). Deep browsing stays in the Zone list screens (GS1 §7.2).
+10. **Palette ordering.** Expanding one group does not reorder other groups and never triggers a request for other types.
+
+**Keyboard and focus**
+
+- Rows keep stable ids derived from `(type, id)`; `aria-activedescendant` refers to those ids, so replacing or appending rows never moves the active row to a different record. If the active row disappears (not in the replacement page), the active row becomes the group's first row.
+- "Show more" is a real `button` in the group, reachable by `Tab` and by `↓` from the group's last row (it is then the last stop in the arrow order before the next group), activated with `Enter` or `Space` (mouse click behaves the same). It carries `aria-label="Show more customers"` (group name) so it is distinct per group.
+- Focus on activation: if the control was activated from the keyboard, DOM focus **stays on the control** while loading and afterwards, so repeated `Enter` keeps loading pages; the first newly added row becomes the active descendant only when the person next presses `↓`. When the control is removed (no more pages), focus moves to the group's last loaded row (as active descendant, input focus preserved) and the live region says "All results loaded".
+- If activated by pointer, focus stays where it was (the input), and the active descendant is unchanged.
+- The live region announces once per settled load: "Loaded 20 more customers" (rendered row count only), or "Couldn't load more" on error. No total is ever announced.
+- Reduced motion: no animated insertion. The list does not scroll-jump: the viewport anchors on the control while new rows are added above or below it.
+
+**Include archived.** Toggling re-runs the current query from scratch (all groups return to the initial five rows, per rule 5). The toggle is a labelled checkbox reachable by `Tab`; its state is not persisted.
 
 ### 5.8 Narrow and touch
 
@@ -323,13 +373,47 @@ Each package is its own thread, branch and draft PR, audited by ChatGPT and appr
 | **GS2-0 Approval gate and hygiene** | Regan's decisions D-GS2-1..17; confirm GS1-A and V2-B/V2-C authorisation order; L1/L2 log check (GS1 D-GS1-17, due 2026-11-30) | none | Now | Decisions recorded |
 | **GS2-A Target entry points** | Contact, opportunity, task panel and catalog item targets in their Zones (small PRs, one per Zone, no API change) | none | After GS2-0 | Types become openable (GS1 §10.6) |
 | **GS2-B Search client and fakes** | `packages/app/src/api/search.ts`, request sequencing/abort, context-key tagging, pure palette state machine, fakes shaped by the GS1 contract | GS1-A contract merged (or a contract-only PR) | After GS1-A contract | Unit-tested client, no UI |
-| **GS2-C Palette Records UI** | Records section, groups, keyboard model, states, recents + resolve, Show more, Include archived, a11y, themes, narrow layout, top-bar trigger | **V2-C palette merged**, GS2-B, GS2-A (per type), V2-B1/B3 | After V2-C | Feature behind existing `search` availability; hidden until the API reports it |
+| **GS2-C Palette Records UI** | Records section, groups, keyboard model, states, recents + resolve, Show more, Include archived, a11y, themes, narrow layout, top-bar trigger | **V2-C palette merged**, GS2-B, GS2-A (per type), V2-B1/B3 | After V2-C | Merged only with the constant false; enablement is a separate gated PR (§12.1) |
 | **GS2-D Verification** | Visual baselines (light/dark, 1440/900/375), screen-reader passes, browser and WKWebView/WebView2 matrix, desktop walkthrough, term-leak tests | GS2-C | With GS2-C | Evidence recorded in the PR |
 | **GS2-E Coverage growth** | UI strings, icons and badges per new GS1-C type, one small PR each | GS1-C providers | After each provider | New groups |
 
 **Order:** GS2-0 → (GS2-A ‖ GS1-A and V2-B/V2-C when authorised) → GS2-B → GS2-C + GS2-D → GS2-E. GS1-A in production additionally needs its readiness gate, Regan's merge approval and a separate migration approval (GS1 §12). Until then the palette (V2-C) ships commands-only.
 
-**Enablement:** GS2-C is merged dark behind a capability check. Record search is shown only when the deployed API serves the contract and logging checklist L1..L5 passed (GS1 §6.8). The flag is a code-level check on API availability, not a feature-flag service and not a production config change; turning it on is a deploy Regan approves.
+**Enablement (deterministic, see §12.1).** Record search is controlled by one build-time constant in the repository, off by default. It is never inferred from an API response, a probe or an error. Turning it on is its own reviewed PR and deploy, approved by Regan, and only after every gate in §12.1 holds.
+
+### 12.1 Enablement gate and delivery authorisation
+
+**Gate (all must hold, each evidenced in the enabling PR):**
+
+1. GS1-A is merged **and deployed** to the target environment: the search routes are in the deployed API and the contract snapshot containing them is the one the client was built against.
+2. Its index migration is applied and verified in production under a separate Regan approval, with the recovery branch and §9 log entry (`docs/migration-readiness.md`) made per the production migration procedure.
+3. GS1's readiness gate passed and is recorded: benchmark and plan diagnostics, production table sizes and index build times, logging checklist L1..L5 (search stays off if bodies or parameters are retained), concurrency-slot tests (GS1 §12).
+4. The 2026-11-30 list-URL logging check (D-GS1-17) is complete, and, if query strings are retained, its remediation is done before invite-only admission widens and no later than 2026-12-31. The gate also stays closed for any **wider-beta admission** step until that check is recorded (the check and its admission gate are unchanged by this document).
+5. The V2-C palette and the per-type target entry points for every enabled type have merged; types whose target does not open are left out of `types` individually (§6), not by the global constant.
+6. GS2-D verification evidence (a11y, themes, browser/WKWebView/WebView2 matrix, leak tests) is attached.
+7. Regan's explicit approval of the enabling PR and of its deploy, in the thread carrying it out.
+
+**Mechanism.** One exported constant (for example `RECORD_SEARCH_ENABLED = false` in `packages/app/src/shell/palette/availability.ts`), read at build time by the web and desktop builds. While false, the palette renders no Records section, makes no search or resolve request, shows no search-specific copy beyond the commands-only empty state (§5.2) and bundles no search code path that can run. The constant is flipped only in the enabling PR. It is not a runtime setting, an environment variable, a database value or a feature-flag service.
+
+**Why not infer availability from the API.** A request that fails is a failure, not a feature signal:
+
+- `404` on a wrong slug, `429`, `503 search_timeout/search_busy`, network errors, aborts, and `5xx` during a deploy are **temporary errors**. When the constant is true they show the error states in §5.4; they never hide the Records section, never flip any state to "unavailable" and are never cached as such.
+- `404` or `405` for the route itself when the constant is true means the API and client are out of step (deployment defect). It is shown as the generic error and reported through the existing client error path; it does not disable the feature either, so a transient routing problem cannot silently turn search off for the session.
+- When the constant is false the client does not call the endpoint to discover anything (no probe, no HEAD, no retry loop).
+- Desktop and web releases ship independently of the API. A desktop build is flipped to true only in a release made after the API is deployed; older desktop builds keep the constant false and stay commands-only, which is correct and safe. A newer client against an older API cannot exist by construction of the gate order (rule 1).
+- Rollback of the API leaves clients with the constant true calling a missing route and showing the generic error; the response to a bad deploy is a client revert or a flip back to false, a reviewed change (or Vercel rollback on web), not automatic detection.
+
+**Delivery authorisation (Regan, 2026-11-16, PR #86 review).** Recorded here so agents do not rely on chat history:
+
+| Work | Authorised? | Conditions |
+|---|---|---|
+| V2-B foundational component work | **Yes** | Per the approved V2-A design and its dependencies; B1..B5 each its own draft PR and audit (V2-A §11) |
+| V2-C commands-only palette | **Yes, later** | After its prerequisite components (V2-B1, B3) are ready; separate reviewed PR; no record search |
+| GS1-A implementation | **Draft PR preparation only** | Production index DDL and migrations need separate approval (GS1 §12) |
+| GS2-A target entry points | **Yes** | Separate draft PRs, normal audit workflow, one per Zone |
+| GS2-B search client and fakes | Not yet requested | Follows GS1-A's contract |
+| GS2-C record-search enablement | **NOT authorised** | §12.1 gate; GS2-C implementation will be requested separately before it starts |
+| Merge, deploy, production migration | **No** | Separate explicit approval each time |
 
 **Independence from other work:** GS2-A is independent of everything. GS2-B/C do not touch Home, the dashboard, the contracts snapshot beyond GS1's own, notifications (N1) or settings (A3). Overlap to watch: V2-C owns `shell/app-shell.tsx`; GS2-C must wait for it rather than edit in parallel.
 
@@ -337,6 +421,8 @@ Each package is its own thread, branch and draft PR, audited by ChatGPT and appr
 
 - **Unit:** state machine transitions; sequence and context-key dropping; debounce and abort; highlight function (escaping, no HTML injection, diacritics); platform label; shortcut capture rules (typing, modal, IME, layout); error mapping to fixed copy.
 - **Component (jsdom + user-event, queries by role):** open/close/focus return; ArrowUp/Down across groups; Enter opens; Show more; Include archived; each state in §5; narrow layout; `types` omission for targets not yet openable; a forced result for an unreadable Zone lands on Home.
+- **Show more:** first expanded request has no cursor and replaces; later pages use `nextCursor` and append; dedupe on overlapping pages; query/toggle/context change discards cursor and aborts; double activation ignored; empty page ends the group; 100-row cap; `400` recovers without looping; focus and `aria-activedescendant` stay stable across replace/append.
+- **Enablement:** with the constant false there is no request and no Records UI; with it true, `404`, `429`, `503`, network failure and abort render error states and never hide the feature; a source test pins the constant default to false until the enabling PR.
 - **Leak tests:** no rendered text contains a server total, a hidden Zone name or the term in error/aria strings; fake server returns hostile fields (extra amount, note) and the UI renders only contract fields; `localStorage`/`sessionStorage`/`history` untouched after a session; no network call below two characters or when closed.
 - **Isolation of context:** business switch, role downgrade, sign-out and `401/403` while results and recents are showing and in flight.
 - **Accessibility:** axe-core only once reviewed under D-V2A-12; manual screen-reader scripts; forced-colours and reduced-motion snapshots; keyboard-only walkthrough.
@@ -354,6 +440,9 @@ Each package is its own thread, branch and draft PR, audited by ChatGPT and appr
 - [ ] No server total, no hidden-Zone hint, no snippet, no amount, no personal details rendered.
 - [ ] Fixed client error copy; no server text or term echoed; `console` silent in production.
 - [ ] No response cache, no polling, no prefetch; bounded `limit`, `q`, recents.
+- [ ] Results rendered through per-type renderers from a six-field view model; strict parse; no generic field rendering.
+- [ ] Show more follows §5.7 (no cursor on the first expansion, replace then append, dedupe, bound cursor).
+- [ ] `RECORD_SEARCH_ENABLED` is false unless the §12.1 gate evidence is attached.
 - [ ] Recents: ids only, in memory, re-resolved, cleared on context change.
 - [ ] No new dependency, Tauri capability, CSP change or API/contract change outside GS1's.
 - [ ] Source-scan: no raw colours, no `dangerouslySetInnerHTML`, no `localStorage` use in the palette.
@@ -383,7 +472,7 @@ Recommendations are mine; none is approved. IDs continue independently of GS1's.
 | D-GS2-8 | Recents persistence | (a) Session-only (D-GS1-6); (b) persisted ids | **(a)** |
 | D-GS2-9 | `⌘↵` "open in place" | (a) Drop until URL routing exists; (b) keep as an alias of `Enter` | **(a)**; amend GS1 §10.2 in the GS2-C PR |
 | D-GS2-10 | Palette component | (a) Shell-specific palette on `Dialog` + B3 pieces; (b) generic V2-B5 `Combobox` | **(a)**; no dependency on B5; no new runtime dependency (D-V2A-12) |
-| D-GS2-11 | Enablement | (a) Merge dark; shown when the API serves the contract and logging checks passed; (b) separate runtime flag service | **(a)**; no flag infrastructure |
+| D-GS2-11 | Enablement | (a) Merge dark; shown when the API serves the contract and logging checks passed; (b) separate runtime flag service | **(a), as amended by D-GS2-20**: a build-time constant behind the §12.1 gate; no runtime detection, no flag infrastructure |
 | D-GS2-12 | Escape and focus rules | (a) `Esc` always closes; after a guard-cancelled navigation the palette reopens with the same input; focus returns to opener or Zone heading; (b) first `Esc` clears the query | **(a)** |
 | D-GS2-13 | Telemetry | (a) None in GS2; term-free metrics only in GS1-D; (b) client usage analytics | **(a)** |
 | D-GS2-14 | Global OS hotkey (summon from outside the app) | (a) Not planned; in-app only; (b) Tauri global-shortcut plugin | **(a)** (needs a new capability, an ADR 0005 amendment and conflicts with D-GS1-8's scope) |
@@ -391,18 +480,35 @@ Recommendations are mine; none is approved. IDs continue independently of GS1's.
 | D-GS2-16 | Result row content beyond GS1 §8 | (a) None; keep the GS1 allow-list; (b) add owner/amount/date | **(a)**; amounts and owners stay out while screens are shared |
 | D-GS2-17 | Naming of excluded-data design | (a) This document is GS2; excluded data becomes GS3; (b) keep GS1's usage | **(a)**; a small follow-up edit to GS1 §4.3 lives in the GS2-0 PR, not here |
 
-Dates and prerequisites not decided here: GS1 D-GS1-17 log check due 2026-11-30 (Regan's date); V2-B and V2-C authorisation (Regan); GS1-A authorisation (Regan).
+### 15.1 Outcomes (Regan, 2026-11-16, after ChatGPT's audit of revision 1)
+
+Regan accepted the recommended outcome for **D-GS2-1 to D-GS2-17**, with **D-GS2-11 subject to the explicit enablement gate in §12.1** (D-GS2-20). The architectural direction is approved. This approves the document direction only: no merge, deployment, migration or record-search enablement. Delivery authorisation is in §12.1.
+
+Revision 2 additions, from the audit findings:
+
+| ID | Finding | Decision | Recommendation |
+|---|---|---|---|
+| D-GS2-18 | GS2-01 (high): Show more against GS1's single-type cursor | First expanded request is single-type, `limit: 25`, no cursor, **replaces** the group; later pages use the returned `nextCursor` and **append**; dedupe by `(type, id)`; cursor bound to query, toggle and context; one in-flight page; stop after 100 rows; focus stays on the control (§5.7) | Adopt |
+| D-GS2-19 | GS2-02 (medium): result fields | GS1 §8 is the normative allow-list; explicit per-type renderers; strict parse into a six-field view model; no generic field rendering (§4.5) | Adopt |
+| D-GS2-20 | GS2-03 (medium): deterministic enablement | Build-time constant, default false, flipped only by a reviewed PR after every §12.1 gate; temporary API errors are never read as unavailability; no probe | Adopt (replaces the "API reports it" wording of D-GS2-11) |
+
+Dates and prerequisites not decided here: the 2026-11-30 logging check (D-GS1-17) and its wider-beta admission gate are unchanged and are gate item 4 in §12.1.
+
+V2-B/V2-C and GS1-A authorisation are now recorded in §12.1.
 
 ## 16. Risks
 
 | Risk | Effect | Mitigation |
 |---|---|---|
 | V2-C slips | Search UI cannot merge | GS2-A/B proceed; commands-only palette ships first |
-| GS1-A index build or benchmark misses targets | Search stays off in production | UI ships dark (D-GS2-11); no UI change needed |
+| GS1-A index build or benchmark misses targets | Search stays off in production | Constant stays false (D-GS2-11, §12.1); no UI change needed |
 | Logging checks find query strings retained | Existing lists leak terms; palette unaffected (POST) | GS1 D-GS1-7 remediation dates stand |
 | Result targets are inconsistent per Zone | Dead results | `types` omitted until target verified; per-type end-to-end test |
 | Shortcut captured by browser or OS | ⌘/Ctrl+K unreliable on some platforms | Matrix; button fallback; D-GS2-15 |
 | Screen-reader behaviour of a custom combobox differs by engine | A11y regressions | Manual passes on WKWebView and WebView2; no reliance on axe alone |
+| A temporary API error mistaken for "feature unavailable" | Search silently disappears, or appears for a stale API | Availability is a build-time constant, never inferred from responses (§12.1) |
+| Server adds a field to results | Extra data reaches the DOM | Strict parse, six-field view model, per-type renderers (§4.5) |
+| Show more skips or repeats rows on live data | Confusing lists | Replacement then append with dedupe; no completeness claim; refine at 100 rows (§5.7) |
 | Stale registry docs | Agents plan from wrong state | Separate registry-refresh docs PR on request |
 | Hidden-Zone inference through UI copy | Permission-model disclosure | Copy rules in §8.3, tested |
 | Scope creep into quick actions, AI search or content search | Cost and leakage | Out of scope; separate decisions |
