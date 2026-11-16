@@ -91,4 +91,24 @@ describe('opening a contact', () => {
     expect(await screen.findByRole('heading', { name: 'You do not have access' })).toBeTruthy();
     expect(screen.queryByText('Acme')).toBeNull();
   });
+
+  it('fails gracefully when the contact moves between the contact read and the customer read', async () => {
+    const acme = customer({ displayName: 'Acme' });
+    const other = customer({ displayName: 'Other' });
+    const amy = contact(acme.id, { displayName: 'Amy' });
+    const { api } = mount(amy.id, { alpha: { customers: [acme, other], contacts: [amy] } });
+    // Moved away as soon as the contact itself has been read: Acme's list no longer holds it.
+    await waitFor(() => expect(api.callsTo(/GET .*contacts\/[^/]+$/).length).toBe(1));
+    amy.customerId = other.id;
+    expect(await screen.findByRole('heading', { name: 'Acme', level: 1 })).toBeTruthy();
+    expect(await within(contactsPanel()).findByText('No contacts are linked to this customer yet.')).toBeTruthy();
+    expect(contactsPanel().querySelector('[aria-current]')).toBeNull();
+  });
+
+  it("shows the customer's not-found state when the customer is gone by the time it is read", async () => {
+    const amy = contact(uuid(), { displayName: 'Amy' }); // points at a customer that does not exist
+    mount(amy.id, { alpha: { contacts: [amy] } });
+    expect(await screen.findByRole('heading', { name: 'Not found' })).toBeTruthy();
+    expect(screen.getByText(/This customer could not be found/)).toBeTruthy();
+  });
 });
