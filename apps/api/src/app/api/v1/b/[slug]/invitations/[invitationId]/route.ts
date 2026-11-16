@@ -5,7 +5,7 @@ import { isUuid, tenantRoute } from '../../../../../_lib/routes';
 
 export const dynamic = 'force-dynamic';
 
-export const DELETE = tenantRoute({ permission: 'members:invite', response: OkResponse }, async ({ db, actor, params }) => {
+export const DELETE = tenantRoute({ permission: 'members:invite', response: OkResponse, retryOnConflict: true }, async ({ db, actor, params }) => {
   if (!isUuid(params.invitationId)) throw new NotFoundError();
   await revokeInvitation(db, actor, params.invitationId);
   return { body: { ok: true as const } };

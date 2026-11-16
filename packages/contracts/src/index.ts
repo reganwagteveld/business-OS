@@ -91,7 +91,8 @@ import {
 } from './scheduling.ts';
 import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
-  ListOutcomesResponse, ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, UpdateOpportunityRequest,
+  ListOutcomesResponse, ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, SalesSummaryResponse,
+  UpdateOpportunityRequest,
 } from './sales.ts';
 import {
   ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse,
@@ -99,8 +100,9 @@ import {
   UpdateContactRequest, UpdateCustomerRequest,
 } from './customers.ts';
 import {
-  AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, BusinessProfileResponse, UpdateBusinessProfileRequest, ChangeRoleRequest, CreateBusinessRequest, CreateBusinessResponse, PlatformAccessResponse,
+  AcceptInvitationRequest, AcceptInvitationResponse, BusinessContextResponse, BusinessProfileResponse, UpdateBusinessProfileRequest, ConfirmRequest, CreateBusinessRequest, CreateBusinessResponse, PlatformAccessResponse,
   CreateInvitationRequest, InvitationResponse, InvitationsResponse, ListBusinessesResponse, MemberResponse, MembersResponse, OkResponse,
+  TransferOwnershipRequest, UpdateMemberRequest,
 } from './tenancy.ts';
 
 import {
@@ -134,10 +136,17 @@ export const endpoints = {
   getBusinessProfile: { method: 'GET', path: '/api/v1/b/:slug/business', response: BusinessProfileResponse },
   updateBusinessProfile: { method: 'PATCH', path: '/api/v1/b/:slug/business', request: UpdateBusinessProfileRequest, response: BusinessProfileResponse },
   listMembers: { method: 'GET', path: '/api/v1/b/:slug/members', response: MembersResponse },
-  changeMemberRole: { method: 'PATCH', path: '/api/v1/b/:slug/members/:membershipId', request: ChangeRoleRequest, response: MemberResponse },
+  /** Role change ({ role }) or, A2-B, suspend/reactivate ({ status }). */
+  changeMemberRole: { method: 'PATCH', path: '/api/v1/b/:slug/members/:membershipId', request: UpdateMemberRequest, response: MemberResponse },
   removeMember: { method: 'DELETE', path: '/api/v1/b/:slug/members/:membershipId', response: OkResponse },
+  transferOwnership: {
+    method: 'POST', path: '/api/v1/b/:slug/members/:membershipId/transfer-ownership', request: TransferOwnershipRequest, response: MemberResponse,
+  },
+  stepDownAsOwner: { method: 'POST', path: '/api/v1/b/:slug/membership/step-down', request: ConfirmRequest, response: MemberResponse },
+  leaveBusiness: { method: 'POST', path: '/api/v1/b/:slug/membership/leave', request: ConfirmRequest, response: OkResponse },
   listInvitations: { method: 'GET', path: '/api/v1/b/:slug/invitations', response: InvitationsResponse },
   createInvitation: { method: 'POST', path: '/api/v1/b/:slug/invitations', request: CreateInvitationRequest, response: InvitationResponse },
+  resendInvitation: { method: 'POST', path: '/api/v1/b/:slug/invitations/:invitationId/resend', response: InvitationResponse },
   revokeInvitation: { method: 'DELETE', path: '/api/v1/b/:slug/invitations/:invitationId', response: OkResponse },
   listCustomers: { method: 'GET', path: '/api/v1/b/:slug/customers', query: ListCustomersQuery, response: ListCustomersResponse },
   createCustomer: { method: 'POST', path: '/api/v1/b/:slug/customers', request: CreateCustomerRequest, response: CustomerResponse },
@@ -247,6 +256,8 @@ export const endpoints = {
   /** Idempotent: creates the default pipeline and standard stages if missing (201), else returns them (200). */
   initialiseDefaultPipeline: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines/default', response: PipelineResponse },
   listStages: { method: 'GET', path: '/api/v1/b/:slug/sales/stages', query: ListStagesQuery, response: ListStagesResponse },
+  // R2 operational dashboard: the open pipeline as grouped totals (sales:read).
+  salesSummary: { method: 'GET', path: '/api/v1/b/:slug/sales/summary', response: SalesSummaryResponse },
   listOpportunities: { method: 'GET', path: '/api/v1/b/:slug/sales/opportunities', query: ListOpportunitiesQuery, response: ListOpportunitiesResponse },
   createOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities', request: CreateOpportunityRequest, response: OpportunityResponse },
   getOpportunity: { method: 'GET', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId', response: OpportunityResponse },

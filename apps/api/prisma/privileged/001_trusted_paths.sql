@@ -333,7 +333,10 @@ BEGIN
 END $$;
 
 -- Accepts an invitation for the caller, whose VERIFIED email must equal the invitation email.
--- Every failure raises the same generic error.
+-- Every failure raises the same generic error. The row lock makes acceptance and revocation (a
+-- conditional UPDATE on the same row, modules/tenancy) mutually exclusive: whichever locks first
+-- wins, and the other re-checks the committed row (A2-B, docs/administration-a2.md §6.2). The open
+-- conditions are stated here as well as in the bos_definer row policies.
 CREATE OR REPLACE FUNCTION app_private.accept_invitation(p_session_token text, p_invite_token text)
 RETURNS TABLE (business_id uuid, slug text, role public."MembershipRole")
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER
@@ -353,6 +356,8 @@ BEGIN
   FROM public.invitations i
   WHERE i.token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(p_invite_token, ''), 'UTF8')), 'hex')
     AND i.accepted_at IS NULL
+    AND i.revoked_at IS NULL
+    AND i.expires_at > pg_catalog.now()
   FOR UPDATE;
   SELECT b.slug INTO v_slug FROM public.businesses b WHERE b.id = v_invite.business_id;
   IF v_user IS NULL OR v_verified IS NOT TRUE OR v_invite.id IS NULL OR v_slug IS NULL

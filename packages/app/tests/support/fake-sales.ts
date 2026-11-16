@@ -26,6 +26,37 @@ function fix(amount: string, currency: string): string {
   return d === 0 ? whole! : `${whole}.${(frac + '0'.repeat(d)).slice(0, d)}`;
 }
 
+/** Exact decimal addition in ten-thousandths (the server's numeric(18,4)), then the currency's own decimals. */
+const units = (v: string) => { const [w, f = ''] = v.split('.'); return BigInt(w!) * 10000n + BigInt((f + '0000').slice(0, 4)); };
+const fromUnits = (u: bigint, currency: string) => fix(`${u / 10000n}.${String(u % 10000n).padStart(4, '0')}`, currency);
+type Totals = Map<string, { u: bigint; count: number }>;
+const add = (t: Totals, o: Opportunity) => { const c = t.get(o.currencyCode) ?? { u: 0n, count: 0 }; t.set(o.currencyCode, { u: c.u + (o.amount ? units(o.amount) : 0n), count: c.count + 1 }); };
+const list = (t: Totals) => [...t.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([currencyCode, v]) => ({ currencyCode, amount: fromUnits(v.u, currencyCode), count: v.count }));
+const n = (t: Totals) => [...t.values()].reduce((a, v) => a + v.count, 0);
+
+/** The same grouping as GET /sales/summary: open, not archived opportunities by pipeline, stage and currency. */
+export function summaryOf(s: FakeSales) {
+  const open = s.opportunities.filter((o) => o.status === 'OPEN' && !o.archivedAt);
+  const all: Totals = new Map();
+  for (const o of open) add(all, o);
+  const pipelines = s.pipelines.map(({ pipeline, stages }) => {
+    const pt: Totals = new Map();
+    const rows = stages.map((st) => {
+      const t: Totals = new Map();
+      for (const o of open.filter((x) => x.stageId === st.id)) { add(t, o); add(pt, o); }
+      return { st, t };
+    }).filter(({ st, t }) => (!st.archivedAt && !pipeline.archivedAt) || n(t) > 0);
+    return { pipeline, pt, rows };
+  }).filter((p) => p.rows.length > 0);
+  return {
+    open: { count: n(all), totals: list(all) },
+    pipelines: pipelines.map(({ pipeline, pt, rows }) => ({
+      id: pipeline.id, name: pipeline.name, isDefault: pipeline.isDefault, count: n(pt), totals: list(pt),
+      stages: rows.map(({ st, t }) => ({ id: st.id, name: st.name, position: st.position, archived: Boolean(st.archivedAt), count: n(t), totals: list(t) })),
+    })),
+  };
+}
+
 export function pipelineWithStages(name = 'Sales pipeline', isDefault = true): { pipeline: Pipeline; stages: Stage[] } {
   const id = randomUUID();
   const stages = [['New', 10], ['Qualified', 25], ['Proposal', 50], ['Negotiation', 75]].map(([n, p], i) => ({
@@ -48,7 +79,7 @@ export function withSales(api: ReturnType<typeof createFakeApi>, sales: Record<s
   const tick = () => new Date((clock += 1000)).toISOString();
   api.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
-    const m = /^\/api\/v1\/b\/([^/]+)\/sales\/(pipelines|stages|opportunities)(?:\/([^/]+))?(?:\/([a-z]+))?$/.exec(url.pathname);
+    const m = /^\/api\/v1\/b\/([^/]+)\/sales\/(pipelines|stages|opportunities|summary)(?:\/([^/]+))?(?:\/([a-z]+))?$/.exec(url.pathname);
     if (!m) return base(input, init);
     const method = init?.method ?? 'GET';
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -63,6 +94,7 @@ export function withSales(api: ReturnType<typeof createFakeApi>, sales: Record<s
     const def = () => s.pipelines.find((p) => p.pipeline.isDefault);
     const ensureDefault = () => def() ?? (s.pipelines.push(pipelineWithStages()), def()!);
 
+    if (resource === 'summary' && method === 'GET') return json(200, { summary: summaryOf(s) });
     if (resource === 'pipelines') {
       if (method === 'GET' && !id) return json(200, { pipelines: s.pipelines.filter((p) => !p.pipeline.archivedAt).map((p) => p.pipeline) });
       if (method === 'POST' && id === 'default') {

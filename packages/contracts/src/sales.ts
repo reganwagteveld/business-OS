@@ -164,3 +164,26 @@ export const OpportunityOutcome = z
   .strict();
 export type OpportunityOutcome = z.infer<typeof OpportunityOutcome>;
 export const ListOutcomesResponse = z.object({ outcomes: z.array(OpportunityOutcome) }).strict();
+
+// ---- R2 operational dashboard: the open pipeline as totals -------------------------------------
+
+const SummaryCount = z.number().int().min(0);
+/** One currency's open value. `amount` sums priced opportunities only; `count` counts every open one in that currency. */
+export const PipelineCurrencyTotal = z.object({ currencyCode: z.string(), amount: z.string(), count: SummaryCount }).strict();
+export type PipelineCurrencyTotal = z.infer<typeof PipelineCurrencyTotal>;
+export const PipelineStageSummary = z
+  .object({ id: Uuid, name: z.string(), position: z.number().int(), archived: z.boolean(), count: SummaryCount, totals: z.array(PipelineCurrencyTotal) })
+  .strict();
+export const PipelineSummary = z
+  .object({ id: Uuid, name: z.string(), isDefault: z.boolean(), count: SummaryCount, totals: z.array(PipelineCurrencyTotal), stages: z.array(PipelineStageSummary) })
+  .strict();
+/**
+ * Open, not archived opportunities grouped by pipeline, stage and currency (one grouped query). Amounts are
+ * per currency, never converted or added across currencies. Archived pipelines are left out unless they still
+ * hold open opportunities; archived stages appear only while they hold some (marked `archived`).
+ */
+export const SalesSummary = z
+  .object({ open: z.object({ count: SummaryCount, totals: z.array(PipelineCurrencyTotal) }).strict(), pipelines: z.array(PipelineSummary) })
+  .strict();
+export type SalesSummary = z.infer<typeof SalesSummary>;
+export const SalesSummaryResponse = z.object({ summary: SalesSummary }).strict();
