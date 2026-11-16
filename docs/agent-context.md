@@ -46,7 +46,7 @@ Status as of 2026-11-16. "Merged" means the code is on `main`. It does **not** m
 | Sales | Merged: pipeline and Kanban board | `docs/sales-data-model.md` |
 | Projects | Merged: projects, tasks, board, locking/versioning | `docs/projects-data-model.md` |
 | Finance | Merged: F1–F5 (quotes, invoices, payments ledger, expenses, PDFs), F6 recurring billing, statements and reminders, F7-A/B catalog. F6 scheduled jobs stay **off**. | `docs/finance-data-model.md`, `docs/finance-*.md` |
-| Finance F8 banking | Architecture being drafted in a thread; no PR yet | Wait for its docs PR |
+| Finance F8 banking | Architecture: draft docs PR #77; nothing built | `docs/finance-banking-f8.md` on that PR |
 | People | Merged: P1 workforce, P2 employee interface. P3-A leave types and policies (#68) | `docs/people-data-model.md`, `docs/people-p2.md` |
 | Scheduling | Merged: S1 calendars/events, S2 resources and availability | `docs/scheduling-s1.md`, `docs/scheduling-s2.md` |
 | Communications | Merged: C1 activity foundation, C2-A provider foundation, C2-B1 mailbox identity, E1 retention/erasure (**dormant**; activation waits on the legal decisions in `communications-e1.md` §13) | `docs/communications-c2.md`, `docs/communications-e1.md` |

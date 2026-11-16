@@ -50,7 +50,7 @@
 - Enabling cron, scheduled jobs, workers, outbound email, billing or any other external effect.
 - Changing authentication, beta admission, RBAC/RLS, credential handling or retention policy without owner-approved scope.
 - Editing files claimed by another active worker.
-- Deleting branches (outside the Neon standing policy below), rewriting shared history, or altering live data.
+- Deleting any Git or Neon branch, rewriting shared history, or altering live data.
 - Choosing a consequential unresolved product policy without an owner decision.
 - Stop at once and report on a migration history or checksum mismatch, an unexpected pending migration, a failed recovery branch or an ambiguous target. Never improvise production repairs.
 
@@ -64,7 +64,7 @@ Production database work runs only from the Mac session, which is the only place
 4. **Verify** with `docs/migration-readiness.md` §5, the health check and a signed-in pass, then record the run in `docs/migration-readiness.md` §9.
 5. **Merge** only afterwards and only with Regan's approval. Vercel deploys `main` to production on merge, so code must never land before its schema.
 
-**Neon standing policy (Regan, 2026-11-16, until revoked).** Read-only checks, migration history and checksum checks, CI and deploy status, dry runs and temporary test branches need no approval. An old recovery branch may be deleted without asking **only if all** of these hold: it is explicitly a temporary recovery branch; it is not production, dev or staging and is not referenced by a deployment, incident, rollback or active migration; its migration is applied and verified; at least two newer verified recovery points remain; it is at least 48 hours old; the deletion is needed for the branch limit; and its exact ID, creation time and purpose were verified. Delete the oldest eligible branch first and log every deletion in `ops/neon/audit-log.jsonl`. Always keep production plus the two most recent verified recovery branches. Everything else in `docs/operations/neon-branch-housekeeping.md` still needs approval.
+**Neon branches.** Read-only checks (migration history and checksums, CI and deploy status, the housekeeping audit), dry runs on disposable environments and temporary test branches need no approval. **Deleting any Neon branch, including an old recovery branch, needs Regan's explicit approval** in the thread that will delete it, as `docs/operations/neon-branch-housekeeping.md` states. "Eligible" in the audit report only means "may be proposed". Always keep production plus the two most recent verified recovery points. No deletion automation exists or may be enabled without Regan's approval. A broader standing deletion rule would replace this paragraph and the housekeeping doc together, in one PR Regan approves.
 
 ## PR submission standard
 
