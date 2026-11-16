@@ -209,7 +209,7 @@ export function evaluate(inventory, registry, now, policy = DEFAULT_POLICY) {
       else for (const gap of verificationGaps(r.entry)) set(DECISION.PROTECTED, gap);
       if (retained.has(b.id)) set(DECISION.KEEP, retained.get(b.id));
     } else if (r.category !== CATEGORY.PRODUCTION) {
-      set(DECISION.NEEDS_APPROVAL, r.note ?? `${r.category} branch: ownership and purpose need a person's decision`);
+      set(DECISION.NEEDS_APPROVAL, r.note ?? (r.entry?.note ? `${r.category} branch: ${r.entry.note}` : `${r.category} branch: ownership and purpose need a person's decision`));
     }
 
     // A retained recovery point is reported as KEEP even when another rule also protects it.

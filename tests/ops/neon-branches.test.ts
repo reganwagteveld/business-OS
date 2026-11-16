@@ -4,13 +4,14 @@
  * the fake's project ID is not a real one, the real neonctl client is never constructed,
  * and the housekeeping code has no delete path at all (asserted below).
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { evaluate, registryHash, validateRegistry, type NeonBranch, type Registry } from '../../scripts/neon-branches/policy.mjs';
 import * as runModule from '../../scripts/neon-branches/run.mjs';
-import { checkDeletion, readLog, runAudit, snapshotOf, type NeonClient } from '../../scripts/neon-branches/run.mjs';
+import { checkDeletion, exitCodeFor, readLog, runAudit, snapshotOf, type NeonClient } from '../../scripts/neon-branches/run.mjs';
 
 const PROJECT = 'test-project-not-real';
 const NOW = new Date('2026-11-29T08:00:00Z');
@@ -426,5 +427,50 @@ describe('pre-deletion check (fresh eligibility gate)', () => {
     const { base } = setup();
     await expect(checkDeletion({ ...base, snapshot: { evaluatedAt: '', registryHash: '', fingerprints: {} }, branchIds: ['old'] })).rejects.toThrow(/snapshot/);
     await expect(checkDeletion({ ...base, branchIds: [] })).rejects.toThrow(/no branches/);
+  });
+});
+
+describe('check CLI exit codes (Phase 2 gate contract)', () => {
+  it('exitCodeFor is 0 only when every named branch is allowed', () => {
+    const v = (verdict: 'allowed' | 'refused' | 'already-absent' | 'aborted') => ({ branchId: 'x', verdict, reasons: [] });
+    expect(exitCodeFor([v('allowed'), v('allowed')])).toBe(0);
+    expect(exitCodeFor([v('allowed'), v('refused')])).toBe(2);
+    expect(exitCodeFor([v('already-absent')])).toBe(2);
+    expect(exitCodeFor([v('allowed'), v('aborted')])).toBe(1);
+    expect(exitCodeFor([])).toBe(2);
+  });
+
+  it('the real CLI exits non-zero for refused, absent or aborted verdicts and prints per-ID verdicts', () => {
+    const root = join(__dirname, '../..');
+    const nowMs = Date.now();
+    const ago = (h: number) => new Date(nowMs - h * 3_600_000).toISOString();
+    const mk = (id: string, h: number): NeonBranch => ({ id, name: `pre-${id}`, parent_id: 'br-prod', parent_lsn: '0/1', current_state: 'ready', created_at: ago(h), updated_at: ago(h) });
+    const live = [{ ...prod, created_at: ago(900), updated_at: ago(1) }, mk('old', 300), mk('mid', 200), mk('n1', 100), mk('n2', 90)];
+    const reg = registryFor(live.slice(1).map((b) => [b] as [NeonBranch]));
+    const now = new Date(nowMs);
+    const snapshot = snapshotOf(evaluate({ branches: live, endpoints: [] }, reg, now));
+    const files = { registry: join(dir, 'registry.json'), snapshot: join(dir, 'snapshot.json'), state: join(dir, 'state.json') };
+    writeFileSync(files.registry, JSON.stringify(reg));
+    writeFileSync(files.snapshot, JSON.stringify(snapshot));
+    writeFileSync(files.state, JSON.stringify({ branches: live, endpoints: [] }));
+    const run = (ids: string, state = files.state) =>
+      spawnSync(process.execPath, ['scripts/neon-branches/cli.mjs', 'check', '--registry', files.registry, '--snapshot', files.snapshot, '--ids', ids], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NEON_HOUSEKEEPING_NEONCTL: join(root, 'tests/ops/fixtures/fake-neonctl.mjs'), FAKE_NEON_STATE: state },
+      });
+    const verdictsOf = (out: string) => JSON.parse(out.trim().split('\n').at(-1)!.replace(/^VERDICTS /, ''));
+
+    const ok = run('old,mid');
+    expect(ok.status).toBe(0);
+    expect(verdictsOf(ok.stdout)).toEqual([{ branchId: 'old', verdict: 'allowed' }, { branchId: 'mid', verdict: 'allowed' }]);
+
+    const refused = run('old,n2'); // n2 is a retained recovery point
+    expect(refused.status).toBe(2);
+    expect(verdictsOf(refused.stdout)).toEqual([{ branchId: 'old', verdict: 'allowed' }, { branchId: 'n2', verdict: 'refused' }]);
+
+    const aborted = run('old', join(dir, 'missing.json')); // fake neonctl fails
+    expect(aborted.status).toBe(1);
+    expect(verdictsOf(aborted.stdout)).toEqual([{ branchId: 'old', verdict: 'aborted' }]);
   });
 });

@@ -2,12 +2,13 @@
 // Usage (from the repo root, on a machine where `neonctl` and `gh` are signed in):
 //   node scripts/neon-branches/cli.mjs audit [--report out.md] [--snapshot out.json] [--github-issue N]
 //   node scripts/neon-branches/cli.mjs check --snapshot out.json --ids br-a,br-b
+// `check` exits 0 only if every named branch is allowed (1 = aborted, 2 = any refused/absent).
 // Both commands are read-only. `check` runs the fresh eligibility gate that Phase 2 deletion will use;
 // nothing in this tool deletes a branch.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { checkDeletion, loadRegistry, neonctlClient, runAudit, snapshotOf } from './run.mjs';
+import { checkDeletion, exitCodeFor, loadRegistry, neonctlClient, runAudit, snapshotOf } from './run.mjs';
 
 const GITHUB_REPO = 'reganwagteveld/business-OS';
 
@@ -24,7 +25,8 @@ const { positionals, values } = parseArgs({
 });
 
 const registry = loadRegistry(values.registry);
-const client = neonctlClient(registry.projectId);
+// NEON_HOUSEKEEPING_NEONCTL lets tests point at a fake, read-only neonctl.
+const client = neonctlClient(registry.projectId, { bin: process.env.NEON_HOUSEKEEPING_NEONCTL || 'neonctl' });
 const command = positionals[0] ?? 'audit';
 
 if (command === 'audit') {
@@ -48,7 +50,9 @@ if (command === 'audit') {
     snapshot: JSON.parse(readFileSync(values.snapshot, 'utf8')),
   });
   for (const v of verdicts) process.stdout.write(`${v.branchId} ${v.name ?? ''}: ${v.verdict} (${v.reasons.join('; ')})\n`);
-  if (verdicts.some((v) => v.verdict === 'aborted')) process.exitCode = 1;
+  // Machine-readable per-ID verdicts on the last line; exit 0 only if every branch is allowed.
+  process.stdout.write(`VERDICTS ${JSON.stringify(verdicts.map(({ branchId, verdict }) => ({ branchId, verdict })))}\n`);
+  process.exitCode = exitCodeFor(verdicts);
 } else {
   throw new Error(`unknown command ${command}`);
 }

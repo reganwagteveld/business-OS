@@ -192,6 +192,17 @@ export function renderReport(result, registry) {
   return lines.join('\n');
 }
 
+/**
+ * Exit code for a set of verdicts. 0 only when EVERY named branch is `allowed`; callers must still
+ * check each verdict by branch ID rather than trusting the exit code alone.
+ * 0 = all allowed, 1 = aborted (inventory failure), 2 = at least one refused or already absent.
+ */
+export function exitCodeFor(verdicts) {
+  if (!Array.isArray(verdicts) || verdicts.length === 0) return 2;
+  if (verdicts.some((v) => v.verdict === 'aborted')) return 1;
+  return verdicts.every((v) => v.verdict === 'allowed') ? 0 : 2;
+}
+
 // ---------- read-only pre-deletion check (the gate Phase 2 must call before every deletion) ----------
 
 /**

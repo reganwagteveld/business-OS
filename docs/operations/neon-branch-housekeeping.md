@@ -55,7 +55,7 @@ node scripts/neon-branches/cli.mjs audit --report /tmp/neon-report.md --snapshot
 ## Keeping the registry current
 
 Whoever cuts a recovery branch adds an entry to `ops/neon/recovery-points.json` in the same PR/thread:
-branch ID and name, migrations, PRs, `appliedAt`, `migration.status`, `deployment.status`, `restoreCheck.status`.
+branch ID and name, migrations, PRs, `appliedAt`, `migration.status`, `deployment.status`, `restoreDrill.status`.
 Set `deployment.status` to `verified` once the post-deploy check passes. Record an incident in `incidents` to freeze branches.
 
 A recovery point counts as **independently verified** only after a **restore drill**: restore the recovery branch

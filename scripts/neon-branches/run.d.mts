@@ -52,3 +52,4 @@ export function checkDeletion(opts: {
   branchIds: string[];
   snapshot: Snapshot;
 }): Promise<Verdict[]>;
+export function exitCodeFor(verdicts: Verdict[]): 0 | 1 | 2;
