@@ -55,8 +55,8 @@ export const Member = z
     role: Role,
     status: MembershipStatus,
     createdAt: z.string().datetime(),
-    /** Administration A2-B: when the member was suspended, or null. */
-    suspendedAt: z.string().datetime().nullable(),
+    /** Administration A2-B: when the member was suspended, or null. The API always sends it; optional for older fixtures and clients. */
+    suspendedAt: z.string().datetime().nullable().optional(),
     /** Present only for callers with members:invite (OWNER, ADMIN, MANAGER; D-A2-11); null if hidden. */
     email: z.string().nullable().optional(),
   })
