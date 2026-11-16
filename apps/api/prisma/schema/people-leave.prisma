@@ -1,0 +1,140 @@
+// People P3-A (docs/people-leave-p3.md): leave types, leave policies, their revision history and the
+// effective-dated assignment of a policy to an employee. Tenant tables with forced RLS and composite
+// (business_id, …) foreign keys; the CHECKs, guard triggers, partial unique indexes and column grants
+// that Prisma cannot express live in migration 20261204000000_people_leave_policies. No DELETE grant on
+// any of them: types and policies are deactivated or archived, revisions are append-only, assignments
+// are closed once.
+//
+// Configuration only. There are no requests, approvals or balances here (P3-B and P3-C), and no rule
+// is derived from a country: every entitlement number is entered by the business.
+
+/// A kind of leave the business offers (annual, sick, unpaid, a custom type…). The category is a
+/// neutral classification for reporting and privacy defaults; it carries no legal rule.
+model PeopleLeaveType {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  description String?
+  /// ANNUAL | SICK | PERSONAL | CARER | UNPAID | COMPASSIONATE | PARENTAL | STUDY | OTHER (CHECK).
+  category    String
+  /// Informational only: P3 makes no pay calculation.
+  paid        Boolean
+  /// Requests of this type are private by default: their notes are never shown outside People (P3-B, P3-E).
+  sensitive   Boolean   @default(false)
+  /// ACTIVE | INACTIVE (CHECK). Inactive = kept, not offered for new requests.
+  status      String    @default("ACTIVE")
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+  version     Int       @default(1)
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business    Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_types_business_fkey")
+  policies    PeopleLeavePolicy[]
+  assignments PeopleLeavePolicyAssignment[]
+
+  @@unique([businessId, id])
+  @@index([businessId, name, id])
+  @@map("people_leave_types")
+}
+
+/// The rules for one leave type as they apply to the employees assigned to it. A business can keep
+/// several policies per type (full time and part time, one per country…). Amounts are in the policy's
+/// unit (days or hours) with up to four decimals.
+model PeopleLeavePolicy {
+  id                   String    @id @db.Uuid
+  businessId           String    @map("business_id") @db.Uuid
+  /// Fixed once created (guard).
+  leaveTypeId          String    @map("leave_type_id") @db.Uuid
+  name                 String
+  description          String?
+  /// Optional ISO 3166-1 alpha-2 label for multi-country businesses. Nothing is derived from it.
+  countryCode          String?   @map("country_code") @db.Char(2)
+  /// DAYS | HOURS (CHECK). Fixed once created (guard).
+  unit                 String
+  /// FULL_DAY | HALF_DAY for DAYS; HOUR | HALF_HOUR | QUARTER_HOUR for HOURS (CHECK).
+  granularity          String
+  /// NONE (no balance kept) | GRANT (an amount per leave year) | ACCRUAL (the annual amount accrues per period).
+  entitlementMethod    String    @map("entitlement_method")
+  entitlementAmount    Decimal?  @map("entitlement_amount") @db.Decimal(9, 4)
+  /// WEEKLY | FORTNIGHTLY | MONTHLY, only for ACCRUAL.
+  accrualFrequency     String?   @map("accrual_frequency")
+  /// CALENDAR | ANNIVERSARY | CUSTOM, only when a balance is kept.
+  yearStart            String?   @map("year_start")
+  yearStartMonth       Int?      @map("year_start_month") @db.SmallInt
+  yearStartDay         Int?      @map("year_start_day") @db.SmallInt
+  /// NONE | UNLIMITED | CAPPED (CHECK); always NONE when no balance is kept.
+  carryover            String    @default("NONE")
+  carryoverCap         Decimal?  @map("carryover_cap") @db.Decimal(9, 4)
+  maxBalance           Decimal?  @map("max_balance") @db.Decimal(9, 4)
+  /// How far below zero a balance may go; 0 = never negative.
+  negativeBalanceLimit Decimal   @default(0) @map("negative_balance_limit") @db.Decimal(9, 4)
+  requiresApproval     Boolean   @default(true) @map("requires_approval")
+  minimumNoticeDays    Int?      @map("minimum_notice_days")
+  allowBackdated       Boolean   @default(false) @map("allow_backdated")
+  waitingPeriodDays    Int?      @map("waiting_period_days")
+  /// ACTIVE | INACTIVE (CHECK). Inactive = kept for current assignments, not assignable.
+  status               String    @default("ACTIVE")
+  archivedAt           DateTime? @map("archived_at") @db.Timestamptz
+  version              Int       @default(1)
+  createdById          String?   @map("created_by_id") @db.Uuid
+  updatedById          String?   @map("updated_by_id") @db.Uuid
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  business    Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_policies_business_fkey")
+  leaveType   PeopleLeaveType               @relation(fields: [businessId, leaveTypeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_policies_leave_type_fkey")
+  revisions   PeopleLeavePolicyRevision[]
+  assignments PeopleLeavePolicyAssignment[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, leaveTypeId])
+  @@index([businessId, leaveTypeId])
+  @@index([businessId, name, id])
+  @@map("people_leave_policies")
+}
+
+/// Append-only: the policy's rules as they were at each version, written by the database on every
+/// insert and update. Later balance and accrual work (P3-C) can tell which rules applied when.
+model PeopleLeavePolicyRevision {
+  businessId   String   @map("business_id") @db.Uuid
+  policyId     String   @map("policy_id") @db.Uuid
+  version      Int
+  rules        Json
+  recordedById String?  @map("recorded_by_id") @db.Uuid
+  recordedAt   DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+
+  business Business          @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_policy_revisions_business_fkey")
+  policy   PeopleLeavePolicy @relation(fields: [businessId, policyId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_policy_revisions_policy_fkey")
+
+  @@id([policyId, version])
+  @@unique([businessId, policyId, version])
+  @@map("people_leave_policy_revisions")
+}
+
+/// Effective-dated: which policy governs an employee's leave of one type, [starts_on, ends_on). At most
+/// one open row per employee and leave type; rows are closed once and never edited or deleted.
+model PeopleLeavePolicyAssignment {
+  id          String    @id @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  employeeId  String    @map("employee_id") @db.Uuid
+  leaveTypeId String    @map("leave_type_id") @db.Uuid
+  policyId    String    @map("policy_id") @db.Uuid
+  startsOn    DateTime  @map("starts_on") @db.Date
+  endsOn      DateTime? @map("ends_on") @db.Date
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  endedById   String?   @map("ended_by_id") @db.Uuid
+  endedAt     DateTime? @map("ended_at") @db.Timestamptz
+
+  business  Business          @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_policy_assignments_business_fkey")
+  employee  PeopleEmployee    @relation(fields: [businessId, employeeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_policy_assignments_employee_fkey")
+  leaveType PeopleLeaveType   @relation(fields: [businessId, leaveTypeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_policy_assignments_leave_type_fkey")
+  policy    PeopleLeavePolicy @relation(fields: [businessId, policyId, leaveTypeId], references: [businessId, id, leaveTypeId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_policy_assignments_policy_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, employeeId, leaveTypeId, startsOn])
+  @@index([businessId, policyId, id])
+  @@map("people_leave_policy_assignments")
+}

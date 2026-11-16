@@ -9,3 +9,9 @@ export { archiveOrgUnit, createOrgUnit, listOrgUnits, restoreOrgUnit, toDepartme
 export { unlinkRemovedMember } from './server/members';
 export { viewerOf } from './server/shared';
 export type { Viewer } from './server/shared';
+// People P3-A (docs/people-leave-p3.md): leave types, policies and policy assignments.
+export {
+  archiveLeavePolicy, archiveLeaveType, createLeavePolicy, createLeaveType, getLeavePolicy, getLeaveType, listLeavePolicies, listLeavePolicyRevisions,
+  listLeaveTypes, restoreLeavePolicy, restoreLeaveType, updateLeavePolicy, updateLeaveType,
+} from './server/leave-config';
+export { assignLeavePolicy, employeeLeavePolicies, endLeavePolicyAssignment, listPolicyAssignments } from './server/leave-assignments';
