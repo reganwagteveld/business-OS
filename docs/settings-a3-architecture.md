@@ -502,7 +502,7 @@ position, which Regan posted on PR #81. It is a reviewer's input, not Regan's de
 | D-A3-14 | Who may open Business settings | (a) `business:read` (all roles, read-only for most, as in A2 §5); (b) `business:manage` only | **(a).** Read-only views show only what the viewer's keys return (§15.8) | (a) |
 | D-A3-15 | Invitations in Settings (**flag**) | (a) Invitations is a Team tab for `members:invite` holders, with rank-filtered role choices and `delivery: failed` leading to Resend; (b) a separate top-level page | **(a).** No change to the A2 rules (D-A2-5 to 7, 13) | (a) |
 | D-A3-16 | Ownership transfer UI (**flag**) | (a) the Ownership & lifecycle danger area, with typed business name, explaining step-down and the last-owner rule; (b) an action in the member row | **(a)**, with the member row linking to it | (a) |
-| D-A3-17 | Step-up for ownership transfer (**flag, new in revision 2**) | (a) keep D-A2-8 (no step-up in v1) for the private beta, and require step-up before the beta widens beyond invited operators' own businesses; (b) require step-up from the first A2-D release; (c) never | **(a).** A2-B already re-checks actor and target authority under lock at commit. Typed confirmation is **not** step-up, and the doc no longer calls it that. The gate is recorded in §16 as "before wider beta" | Needs a recorded decision before wider beta |
+| D-A3-17 | Step-up for ownership transfer (**flag, new in revision 2**) | (a) keep D-A2-8 (no step-up in v1) for the private beta, and require step-up before the beta widens beyond invited operators' own businesses; (b) require step-up from the first A2-D release; (c) never | **(a).** A2-B already re-checks actor and target authority under lock at commit. Typed confirmation is **not** step-up, and the doc no longer calls it that. The gate is recorded in §16 as "before wider beta". Option (b) would change the build order, because A2-D's transfer UI ships before A3-A's step-up | Re-audit: (a), with a **hard gate**: transfer step-up implemented and tested before any wider or externally recruited beta |
 
 ## 15. Security gates and lifecycle designs (audit round 1)
 
@@ -708,6 +708,29 @@ Self-service deletion is out of scope until legal review (the E1 §13 decisions)
   invitations never shown to MEMBER; Finance identifiers only for `finance:read`; audit rows only for `audit:read`.
   The client never requests a field "just in case" and hides it in the UI.
 
+### 15.9 Implementation gates from the revision 2 re-audit
+
+The re-audit of revision 2 (conditional pass, docs only) set five gates. Each stage carries them forward:
+
+1. **A3-0** inventories the **installed** Better Auth 1.7.22 method and path pairs, not documentation. It rejects
+   unsupported routes **before** forwarding, and tests path normalisation, trailing slashes, percent-encoding and
+   query strings. It keeps the desktop `authorize` and `token` routes, which sit outside the catch-all, working.
+   Verification and reset links are tested end to end. Admission stays a separate check from the allow-list, and
+   every rejected path is proven to have no side effect.
+2. **Step-up (A3-A)** is stored on the server, per session. For each high-risk action the design states how the
+   proof is validated, whether it is consumed or reusable within its window, and what happens when two actions race
+   on one proof. Password change and session revocation are verified against both Better Auth's session lookup and
+   desktop bearer resolution. The source rule from §15.2 stops account routes importing tenant authority.
+3. **Archive (A3-D)** must not commit an archived state while credentials are still usable. Before building it,
+   A3-D confirms that the Communications revocation path (`revokeHeldConnections` and the NEEDS_REAUTH status
+   trigger, as built in A2-B #76) runs inside the archive transaction and stops **both** queued and running jobs.
+   If it can't, the archive is redesigned, for example as a preflight that revokes first and then archives under
+   the same owner lock.
+4. **Account deletion** is described as deactivation plus pseudonymisation, never as irreversible erasure. Each
+   operator execution is separately authorised and audited, and legal and retention review stays a precondition.
+5. **D-A3-17** is a release gate, not just a paper decision: transfer step-up is **implemented and tested** before
+   a wider beta. Authority is checked at commit (already true in A2-B).
+
 ## 16. Staged plan
 
 Revised to the gate order from audit round 1. Each stage gets its own thread, branch and draft PR, audited before
@@ -723,7 +746,7 @@ merge. No production step happens without separate approval.
 | 6 | **A2-E + A3-C** | Audit viewer API and security suite (A2-E), then the Audit log UI (A3-C) | A2-D | no | Dependent: A2-E |
 | 7 | **A3-B** | Integrations and Data & privacy pages, each card registered only when its gate passes (§15.8) | C2 UI, E1 activation, N1, F8 | possibly | Dependent: C2, E1, N1, F8 |
 | 8 | **A3-D Lifecycle (deferred)** | Archive (§15.5) and the account-deletion request flow (§15.6). Data export only after D-A3-13 | **dedicated implementation security review**; D-A3-8, D-A3-9; legal review for deletion; A3-A step-up | yes (definer functions, `archived_by`) | Requires implementation |
-| — | Before wider beta | Decide D-A3-17 (transfer step-up) and, if (a) or (b), add it | Regan's decision | no | Gate |
+| — | **Before wider beta (hard gate)** | Transfer step-up implemented and tested on top of the A3-A mechanism (D-A3-17, §15.9 gate 5) | A3-A merged | no | Gate |
 | — | Later, separate | Pixa plan and billing (D-A3-10), email change (D-A3-6), notification preferences (N1) | own workstreams | — | Deferred |
 
 Model guidance from the A2 pattern: Opus for A3-0, A3-A and A3-D (security and lifecycle). Sonnet for UI-only
@@ -759,7 +782,7 @@ stages unless Regan says otherwise.
 ```text
 TASK / BRANCH / BASE SHA: A3 Settings architecture / claude/project-thread-m3veky / b2f308b
 CHANGED FILES: docs/settings-a3-architecture.md (new). No other file.
-REVISION: 2, addressing ChatGPT audit round 1 (amendments 1–9 in §15; §14, §16, §17 revised)
+REVISION: 2 + re-audit gates (§15.9). Round 1 amendments 1–9 in §15; re-audit of revision 2: conditional pass
 VERIFIED REPO FACTS: §2 and §4 (A2-A and #71 merged; A2-B draft #76 re-stamped 20261205000000; V2-A merged;
   audit:read and business:delete unused; users.locale/time_zone unused; auth catch-all has no path allow-list)
 DECISIONS / RECOMMENDATIONS: D-A3-1..17 (§14), all pending Regan; audit R1 positions recorded beside each
