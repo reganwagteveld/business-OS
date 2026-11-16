@@ -10,9 +10,15 @@ import { ZoneFrame } from '../zone-frame';
 import { formatRangeTitle, shiftAnchor, todayIn, viewRange, weekStartFor, type ViewKind } from './calendar-math';
 import { EventDetail } from './event-detail';
 import { EventForm, type EventDraft } from './event-form';
+import { themeAccent } from './resource-labels';
+import { ResourceTimeline } from './resource-timeline';
+import { ResourceDirectory } from './resources';
 import { MonthGrid, TimeGrid } from './views';
 
 type Overlay = { kind: 'none' } | { kind: 'detail'; id: string } | { kind: 'new'; draft: EventDraft } | { kind: 'edit'; id: string } | { kind: 'calendar' };
+/** S2: the calendar views (S1), the resource schedule, and the resource directory. */
+type Section = 'calendar' | 'timeline' | 'resources';
+const SECTIONS: { id: Section; label: string }[] = [{ id: 'calendar', label: 'Calendar' }, { id: 'timeline', label: 'Resource schedule' }, { id: 'resources', label: 'Resources' }];
 const VIEWS: { id: ViewKind; label: string }[] = [{ id: 'day', label: 'Day' }, { id: 'week', label: 'Week' }, { id: 'month', label: 'Month' }];
 
 /**
@@ -64,6 +70,7 @@ export function SchedulingZone({ client, context, userLabel, now, onHome, onSwit
           <Schedule
             client={client} slug={slug} locale={locale} businessZone={businessZone} calendars={calendars!} now={now}
             canCreate={canCreate} canUpdate={can('scheduling:update')} canCancel={can('scheduling:cancel')} canManage={can('scheduling:manage_calendars')}
+            canManageResources={can('scheduling:manage_resources')}
             onCalendarsChanged={() => setGeneration((g) => g + 1)} onSessionEnded={onSessionEnded}
           />
         )}
@@ -72,10 +79,11 @@ export function SchedulingZone({ client, context, userLabel, now, onHome, onSwit
   );
 }
 
-function Schedule({ client, slug, locale, businessZone, calendars, now, canCreate, canUpdate, canCancel, canManage, onCalendarsChanged, onSessionEnded }: {
+function Schedule({ client, slug, locale, businessZone, calendars, now, canCreate, canUpdate, canCancel, canManage, canManageResources, onCalendarsChanged, onSessionEnded }: {
   client: SchedulingClient; slug: string; locale: string; businessZone: string; calendars: SchedulingCalendar[]; now?: number;
-  canCreate: boolean; canUpdate: boolean; canCancel: boolean; canManage: boolean; onCalendarsChanged: () => void; onSessionEnded: () => void;
+  canCreate: boolean; canUpdate: boolean; canCancel: boolean; canManage: boolean; canManageResources: boolean; onCalendarsChanged: () => void; onSessionEnded: () => void;
 }) {
+  const [section, setSection] = useState<Section>('calendar');
   const [calendarId, setCalendarId] = useState(() => (calendars.find((c) => c.isDefault) ?? calendars[0]!).id);
   const calendar = calendars.find((c) => c.id === calendarId) ?? calendars.find((c) => c.isDefault) ?? calendars[0]!;
   const zone = calendar.timeZone;
@@ -112,7 +120,20 @@ function Schedule({ client, slug, locale, businessZone, calendars, now, canCreat
       secondaryActions={canManage ? <Button variant="outline" onClick={() => setOverlay({ kind: 'calendar' })}>Add calendar</Button> : undefined}
     >
       <div className="space-y-4">
+        <div role="tablist" aria-label="Schedule sections" className="inline-flex rounded-lg border p-0.5">
+          {SECTIONS.map((s) => (
+            <button key={s.id} type="button" role="tab" aria-selected={section === s.id} onClick={() => setSection(s.id)}
+              className={`min-h-9 rounded-md px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring ${section === s.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+              {s.label}
+            </button>
+          ))}
+        </div>
         {notice ? <Alert tone="success" role="status"><AlertDescription>{notice}</AlertDescription></Alert> : null}
+        {section === 'resources' ? (
+          <ResourceDirectory client={client} slug={slug} locale={locale} timeZone={zone} canManage={canManageResources} onSessionEnded={onSessionEnded} />
+        ) : section === 'timeline' ? (
+          <ResourceTimeline client={client} slug={slug} locale={locale} timeZone={zone} now={now} refresh={tick} onOpen={(id) => setOverlay({ kind: 'detail', id })} onSessionEnded={onSessionEnded} />
+        ) : (<>
         <div className="flex flex-wrap items-center gap-3">
           {calendars.length > 1 ? (
             <label className="flex items-center gap-2 text-sm">
@@ -155,6 +176,7 @@ function Schedule({ client, slug, locale, businessZone, calendars, now, canCreat
             )}
           </div>
         )}
+        </>)}
       </div>
       {overlay.kind === 'detail' ? (
         <EventDetail client={client} slug={slug} id={overlay.id} calendars={calendars} locale={locale} canUpdate={canUpdate} canCancel={canCancel}
@@ -212,16 +234,6 @@ const ZONES: string[] = (() => {
     return [];
   }
 })();
-
-/** The theme's accent as a hex colour (the colour input needs one), read from the design tokens; none if unavailable. */
-function themeAccent(): string {
-  try {
-    const value = getComputedStyle(document.documentElement).getPropertyValue('--ring').trim();
-    return /^#[0-9a-f]{6}$/i.test(value) ? value : '';
-  } catch {
-    return '';
-  }
-}
 
 /** Adds a calendar: a name, an optional colour, and the zone its events are shown in (the business's by default). */
 function CalendarForm({ client, slug, defaultZone, onSaved, onClose, onSessionEnded }: {

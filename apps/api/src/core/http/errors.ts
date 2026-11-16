@@ -26,6 +26,8 @@ export type StateConflictCode =
   | 'start_date_locked'
   // Scheduling S1: the default calendar cannot be archived; cancelled events are read-only.
   | 'default_calendar' | 'not_scheduled'
+  // Scheduling S2 (docs/scheduling-s2.md §3): an inactive resource cannot be newly assigned.
+  | 'resource_inactive'
   // Finance F5 (docs/finance-documents-f5.md §7): generated documents.
   | 'not_eligible' | 'not_draft' | 'no_original' | 'version_limit' | 'document_too_large' | 'branding_logo_invalid'
   // Finance F6-2: a statement with more entries than one document holds (narrow the range).

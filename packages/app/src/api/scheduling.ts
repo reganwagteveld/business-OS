@@ -1,7 +1,8 @@
 import {
-  AvailabilityResponse, CalendarResponse, CreateCalendarRequest, CreateEventRequest, DefaultCalendarResponse, endpointPath, endpoints, EventResponse,
-  EventTransitionRequest, ListCalendarsResponse, ListEventsResponse, SchedulingConflictResponse, UpdateCalendarRequest, UpdateEventRequest,
-  type SchedulingCalendar, type SchedulingConflict, type SchedulingEvent,
+  AvailabilityResponse, CalendarResponse, CreateCalendarRequest, CreateEventRequest, CreateResourceRequest, DefaultCalendarResponse, endpointPath, endpoints,
+  EventResponse, EventTransitionRequest, ListCalendarsResponse, ListEventsResponse, ListResourcesResponse, ResourceAvailabilityResponse, ResourceResponse,
+  ResourceTransitionRequest, SchedulingConflictResponse, UpdateCalendarRequest, UpdateEventRequest, UpdateResourceRequest,
+  type SchedulingCalendar, type SchedulingConflict, type SchedulingEvent, type SchedulingResource, type SchedulingResourceType,
 } from '@business-os/contracts';
 import type { z } from 'zod';
 import type { AuthTransport } from './auth';
@@ -31,14 +32,34 @@ export interface SchedulingClient {
   initialiseDefault(slug: string, signal?: AbortSignal): Promise<Outcome<SchedulingCalendar>>;
   createCalendar(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<SchedulingCalendar>>;
   updateCalendar(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<SchedulingCalendar>>;
-  /** Every event overlapping [from, to) on one calendar (scheduled and cancelled), following the server's cursors. */
-  events(slug: string, query: { calendarId: string; from: string; to: string }, signal?: AbortSignal): Promise<Outcome<SchedulingEvent[]>>;
+  /**
+   * Every event overlapping [from, to) (scheduled and cancelled), following the server's cursors: on one
+   * calendar, or on every active calendar when none is named; optionally only those holding one resource.
+   */
+  events(slug: string, query: { calendarId?: string; resourceId?: string; from: string; to: string; status?: 'scheduled' | 'all' }, signal?: AbortSignal): Promise<Outcome<SchedulingEvent[]>>;
   event(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<EventWrite>>;
   createEvent(slug: string, input: unknown, signal?: AbortSignal): Promise<WriteOutcome>;
   updateEvent(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<WriteOutcome>;
   cancelEvent(slug: string, id: string, version: number, signal?: AbortSignal): Promise<Outcome<EventWrite>>;
   archiveEvent(slug: string, id: string, version: number, signal?: AbortSignal): Promise<Outcome<EventWrite>>;
   availability(slug: string, query: { calendarId: string; start: string; end: string; excludeEventId?: string }, signal?: AbortSignal): Promise<Outcome<{ available: boolean; conflicts: SchedulingConflict[] }>>;
+  // ---- S2 resources (docs/scheduling-s2.md) ----
+  /** One page of resources by name, and the cursor for the next. */
+  resources(slug: string, query: ResourceListQuery, signal?: AbortSignal): Promise<Outcome<{ resources: SchedulingResource[]; nextCursor: string | null }>>;
+  resource(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<ResourceWithBookings>>;
+  createResource(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<ResourceWithBookings>>;
+  updateResource(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<ResourceWithBookings>>;
+  archiveResource(slug: string, id: string, version: number, signal?: AbortSignal): Promise<Outcome<ResourceWithBookings>>;
+  restoreResource(slug: string, id: string, version: number, signal?: AbortSignal): Promise<Outcome<ResourceWithBookings>>;
+  /** Advisory: the booking itself is re-checked by the server. */
+  resourceAvailability(slug: string, query: { start: string; end: string; resourceIds?: string[]; calendarId?: string; excludeEventId?: string }, signal?: AbortSignal): Promise<Outcome<ResourceAvailabilityResult>>;
+}
+
+/** S2: a resource and how many upcoming bookings still hold it. */
+export interface ResourceWithBookings { resource: SchedulingResource; upcomingBookings: number }
+export type ResourceAvailabilityResult = z.infer<typeof ResourceAvailabilityResponse>;
+export interface ResourceListQuery {
+  q?: string; type?: SchedulingResourceType; status?: 'current' | 'active' | 'inactive' | 'archived' | 'all'; cursor?: string; limit?: number;
 }
 
 function fieldErrors(error: z.ZodError): Record<string, string> {
@@ -107,7 +128,7 @@ export function createSchedulingClient(baseUrl: string, transport: AuthTransport
       const all: SchedulingEvent[] = [];
       let cursor: string | undefined;
       for (let page = 0; page < MAX_EVENT_PAGES; page++) {
-        const raw = await http.request('GET', p(endpoints.listEvents.path, { slug }) + qs({ ...query, status: 'all', cursor }), undefined, signal);
+        const raw = await http.request('GET', p(endpoints.listEvents.path, { slug }) + qs({ ...query, status: query.status ?? 'all', cursor }), undefined, signal);
         const outcome = settle(raw, ListEventsResponse, (d) => d);
         if (outcome.kind !== 'ok') return outcome;
         all.push(...outcome.data.events);
@@ -139,6 +160,36 @@ export function createSchedulingClient(baseUrl: string, transport: AuthTransport
     },
     async availability(slug, query, signal) {
       return settle(await http.request('GET', p(endpoints.checkAvailability.path, { slug }) + qs(query), undefined, signal), AvailabilityResponse, (d) => d);
+    },
+    async resources(slug, query, signal) {
+      const raw = await http.request('GET', p(endpoints.listResources.path, { slug }) + qs({ ...query, limit: String(query.limit ?? 50) }), undefined, signal);
+      return settle(raw, ListResourcesResponse, (d) => d);
+    },
+    async resource(slug, id, signal) {
+      return settle(await http.request('GET', p(endpoints.getResource.path, { slug, resourceId: id }), undefined, signal), ResourceResponse, (d) => d);
+    },
+    async createResource(slug, input, signal) {
+      const checked = check(CreateResourceRequest, input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('POST', p(endpoints.createResource.path, { slug }), checked.data, signal), ResourceResponse, (d) => d);
+    },
+    async updateResource(slug, id, patch, signal) {
+      const checked = check(UpdateResourceRequest, patch);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('PATCH', p(endpoints.updateResource.path, { slug, resourceId: id }), checked.data, signal), ResourceResponse, (d) => d);
+    },
+    async archiveResource(slug, id, version, signal) {
+      const body = ResourceTransitionRequest.parse({ version });
+      return settle(await http.request('POST', p(endpoints.archiveResource.path, { slug, resourceId: id }), body, signal), ResourceResponse, (d) => d);
+    },
+    async restoreResource(slug, id, version, signal) {
+      const body = ResourceTransitionRequest.parse({ version });
+      return settle(await http.request('POST', p(endpoints.restoreResource.path, { slug, resourceId: id }), body, signal), ResourceResponse, (d) => d);
+    },
+    async resourceAvailability(slug, query, signal) {
+      const { resourceIds, ...rest } = query;
+      const raw = await http.request('GET', p(endpoints.resourceAvailability.path, { slug }) + qs({ ...rest, resourceIds: resourceIds?.join(',') }), undefined, signal);
+      return settle(raw, ResourceAvailabilityResponse, (d) => d);
     },
   };
 }

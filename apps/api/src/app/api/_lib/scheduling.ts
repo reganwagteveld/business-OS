@@ -13,6 +13,7 @@ const idOf = (name: string) => (params: Record<string, string>): string => {
 };
 export const calendarIdOf = idOf('calendarId');
 export const eventIdOf = idOf('eventId');
+export const resourceIdOf = idOf('resourceId');
 
 /** A write answers with the event, or 409 scheduling_conflict listing what it overlaps (nothing was written). */
 export const EventWriteResponse = z.union([EventResponse, SchedulingConflictResponse]);
