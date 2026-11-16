@@ -1,6 +1,6 @@
 # GS1: Global Search, architecture and implementation plan
 
-- **Status:** Revision 2, after Regan's conditional architecture approval on PR #75 (2026-11-16). Direction approved; owner decisions recorded in §13. Documentation only. Nothing here is built, migrated or deployed, and **GS1-A is not authorised yet**: it needs a separate go-ahead once this revision is reviewed.
+- **Status:** Approved architecture (docs only). Revision 3, after Regan's review and ChatGPT's final re-audit on PR #75 (2026-11-16). All owner decisions D-GS1-1..18 are recorded in §13. Documentation only. Nothing here is built, migrated or deployed, and **GS1-A is not authorised yet**: it needs a separate go-ahead once this revision is reviewed.
 - **Revision 2 changes:** exact branch SQL, index-compatible matching and no unindexed 2-character scans (§5.3, §9); statement-timeout mechanics and narrow 57014 handling (§5.5); no response cache, security-context invalidation and re-authorised recents (§10.4, §10.7); logging claims made conditional on a verification checklist, with a dated trigger for existing `?q=` lists (§6.8); enforceable server-side concurrency limits and measurement thresholds (§6.9); EXPLAIN as diagnostics, table-size and lock checks (§11.4, §12); verified navigation targets per type (§10.6); decisions, tests and sequencing updated (§12–§14).
 - **Scope:** record search across the Zones, delivered through the command palette already specified in [UI V2-A §8.2](ui/pixa-design-system-v2-a.md#82-command-palette-client-side-no-backend).
 - **Baseline:** `main` at `6bc707e` (UI V2-A merged). Open PRs checked: #68 (People P3-A leave, merging), #66 (Neon housekeeping), #53, #48. None of them adds or changes search; P3-A's leave tables are explicitly out of GS1 scope (§4.3).
@@ -753,14 +753,16 @@ Recorded from Regan's review on PR #75 (2026-11-16). This review approved the do
 | D-GS1-13 | Rate limiting | **Strengthened beyond (a)** | Server-side per-user (2) and per-business (8) concurrency slots in GS1-A; measured thresholds for a rate limit before public beta (§6.9) |
 | D-GS1-14 | Scope of GS1 | **(a)** §4.1 now, §4.2 in GS1-C; activities, communications and leave excluded | §4 |
 
-New proposals in revision 2, for Regan. ChatGPT's re-audit of `3809b1a` (conditional pass) recommended D-15 provisionally, D-16 conditionally (the conditions are now in §11.4), and D-17 and D-18 outright. That is a recommendation only; none of them is approved until Regan says so.
+Added in revision 2 and decided by Regan on 2026-11-16, accepting the recommendations from ChatGPT's re-audits, conditions included:
 
-| ID | Proposal | Recommendation |
-|---|---|---|
-| D-GS1-15 | Concurrency limits | 2 in-flight searches per user per business, 8 per business, `429` with `Retry-After: 1` (§6.9). Tune from measurements |
-| D-GS1-16 | Index build lock threshold | 2 s is a planning threshold. Under it: plain `CREATE INDEX` with `lock_timeout`, a controlled `statement_timeout`, a recovery plan, a re-measure under writes and separate production approval. Over it: a separately approved `CREATE INDEX CONCURRENTLY` step (§11.4) |
-| D-GS1-17 | Dates for D-GS1-7 | Verify by 2026-11-30; remediate before admission widens and by 2026-12-31 if needed (§6.8) |
-| D-GS1-18 | Phone matching | Not in GS1-A (no index-safe way today); digits-only expression index in GS1-D if wanted (§4.1) |
+| ID | Decision | Outcome | Conditions and where they are handled |
+|---|---|---|---|
+| D-GS1-15 | Concurrency limits | **Provisionally approved:** 2 in-flight searches per user per business, 8 per business, `429 search_busy` with `Retry-After: 1` | Subject to benchmarking; tuned from measurements (§6.9, §11.4) |
+| D-GS1-16 | Index build lock threshold | **Approved as a planning threshold:** 2 s per table at production size | Not a safety guarantee. Under it: plain `CREATE INDEX` only with the §11.4 safeguards (runner transaction behaviour confirmed, `lock_timeout`, controlled `statement_timeout`, recovery plan, re-measure under writes) and a separate production migration approval. Over it: a separately approved `CREATE INDEX CONCURRENTLY` step |
+| D-GS1-17 | Dates for D-GS1-7 | **Approved:** check list-URL logging (L1/L2) by 2026-11-30 | If query strings are retained, remediate before invite-only admission widens and no later than 2026-12-31 (§6.8) |
+| D-GS1-18 | Phone matching | **Deferred to GS1-D** | Needs its own index and review (§4.1) |
+
+These decisions settle the architecture document only. GS1-A implementation, benchmarks that create infrastructure, index creation, migrations and turning on live search each still need their own explicit approval.
 
 ## 14. Test strategy
 
