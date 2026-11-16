@@ -788,7 +788,7 @@ businesses, roles OWNER / MANAGER / MEMBER).
 
 | Workstream | What W1 assumes / leaves to it | Duplication avoided |
 |---|---|---|
-| **F8** banking (#77) | Payments are recorded by people today; F8 proposes bank import and matching to those payments. W1 stops at "payment recorded". | No bank, match or reconciliation design here. |
+| **F8** banking (#77, merged to `main` during this review as `docs/finance-banking-f8.md`) | Payments are recorded by people today; F8 proposes bank import and matching to those payments. W1 stops at "payment recorded". | No bank, match or reconciliation design here. |
 | **GS1** search (#75) | Back-link chips (§11) are navigation; finding records across Zones is GS1. | No search index or palette proposal. |
 | **R2** dashboards (merged #62) | WF-7 adds metrics through the R1 registry; dashboards compose them. | No dashboard layout proposal. |
 | **A2 / A2-B** (#70, #76) | Member removal clears owners/assignees (existing); orchestration routes reuse role → key mapping unchanged. | No RBAC change; multi-key checks use existing keys only. |
