@@ -19,7 +19,7 @@ import { Decimal, type AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { isUniqueViolation, RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
 import { checkCurrency, formatPlain } from './money';
-import { activeTaxRate } from './settings';
+import { activeTaxRate, loadSettings } from './settings';
 import { businessProfile } from './shared';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -277,4 +277,66 @@ export function lineDefaultsOf(
     unitPrice: item.currencyCode === document.currencyCode ? item.unitPrice : null,
     taxRateId: item.taxMode === 'RATE' ? item.taxRateId : item.taxMode === 'BUSINESS_DEFAULT' ? document.defaultTaxRateId : null,
   };
+}
+
+// ---- F7-B: catalog items on draft quote and invoice lines (docs/finance-catalog-f7b.md) ----------
+
+/** A draft line as the quote and invoice endpoints accept it: a manual line, or one that names a catalog item. */
+export type DraftLineInput = {
+  catalogItemId?: string; description?: string; quantity?: string; unitPrice?: string; discountAmount?: string; taxRateId?: string | null;
+};
+export type ResolvedLine = { description: string; quantity: string; unitPrice: string; discountAmount?: string; taxRateId?: string | null };
+
+/**
+ * Turns draft lines that name a catalog item into ordinary lines, before the document prices them.
+ * Runs in the caller's unit of work, after the document lock (lock order: document, then catalog
+ * items). The items are read `FOR SHARE` in id order, so an item cannot be archived, deactivated or
+ * repriced between this check and the commit: a concurrent change either commits first (and is seen
+ * here) or waits for this transaction.
+ *
+ * Rules (D-F7B-1..5): only an item of this business (RLS; another business's id is the same 400 as a
+ * missing one), only an ACTIVE item that is not archived, the item's price only when the document is
+ * in the item's currency (never converted; otherwise the line must carry its own price), the tax from
+ * the item (its rate, the business default rate now, or none). Every field the client sent wins. The
+ * item id is not kept: the result is a plain line and the existing document rules apply unchanged
+ * (priceLines refuses an archived tax rate that the draft did not already use).
+ */
+export async function resolveCatalogLines(db: AppTenantDb, lines: DraftLineInput[], currencyCode: string): Promise<{ lines: ResolvedLine[]; catalogLines: number }> {
+  const ids = [...new Set(lines.map((l) => l.catalogItemId).filter((v): v is string => !!v))].sort();
+  if (ids.length === 0) return { lines: lines as ResolvedLine[], catalogLines: 0 };
+  // RLS limits this to the current business. Locked in id order so that two drafts naming the same items never deadlock.
+  await db.$queryRaw`
+    SELECT id::text FROM finance_catalog_items
+    WHERE id = ANY(${ids}::uuid[]) AND business_id = nullif(current_setting('app.business_id', true), '')::uuid
+    ORDER BY id FOR SHARE`;
+  const rows = (await db.financeCatalogItem.findMany({ where: { id: { in: ids } }, select: itemSelect })) as ItemRow[];
+  const byId = new Map(rows.map((r) => [r.id, itemDto(r)]));
+  const defaultTaxRateId = rows.some((r) => r.taxMode === 'BUSINESS_DEFAULT')
+    ? (await loadSettings(db)).defaultTaxRateId
+    : null;
+  let catalogLines = 0;
+  const resolved = lines.map((line): ResolvedLine => {
+    if (!line.catalogItemId) return line as ResolvedLine;
+    const item = byId.get(line.catalogItemId);
+    if (!item) throw new RuleViolationError('invalid_catalog_item', 'Choose a product or service of this business.');
+    if (item.archivedAt !== null) throw new StateConflictError('archived_reference');
+    if (item.status !== 'ACTIVE') throw new StateConflictError('catalog_item_inactive');
+    const defaults = lineDefaultsOf(item, { currencyCode, defaultTaxRateId });
+    const unitPrice = line.unitPrice ?? defaults.unitPrice;
+    if (unitPrice === null) {
+      throw item.unitPrice !== null
+        ? new RuleViolationError('catalog_currency_mismatch', `The price of “${item.name}” is in ${item.currencyCode}. Enter a price in ${currencyCode}.`)
+        : new RuleViolationError('catalog_price_required', `“${item.name}” has no default price. Enter a price.`);
+    }
+    catalogLines += 1;
+    const { catalogItemId: _, ...rest } = line;
+    return {
+      ...rest,
+      description: line.description ?? defaults.description,
+      quantity: line.quantity ?? '1',
+      unitPrice,
+      taxRateId: line.taxRateId !== undefined ? line.taxRateId : defaults.taxRateId,
+    };
+  });
+  return { lines: resolved, catalogLines };
 }
