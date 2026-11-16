@@ -22,7 +22,7 @@ import { canOpen, HOME, resolveNavigation, type ResolvedNavigation, type ShellRo
 import { useLoad } from './zones/use-load';
 import type { BusinessContext } from './api/tenancy';
 import type { CurrentUser } from '@business-os/contracts';
-import { CustomerZone } from './zones/customers/customer-zone';
+import { CustomerZone, customerTarget } from './zones/customers/customer-zone';
 import { PeopleZone } from './zones/people/people-zone';
 import { ProjectsZone } from './zones/projects/projects-zone';
 import { FinanceZone } from './zones/finance/finance-zone';
@@ -231,7 +231,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     screen = (
       <CustomerZone
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
-        client={customers} context={active} userLabel={userLabel} initialCustomerId={target} initialAction={intent}
+        client={customers} context={active} userLabel={userLabel} initialCustomerId={customerTarget(target).customerId} initialContactId={customerTarget(target).contactId} initialAction={intent}
         projects={canReadProjects ? { client: projects, onOpen: (id) => open({ zone: 'projects', target: id }) } : undefined}
         finance={canReadFinance ? { client: finance, onOpen: (target) => open({ zone: 'finance', child: target.startsWith('quote:') ? 'quotes' : target.startsWith('payment:') ? 'payments' : target.startsWith('statement:') ? 'receivables' : 'invoices', target }) } : undefined}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}

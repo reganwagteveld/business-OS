@@ -10,6 +10,7 @@ import { KindBadge, StatusBadge } from './directory';
 import { addressLines, formatWhen } from './format';
 import { Breakable, linkClass, safeHref, telHref } from './links';
 import { ManageContacts } from './manage-contacts';
+import type { ContactFocus } from './contact-entry';
 import { ActivityComposer } from './activity-composer';
 import { ActivityTimeline } from '../activity/activity-timeline';
 import { ConversationHistory } from '../activity/conversation-history';
@@ -44,8 +45,10 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  * One customer's workspace. Everything shown is a real record from the API; contacts and activity
  * are managed through the existing tenant-scoped API. Archive asks first and restore is one click.
  */
-export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, canLogActivity, canReadMessages = false, projects, finance, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
+export function CustomerDetail({ client, slug, id, contact, locale, timeZone, canWrite, canLogActivity, canReadMessages = false, projects, finance, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
   client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
+  /** A contact to mark in the contacts panel (the page was opened from a `contact:<id>` target). */
+  contact?: ContactFocus;
   /** communications:read: show the conversation history panel. */
   canReadMessages?: boolean;
   /** The customer's projects, shown only to people who may read projects (the server checks again). */
@@ -79,7 +82,7 @@ export function CustomerDetail({ client, slug, id, locale, timeZone, canWrite, c
         // place instead of remounting it, so open drafts below are never thrown away.
         <Loaded
           key={shown.id}
-          customer={shown} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages}
+          customer={shown} contact={contact} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages}
           names={names} projects={projects} finance={finance} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
         />
       ) : null}
@@ -91,8 +94,8 @@ export interface ProjectsLink { client: ProjectsClient; onOpen: (projectId: stri
 /** The customer's finance panel, passed only to people who hold finance:read. `onOpen` takes `invoice:<id>`, `quote:<id>` or `payment:<id>`. */
 export interface FinanceLink { client: FinanceClient; onOpen: (target: string) => void }
 
-function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActivity, canReadMessages, names, projects, finance, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
-  customer: Customer; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean; canReadMessages: boolean;
+function Loaded({ customer, contact, client, slug, locale, timeZone, canWrite, canLogActivity, canReadMessages, names, projects, finance, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
+  customer: Customer; contact?: ContactFocus; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean; canReadMessages: boolean;
   names: Map<string, string> | null; projects?: ProjectsLink; finance?: FinanceLink; onEdit: (c: Customer) => void; onChanged: () => void;
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
@@ -176,7 +179,7 @@ function Loaded({ customer, client, slug, locale, timeZone, canWrite, canLogActi
           </Panel>
         </div>
         <div className="self-start lg:col-start-3 lg:row-span-2 lg:row-start-1">
-          <ManageContacts customer={customer} client={client} slug={slug} canWrite={canWrite} onCustomerChanged={onChanged} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
+          <ManageContacts customer={customer} focus={contact} client={client} slug={slug} canWrite={canWrite} onCustomerChanged={onChanged} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
         </div>
         <div className="lg:col-span-2 lg:row-start-2">
           <Panel title="Notes">
