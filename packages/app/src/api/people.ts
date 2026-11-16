@@ -1,5 +1,5 @@
 import {
-  ChangeEmploymentStatusRequest, CreateDepartmentRequest, CreateEmployeeRequest, CreateLocationRequest, DepartmentResponse, LocationResponse,
+  ChangeDepartmentRequest, ChangeEmploymentStatusRequest, ChangeManagerRequest, CreateDepartmentRequest, CreateEmployeeRequest, CreateLocationRequest, DepartmentResponse, LocationResponse,
   UpdateDepartmentRequest, UpdateLocationRequest, EmployeeHistoryResponse, EmployeeResponse, endpointPath, endpoints, ListDepartmentsResponse,
   ListEmployeesResponse, ListLocationsResponse, PersonalDetailsResponse, UpdateEmployeeRequest, UpdatePersonalDetailsRequest,
   type Department, type Employee, type EmployeePersonalDetails, type EmploymentStatus, type Location,
@@ -34,6 +34,10 @@ export interface PeopleClient {
   /** `patch` must include the `version` the edit was based on; a stale one comes back as conflict `stale`. */
   update(slug: string, id: string, patch: unknown, signal?: AbortSignal): Promise<Outcome<Employee>>;
   changeStatus(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Employee>>;
+  /** `{ departmentId | null, effectiveDate?, version }`: closes the open assignment and opens a new one (people:manage). */
+  changeDepartment(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Employee>>;
+  /** `{ managerEmployeeId | null, effectiveDate?, version }`: the server refuses self, terminated managers and cycles. */
+  changeManager(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Employee>>;
   history(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<EmployeeHistory>>;
   /** Needs people:read_sensitive; without it the server answers forbidden. */
   personal(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<EmployeePersonalDetails>>;
@@ -124,6 +128,16 @@ export function createPeopleClient(baseUrl: string, transport: AuthTransport, fe
       const checked = ChangeEmploymentStatusRequest.safeParse(input);
       if (!checked.success) return invalid(checked.error);
       return settle(await http.request('POST', emp(endpoints.changeEmploymentStatus.path, slug, id), checked.data, signal), EmployeeResponse, (d) => d.employee);
+    },
+    async changeDepartment(slug, id, input, signal) {
+      const checked = ChangeDepartmentRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('POST', emp(endpoints.changeEmployeeDepartment.path, slug, id), checked.data, signal), EmployeeResponse, (d) => d.employee);
+    },
+    async changeManager(slug, id, input, signal) {
+      const checked = ChangeManagerRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('POST', emp(endpoints.changeEmployeeManager.path, slug, id), checked.data, signal), EmployeeResponse, (d) => d.employee);
     },
     async history(slug, id, signal) {
       return settle(await http.request('GET', emp(endpoints.getEmployeeHistory.path, slug, id), undefined, signal), EmployeeHistoryResponse, (d) => d);

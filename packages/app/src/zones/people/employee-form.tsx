@@ -6,23 +6,24 @@ import type { PeopleClient } from '../../api/people';
 import type { Outcome } from '../../api/tenancy';
 import { ZonePage } from '../../shell/zone-page';
 import { EMPLOYMENT_TYPES, isDay } from './format';
+import { ManagerPicker } from './manager-picker';
 
 interface Values {
   givenName: string; familyName: string; preferredName: string; employeeNumber: string; jobTitle: string; employmentType: string;
-  workEmail: string; workPhone: string; locationId: string; userId: string; startDate: string; status: string; departmentId: string;
+  workEmail: string; workPhone: string; locationId: string; userId: string; startDate: string; status: string; departmentId: string; managerEmployeeId: string;
 }
 type Key = keyof Values;
 const LABEL: Record<Key, string> = {
   givenName: 'given name', familyName: 'family name', preferredName: 'preferred name', employeeNumber: 'employee number', jobTitle: 'job title',
   employmentType: 'employment type', workEmail: 'work email', workPhone: 'work phone', locationId: 'location', userId: 'linked team member',
-  startDate: 'start date', status: 'status', departmentId: 'department',
+  startDate: 'start date', status: 'status', departmentId: 'department', managerEmployeeId: 'manager',
 };
 const EDIT_KEYS: Key[] = ['givenName', 'familyName', 'preferredName', 'employeeNumber', 'jobTitle', 'employmentType', 'workEmail', 'workPhone', 'locationId', 'userId', 'startDate'];
 
 const valuesOf = (e: Employee | undefined): Values => ({
   givenName: e?.givenName ?? '', familyName: e?.familyName ?? '', preferredName: e?.preferredName ?? '', employeeNumber: e?.employeeNumber ?? '',
   jobTitle: e?.jobTitle ?? '', employmentType: e?.employmentType ?? '', workEmail: e?.workEmail ?? '', workPhone: e?.workPhone ?? '',
-  locationId: e?.location?.id ?? '', userId: e?.userId ?? '', startDate: e?.startDate ?? '', status: 'PENDING', departmentId: '',
+  locationId: e?.location?.id ?? '', userId: e?.userId ?? '', startDate: e?.startDate ?? '', status: 'PENDING', departmentId: '', managerEmployeeId: '',
 });
 /** What goes on the wire: null clears an optional value; the contract trims text. */
 const wire = (v: string): string | null => (v.trim() === '' ? null : v.trim());
@@ -30,6 +31,7 @@ const wire = (v: string): string | null => (v.trim() === '' ? null : v.trim());
 /** Server reasons mapped to the field they belong to, so the message sits where the person can fix it. */
 const FIELD_OF: Record<string, { key: Key; message: string }> = {
   duplicate_employee_number: { key: 'employeeNumber', message: 'Another employee already has this number.' },
+  invalid_manager: { key: 'managerEmployeeId', message: 'That person cannot be a manager. Choose someone who has not been terminated.' },
   user_already_linked: { key: 'userId', message: 'This team member is already linked to another employee.' },
 };
 
@@ -198,6 +200,11 @@ export function EmployeeForm({ client, slug, employee, departments, locations, m
                   {(departments ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </Select>
               )}</Field>
+            ) : null}
+            {!editing ? (
+              <div className="sm:col-span-2">
+                <ManagerPicker client={client} slug={slug} value={values.managerEmployeeId} onChange={(id) => set('managerEmployeeId', id)} error={errors.managerEmployeeId} />
+              </div>
             ) : null}
             <Field label="Location" error={errors.locationId}>{(c) => (
               <Select {...c} value={values.locationId} onChange={(e) => set('locationId', e.target.value)}>

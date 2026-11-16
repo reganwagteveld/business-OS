@@ -82,7 +82,7 @@ export function PeopleZone({ client, customers, context, userLabel, initialEmplo
         {view.name === 'detail' ? (
           <Profile
             key={view.id}
-            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} members={pick(team)} canManage={canManage} canReadSensitive={canReadSensitive}
+            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} members={pick(team)} departments={pick(departments)} canManage={canManage} canReadSensitive={canReadSensitive}
             onBack={() => guard.leave(() => go({ name: 'list' }))} onEdit={(employee) => go({ name: 'edit', employee })}
             onDirtyChange={markDraft.bind(null, 'personal')} onChanged={setNotice} onSessionEnded={onSessionEnded}
           />

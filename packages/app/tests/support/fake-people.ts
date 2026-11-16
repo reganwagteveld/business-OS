@@ -7,7 +7,7 @@
  * and contracts sit in front of it.
  */
 import {
-  ChangeEmploymentStatusRequest, CreateDepartmentRequest, CreateEmployeeRequest, CreateLocationRequest, ListEmployeesQuery, UpdateDepartmentRequest,
+  ChangeDepartmentRequest, ChangeEmploymentStatusRequest, ChangeManagerRequest, CreateDepartmentRequest, CreateEmployeeRequest, CreateLocationRequest, ListEmployeesQuery, UpdateDepartmentRequest,
   UpdateEmployeeRequest, UpdateLocationRequest, UpdatePersonalDetailsRequest,
   type Department, type Employee, type EmployeePersonalDetails, type EmploymentStatus, type Location,
 } from '@business-os/contracts';
@@ -19,11 +19,13 @@ export interface FakePeople {
   history: Record<string, { fromStatus: EmploymentStatus | null; toStatus: EmploymentStatus; effectiveDate: string; reason: string | null }[]>;
   /** The caller's permission keys, as the server would see them. */
   permissions: string[];
+  /** Open and closed assignment rows, oldest first, as the history endpoint returns them. */
+  assignments: Record<string, { departments: { id: string; department: { id: string; name: string; archived: boolean }; startsOn: string; endsOn: string | null }[]; managers: { id: string; manager: { id: string; name: string; status: EmploymentStatus }; startsOn: string; endsOn: string | null }[] }>;
   /** Employee ids that have direct reports (termination is refused). */
   withReports: string[];
 }
 export const emptyPeople = (permissions: string[] = ['people:read', 'people:manage', 'people:configure', 'people:read_sensitive']): FakePeople =>
-  ({ employees: [], departments: [], locations: [], personal: {}, history: {}, permissions, withReports: [] });
+  ({ employees: [], departments: [], locations: [], personal: {}, history: {}, assignments: {}, permissions, withReports: [] });
 
 const NOW = '2026-11-14T03:00:00.000Z';
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -170,7 +172,7 @@ export function withPeople(api: ReturnType<typeof createFakeApi>, data: Record<s
     const e = s.employees.find((x) => x.id === id);
     if (!e) return json(404, { error: 'not_found' });
     if (sub === 'history') {
-      return json(200, { status: (s.history[id] ?? []).map((h) => ({ id: randomUUID(), ...h, reason: has('people:read_sensitive') ? h.reason : null, recordedById: null, recordedAt: NOW })), departments: [], managers: [] });
+      return json(200, { status: (s.history[id] ?? []).map((h) => ({ id: randomUUID(), ...h, reason: has('people:read_sensitive') ? h.reason : null, recordedById: null, recordedAt: NOW })), departments: (s.assignments[id]?.departments ?? []).map((d) => ({ ...d, createdById: null, endedById: null })), managers: (s.assignments[id]?.managers ?? []).map((m) => ({ ...m, createdById: null, endedById: null })) });
     }
     if (sub === 'personal') {
       if (!has('people:read_sensitive')) return json(403, { error: 'forbidden' });
@@ -184,6 +186,37 @@ export function withPeople(api: ReturnType<typeof createFakeApi>, data: Record<s
       void _v;
       s.personal[id] = { ...cur, ...patch, version: cur.version + 1, updatedAt: tick() } as EmployeePersonalDetails;
       return json(200, { personalDetails: s.personal[id] });
+    }
+    if (sub === 'department' || sub === 'manager') {
+      if (!has('people:manage')) return json(403, { error: 'forbidden' });
+      const parsed = (sub === 'department' ? ChangeDepartmentRequest : ChangeManagerRequest).safeParse(body);
+      if (!parsed.success) return json(400, { error: 'invalid_input' });
+      const input = parsed.data as { departmentId?: string | null; managerEmployeeId?: string | null; effectiveDate?: string; version: number };
+      if (input.version !== e.version) return json(409, { error: 'stale' });
+      if (e.status === 'TERMINATED') return json(409, { error: 'terminated' });
+      if (input.effectiveDate && input.effectiveDate > '2026-11-16') return json(400, { error: 'future_effective_date', message: 'The effective date cannot be in the future.' });
+      const day = input.effectiveDate ?? '2026-11-16';
+      const book = (s.assignments[id] ??= { departments: [], managers: [] });
+      if (sub === 'department') {
+        const dept = input.departmentId ? s.departments.find((x) => x.id === input.departmentId) : undefined;
+        if (input.departmentId && !dept) return json(404, { error: 'not_found' });
+        if (dept?.archivedAt) return json(409, { error: 'archived_reference' });
+        if ((e.department?.id ?? null) === (input.departmentId ?? null)) return json(200, { employee: e });
+        for (const r of book.departments) if (!r.endsOn) r.endsOn = day;
+        if (dept) book.departments.push({ id: randomUUID(), department: { id: dept.id, name: dept.name, archived: false }, startsOn: day, endsOn: null });
+        e.department = dept ? { id: dept.id, name: dept.name, archived: false } : null;
+      } else {
+        const mgr = input.managerEmployeeId ? s.employees.find((x) => x.id === input.managerEmployeeId) : undefined;
+        if (input.managerEmployeeId && !mgr) return json(404, { error: 'not_found' });
+        if (mgr && (mgr.id === id || mgr.status === 'TERMINATED')) return json(409, { error: 'invalid_manager' });
+        for (let up = mgr; up; up = up.manager ? s.employees.find((x) => x.id === up!.manager!.id) : undefined) if (up.id === id) return json(409, { error: 'manager_cycle' });
+        if ((e.manager?.id ?? null) === (input.managerEmployeeId ?? null)) return json(200, { employee: e });
+        for (const r of book.managers) if (!r.endsOn) r.endsOn = day;
+        if (mgr) book.managers.push({ id: randomUUID(), manager: { id: mgr.id, name: mgr.displayName, status: mgr.status }, startsOn: day, endsOn: null });
+        e.manager = mgr ? { id: mgr.id, name: mgr.displayName, status: mgr.status } : null;
+      }
+      Object.assign(e, { version: e.version + 1, updatedAt: tick() });
+      return json(200, { employee: e });
     }
     if (sub === 'status') {
       if (!has('people:manage')) return json(403, { error: 'forbidden' });

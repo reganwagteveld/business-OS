@@ -480,3 +480,142 @@ describe('the app: navigation into People', () => {
     expect(screen.queryByRole('button', { name: 'Open the People Zone' })).toBeNull();
   });
 });
+
+describe('department and manager assignments', () => {
+  const setupTeam = () => {
+    const sales = department({ name: 'Sales' });
+    const ops = department({ name: 'Operations' });
+    const boss = employee({ givenName: 'Bea', familyName: 'Boss' });
+    const sam = employee({ givenName: 'Sam', familyName: 'Staff', department: { id: ops.id, name: 'Operations', archived: false } });
+    const gone = employee({ givenName: 'Gus', familyName: 'Gone', status: 'TERMINATED' });
+    return { sales, ops, boss, sam, gone };
+  };
+  const openProfile = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
+    await user.click(await screen.findByRole('button', { name }));
+    await heading(new RegExp(name));
+  };
+
+  it('moves an employee to another department with an effective date and shows the history', async () => {
+    const { sales, ops, sam } = setupTeam();
+    const { api, user } = setup({ people: { departments: [sales, ops], employees: [sam] } });
+    await openProfile(user, 'Sam Staff');
+    await user.click(screen.getByRole('button', { name: 'Change department' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText('Department'), sales.id);
+    await user.type(within(dialog).getByLabelText('Effective date'), '2026-11-10');
+    await user.click(within(dialog).getByRole('button', { name: 'Save department' }));
+    expect(await screen.findByText("Sam Staff's department was updated.")).toBeTruthy();
+    expect(api.callsTo(/POST .*\/department$/)[0]!.body).toEqual({ departmentId: sales.id, effectiveDate: '2026-11-10', version: 1 });
+    expect(await screen.findByText(/Department: Sales/)).toBeTruthy();
+    expect(within(screen.getByText('Department and reporting history').closest('section')!).getByText(/Department: Sales/).parentElement!.textContent).toContain('to now');
+  });
+
+  it('clears a department, and refuses a stale version or an archived department with an explanation', async () => {
+    const { sales, ops, sam } = setupTeam();
+    const { api, user } = setup({ people: { departments: [sales, ops], employees: [sam] } });
+    await openProfile(user, 'Sam Staff');
+    await user.click(screen.getByRole('button', { name: 'Change department' }));
+    let dialog = await screen.findByRole('dialog');
+    api.people.alpha!.employees[0]!.version = 4; // someone else saved first
+    await user.selectOptions(within(dialog).getByLabelText('Department'), '');
+    await user.click(within(dialog).getByRole('button', { name: 'Save department' }));
+    expect(await within(dialog).findByText(/Someone else changed this employee/)).toBeTruthy();
+    expect(api.people.alpha!.employees[0]!.department?.name).toBe('Operations');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await user.click(await screen.findByRole('button', { name: 'Change department' }));
+    dialog = await screen.findByRole('dialog');
+    api.people.alpha!.employees[0]!.version = 1;
+    sales.archivedAt = '2026-11-15T00:00:00.000Z'; // archived after the choices loaded
+    await user.selectOptions(within(dialog).getByLabelText('Department'), sales.id);
+    await user.click(within(dialog).getByRole('button', { name: 'Save department' }));
+    expect(await within(dialog).findByText(/That department has been archived/)).toBeTruthy();
+  });
+
+  it('sets a manager from a server-side search, never offering the employee or terminated people', async () => {
+    const { boss, sam, gone } = setupTeam();
+    const { api, user } = setup({ people: { employees: [boss, sam, gone] } });
+    await openProfile(user, 'Sam Staff');
+    await user.click(screen.getByRole('button', { name: 'Change manager' }));
+    const dialog = await screen.findByRole('dialog');
+    const select = await within(dialog).findByLabelText('Reports to');
+    await waitFor(() => expect(within(select).queryByRole('option', { name: /Bea Boss/ })).toBeTruthy());
+    expect(within(select).queryByRole('option', { name: /Sam Staff/ })).toBeNull();
+    expect(within(select).queryByRole('option', { name: /Gus Gone/ })).toBeNull();
+    await user.type(within(dialog).getByLabelText('Find a person'), 'Bea');
+    await waitFor(() => expect(api.callsTo(/GET .*\/people\/employees$/).some((c) => c.query.q === 'Bea' && c.query.limit === '25')).toBe(true));
+    await user.selectOptions(select, boss.id);
+    await user.click(within(dialog).getByRole('button', { name: 'Save manager' }));
+    expect(await screen.findByText("Sam Staff's manager was updated.")).toBeTruthy();
+    expect(api.callsTo(/POST .*\/manager$/)[0]!.body).toEqual({ managerEmployeeId: boss.id, version: 1 });
+    expect(await screen.findByText(/Reports to: Bea Boss/)).toBeTruthy();
+  });
+
+  it('a reporting-line cycle, a terminated manager and a self-assignment are refused by the server and explained', async () => {
+    const { boss, sam, gone } = setupTeam();
+    boss.manager = { id: sam.id, name: sam.displayName, status: 'ACTIVE' }; // Bea already reports to Sam
+    const { api, user } = setup({ people: { employees: [boss, sam, gone] } });
+    await openProfile(user, 'Sam Staff');
+    await user.click(screen.getByRole('button', { name: 'Change manager' }));
+    const dialog = await screen.findByRole('dialog');
+    const select = await within(dialog).findByLabelText('Reports to');
+    await waitFor(() => expect(within(select).queryByRole('option', { name: /Bea Boss/ })).toBeTruthy());
+    await user.selectOptions(select, boss.id);
+    await user.click(within(dialog).getByRole('button', { name: 'Save manager' }));
+    expect(await within(dialog).findByText(/reporting loop/)).toBeTruthy();
+    expect(api.people.alpha!.employees.find((x) => x.id === sam.id)!.manager).toBeNull();
+    // the client never offers these, but a forged request is refused by the server as well
+    const client = createPeopleClient(BASE, { kind: 'cookie' }, api.fetch);
+    expect((await client.changeManager('alpha', sam.id, { managerEmployeeId: sam.id, version: 1 })).kind).toBe('conflict');
+    expect((await client.changeManager('alpha', sam.id, { managerEmployeeId: gone.id, version: 1 })).kind).toBe('conflict');
+  });
+
+  it('a future effective date is refused with the server\'s message', async () => {
+    const { sales, sam } = setupTeam();
+    const { user } = setup({ people: { departments: [sales], employees: [sam] } });
+    await openProfile(user, 'Sam Staff');
+    await user.click(screen.getByRole('button', { name: 'Change department' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText('Department'), sales.id);
+    await user.type(within(dialog).getByLabelText('Effective date'), '2030-01-01');
+    await user.click(within(dialog).getByRole('button', { name: 'Save department' }));
+    expect(await within(dialog).findByText('The effective date cannot be in the future.')).toBeTruthy();
+  });
+
+  it('can be chosen when adding an employee', async () => {
+    const { boss, sales } = setupTeam();
+    const { api, user } = setup({ people: { employees: [boss], departments: [sales] } });
+    await user.click((await screen.findAllByRole('button', { name: 'Add employee' }))[0]!);
+    await user.type(await screen.findByLabelText('Given name'), 'New');
+    await user.type(screen.getByLabelText('Family name'), 'Hire');
+    await user.selectOptions(screen.getByLabelText('Department'), sales.id);
+    const select = screen.getByLabelText('Reports to');
+    await waitFor(() => expect(within(select).queryByRole('option', { name: /Bea Boss/ })).toBeTruthy());
+    await user.selectOptions(select, boss.id);
+    await user.click(screen.getByRole('button', { name: 'Add employee' }));
+    await heading(/New Hire/);
+    expect(api.callsTo(/POST .*\/people\/employees$/)[0]!.body).toMatchObject({ departmentId: sales.id, managerEmployeeId: boss.id });
+  });
+
+  it('read-only people have no change actions, and the API refuses a forged change', async () => {
+    const { sales, sam, boss } = setupTeam();
+    const { api, user } = setup({ permissions: READ, people: { departments: [sales], employees: [sam, boss] } });
+    await openProfile(user, 'Sam Staff');
+    expect(screen.queryByRole('button', { name: 'Change department' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Change manager' })).toBeNull();
+    const client = createPeopleClient(BASE, { kind: 'cookie' }, api.fetch);
+    expect((await client.changeDepartment('alpha', sam.id, { departmentId: sales.id, version: 1 })).kind).toBe('forbidden');
+    expect((await client.changeManager('alpha', sam.id, { managerEmployeeId: boss.id, version: 1 })).kind).toBe('forbidden');
+  });
+
+  it('terminated employees offer no assignment changes, and another business\'s ids are not found', async () => {
+    const { sam, gone } = setupTeam();
+    const theirs = employee({ givenName: 'Beta', familyName: 'Secret' });
+    const { api, user } = setup({ people: { employees: [sam, gone] }, extra: { beta: { ...emptyPeople(), employees: [theirs] } } });
+    await user.selectOptions(await screen.findByLabelText('Status'), 'TERMINATED');
+    await openProfile(user, 'Gus Gone');
+    expect(screen.queryByRole('button', { name: 'Change department' })).toBeNull();
+    const client = createPeopleClient(BASE, { kind: 'cookie' }, api.fetch);
+    expect((await client.changeDepartment('alpha', theirs.id, { departmentId: null, version: 1 })).kind).toBe('not_found');
+    expect((await client.changeManager('alpha', sam.id, { managerEmployeeId: theirs.id, version: 1 })).kind).toBe('not_found');
+  });
+});

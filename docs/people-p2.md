@@ -13,6 +13,7 @@ described in `docs/people-data-model.md`. The People Zone is now `built` in the 
 | Create | Add employee | Field-level validation, values kept on failure, one request per submit, duplicate employee number reported on its field, success opens the new profile. Creating an employee never creates a login, invitation or membership. |
 | Edit | Edit | Sends only changed fields plus the version. A concurrent change returns `stale`: nothing is saved, the person's edits are kept, the newer record is loaded underneath and the person is told. Start date is editable only while PENDING. Terminated employees cannot be edited. |
 | Status | Action buttons and confirmation dialog | Only the P1 transitions are offered (§4). The dialog explains consequences, takes an optional effective date and reason, and the server's refusal reasons are shown in words. |
+| Assignments | Profile: Change department, Change manager | Effective-dated change through the P1 endpoints, using the version the person saw. Department from active departments; manager chosen by a server-side search (25 at a time), excluding the employee and terminated people. The server still refuses self, terminated managers, archived departments, reporting-line cycles, stale versions and future dates, and each reason is shown. Profile reloads, and a "Department and reporting history" section lists open and closed assignments. The add-employee form can also set an initial department and manager. Not offered for terminated employees. |
 | Departments, locations | Tabs inside People | Create, edit, archive and restore with `people:configure`; view with `people:read`. Archive is refused by the server while anyone is assigned (`in_use`). Duplicate active names are refused. |
 | Team-member link | Employee form | Optional select of existing active members (needs `members:read` and `people:manage`). Grants nothing and changes no membership. |
 | Navigation | Shell | People card and sidebar entry for roles with `people:read`; People is no longer "coming soon". |
@@ -29,7 +30,7 @@ tax, bank, identity documents, leave balances.
 | Key | UI effect |
 | --- | --- |
 | `people:read` | Zone is available; directory, profiles, departments, locations, status history (reasons hidden). |
-| `people:manage` | Add employee, Edit, status actions, team-member link, editing personal details (also needs `read_sensitive`). |
+| `people:manage` | Add employee, Edit, status actions, change department and manager, team-member link, editing personal details (also needs `read_sensitive`). |
 | `people:configure` | Add, edit, archive, restore departments and locations. |
 | `people:read_sensitive` | Personal details section is rendered and requested. Without the key the screen never calls the personal-details endpoint, and the API answers 403 if called anyway. Status reasons are returned only with this key. |
 
@@ -56,11 +57,11 @@ locations (list, create, patch, archive, restore).
 
 ## 7. Tests
 
-`packages/app/tests/people-zone.test.tsx` (36 tests) runs the real client and contracts against an in-memory stand-in
+`packages/app/tests/people-zone.test.tsx` (44 tests) runs the real client and contracts against an in-memory stand-in
 (`tests/support/fake-people.ts`) that mirrors the server's rules, permissions and per-business isolation. Covers: empty,
 populated, search, filters, sort, paging, loading, error and offline states; create (valid, invalid, duplicate, double
 submit, server failure, unsaved-changes guard); edit and stale conflict; user link; every status path including refusals;
-personal details with and without the key; departments and locations (create, duplicate, in-use archive, restore,
+personal details with and without the key; department and manager changes (effective dates, stale, archived, cycle, terminated and self manager, future date, read-only, cross-business); departments and locations (create, duplicate, in-use archive, restore,
 read-only); authorization and cross-business isolation at the client/API boundary; navigation from Home.
 
 Server authorization, RLS and database isolation are **not** re-tested with mocks: they are covered by the P1 suites
@@ -69,7 +70,6 @@ which P2 does not modify. Three existing client tests that asserted People was "
 
 ## 8. Known limitations and deferred
 
-- Manager and department changes after creation (P1 has the endpoints) have no screen yet; the profile shows them read-only.
 - No export, bulk actions, org chart, profile photos or custom fields.
 - The directory lists work information only; there is no per-field audit viewer.
 - Departments are flat, as in P1.
