@@ -5,6 +5,11 @@
 > endpoint, column, event or rule below is a design for review; every "present" statement is backed by a file
 > on `main` at `b2f308b` (2026-11-16).
 
+> **Revision 2 (2026-11-16)** after the independent architecture audit on #79: customer/project invariants and
+> reassignment policy (§6.1), exact quote billing totals and over-quote confirmation (§8.6), lock order checked
+> against the current code with a deadlock analysis (§9.2), `source_quote_id` constraint design and Prisma
+> feasibility (§8.2), finance-id redaction in generic reads (§10), new decision W1-D13.
+
 ## Contents
 
 0. [Summary](#0-summary)
@@ -56,7 +61,7 @@ reporting and timeline. Cross-Zone actions run as **synchronous calls between pu
 tenant transaction**, the same pattern Finance already uses for its C2-C reminder boundary. No event bus is
 proposed for this work; a transactional outbox is only proposed as the integration point for N1 notifications.
 
-Owner decisions needed: 12 (§15). The four that block the most work are W1-D1 (who orchestrates), W1-D3 (how a
+Owner decisions needed: 13 (§15). The four that block the most work are W1-D1 (who orchestrates), W1-D3 (how a
 project remembers its quote), W1-D5 (what "work completed" means) and FD-P3 (quote invoicing limits).
 
 ---
@@ -254,6 +259,53 @@ Rules that hold throughout:
 | Metrics | Reporting computes from each owning Zone's reporting functions | — | stored copies of business numbers |
 | Interaction history | Customers activity timeline | each Zone writes a summary entry (proposed G11) | financial amounts on the timeline for viewers without `finance:read` |
 
+### 6.1 Customer and project link invariants
+
+Records linked to one job must belong to the same customer, and stay that way when someone edits the job or the
+record later. Today every one of these customer fields is editable: `Project.customerId` (`updateProject`),
+`SchedulingEvent.customerId` (`updateEvent`), finance drafts (`updateDraft`) and expenses. Issued documents are
+frozen (`finance_guard_document`).
+
+**Invariant I1.** For every row that links a project and has a customer, the project has **the same** customer.
+Rows: finance documents (customer required), finance expenses (customer optional), recurring invoice templates
+(customer required), scheduling events (customer optional, WF-4), projects' own source quote (§8.2).
+
+**Policy (recommended for W1-D6):**
+
+| Situation | Rule |
+|---|---|
+| Customer-owned project | A linked record with a customer must have the project's customer. A linked record **without** a customer (an internal expense, an internal visit) is allowed. |
+| Customerless (internal) project | Only records **without** a customer may link it. A quote, invoice, credit note or recurring template cannot link a customerless project (they always have a customer). An expense or visit with a customer cannot either. |
+| Customerless project acquires a customer | Allowed. Under the rule above it cannot hold records with a customer, so nothing can conflict. |
+| Customer-owned project changes customer, or loses it | Refused while **any** linked row with a customer exists, in any status, including void documents and cancelled visits (`409 project_customer_locked`). Changing history to point at another customer would misstate issued records. To move the work, create a new project. |
+| A linked record changes customer | Refused if it would break I1 (`400 project_customer_mismatch`). For drafts this is the same check as linking. |
+| The project is archived | Existing rule: newly linking an archived project is refused (`archived_reference`); existing links stay. |
+
+**Enforcement: database first, service for clear errors.** A composite FK that includes the customer makes
+PostgreSQL enforce I1 on both sides:
+
+- `projects` gets a new unique key `(business_id, id, customer_id)` (implied by the primary key, so it cannot fail).
+- Each linking table gets FK `(business_id, project_id, customer_id)` → `projects(business_id, id, customer_id)`,
+  `ON UPDATE NO ACTION`, alongside the existing `(business_id, project_id)` FK.
+- With the default `MATCH SIMPLE`, the FK is skipped when `project_id` **or** `customer_id` is NULL. That gives
+  exactly the policy above: a record without a customer may link any project (the plain FK still applies); a
+  record with a customer needs a project row with that same customer, so it can never link a customerless project.
+- An `UPDATE projects SET customer_id` that would orphan a referencing row fails (`23503`). That is the
+  reassignment lock, with no trigger and no race: a referencing insert takes `FOR KEY SHARE` on the project row,
+  and changing a column of a unique key turns the project update into a `FOR UPDATE` lock, so the two serialise.
+  Ordinary project edits (name, status, dates) stay `FOR NO KEY UPDATE` and do not block linking.
+- The services check first and return `400 project_customer_mismatch` / `409 project_customer_locked`; the FK
+  violation is the backstop and is mapped to the same codes.
+
+Feasibility: Prisma composite relations to a `@@unique` set with a shared nullable scalar are already used in
+`finance.prisma`. Existing rows must satisfy the new FKs before they are added (`NOT VALID`, then `VALIDATE`).
+Production holds no customer businesses yet (last recorded state), but WF-1 must still run a read-only count of
+violating rows before its migration and stop if it is not zero.
+
+**Ownership.** The FKs live on Finance and Scheduling tables, so they ship in those Zones' PRs (WF-1 for finance
+documents, expenses and templates; WF-4 for events). The unique key on `projects` ships in WF-1 as a Projects-owned
+part of the same migration. The Projects UI must handle `409 project_customer_locked` on edit.
+
 ---
 
 ## 7. Gap register with owning Zone
@@ -262,7 +314,7 @@ Rules that hold throughout:
 |---|---|---|---|---|---|
 | G1 | Finance forms cannot set `opportunityId` / `projectId` on quotes, invoices, expenses (API supports it) | Finance (client) | No | — | WF-1 |
 | G2 | Opportunity and project screens do not show their quotes, invoices, expenses (lists already filter by `projectId`; need `opportunityId` filter) | Finance (embedded panel, like `CustomerFinance`) hosted by Sales and Projects | No (additive list filter) | G1 | WF-1 |
-| G3 | Project ↔ document customer mismatch allowed | Finance (service rule in `checkLinks`) | No | W1-D6 | WF-1 |
+| G3 | Project ↔ document customer mismatch allowed; project customer can change under linked records | Finance, Projects (I1, §6.1) | **Yes**: unique key on `projects`, composite FKs on finance tables | W1-D6 | WF-1 |
 | G4 | Project has no source (opportunity / quote); accepted quote cannot start a job | Projects | **Yes**: `source_opportunity_id` (reserved in projects §8) + quote link per W1-D3 | W1-D1, W1-D3 | WF-2 |
 | G5 | Quote acceptance and opportunity outcome are unrelated | Orchestration (W1-D1) calling Finance + Sales public APIs | No | W1-D2 | WF-3 |
 | G6 | Visits cannot reference a project or task | Scheduling | **Yes**: `project_id`, `task_id?` on `scheduling_events` | — | WF-4 |
@@ -299,26 +351,45 @@ Options for remembering which quote started a job (W1-D3):
 
 | Option | Shape | Pros | Cons |
 |---|---|---|---|
-| **A (recommended)** | `projects.source_opportunity_id` (FK, reserved) **and** `projects.source_quote_id` (composite FK to `finance_documents(business_id, id, kind)` with kind pinned to QUOTE) | One row, simple queries; FK guarantees tenant and kind | Projects table references a Finance table; the id is visible to `projects:read` holders (the quote's *content* stays behind `finance:read`) |
+| **A (recommended)** | `projects.source_opportunity_id` and `projects.source_quote_id` on the project, with database constraints (below) | One row, simple queries; tenant, kind, customer and uniqueness enforced by PostgreSQL | Projects table references a Finance table; the id must be redacted for people without `finance:read` (§10) |
 | B | A link table `work_links(business_id, from_type, from_id, to_type, to_id)` owned by an orchestration module | Generic, no Zone column changes | Polymorphic, no real FKs (tenant safety by code only); against the repo's composite-FK rule |
 | C | Migration adding `project_id` to `mutable_after_issue` for quotes | Quote → project link stays on Finance side | Weakens the sealed-document guarantee; changes an ADR 0007 invariant |
+
+**Option A constraint design.** Each guarantee is listed with what enforces it. "DB" means PostgreSQL refuses the
+row whatever the application does; "service" means a check with a clear error before the write.
+
+| Guarantee | Enforced by | Shape |
+|---|---|---|
+| Same tenant | DB | Composite FK starting with `business_id` (as every tenant FK) |
+| The source is a quote, not an invoice or credit note | DB | `source_quote_kind FinanceDocumentKind NOT NULL DEFAULT 'QUOTE'` + `CHECK (source_quote_kind = 'QUOTE')`, included in the FK. This is the existing `finance_documents.source_quote_kind` pattern (`finance.prisma`). |
+| The project's customer is the quote's customer | DB | FK `(business_id, source_quote_id, source_quote_kind, customer_id)` → `finance_documents(business_id, id, kind, customer_id)`. Needs a new unique key `finance_documents_kind_customer_key (business_id, id, kind, customer_id)` (Finance-owned migration; it is implied by the primary key, so it cannot fail on existing rows). Plus `CHECK (source_quote_id IS NULL OR customer_id IS NOT NULL)`, because PostgreSQL's default `MATCH SIMPLE` skips the FK when any column is NULL. |
+| One project per quote (W1-D10) | DB | `@@unique([businessId, sourceQuoteId])`. NULLs are distinct in PostgreSQL, so unlinked projects are unaffected; no partial index needed. |
+| Provenance is immutable | DB | `source_quote_id`, `source_quote_kind` and `source_opportunity_id` are set at insert only. `projects` has a table-level `UPDATE` grant today (migration `20261114120000_projects`), so this needs a `BEFORE UPDATE` guard trigger refusing any change to these columns (switching Projects to column-level grants is a larger change and not proposed). The FK uses `ON UPDATE NO ACTION`, and the quote's `id`, `kind` and `customer_id` are already frozen by `finance_guard_document`. |
+| The quote was ACCEPTED when the job started (W1-D2) | Service + DB | Service: quote locked and checked `ACCEPTED`, `400 quote_not_accepted` otherwise. DB backstop: a `BEFORE INSERT` trigger on `projects` reading the quote's status when `source_quote_id` is set. |
+| Later quote lifecycle | Rule | A quote can later only become `VOID` (`transitionQuote` and `voidDocument`). Voiding does not touch the project; the project shows "source quote void" to `finance:read` holders. `ON DELETE NO ACTION` is moot: finance documents are never deleted. |
+| Project customer can no longer drift from its quote | DB | The FK above includes `customer_id`, so `UPDATE projects SET customer_id = …` on a quote-sourced project fails (`23503`, mapped to `409 project_customer_locked`). |
+| Opportunity link | DB + service | FK `(business_id, source_opportunity_id)` → `opportunities(business_id, id)`, immutable by the same trigger. Customer match is a service check **at creation only**: an opportunity's `customerId` stays editable in Sales and is provenance here, not an invariant. |
+
+**Prisma feasibility (checked against `main`).** Prisma expresses composite FKs to any `@@unique` set and allows one
+scalar (`customerId`) to appear in several relations: `FinanceDocument.sourceQuote` already shares `currencyCode`
+and `customerId` with other relations. Prisma cannot express the CHECKs, the guard trigger or the insert trigger;
+they go in the migration SQL, as for every other Zone. Tests must show each DB rule refusing a direct SQL write
+that bypasses the service (the repo's mutation-check practice).
 
 Proposed endpoint:
 
 ```
-POST projects/from-quote            Idempotency-Key required
-{ quoteId, name?, ownerUserId?, startDate?, dueDate?, markOpportunityWon?: boolean, opportunityVersion?: number }
-→ 201 { project, opportunity? }    200 on replay
+POST workflows/projects/from-quote        Idempotency-Key required
+{ quoteId, quoteVersion, name?, ownerUserId?, startDate?, dueDate?,
+  winOpportunity?: { opportunityId, version } }
+→ 201 { project, opportunity? }          200 on replay
 ```
 
-- Requires `projects:create` **and** `finance:read` (to read the quote) **and**, if `markOpportunityWon`,
-  `sales:write`. Checked server-side, each key separately (§10).
-- The quote must be `ACCEPTED` (or `ISSUED` if W1-D2 allows) and not void; its customer becomes the project's
-  customer; name defaults to the quote number plus customer display name **only if** the caller holds
-  `customers:read`, otherwise the quote number.
-- One quote may start **at most one** project (unique `(business_id, source_quote_id)` where not null),
-  W1-D10.
-- `POST projects/from-opportunity` is the same without a quote (for W-B jobs from a won opportunity).
+- Requires `projects:create` **and** `finance:read` **and**, if `winOpportunity`, `sales:write`. Each checked
+  server-side (§10).
+- The project's customer is the quote's customer. Name defaults to the quote number plus customer display name
+  **only if** the caller holds `customers:read`, otherwise the quote number.
+- `POST workflows/projects/from-opportunity` is the same without a quote (W-B jobs from a won opportunity).
 
 ### 8.3 Accept quote and win opportunity (WF-3)
 
@@ -327,7 +398,7 @@ POST finance/quotes/:id/accept      (existing route, additive body field)
 { version, alsoWinOpportunity?: { opportunityId, version } }
 ```
 
-Or, if W1-D1 picks an orchestration module, `POST workflows/quotes/:id/accept`. Either way: one transaction,
+With W1-D1 = (b) this is `POST workflows/quotes/:id/accept` instead (same body). Either way: one transaction,
 `finance:issue` and `sales:write` both required when `alsoWinOpportunity` is present, opportunity must be the
 quote's `opportunityId` and `OPEN`. If the opportunity is already WON, the quote is still accepted and the
 response says `opportunity: already_won` (not an error).
@@ -336,7 +407,8 @@ response says `opportunity: already_won` (not an error).
 
 - `scheduling_events.project_id` (nullable, composite FK to `projects`), `task_id` (nullable, composite FK
   `(business_id, project_id, task_id)` so a task must belong to the same project).
-- Same customer rule as G3: if both event and project have a customer they must match.
+- Invariant I1 (§6.1): an event with a customer may only link a project with the same customer; enforced by the
+  composite FK `(business_id, project_id, customer_id)`. The service pre-fills the event's customer from the project.
 - `POST scheduling/events` and `PATCH` accept `projectId`, `taskId`; linking needs `projects:read` in addition to
   the scheduling key; the response embeds `project: { id, name } | null` only for `projects:read` holders
   (as Projects does with customer names).
@@ -349,18 +421,62 @@ response says `opportunity: already_won` (not an error).
 ### 8.5 Invoice a job (WF-6)
 
 ```
-POST finance/projects/:projectId/invoice-draft     Idempotency-Key required
-{ source: 'quote', quoteId, portion?: { percent } | { amount } }   // deposit / progress / balance
-| { source: 'blank', lines?: LineInput[] }                          // W-B jobs without a quote
-→ 201 { document }  (DRAFT invoice, projectId set, sourceQuoteId when from a quote)
+POST workflows/projects/:projectId/invoice-draft     Idempotency-Key required
+{ source: 'quote', quoteId, portion?: { percent } | { amount }, overQuote?: { remainingNet, currencyCode } }
+| { source: 'blank', lines?: LineInput[] }                                   // W-B jobs without a quote
+→ 201 { document, quoteBilling? }   (DRAFT invoice, projectId set, sourceQuoteId when from a quote)
 ```
 
-- Reuses `convertQuote` / `createInvoice` internals; never issues. `finance:write`.
-- Returns `invoicedOfQuote: { quoted, invoicedNet, remaining }` per currency so the UI can warn
-  (FD-P3: warn vs block).
-- `portion` is a single line "Deposit 30% of Q-0042" or a scaled copy of lines (W1-D11).
+- Reuses `convertQuote` / `createInvoice` internals; never issues. `finance:write` (+ `projects:read`).
+- `quoteBilling` returns the figures in §8.6 so the UI can show "invoiced so far" before anything is issued.
+- `portion` (W1-D11): a single summary line "Deposit 30% of Q-0042" **only when every line of the quote uses the
+  same tax treatment** (one tax rate, or none). Otherwise the summary is split into one line per tax rate,
+  proportional to each rate's net share, so tax on the deposit matches tax on the quote. Each line amount is
+  rounded to the currency scale half away from zero (`roundTo`, `finance/server/money.ts`); the last line takes
+  the rounding remainder so the lines sum exactly to the requested portion.
 
-### 8.6 Domain events (proposal, no infrastructure)
+### 8.6 Quote billing totals ("invoiced against quote")
+
+Precise definitions, all **per quote**, so one currency and one customer (both pinned by the existing
+`finance_documents_source_quote_fkey`). Amounts are exact decimals already stored at the document's currency
+scale; comparisons are exact, no rounding.
+
+| Figure | Definition |
+|---|---|
+| `quotedNet` | the quote's `subtotal` (net of tax). Net, not gross, is the basis: tax rates may legitimately differ between quote and invoice (a rate change), and tax is not revenue (`finance-data-model.md` §9). |
+| `quotedGross` | the quote's `total`, shown for information only. |
+| `issuedNet` | Σ `subtotal` of invoices with `source_quote_id` = the quote and `status = ISSUED`. `VOID` invoices are excluded; a void invoice never counts. |
+| `creditedNet` | Σ `subtotal` of credit notes with `status = ISSUED` whose `credited_invoice_id` is one of those invoices. Draft and void credit notes do not count. |
+| `billedNet` | `issuedNet − creditedNet` |
+| `draftNet` | Σ `subtotal` of `DRAFT` invoices from the quote. Shown separately ("in draft"), because drafts can be discarded. |
+| `remainingNet` | `quotedNet − billedNet − draftNet` (may be negative) |
+| payments | Not part of these figures. Being paid is settlement (F2), not billing. |
+
+Invoices on the same project that were **not** converted from this quote (blank or from another quote) do not count
+against it; they appear in the project summary (§8.1) instead.
+
+**Over-quote rule (FD-P3 as recommended: no hard cap, explicit confirmation).**
+
+- At **draft creation** (convert or invoice-draft): if `billedNet + draftNet + newNet > quotedNet`, the request is
+  refused with `409 over_quote_unconfirmed` and the current figures, unless it carries
+  `overQuote: { remainingNet, currencyCode }` equal to the server's current `remainingNet`. A different value is
+  `409 over_quote_changed` (someone billed in between). The confirmation is about **those** figures; it is
+  never inferred from a generic action.
+- At **issue** of an invoice that has a `source_quote_id`: the same check with `billedNet + thisNet > quotedNet`
+  (drafts excluded, since only issued invoices bill). The issue request needs its own `overQuote` confirmation;
+  a confirmation given at draft time does not carry over, because other invoices may have been issued since.
+- **Repeat billing safeguards:** (1) the `Idempotency-Key` replays a retried create; (2) a second draft from the
+  same quote while one is still a draft returns `quoteBilling.draftNet > 0` and the UI says "a draft from this
+  quote already exists" with a link, before creating another; (3) the confirmation rule above catches a
+  second full conversion.
+- **Concurrency:** two invoices from one quote issued at the same moment must not both pass the check on the
+  same stale `billedNet`. Each issue takes a transaction-scoped advisory lock
+  `hashtextextended('finance.quote_billing:' || quote_id, 0)` after locking its own invoice and before the
+  number-series row (§9.2). The second issue waits, then re-reads `billedNet` (READ COMMITTED sees the first
+  commit) and is refused if it now goes over without a confirmation matching the new figure.
+- Voids and credit notes only lower `billedNet`, so they need no lock for this rule.
+
+### 8.7 Domain events (proposal, no infrastructure)
 
 W1 does **not** propose an event bus. Every handoff above is a synchronous call. These event names are proposed
 as a **shared vocabulary**, used today as audit action names (most already exist) and later as the payload of a
@@ -385,23 +501,76 @@ in notifications to people who lack the source Zone's read key (§10).
 
 ### 9.1 One request, one transaction
 
-Each cross-Zone action is one `tenantRoute` request, so one `withTenant` transaction. The orchestrating code calls
-the owning Zone's **public** function for each record with the same `db`. Either every record changes or none.
-No two-phase commit, no saga, no background job.
+Each cross-Zone action is one `tenantRoute` request, so one `withTenant` transaction (READ COMMITTED). The
+orchestrating code calls the owning Zone's **public** function for each record with the same `db`. Either every
+record changes or none. No two-phase commit, no saga, no background job.
 
-### 9.2 Lock order
+### 9.2 Lock order, checked against the current code
 
-Cross-Zone actions lock in a fixed global order to avoid deadlocks with existing single-Zone lock protocols:
+As in Finance (`finance-data-model.md` §6.3), lock order is about **liveness**: the invariants hold under any
+order (they rest on row-level conditional writes, CHECKs and FKs), but a wrong order can deadlock (`40P01`,
+whole transaction rolled back). The goal is that no proposed action can form a cycle with an existing path.
 
-1. Customer rows are never locked (read only).
-2. **Sales** opportunity (conditional `updateMany` on version/status).
-3. **Finance** documents, in id order (ADR 0007 order, unchanged).
-4. **Projects** project (`FOR SHARE` / conditional update), then tasks.
-5. **Scheduling** per ADR 0008 (calendar, then resources in id order, then event).
+**Locks the existing paths take (verified on `main`):**
 
-Finance-internal order (`finance-data-model.md` §6.3, ADR 0007) and Scheduling order (ADR 0008) are kept
-intact; W1 only fixes the order *between* Zones. Each proposed PR must add a two-session concurrency test for its
-action.
+| Zone | Path | Locks, in order | Source |
+|---|---|---|---|
+| Finance | every document write | idempotency advisory lock (creates), documents `FOR NO KEY UPDATE` by id, referenced documents `FOR SHARE`, lines, number series (issue trigger) | `finance/server/shared.ts` (`lockDocuments`), `finance-data-model.md` §6.3 |
+| Finance | payments, allocations | payment, then invoices by id | §6.3 table |
+| Finance | draft create / edit linking a project or opportunity | no explicit lock; the FK check takes `FOR KEY SHARE` on the project / opportunity row at insert | `checkLinks` (plain read), Postgres FK |
+| Sales | win / lose / edit / move | the opportunity row, by conditional `UPDATE … WHERE version/status` (implicit row lock) | `sales/server/opportunities.ts` |
+| Projects | edit / archive project | the project row, by conditional `UPDATE` (implicit `FOR NO KEY UPDATE`) | `projects/server/projects.ts` |
+| Projects | task create / edit / move / archive | project `FOR SHARE`, then (create, move) advisory `project_tasks.order:<project>`, then task(s) `FOR UPDATE` | `projects/server/tasks.ts` |
+| Scheduling | event create / edit / cancel / archive | steps 0–6 of ADR 0008: default-calendar advisory, calendars `FOR SHARE` + advisory, resources `FOR SHARE` + advisory (by id), event `FOR UPDATE` with version re-check, then writes | ADR 0008 §1 |
+
+Today no path locks rows of two Zones explicitly; the only cross-Zone locks are the implicit `FOR KEY SHARE`
+from FK checks, which conflict with nothing except a `FOR UPDATE` (key change or delete) on the referenced row,
+and no existing path does that to a project, opportunity or quote.
+
+**Proposed global class order** (between Zones; each Zone keeps its own internal order):
+
+1. Idempotency advisory lock of the request (Finance pattern).
+2. **Finance** rows, in Finance's own order (payments, documents by id, referenced documents `FOR SHARE`); then
+   the new quote-billing advisory lock (§8.6); the number series stays last (it is inside the issue trigger).
+3. **Sales** opportunity.
+4. **Projects**: project, then the task-order advisory lock, then tasks.
+5. **Scheduling**: ADR 0008 steps 0–6.
+
+Rule for a path that must *read* a later-class row before it knows which earlier-class rows to lock (for example,
+completing a visit needs the event to find its task): read without a lock, lock in class order, then re-check the
+later row's `version` under its lock (ADR 0008's own technique). A version change aborts with `409 stale`.
+
+**Each proposed action:**
+
+| Action | Locks, in order |
+|---|---|
+| Accept quote (+ win opportunity) | quote `FOR NO KEY UPDATE` → opportunity conditional `UPDATE` |
+| Project from quote (+ win) | idempotency lock → quote `FOR NO KEY UPDATE` (held strong from the start, not `FOR SHARE`, so two concurrent requests never try to upgrade a shared lock) → opportunity `UPDATE` → project `INSERT` (FK `KEY SHARE` on quote and opportunity, already held) |
+| Project customer change (I1) | project `UPDATE` (becomes `FOR UPDATE` because `customer_id` is in a unique key) → read linked rows without locks, only for the error message |
+| Link a draft document / expense to a project | Finance locks → FK `KEY SHARE` on the project at write |
+| Visit create / edit with a project | project `FOR SHARE` (new, before ADR 0008 step 0) → ADR 0008 steps 0–6 |
+| Complete visit (+ close task) | read event (no lock) → project `FOR SHARE` → task `FOR UPDATE` → ADR 0008 step 5 event `FOR UPDATE` + version re-check → writes |
+| Invoice draft from project | idempotency lock → quote `FOR SHARE` (referenced) → quote-billing advisory → project `FOR SHARE` → invoice `INSERT` |
+| Issue an invoice with a source quote | invoice `FOR NO KEY UPDATE` → quote-billing advisory → series (trigger) |
+
+**Deadlock analysis of the pairs that share rows:**
+
+| Pair | Why no cycle |
+|---|---|
+| Accept+win vs plain win of the same opportunity | Plain win holds only the opportunity. Accept+win holds the quote and waits for the opportunity. No path holds the opportunity and waits for a quote (W1 never auto-accepts a quote from Sales). |
+| Two accept+win on different quotes of one opportunity | Each holds its own quote and waits on the opportunity; the second then sees `WON` and answers `already_won`. |
+| Project from quote vs quote void | Both lock the quote first; one waits. If the void wins, the project request sees `VOID` and is refused. |
+| Project customer change vs document draft linking it | Draft holds Finance locks and waits for `KEY SHARE` on the project; the customer change holds the project `FOR UPDATE` and takes **no** Finance lock. No cycle; after the change commits, the draft's FK check runs against the new customer and fails cleanly. |
+| Project customer change vs visit linking it | Visit takes project `FOR SHARE` first (step before ADR 0008), so it simply waits for the change. |
+| Project archive vs visit create / task change | All take the project first (`NO KEY UPDATE` vs `FOR SHARE`): queue, no cycle. Same as the existing task-vs-archive rule. |
+| Complete visit vs task move | Both take the project `FOR SHARE`, then the task `FOR UPDATE`. Only the move takes the task-order advisory lock in between, so the two can only wait on the task row itself: no cycle. |
+| Complete visit vs visit edit (retime) | Edit: project `FOR SHARE` → calendars → resources → event. Completion: project `FOR SHARE` → task → event. Shared locks on the project do not conflict; the only exclusive lock both want is the event, taken last by both. |
+| Two issues of invoices from one quote | Each holds its own invoice, then queues on the quote-billing advisory lock, then the series row. Same shape as Finance's existing "two issues in one series" row. |
+| Invoice draft from project vs project archive | Draft takes the project `FOR SHARE` after Finance locks; archive takes only the project. No cycle. |
+
+**Evidence each PR must add** (the Finance K4/K8 and Scheduling ADR 0008 practice): a deterministic two-session
+test that reproduces `40P01` when the action is written in the wrong order, and a concurrency run of the right
+order with no `40P01` and all invariants holding. W1 asserts nothing here as tested; it is the design to test.
 
 ### 9.3 Versions and idempotency
 
@@ -409,9 +578,11 @@ action.
   whole action with `409 stale` and a `record` field saying which (`opportunity`, `quote`, `project`, `task`,
   `event`).
 - Every **create** in an orchestration endpoint requires `Idempotency-Key` and stores `request_hash`, reusing
-  Finance's pattern (advisory lock on the key + partial unique index). Replays return the original result with
-  200; a different body with the same key is `409 idempotency_conflict`.
-- Uniqueness backstops: one project per source quote (W1-D10); one active completion per event (status column).
+  Finance's pattern (advisory lock on the key + unique index). Replays return the original result with 200; a
+  different body with the same key is `409 idempotency_conflict`. Where the created row is a project, the key and
+  hash need a home: either columns on `projects` (as on `finance_documents`) or a small `workflow_requests` table
+  owned by the orchestration module (W1-D13).
+- Uniqueness backstops: one project per source quote (§8.2); one completion per event (status column).
 - Pure state transitions (accept, win, complete) are idempotent by state: repeating with a stale version is a 409,
   never a second effect.
 
@@ -424,14 +595,21 @@ action.
   `customers:read`. Orchestration routes need every key (`all-of`) checked server-side before any write, plus conditional keys for optional parts
   (`markOpportunityWon` → `sales:write`). The UI hides options the person lacks, but the server decides.
 - **Finance stays separate (FD-P1).** Project owners, assignees and resource holders gain no finance access.
-  A project's finance panel and `GET finance/projects/:id/summary` require `finance:read`. A `projects:read`
-  holder may see that a source quote *exists* (an id) but not its number, amount or lines.
+  A project's finance panel, `GET finance/projects/:id/summary` and quote billing figures require `finance:read`.
+- **No finance identifiers in generic reads.** The project response includes `sourceQuoteId` **only** for
+  `finance:read` holders; for everyone else the field is absent (not `null`, not a boolean), so a project read
+  does not reveal whether a quote exists. The same applies to project lists, the customer's project list, visit
+  responses that embed a project, search results (GS1) and reporting drill-downs. Errors stay generic:
+  `409 project_customer_locked` does not say which kind of record, how many, or their ids. Audit entries carry
+  the quote id, but audit is readable only with `audit:read` (OWNER/ADMIN, who hold `finance:read` by default);
+  if custom roles ever separate the two, audit reads must redact finance ids too.
+- **Opportunity ids** on projects follow the same rule with `sales:read`.
 - **Names follow the Projects `Viewer` pattern.** Customer names only with `customers:read`; project names on a
   visit only with `projects:read`; quote numbers only with `finance:read`.
 - **People boundary.** No proposal reads People tables. Labour and person links wait for the People-owned path
   (S2 §9).
 - **Tenant isolation.** Every new column is a composite `(business_id, x_id)` FK under forced RLS; new link rules
-  (same customer) are service checks with clear errors. `tests/isolation` must cover every new FK with a
+  (same customer, I1) are enforced by composite FKs, with service checks for clear errors. `tests/isolation` must cover every new FK with a
   cross-tenant insert attempt.
 - **Timeline (G11).** Finance entries on the customer timeline carry type and ids; the activity read path must
   drop or redact `finance.*` entries for viewers without `finance:read` (amounts and numbers never appear for
@@ -482,7 +660,10 @@ Cross-cutting:
 | Project archived | Existing rule: read-only; new visits and invoices cannot newly link it (`archived_reference`). |
 | Visit cancelled after completion | Refused (`409 completed`); reopen first. |
 | Resource conflict when scheduling a job visit | Existing S2 behaviour: 409 with conflicts unless the overlap is accepted on purpose. |
-| Invoice from project exceeds quote total | FD-P3: warn (default) or block. Never silently. |
+| Invoice from project exceeds quote total | `409 over_quote_unconfirmed` with figures, unless the request confirms the exact current `remainingNet` (§8.6). Checked again at issue. |
+| Someone issues another invoice from the quote between confirmation and issue | `409 over_quote_changed`; the person sees the new figures and confirms again. |
+| Project customer changed while documents, expenses, visits or a source quote reference it | `409 project_customer_locked` (service), FK `23503` as backstop; nothing changes. |
+| Customerless project linked from a quote, invoice or a visit with a customer | `400 project_customer_mismatch`; set the project's customer first. |
 | Invoice voided | Allocations must be reversed first (existing rule). Project and visits unchanged. Credit note path unchanged. |
 | Payment reversed | Existing: allocations reversed first in one unit of work; settlement re-derives; timeline entry "payment reversed". |
 | Customer archived mid-workflow | Existing records keep links; new links refused (`archived_reference`); converting an issued quote still allowed (existing). |
@@ -498,12 +679,12 @@ time, sorting after everything on `main` and in open PRs.
 
 | Order | PR | Scope | Owning Zone(s) | Schema | Blocked by |
 |---|---|---|---|---|---|
-| 1 | **WF-1** Link existing records | Opportunity and project pickers on quote/invoice/expense forms; "Quotes & invoices" panel on opportunity and project (embedded Finance component, `finance:read` only); `opportunityId` list filter; `GET finance/projects/:id/summary`; G3 same-customer rule | Finance (owner), Sales/Projects host the panel | None | W1-D6 |
-| 2 | **WF-2** Job source | `projects.source_opportunity_id` (+ `source_quote_id` per W1-D3); `POST projects/from-quote`, `from-opportunity`; multi-key route helper | Projects | Yes (additive, nullable) | W1-D1, W1-D3, W1-D10 |
+| 1 | **WF-1** Link existing records | Opportunity and project pickers on quote/invoice/expense forms; "Quotes & invoices" panel on opportunity and project (embedded Finance component, `finance:read` only); `opportunityId` list filter; `GET finance/projects/:id/summary`; invariant I1 (§6.1) for finance documents, expenses and templates | Finance (owner), Projects (unique key, error handling), Sales/Projects host the panel | Yes (additive keys and FKs; pre-check for violating rows) | W1-D6 |
+| 2 | **WF-2** Job source | `projects.source_opportunity_id`, `source_quote_id`, `source_quote_kind` with the §8.2 constraints and guard triggers; Finance-owned unique key `(business_id, id, kind, customer_id)`; `from-quote`, `from-opportunity`; multi-key route helper; finance-id redaction in project reads | Projects (+ one Finance key) | Yes (additive, nullable) | W1-D1, W1-D3, W1-D10 |
 | 3 | **WF-3** Accept and win | Accept quote with optional opportunity win in one transaction; "Start a job" option wired to WF-2 | Orchestration per W1-D1 (Finance + Sales public APIs) | None | WF-2, W1-D2 |
-| 4 | **WF-4** Visits for jobs | `scheduling_events.project_id`, `task_id`; filters; project "Visits" panel; schedule-from-project | Scheduling (schema), Projects (panel) | Yes | D-S2-8 nav on |
+| 4 | **WF-4** Visits for jobs | `scheduling_events.project_id`, `task_id`, I1 FK; filters; project "Visits" panel; schedule-from-project | Scheduling (schema), Projects (panel) | Yes | D-S2-8 nav on |
 | 5 | **WF-5** Completion | Event `COMPLETED` (per W1-D5), complete endpoint, optional task close | Scheduling, Projects | Yes | WF-4, W1-D5 |
-| 6 | **WF-6** Invoice the job | `invoice-draft` from project (quote portion or blank), invoiced-vs-quoted | Finance | None expected | WF-2, FD-P3, W1-D11 |
+| 6 | **WF-6** Invoice the job | `invoice-draft` from project (quote portion or blank), quote billing figures and over-quote confirmation at draft and issue (§8.6) | Finance | None expected (figures are derived) | WF-2, FD-P3, W1-D11 |
 | 7 | **WF-7** Reporting | Project recorded-cost margin (as specified in `finance-data-model.md` §9), quote-to-cash funnel (won → quoted → accepted → invoiced → paid, per currency), promote `projects.tasks_completed`, `scheduling.events_scheduled`, add `scheduling.visits_completed` | Reporting + source Zones' reporting reads | None | WF-1..6 for data; R2 for dashboards |
 | 8 | **WF-8** Timeline and intake | Cross-Zone system activities with redaction (G11); "New opportunity from conversation" (G12) | Customers/Activity, Sales, Communications UI | None (new activity types) | W1-D8, W1-D9 |
 
@@ -530,19 +711,24 @@ businesses, roles OWNER / MANAGER / MEMBER).
 
 **AT-B (job without quote, W-B)**: project from customer → visit → complete → `invoice-draft` blank with catalog lines → issue → pay. Margin includes linked expenses.
 
-**AT-C (deposit and progress, W-C)**: accepted quote 1000 → deposit 30% invoice → progress 50% → balance; invoiced-vs-quoted reaches 100%; a further invoice warns (or is refused, per FD-P3).
+**AT-C (deposit and progress, W-C)**: accepted quote net 1000.00 (two tax rates) → deposit 30% creates one line per tax rate summing exactly to 300.00 → progress 50% → balance; `billedNet` reaches 1000.00. A further invoice is refused without confirmation, accepted with the exact `remainingNet`, refused with a stale one. Voiding the progress invoice and crediting part of the deposit lower `billedNet` by exactly those subtotals. Two concurrent issues from the quote that together exceed it: one succeeds, the other gets `over_quote_changed`.
 
 **AT-D (recurring, W-D)**: recurring template with `projectId` generates a draft via manual "generate now" (jobs remain off) → draft carries the project → appears in project summary.
 
 **AT-E (failure and concurrency)**
 - Two sessions accept the same quote with win → one succeeds, the other 409; exactly one outcome row.
+- Deadlock tests per §9.2: each new action, written in reverse class order in a test harness, reproduces `40P01`; the shipped order under a concurrent mix (accept+win, from-quote, project customer change, draft linking, visit create/complete, task move) produces none.
 - Start job from quote with the same key twice → one project; with two keys → 409 `job_exists`.
 - Inject a failure in the Sales call during accept+win → quote still ISSUED, no audit rows.
 - Lost opportunity → accept+win refused, nothing changed.
 
 **AT-F (access and isolation)**
 - MEMBER (no finance keys) opens a project → no finance panel, summary endpoint 403, no quote number shown.
-- Project linked to customer X cannot be linked on a document for customer Y (G3) → 400 `project_customer_mismatch`.
+- Project linked to customer X cannot be linked on a document, expense, template or visit for customer Y → 400 `project_customer_mismatch`; a direct SQL insert bypassing the service fails on the FK.
+- Customerless project: a quote cannot link it; an expense without a customer can; then the project acquires a customer successfully.
+- Project with any linked customer record (including a void invoice) cannot change or clear its customer → 409; direct SQL `UPDATE` fails on the FK.
+- `projects:read` holder without `finance:read`: project, project list, customer-projects list and visit responses contain no `sourceQuoteId` key at all; the error for a locked customer change names no finance record.
+- Source quote constraints by direct SQL: wrong kind (invoice id), other customer, second project for the same quote, update of `source_quote_id`, insert while the quote is ISSUED → each refused by the database.
 - Business B cannot link business A's project, quote or event by id (FK + RLS) → 400/404, never 500.
 - Timeline: a viewer without `finance:read` sees no finance amounts or numbers.
 - Reporting: margin metric refused without `finance:read` and `projects:read`.
@@ -558,14 +744,15 @@ businesses, roles OWNER / MANAGER / MEMBER).
 | **W1-D3** | How does a project remember its quote? | §8.2 A / B / C | **A**: `source_quote_id` + `source_opportunity_id` on projects with composite FKs. |
 | **W1-D4** | Should issuing a quote move the opportunity's stage? | never / optional per business (A3) | Never by default; optional setting later via A3. |
 | **W1-D5** | What records "work completed"? | (a) event status COMPLETED; (b) task DONE only; (c) a separate job-report record | **(a)** with optional task close; (c) later if sign-offs or photos are needed. |
-| **W1-D6** | Must a document's project belong to the document's customer? | require match / allow internal projects (no customer) / allow any | Require match when the project has a customer; allow projects with no customer. |
+| **W1-D6** | Customer consistency between a project and its linked records | §6.1 policy / require match only at link time / allow any | **§6.1 policy**: same customer, enforced by FK; customerless projects accept only records without a customer; customer locked once customer records link it. |
 | **W1-D7** | Opportunity WON without a quote: offer "Start job"? | yes / no | Yes (`from-opportunity`), for W-B. |
 | **W1-D8** | Should finance events appear on the customer timeline? | no / yes with redaction / yes only for finance users | Yes, type and link only; amounts and numbers only for `finance:read`. |
 | **W1-D9** | Lead / enquiry concept | none (customer + opportunity) / customer `lifecycle` (prospect, active) / separate lead entity | Defer: use customer + opportunity; revisit with C2 inbound. |
 | **W1-D10** | How many jobs per quote? | one / many | One (unique); a second job is a manual project. |
-| **W1-D11** | Deposit / progress invoice shape | single summary line / scaled copy of quote lines | Single summary line referencing the quote (simpler tax rounding); scaled copy later. |
+| **W1-D11** | Deposit / progress invoice shape | summary line(s) / scaled copy of quote lines | Summary line, split per tax rate when the quote has more than one (§8.5); scaled copy later. |
 | **W1-D12** | Is a project the "job" for trade businesses, or is a separate Job entity needed? | project = job / new entity | Project = job for now; industry wording via labels, not a new table. |
-| FD-P3 (existing) | Quote conversion limits | — | Unchanged recommendation in `finance-data-model.md` §14: any issued/accepted quote, no cap, show invoiced-vs-quoted (WF-6 adds the figure). |
+| FD-P3 (existing) | Quote conversion limits | hard cap / warn / no check | No hard cap; over-quote needs an explicit confirmation of the exact current figures at draft and at issue (§8.6). Conversion stays allowed from ISSUED or ACCEPTED quotes. |
+| **W1-D13** | Where idempotency keys of orchestration creates live | columns on the created row / `workflow_requests` table in the orchestration module | `workflow_requests` (keeps Zone tables unchanged; one place for all orchestration replays). |
 | FD-P4 (existing) | Automatic opportunity → document conversion | — | Superseded by WF-3's explicit, confirmed action; nothing automatic. |
 
 ---
