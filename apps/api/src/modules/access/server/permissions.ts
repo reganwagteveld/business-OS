@@ -30,10 +30,12 @@ export const ZONE_PERMISSIONS = {
   // billing (F6, D-F6-3) = recurring invoice schedules: create, change, pause, resume, cancel, generate
   // now, retry and skip periods; and (F6-3) payment reminders: policies, customer assignments, holds and
   // dismissing a reminder. Reading schedules, runs, policies, holds and reminders is finance:read.
+  // catalog (F7-A, docs/finance-catalog-f7a.md §5) = create, edit, deactivate, archive and restore
+  // products and services. Reading the catalog is finance:read.
   finance: [
     'finance:read', 'finance:write', 'finance:issue', 'finance:payments', 'finance:expenses', 'finance:manage',
     'finance:documents_preview', 'finance:documents_generate', 'finance:documents_download', 'finance:documents_branding',
-    'finance:billing',
+    'finance:billing', 'finance:catalog',
   ],
   // People (docs/people-data-model.md §5, decision PD-1). Separate from every other Zone. read = the
   // directory (work fields, org, reporting lines, history without reasons); read_sensitive = personal
@@ -77,7 +79,10 @@ const PROJECTS_WORK: Permission[] = ['projects:read', 'projects:create', 'projec
  */
 const FINANCE_DOCUMENTS: Permission[] = ['finance:documents_preview', 'finance:documents_generate', 'finance:documents_download'];
 const FINANCE_WORK: Permission[] = ['finance:read', 'finance:write', 'finance:expenses', ...FINANCE_DOCUMENTS];
-const FINANCE_ALL: Permission[] = [...FINANCE_WORK, 'finance:issue', 'finance:payments', 'finance:manage', 'finance:documents_branding', 'finance:billing'];
+/** F7-A (provisional, D-F7A-2): the catalog's prices are commercial policy, so OWNER and ADMIN manage it; MANAGER reads it. */
+const FINANCE_ALL: Permission[] = [
+  ...FINANCE_WORK, 'finance:issue', 'finance:payments', 'finance:manage', 'finance:documents_branding', 'finance:billing', 'finance:catalog',
+];
 /** PD-1 defaults: OWNER and ADMIN administer People; MANAGER sees the directory only; MEMBER has no People access. */
 const PEOPLE_ALL: Permission[] = ['people:read', 'people:read_sensitive', 'people:manage', 'people:configure'];
 /** Everyone in the business works with the schedule; configuring calendars is for whoever runs the work. */

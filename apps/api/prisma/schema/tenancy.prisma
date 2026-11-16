@@ -91,6 +91,7 @@ model Business {
   communicationsErasureKeys      CommunicationsErasureKey[]
   communicationsErasedReferences CommunicationsErasedReference[]
   communicationsPrivilegedGrants CommunicationsPrivilegedGrant[]
+  financeCatalogItems            FinanceCatalogItem[]
 
   @@map("businesses")
 }

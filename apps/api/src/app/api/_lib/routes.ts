@@ -43,6 +43,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   FN016: [409, 'has_payments'], FN017: [409, 'archived_reference'], FN018: [409, 'expense_not_open'],
   // F5 (migration 20261122000000_finance_documents): generated documents and branding assets.
   FN019: [409, 'not_eligible'], FN020: [409, 'stale'], FN021: [409, 'immutable'],
+  // F7-A (migration 20261130000000_finance_catalog): catalog items.
+  FN050: [409, 'immutable'], FN051: [409, 'archived'], FN052: [409, 'stale'],
   // People (migration 20261118000000_people, docs/people-data-model.md §4).
   PE001: [409, 'invalid_transition'], PE002: [409, 'manager_cycle'], PE003: [400, 'invalid_manager'], PE004: [409, 'immutable'],
   PE005: [409, 'has_direct_reports'], PE006: [409, 'terminated'], PE007: [409, 'archived_reference'], PE008: [409, 'in_use'],
@@ -70,6 +72,8 @@ const FINANCE_CONSTRAINTS: [RegExp, string][] = [
   [/finance_expenses_paid/, 'over_payment'],
   [/finance_expense_allocations_active_key/, 'already_allocated'],
   [/finance_expense_categories_active_name_key/, 'duplicate_name'],
+  // F7-A.
+  [/finance_catalog_items_code_key/, 'duplicate_code'],
   // People: the unique indexes behind the service checks (a race the service lost).
   [/people_employees_number_key/, 'duplicate_employee_number'],
   [/people_employees_user_key/, 'user_already_linked'],

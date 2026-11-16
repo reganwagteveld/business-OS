@@ -8,6 +8,7 @@ import { useDraftGuard } from '../drafts';
 import { Problem } from '../problem';
 import { useLoad } from '../use-load';
 import { ZoneFrame } from '../zone-frame';
+import { CatalogItemPage, CatalogList, CatalogNew } from './catalog';
 import { DocumentDetail } from './document-detail';
 import { DocumentForm } from './document-form';
 import { DocumentList } from './document-list';
@@ -47,6 +48,7 @@ export function initialView(section: string | undefined, target: string | undefi
     if ((section === 'quotes' || section === 'invoices') && can.write) return { name: 'document-new', path: section };
     if (section === 'payments' && can.payments) return { name: 'payment-new' };
     if ((section === undefined || section === 'expenses') && can.expenses) return { name: 'expense-new' };
+    if (section === 'catalog' && can.catalog) return { name: 'catalog-new' };
   }
   return viewOfSection(section ?? (intent === 'new' ? 'expenses' : undefined));
 }
@@ -81,7 +83,7 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
     const has = (p: string) => perms.includes(p);
     return {
       write: has('finance:write'), issue: has('finance:issue'), payments: has('finance:payments'), expenses: has('finance:expenses'),
-      manage: has('finance:manage'), billing: has('finance:billing'), readCustomers: has('customers:read') && Boolean(customers),
+      manage: has('finance:manage'), billing: has('finance:billing'), catalog: has('finance:catalog'), readCustomers: has('customers:read') && Boolean(customers),
       pdfPreview: has('finance:documents_preview'), pdfGenerate: has('finance:documents_generate'), pdfDownload: has('finance:documents_download'),
       branding: has('finance:documents_branding'),
     };
@@ -215,6 +217,13 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
         <ExpensePaymentForm expenseId={view.expenseId} onCancel={back(view.expenseId ? { name: 'expense', id: view.expenseId } : { name: 'expense-payments' })}
           onDone={(p) => go({ name: 'expense-payment', id: p.id }, 'Supplier payment recorded.')} />
       );
+      break;
+    case 'catalog': screen = <CatalogList />; break;
+    case 'catalog-item':
+      screen = needsLookups(taxRates !== null) ?? <CatalogItemPage key={view.id} id={view.id} taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null} />;
+      break;
+    case 'catalog-new':
+      screen = needsLookups(taxRates !== null) ?? <CatalogNew taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null} />;
       break;
     case 'settings': screen = <FinanceSettingsPage key={view.tab ?? 'business'} tab={view.tab} onChanged={() => setGeneration((g) => g + 1)} />; break;
   }
