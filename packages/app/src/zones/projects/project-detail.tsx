@@ -38,8 +38,11 @@ const muted = (text: string) => <span className="text-muted-foreground">{text}</
  * One project: its details, linked customer, owner, real task progress and its tasks. Edit, archive
  * and restore appear only where the role allows; the server checks every action again.
  */
-export function ProjectDetail({ client, slug, id, locale, timeZone, members, canUpdate, canArchive, canManageTasks, onBack, onEdit, onOpenCustomer, onDraftChange, confirmLeave, onSessionEnded }: {
-  client: ProjectsClient; slug: string; id: string; locale?: string; timeZone: string; members: Member[] | null;
+export function ProjectDetail({ client, slug, id, initialTaskId, locale, timeZone, members, canUpdate, canArchive, canManageTasks, onBack, onEdit, onOpenCustomer, onDraftChange, confirmLeave, onSessionEnded }: {
+  client: ProjectsClient; slug: string; id: string;
+  /** A task of this project whose panel opens on the board once the tasks load (GS2-A). */
+  initialTaskId?: string;
+  locale?: string; timeZone: string; members: Member[] | null;
   canUpdate: boolean; canArchive: boolean; canManageTasks: boolean;
   onBack: () => void; onEdit: (p: Project) => void; onOpenCustomer?: (customerId: string) => void;
   onDraftChange: (key: string, dirty: boolean) => void; confirmLeave: (action: () => void) => void; onSessionEnded: () => void;
@@ -57,7 +60,7 @@ export function ProjectDetail({ client, slug, id, locale, timeZone, members, can
       ) : null}
       {shown ? (
         <Loaded
-          key={shown.id} project={shown} client={client} slug={slug} locale={locale} timeZone={timeZone} members={members}
+          key={shown.id} project={shown} client={client} slug={slug} initialTaskId={initialTaskId} locale={locale} timeZone={timeZone} members={members}
           canUpdate={canUpdate} canArchive={canArchive} canManageTasks={canManageTasks} onEdit={onEdit} onOpenCustomer={onOpenCustomer}
           onChanged={project.reload} onDraftChange={onDraftChange} confirmLeave={confirmLeave} onSessionEnded={onSessionEnded}
         />
@@ -66,8 +69,8 @@ export function ProjectDetail({ client, slug, id, locale, timeZone, members, can
   );
 }
 
-function Loaded({ project, client, slug, locale, timeZone, members, canUpdate, canArchive, canManageTasks, onEdit, onOpenCustomer, onChanged, onDraftChange, confirmLeave, onSessionEnded }: {
-  project: Project; client: ProjectsClient; slug: string; locale?: string; timeZone: string; members: Member[] | null;
+function Loaded({ project, client, slug, initialTaskId, locale, timeZone, members, canUpdate, canArchive, canManageTasks, onEdit, onOpenCustomer, onChanged, onDraftChange, confirmLeave, onSessionEnded }: {
+  project: Project; client: ProjectsClient; slug: string; initialTaskId?: string; locale?: string; timeZone: string; members: Member[] | null;
   canUpdate: boolean; canArchive: boolean; canManageTasks: boolean; onEdit: (p: Project) => void; onOpenCustomer?: (customerId: string) => void;
   onChanged: () => void; onDraftChange: (key: string, dirty: boolean) => void; confirmLeave: (action: () => void) => void; onSessionEnded: () => void;
 }) {
@@ -79,6 +82,8 @@ function Loaded({ project, client, slug, locale, timeZone, members, canUpdate, c
   const inFlight = useRef(false);
   /** The board is the default way to see tasks; the list stays available. */
   const [view, setView] = useState<'board' | 'list'>('board');
+  // The task to open on arrival is used once: switching to the list and back must not reopen it.
+  const [arrivalTask, setArrivalTask] = useState(initialTaskId);
 
   const change = async (action: 'archive' | 'restore') => {
     if (inFlight.current) return;
@@ -178,6 +183,7 @@ function Loaded({ project, client, slug, locale, timeZone, members, canUpdate, c
           <TaskBoard
             project={project} client={client} slug={slug} locale={locale} timeZone={timeZone} members={members} canManage={canManageTasks && !archived}
             viewSwitch={viewSwitch} onTasksChanged={onChanged} onDraftChange={onDraftChange} confirmLeave={confirmLeave} onSessionEnded={onSessionEnded}
+            initialTaskId={arrivalTask} onInitialTaskSettled={() => setArrivalTask(undefined)}
           />
           <div className="grid gap-5 lg:grid-cols-3">{side}</div>
         </div>

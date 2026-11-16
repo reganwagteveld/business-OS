@@ -23,8 +23,15 @@ type View = { name: 'list' } | { name: 'board' } | { name: 'detail'; id: string 
  * `key={slug}` so switching business discards every bit of this state (records, names, filters);
  * nothing is persisted or cached outside the component.
  */
-export function SalesZone({ sales, customers, context, userLabel, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function SalesZone({ sales, customers, context, userLabel, initialOpportunityId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
   sales: SalesClient; customers: CustomersClient; context: BusinessContext; userLabel: string;
+  /**
+   * Opens this opportunity's detail (a shell route target, e.g. a search result, GS1 §10.6). The detail
+   * loads it through the Sales API, which enforces permission and tenant again; an id that is not in
+   * this business shows the existing not-found state. Back returns to the list. Takes precedence over
+   * `initialAction`.
+   */
+  initialOpportunityId?: string;
   /** Opens the add-opportunity form once Sales has loaded (a Home shortcut); ignored without sales:write. */
   initialAction?: 'new';
   onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
@@ -32,7 +39,7 @@ export function SalesZone({ sales, customers, context, userLabel, initialAction,
   const { slug, name, timeZone, locale, currency } = context.business;
   const canWrite = context.membership.permissions.includes('sales:write');
   const [listMode, setListMode] = useState<ListMode>('list');
-  const [view, setView] = useState<View>({ name: 'list' });
+  const [view, setView] = useState<View>(initialOpportunityId ? { name: 'detail', id: initialOpportunityId } : { name: 'list' });
   const [query, setQuery] = useState<ListQuery>({ q: '', status: 'open', archived: 'active', pipelineId: '', stageId: '' });
   const [notice, setNotice] = useState<string | null>(null);
   const guard = useDraftGuard();
@@ -91,7 +98,7 @@ export function SalesZone({ sales, customers, context, userLabel, initialAction,
 
   // The default pipeline is set up only by an explicit action (POST), never by viewing Sales.
   const [settingUp, setSettingUp] = useState<string | null>(null);
-  const [addAfterSetUp, setAddAfterSetUp] = useState(initialAction === 'new' && canWrite);
+  const [addAfterSetUp, setAddAfterSetUp] = useState(!initialOpportunityId && initialAction === 'new' && canWrite);
   const setUp = async (thenAdd = false) => {
     setSettingUp(null);
     const result = await sales.initialiseDefault(slug);

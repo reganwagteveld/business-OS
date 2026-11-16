@@ -10,7 +10,28 @@ import { ProjectDetail } from './project-detail';
 import { ProjectForm } from './project-form';
 import { DEFAULT_QUERY, ProjectList, type ListQuery } from './project-list';
 
-type View = { name: 'list' } | { name: 'detail'; id: string } | { name: 'new' } | { name: 'edit'; project: Project };
+type View = { name: 'list' } | { name: 'detail'; id: string; taskId?: string } | { name: 'new' } | { name: 'edit'; project: Project };
+
+/**
+ * Reads a shell route target for this Zone. `<projectId>` opens the project; `<projectId>:task:<taskId>`
+ * (GS2-A, the target a search result for a task uses) opens the project on its board with that task's
+ * panel. Anything else is treated as a project id, so a malformed target lands on the project's own
+ * not-found state, as a bad id always has. The ids are only ever sent to the Projects API, which checks
+ * the permission, the business and that the task belongs to the project.
+ */
+export function parseProjectTarget(target: string): { projectId: string; taskId?: string } {
+  const parts = target.split(':');
+  if (parts.length === 3 && parts[1] === 'task' && parts[0] && parts[2]) return { projectId: parts[0], taskId: parts[2] };
+  return { projectId: target };
+}
+
+function initialView(target: string | undefined, intent: 'new' | undefined, canCreate: boolean): View {
+  if (target) {
+    const { projectId, taskId } = parseProjectTarget(target);
+    return taskId ? { name: 'detail', id: projectId, taskId } : { name: 'detail', id: projectId };
+  }
+  return intent === 'new' && canCreate ? { name: 'new' } : { name: 'list' };
+}
 
 /**
  * The Projects Zone: project list, create/edit form and project workspace with its tasks. Mount it
@@ -20,7 +41,10 @@ type View = { name: 'list' } | { name: 'detail'; id: string } | { name: 'new' } 
  */
 export function ProjectsZone({ client, customers, context, userLabel, initialProjectId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded, onOpenCustomer }: {
   client: ProjectsClient; customers: CustomersClient; context: BusinessContext; userLabel: string;
-  /** Opens straight into one project (for example from a customer's page). */
+  /**
+   * Opens straight into one project (for example from a customer's page), or with
+   * `<projectId>:task:<taskId>` into that project's board with the task's panel open (a search result).
+   */
   initialProjectId?: string;
   /** Opens straight into the new-project form (a Home shortcut); ignored without projects:create. */
   initialAction?: 'new';
@@ -35,7 +59,7 @@ export function ProjectsZone({ client, customers, context, userLabel, initialPro
   const canArchive = can('projects:archive');
   const canManageTasks = can('projects:manage_tasks');
   const canReadCustomers = can('customers:read');
-  const [view, setView] = useState<View>(initialProjectId ? { name: 'detail', id: initialProjectId } : initialAction === 'new' && canCreate ? { name: 'new' } : { name: 'list' });
+  const [view, setView] = useState<View>(() => initialView(initialProjectId, initialAction, canCreate));
   const [query, setQuery] = useState<ListQuery>(DEFAULT_QUERY);
   const [notice, setNotice] = useState<string | null>(null);
   const guard = useDraftGuard();
@@ -75,7 +99,7 @@ export function ProjectsZone({ client, customers, context, userLabel, initialPro
         ) : null}
         {view.name === 'detail' ? (
           <ProjectDetail
-            client={client} slug={slug} id={view.id} locale={locale} timeZone={timeZone} members={members}
+            client={client} slug={slug} id={view.id} initialTaskId={view.taskId} locale={locale} timeZone={timeZone} members={members}
             canUpdate={canUpdate} canArchive={canArchive} canManageTasks={canManageTasks}
             onBack={() => guard.leave(() => go({ name: 'list' }))} onEdit={(project) => go({ name: 'edit', project })}
             onOpenCustomer={canReadCustomers && onOpenCustomer ? onOpenCustomer : undefined}

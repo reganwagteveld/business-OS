@@ -1,5 +1,5 @@
 import type { Contact, Customer } from '@business-os/contracts';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { CustomersClient } from '../../api/customers';
 import type { Outcome } from '../../api/tenancy';
 import { actionClass, inputClass, secondaryClass } from '../../shell/frame';
@@ -7,6 +7,7 @@ import { Problem, Skeleton } from '../problem';
 import { useDialog } from '../dialog';
 import { useLoad } from '../use-load';
 import { Breakable, linkClass, telHref } from './links';
+import type { ContactFocus } from './contact-entry';
 
 // Name fields first; the display name is an optional override (PR 11 name rules: left blank, the
 // server derives it from the first and last name, or from the email).
@@ -39,13 +40,16 @@ function explain(outcome: Exclude<Outcome<unknown>, { kind: 'ok' }>): string {
  * Every contact is loaded (all pages), so the primary contact always shows first. An open form
  * reports unsaved changes to the Zone, which asks before anything would discard them.
  */
-export function ManageContacts({ customer, client, slug, canWrite, onCustomerChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
+export function ManageContacts({ customer, focus, client, slug, canWrite, onCustomerChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
   customer: Customer; client: CustomersClient; slug: string; canWrite: boolean;
+  /** One contact to mark and scroll to (opened from a `contact:<id>` target). An archived one opens the archived list. */
+  focus?: ContactFocus;
   onCustomerChanged: () => void; onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const uid = useId();
   const active = useLoad(`contacts|${slug}|${customer.id}|active`, (signal) => client.contacts(slug, customer.id, 'active', signal));
-  const [showArchived, setShowArchived] = useState(false);
+  const [showArchived, setShowArchived] = useState(focus?.archived ?? false);
+  const scrollTo = useScrollOnce();
   const [editing, setEditing] = useState<{ contact: Contact | null; initial: Values } | null>(null);
   const [values, setValues] = useState<Values>(valuesOf());
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<Field, string>>>({});
@@ -181,7 +185,7 @@ export function ManageContacts({ customer, client, slug, canWrite, onCustomerCha
         ) : (
           <ul className="divide-y divide-border">
             {ordered.map((c) => (
-              <li key={c.id} className="py-3 first:pt-0 last:pb-0">
+              <li key={c.id} {...marked(focus, c.id, scrollTo)} className={`py-3 first:pt-0 last:pb-0 ${c.id === focus?.id ? highlightClass : ''}`}>
                 <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                   {c.displayName}
                   {c.id === customer.primaryContactId ? <span aria-label="Primary contact" className="rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">Primary</span> : null}
@@ -228,7 +232,7 @@ export function ManageContacts({ customer, client, slug, canWrite, onCustomerCha
             {showArchived ? 'Hide archived contacts' : 'Show archived contacts'}
           </button>
           {showArchived ? (
-            <ArchivedContacts client={client} slug={slug} customerId={customer.id} canRestore={allowed} busy={busy} onSessionEnded={onSessionEnded}
+            <ArchivedContacts client={client} slug={slug} customerId={customer.id} focus={focus} canRestore={allowed} busy={busy} onSessionEnded={onSessionEnded}
               onRestore={(c, done) => void run(() => client.restoreContact(slug, c.id), (restored) => { setMessage(`${restored.displayName} restored.`); active.reload(); done(); })} />
           ) : null}
         </div>
@@ -237,10 +241,11 @@ export function ManageContacts({ customer, client, slug, canWrite, onCustomerCha
   );
 }
 
-function ArchivedContacts({ client, slug, customerId, canRestore, busy, onRestore, onSessionEnded }: {
-  client: CustomersClient; slug: string; customerId: string; canRestore: boolean; busy: boolean;
+function ArchivedContacts({ client, slug, customerId, focus, canRestore, busy, onRestore, onSessionEnded }: {
+  client: CustomersClient; slug: string; customerId: string; focus?: ContactFocus; canRestore: boolean; busy: boolean;
   onRestore: (c: Contact, done: () => void) => void; onSessionEnded: () => void;
 }) {
+  const scrollTo = useScrollOnce();
   const { state, reload } = useLoad(`contacts|${slug}|${customerId}|archived`, (signal) => client.contacts(slug, customerId, 'archived', signal));
   if (state.status === 'loading') return <Skeleton rows={1} label="Loading archived contacts…" />;
   if (state.outcome.kind !== 'ok') return <div className="mt-3"><Problem outcome={state.outcome} what="Archived contacts" onRetry={reload} onSessionEnded={onSessionEnded} /></div>;
@@ -248,13 +253,28 @@ function ArchivedContacts({ client, slug, customerId, canRestore, busy, onRestor
   return (
     <ul aria-label="Archived contacts" className="mt-2 divide-y divide-border">
       {state.outcome.data.map((c) => (
-        <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+        <li key={c.id} {...marked(focus, c.id, scrollTo)} className={`flex flex-wrap items-center justify-between gap-2 py-2 ${c.id === focus?.id ? highlightClass : ''}`}>
           <span className="text-sm text-muted-foreground">{c.displayName}</span>
           {canRestore ? <TextButton disabled={busy} label={`Restore: ${c.displayName}`} onClick={() => onRestore(c, reload)}>Restore</TextButton> : null}
         </li>
       ))}
     </ul>
   );
+}
+
+// The opened contact gets a visible ring and aria-current, and is scrolled into view once it renders.
+const highlightClass = 'rounded-lg px-2 ring-2 ring-ring';
+function marked(focus: ContactFocus | undefined, id: string, ref: (node: HTMLLIElement | null) => void) {
+  return focus?.id === id ? { 'aria-current': 'true' as const, ref } : {};
+}
+/** A stable ref callback that scrolls its element into view the first time only, so later refreshes never move the page. */
+function useScrollOnce() {
+  const done = useRef(false);
+  return useCallback((node: HTMLLIElement | null) => {
+    if (!node || done.current) return;
+    done.current = true;
+    node.scrollIntoView?.({ block: 'nearest' });
+  }, []);
 }
 
 function ContactLines({ contact: c }: { contact: Contact }) {
