@@ -34,6 +34,9 @@ jobs:
       desktop: ${{ steps.classify.outputs.desktop }}
       tier: ${{ steps.classify.outputs.tier }}
       desktop_reason: ${{ steps.classify.outputs.desktop_reason }}
+      # CIQ-A1: which gated jobs run (docs, client or full). Separate from the CI-2A desktop decision.
+      gate_tier: ${{ steps.gate-tier.outputs.gate_tier }}
+      gate_reason: ${{ steps.gate-tier.outputs.gate_reason }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,6 +46,8 @@ jobs:
       - name: Self-test the change classifier and the gate verdict
         run: |
           .github/scripts/classify-changes.test.sh
+          .github/scripts/classify-gate-tier.test.sh
+          .github/scripts/scan-doc-credentials.test.sh
           .github/scripts/ci-gate.test.sh
           .github/scripts/changed-files.test.sh
           .github/scripts/check-migration-order.test.sh
@@ -84,9 +89,51 @@ jobs:
               .github/scripts/classify-changes.sh < "$RUNNER_TEMP/changed-files" || full "classifier failed (fail closed)"
             fi
           } | tee -a "$GITHUB_OUTPUT"
+      # CIQ-A1 (docs/ci.md "Gate tiers"): docs skips static, unit, build and database; client skips only
+      # database; everything else is full. Any failure to establish or classify the diff selects full.
+      - name: Decide which gated jobs are needed
+        id: gate-tier
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          GATE_REF: ${{ github.ref }}
+        run: |
+          full() {
+            echo "gate_tier=full"
+            echo "gate_reason=$1"
+          }
+          {
+            if [ "$EVENT_NAME" != pull_request ] && [ "$EVENT_NAME" != push ]; then
+              full "full validation for $EVENT_NAME on $GATE_REF"
+            elif ! .github/scripts/changed-files.sh > "$RUNNER_TEMP/gate-files" 2> "$RUNNER_TEMP/gate-files.err"; then
+              full "changed files could not be established (fail closed): $(head -c 120 "$RUNNER_TEMP/gate-files.err" | tr '\n' ' ')"
+            elif ! out="$(.github/scripts/classify-gate-tier.sh < "$RUNNER_TEMP/gate-files")"; then
+              full "gate tier classifier failed (fail closed)"
+            else
+              echo "$out"
+            fi
+          } | tee -a "$GITHUB_OUTPUT"
+      # Every tier: added lines in documentation must not look like credentials. On events without a
+      # single-step diff there is nothing to compare, and the full tier runs everything else.
+      - name: Added documentation lines contain no credentials
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          if .github/scripts/changed-files.sh > /dev/null 2>&1; then
+            git diff --unified=0 --no-renames HEAD^1 HEAD | .github/scripts/scan-doc-credentials.sh
+          else
+            echo "no single-step diff for this event; skipped (the full tier runs every job)"
+          fi
 
+  # CIQ-A1: static, unit and build are skipped only for the docs tier; database also for the client tier.
+  # The conditions are "run unless the classifier explicitly said otherwise", so an empty or unknown
+  # tier runs the job. If Detect changes fails, these jobs are skipped and CI gate fails on its result.
   static:
     name: Static checks (contracts, types, lint, boundaries)
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env: &workspace-env
@@ -126,6 +173,8 @@ jobs:
 
   unit:
     name: Unit, contract and architecture tests
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env: *workspace-env
@@ -139,6 +188,8 @@ jobs:
 
   database:
     name: Database tests (roles, migrations, integration, RLS isolation)
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs' && needs.changes.outputs.gate_tier != 'client'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
@@ -238,6 +289,8 @@ jobs:
 
   build:
     name: Build verification (API, web, desktop frontend, startup, bundle security)
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env: *workspace-env
@@ -315,8 +368,9 @@ jobs:
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
 
   # The single required status check. It runs even when jobs before it fail, are cancelled or are
-  # skipped, and passes only if every applicable check succeeded. A skipped job satisfies it only
-  # when it is the desktop matrix and the change classifier said the desktop matrix was not needed.
+  # skipped, and passes only if every applicable check succeeded. A skipped job satisfies it only when
+  # the classifier succeeded and its explicit output permits that skip: the desktop matrix by the CI-2A
+  # desktop decision, static/unit/build/database by the CIQ-A1 gate tier (.github/scripts/ci-gate.sh).
   gate:
     name: CI gate
     if: always()
@@ -336,6 +390,8 @@ jobs:
       DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
       DESKTOP_TIER: ${{ needs.changes.outputs.tier }}
       DESKTOP_REASON: ${{ needs.changes.outputs.desktop_reason }}
+      GATE_TIER: ${{ needs.changes.outputs.gate_tier }}
+      GATE_REASON: ${{ needs.changes.outputs.gate_reason }}
     steps:
       - name: Summary
         continue-on-error: true
@@ -364,7 +420,9 @@ jobs:
             echo "| Build verification (API, web, desktop frontend, startup, bundles) | $(icon "$BUILD") $BUILD | $(dur 'Build verification') |"
             echo "| Desktop shell (Linux, macOS, Windows) | $(icon "$DESKTOP") $DESKTOP | $(dur 'Desktop shell') (slowest OS) |"
             echo
-            echo "Tier: **${DESKTOP_TIER:-unknown}**. Desktop matrix required: **${DESKTOP_REQUIRED:-unknown}** ($DESKTOP_REASON)"
+            echo "Gate tier: **${GATE_TIER:-unknown}** ($GATE_REASON)"
+            echo
+            echo "Desktop tier: **${DESKTOP_TIER:-unknown}**. Desktop matrix required: **${DESKTOP_REQUIRED:-unknown}** ($DESKTOP_REASON)"
             started="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT" --jq .run_started_at 2>/dev/null || true)"
             if [ -n "$started" ]; then
               total=$(( $(date +%s) - $(date -d "$started" +%s) ))

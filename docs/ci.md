@@ -6,19 +6,41 @@ One workflow, `.github/workflows/ci.yml` (plus the separate, non-gating visual-r
 
 | Job | Runs | What it checks |
 |---|---|---|
-| Detect changes | always | Self-tests the change classifier and the gate verdict, then decides whether the desktop matrix is needed |
-| Static checks | always | Contract snapshot, typecheck, lint, boundaries (dependency-cruiser + source rules) |
-| Unit, contract and architecture tests | always | `pnpm test` (every package plus `tests/architecture`) |
-| Database tests | always | PostgreSQL roles, `prisma migrate deploy` as the owner role, privileged SQL, integration tests (API, RBAC, tenancy), RLS spike and isolation tests behind PgBouncer, the finance integrity and payments suites again with `bos_app` behind PgBouncer (F2), migrations match schema |
-| Build verification | always | `pnpm build` (API, web, desktop frontend), API boots without owner credentials, client bundles contain no server configuration |
+| Detect changes | always | Self-tests the classifiers, the credential scan and the gate verdict; checks migration order; decides the gate tier and whether the desktop matrix is needed; scans added documentation lines for credentials |
+| Static checks | unless gate tier `docs` | Contract snapshot, typecheck, lint, boundaries (dependency-cruiser + source rules) |
+| Unit, contract and architecture tests | unless gate tier `docs` | `pnpm test` (every package plus `tests/architecture`) |
+| Database tests | gate tier `full` only | PostgreSQL roles, `prisma migrate deploy` as the owner role, privileged SQL, integration tests (API, RBAC, tenancy), RLS spike and isolation tests behind PgBouncer, the finance integrity and payments suites again with `bos_app` behind PgBouncer (F2), migrations match schema |
+| Build verification | unless gate tier `docs` | `pnpm build` (API, web, desktop frontend), API boots without owner credentials, client bundles contain no server configuration |
 | Desktop shell (Linux, macOS, Windows) | see below | Unsigned Tauri build (Linux compile only, macOS `.app`, Windows NSIS) and the Rust unit tests |
 | CI gate | always, even after failures or cancellation | Passes only if every applicable job succeeded |
 
-Static, unit, database and build jobs never depend on which files changed. Only the desktop matrix is conditional.
+Two independent decisions, both fail closed, select the conditional jobs: the **gate tier** (CIQ-A1, below) for static, unit, database and build, and the **desktop tier** (CI-2A) for the native matrix.
+
+## Gate tiers (CIQ-A1)
+
+Design: `docs/ciq-1-merge-queue-throughput.md` §4.A.1 and §4.A.2 (owner decisions D-CI-2 and D-CIQ-1). `.github/scripts/classify-gate-tier.sh` reads the same changed-file list as the desktop classifier and prints `gate_tier`:
+
+| Gate tier | Paths (every changed path must match) | Static | Unit | Build | Database |
+|---|---|---|---|---|---|
+| `docs` | ordinary documentation: `docs/**` `.md`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`, **excluding** governance documents (below) | skipped | skipped | skipped | skipped |
+| `client` | at least one client source file, i.e. `.ts`, `.tsx` or `.css` under `packages/app/src/`, `packages/app/tests/`, `packages/ui/src/`, `packages/ui/tests/` or `apps/web/src/`, plus optionally ordinary documentation; **excluding** the HTTP transport (`packages/app/src/api/http.ts`, `client.ts`), `packages/app/src/config.ts`, `packages/app/src/auth/**`, test `setup` files, hidden files, `*.config.*`, `tsconfig*`, manifests and lockfiles, and any path containing `auth`, `session`, `admission`, `permission`, `tenant`, `tenanc`, `rbac`, `role`, `csrf`, `token`, `secret` or `credential` (case-insensitive) | runs | runs | runs | skipped |
+| `full` | anything else | runs | runs | runs | runs |
+
+**Governance documents are never `docs` tier** (case-insensitive): `CLAUDE.md`, `AGENTS.md` and `SECURITY.md` anywhere, every root `*.md` (including `README.md`), and under `docs/`: `agent-*`, `agents/`, `merge-queue*`, `active-workstreams*`, `ci*`, `*-ci-*`, `*release*`, `*migration*`, `deployment*`, `vercel*`, `*neon*`, `operations/`, `ops/`, `private-beta*`, `*security*`, `*lockdown*`, `*admission*`, `adr/`. They run the full suite and keep their own governance review (Regan's own approval where they change the approval model).
+
+**Why `client` may skip the Database job:** clients reach data only through `/api/v1`. `pnpm boundaries` and `tests/architecture` forbid database or server imports in client packages, no API or database test imports a client package, and both checks still run in the `client` tier.
+
+**Events:** only `pull_request` and a `push` to `refs/heads/main` may use `docs` or `client`. Release branches, tags, manual runs, the weekly schedule and `workflow_call` (nightly, release validation) are always `full`.
+
+**Fail closed:** an empty list, a diff that cannot be established, an unsafe path name (`..`, `.` segments, `//`, a leading `/`, control characters, backslashes), any path not on an allow-list, a mix with a `full` path and a classifier error all select `full`. Jobs run unless the classifier explicitly said `docs` (or `client` for Database), so a missing output runs them.
+
+**Credential scan (every tier):** `scan-doc-credentials.sh` fails Detect changes when a line *added* to `docs/**`, `*.md`, `*.mdx` or `*.txt` matches a provider credential pattern (AWS, GitHub, private keys, Slack, Stripe live, npm, Resend, Neon URL with a password). The match is never printed.
+
+Change the rules only together with `classify-gate-tier.test.sh` and `ci-gate.test.sh`. A tier only decides which jobs `CI gate` requires: it never grants merge permission, which still comes only from a verified verdict (`docs/agent-task-protocol.md`).
 
 ## When the desktop matrix runs
 
-The native desktop matrix (Linux compile check, macOS, Windows) is the only conditional job. Static checks, unit tests, database tests and build verification run on every run, including documentation-only ones. `.github/scripts/changed-files.sh` lists the changed paths and `.github/scripts/classify-changes.sh` classifies them (CI-2A, design in [ci-2-runner-efficiency.md](ci-2-runner-efficiency.md)). The result is a **tier**:
+The native desktop matrix (Linux compile check, macOS, Windows) runs according to the desktop tier, which is independent of the gate tier. `.github/scripts/changed-files.sh` lists the changed paths and `.github/scripts/classify-changes.sh` classifies them (CI-2A, design in [ci-2-runner-efficiency.md](ci-2-runner-efficiency.md)). The result is a **tier**:
 
 | Tier | Paths (every changed path must match) | Matrix |
 |---|---|---|
@@ -67,7 +89,7 @@ Nothing publishes. Any future publish workflow must be a separate PR with a GitH
 
 ## The gate
 
-`.github/scripts/ci-gate.sh` (self-tested by `ci-gate.test.sh`) fails when any of these is not `success`: Detect changes, Static checks, Unit tests, Database tests, Build verification. The desktop matrix must also be `success` unless the classifier job succeeded and explicitly reported `desktop=false` with tier `docs` or `server`; a skip with any other tier, a missing tier or a failed classifier fails the gate. The gate uses `if: always()`, so it reports a failure (not a skip) when jobs before it fail or are cancelled. A run that never completes leaves `CI gate` pending, which blocks merge.
+`.github/scripts/ci-gate.sh` (self-tested by `ci-gate.test.sh`) fails when Detect changes is not `success`, and when Static checks, Unit tests, Database tests or Build verification is not `success`, except that a job may be `skipped` when Detect changes succeeded and the gate tier permits that skip (`docs`: static, unit, build, database; `client`: database only). A permitted job that ran anyway must succeed; a missing result, an unknown or empty tier, or a failed classifier requires success. The desktop matrix must also be `success` unless the classifier job succeeded and explicitly reported `desktop=false` with tier `docs` or `server`; a skip with any other tier, a missing tier or a failed classifier fails the gate. The gate uses `if: always()`, so it reports a failure (not a skip) when jobs before it fail or are cancelled. A run that never completes leaves `CI gate` pending, which blocks merge.
 
 Do not mark individual jobs as required: GitHub treats a skipped required job as passing.
 
