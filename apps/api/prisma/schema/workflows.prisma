@@ -1,0 +1,29 @@
+// workflows module (docs/cross-zone-workflows-wf1.md §4.1, §5.5; W1-D1, W1-D13). The thin cross-Zone
+// module owns no business record, only this idempotency ledger. Forced RLS; bos_app may SELECT and
+// INSERT only, so a key, once written in a committed action, cannot be changed or removed by tenant code.
+// Retention policy (D-WF1-12): 90-day target; no cleanup job exists, so rows physically remain until a
+// separately approved cleanup. Safety never depends on deletion (state guards in WF-1B-2).
+
+/// One idempotent workflow action: written in the same transaction as the action, so a rolled-back
+/// action leaves no key. Same key + same request hash replays the original result.
+model WorkflowRequest {
+  id             String   @id @db.Uuid
+  businessId     String   @map("business_id") @db.Uuid
+  /// project.from_opportunity or project.from_quote (CHECK).
+  operation      String
+  idempotencyKey String   @map("idempotency_key")
+  /// SHA-256 (hex) of the canonical request body.
+  requestHash    String   @map("request_hash")
+  /// What the action created (CHECK: project).
+  resultType     String   @map("result_type")
+  resultId       String   @map("result_id") @db.Uuid
+  actorUserId    String   @map("actor_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "workflow_requests_business_fkey")
+
+  @@unique([businessId, id])
+  @@unique([businessId, operation, idempotencyKey], map: "workflow_requests_key")
+  @@index([businessId, createdAt])
+  @@map("workflow_requests")
+}

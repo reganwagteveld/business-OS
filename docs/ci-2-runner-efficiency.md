@@ -1,6 +1,6 @@
 # CI-2: runner efficiency, nightly macOS validation and release gate
 
-Status: CI-2A implemented in this PR. CI-2B and CI-2C are planned here and will be separate PRs (owner amendment of 2026-11-17). Parent plan: [ci-merge-pipeline-proposal.md](ci-merge-pipeline-proposal.md) (PR 94, decisions D-CI-1..5). Nothing here changes branch protection: `CI gate` stays the only required check.
+Status: CI-2A and CI-2B are merged; CI-2C is in a separate PR (113). Planned here as separate PRs (owner amendment of 2026-11-17). Parent plan: [ci-merge-pipeline-proposal.md](ci-merge-pipeline-proposal.md) (PR 94, decisions D-CI-1..5). Nothing here changes branch protection: `CI gate` stays the only required check.
 
 ## 1. Baseline (measured 2026-11-16 from the Actions jobs API)
 
@@ -88,7 +88,7 @@ Owner requirements of 2026-11-17 (CI-2-F). Proposed design:
 - Recording: per-job duration, runner-minutes per OS and failures in the job summary, uploaded test reports and `.app` checksum as artifacts (30 days).
 - Visibility: on failure the workflow opens or updates one `nightly-failure` issue (needs `issues: write` on that job only). Nightly failures do not block unrelated PRs; the release gate (CI-2C) treats an unresolved relevant failure as blocking.
 
-## 4. CI-2C: mandatory full-platform release gate (planned, separate PR)
+## 4. CI-2C: mandatory full-platform release gate (implemented in PR 113; operating description in [ci.md](ci.md))
 
 Owner requirements of 2026-11-17 (CI-2-G, CI-2-H). Proposed design:
 

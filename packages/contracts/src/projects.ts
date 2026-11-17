@@ -26,6 +26,15 @@ const Count = z.number().int().min(0);
 export const ProjectCustomer = z.object({ id: Uuid, displayName: z.string(), archived: z.boolean() }).strict();
 export type ProjectCustomer = z.infer<typeof ProjectCustomer>;
 
+/** WF-1 §6.7: the linked opportunity as Sales holds it now (title and status, never amounts). */
+export const ProjectSourceOpportunity = z.object({ id: Uuid, title: z.string(), status: z.enum(['OPEN', 'WON', 'LOST']) }).strict();
+export type ProjectSourceOpportunity = z.infer<typeof ProjectSourceOpportunity>;
+/** WF-1 §6.7: the source quote as Finance holds it now (number and status, never amounts). */
+export const ProjectSourceQuote = z
+  .object({ id: Uuid, number: z.string().nullable(), status: z.enum(['DRAFT', 'ISSUED', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'VOID']) })
+  .strict();
+export type ProjectSourceQuote = z.infer<typeof ProjectSourceQuote>;
+
 export const Project = z
   .object({
     id: Uuid,
@@ -48,6 +57,18 @@ export const Project = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     archivedAt: z.string().datetime().nullable(),
+    /**
+     * WF-1 (docs/cross-zone-workflows-wf1.md §6.7): the opportunity this work came from. Present only for
+     * callers who may read Sales (sales:read); for everyone else both keys are absent, never null.
+     */
+    sourceOpportunityId: Uuid.nullable().optional(),
+    sourceOpportunity: ProjectSourceOpportunity.nullable().optional(),
+    /**
+     * The accepted quote this project delivers. Present only for callers who may read Finance
+     * (finance:read); for everyone else both keys are absent, never null (D-WF1-05).
+     */
+    sourceQuoteId: Uuid.nullable().optional(),
+    sourceQuote: ProjectSourceQuote.nullable().optional(),
   })
   .strict();
 export type Project = z.infer<typeof Project>;
