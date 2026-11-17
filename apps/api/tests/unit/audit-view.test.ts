@@ -7,6 +7,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ListAuditEventsQuery } from '@business-os/contracts';
+import { REVIEWED_ACTIONS } from '@/core/audit/reviewed-actions';
 import {
   FALLBACK_LABEL, FALLBACK_TARGET_TYPE, MAX_WINDOW_MS, matchFamily, prefixLikePattern, resolveRule, resolveWindow, SAFE_TARGET_TYPES, sanitizeMetadata, VIEW_RULES, viewTarget,
 } from '@/core/audit/view-rules';
@@ -43,16 +44,16 @@ describe('view rules', () => {
   it('gives any other string the fixed fallback: no metadata, at most a fixed target type', () => {
     for (const action of ['brand_new.thing', 'x', '', 'Customer.created', 'customer created', '<script>alert(1)</script>', 'a'.repeat(200)]) {
       const rule = resolveRule(action);
-      expect(rule, action).toMatchObject({ label: FALLBACK_LABEL, group: 'other', unknown: true, target: 'type_only' });
+      expect(rule, action).toMatchObject({ label: FALLBACK_LABEL, group: 'other', unknown: true, unmatched: true, target: 'type_only' });
       expect(rule.keys.size).toBe(0);
       expect(viewTarget(rule, 'secret_type', U)).toEqual({ type: FALLBACK_TARGET_TYPE });
     }
   });
 
-  it('keeps only allow-listed keys and plain values, truncating strings and lists', () => {
+  it('keeps only allow-listed keys and plain values, dropping non-code strings and truncating lists', () => {
     const keys = new Set(['fields', 'role', 'count', 'flag']);
     expect(sanitizeMetadata({ fields: ['a', 'b'], role: 'ADMIN', count: 3, flag: false, email: 'x@y.z', token: 't', nested: { a: 1 } }, keys)).toEqual({ fields: ['a', 'b'], role: 'ADMIN', count: 3, flag: false });
-    expect(sanitizeMetadata({ role: 'x'.repeat(500) }, keys).role).toHaveLength(200);
+    expect(sanitizeMetadata({ role: 'x'.repeat(500) }, keys)).toEqual({}); // too long to be a code: dropped, never cut
     expect((sanitizeMetadata({ fields: Array.from({ length: 50 }, (_, i) => `f${i}`) }, keys).fields as string[]).length).toBe(20);
     expect(sanitizeMetadata({ fields: ['a', 1] }, keys)).toEqual({});
     expect(sanitizeMetadata({ role: null, count: Number.NaN, flag: 'yes' }, keys)).toEqual({ flag: 'yes' });
@@ -76,11 +77,41 @@ describe('view rules', () => {
 
   it('shows a target as the rule allows: id for show, type for type_only, nothing for hidden or absent', () => {
     expect(viewTarget(resolveRule('customer.created'), 'customer', U)).toEqual({ type: 'customer', id: U });
-    expect(viewTarget(resolveRule('customer.created'), 'weird_type', U)).toEqual({ type: 'record', id: U });
+    // An unclassified type, or a known type that does not belong to the action's family, never keeps its id.
+    expect(viewTarget(resolveRule('customer.created'), 'weird_type', U)).toEqual({ type: 'record' });
+    expect(viewTarget(resolveRule('customer.created'), 'finance_settings', U)).toEqual({ type: 'record' });
+    expect(viewTarget(resolveRule('finance.document.issued'), 'customer', U)).toEqual({ type: 'customer', id: U });
     expect(viewTarget(resolveRule('people.employee.updated'), 'people_employee', U)).toEqual({ type: 'people_employee' });
     expect(viewTarget(resolveRule('communications.erasure.requested'), 'erasure', U)).toBeNull();
     expect(viewTarget(resolveRule('conversation.created'), 'conversation', U)).toBeNull();
     expect(viewTarget(resolveRule('customer.created'), null, null)).toBeNull();
+  });
+});
+
+describe('reviewed actions only', () => {
+  it('gives a new action in a known family its label and group but no metadata and no target id', () => {
+    const rule = resolveRule('finance.unreviewed_future_action');
+    expect(rule).toMatchObject({ label: 'Finance record unreviewed future action', group: 'finance', unknown: true, unmatched: false });
+    expect(rule.keys.size).toBe(0);
+    expect(viewTarget(rule, 'finance_document', U)).toEqual({ type: 'record' });
+    expect(viewTarget(resolveRule('customer.brand_new'), 'customer', U)).toEqual({ type: 'record' });
+    expect(viewTarget(resolveRule('conversation.brand_new'), 'conversation', U)).toBeNull();
+  });
+  it('shows only code-like values: no emails, spaces or free text', () => {
+    const keys = new Set(['number', 'reason', 'fields', 'status']);
+    expect(sanitizeMetadata({ number: 'INV-0001', status: 'PAID_IN_FULL', fields: ['jobTitle', 'a.b'], reason: '2026-11-17T10:00:00Z' }, keys)).toEqual({ number: 'INV-0001', status: 'PAID_IN_FULL', fields: ['jobTitle', 'a.b'], reason: '2026-11-17T10:00:00Z' });
+    for (const bad of ['jane@example.com', 'a customer name', '<b>x</b>', 'x'.repeat(65), '', 'line\nbreak']) {
+      expect(sanitizeMetadata({ number: bad, reason: bad }, keys), bad).toEqual({});
+      expect(sanitizeMetadata({ fields: ['ok', bad] }, keys), bad).toEqual({});
+    }
+  });
+  it('lists every reviewed action under a family whose target types are safe', () => {
+    for (const action of REVIEWED_ACTIONS) {
+      const rule = resolveRule(action);
+      expect(rule.unmatched, action).toBe(false);
+      expect(rule.unknown, action).toBe(false);
+      for (const type of rule.types) expect(SAFE_TARGET_TYPES.has(type), `${action} ${type}`).toBe(true);
+    }
   });
 });
 
@@ -142,6 +173,7 @@ describe('coverage: every audited action resolves to a family rule', () => {
     for (const m of text.matchAll(/'((?:business|invitation|communications)\.[a-z_]+(?:\.[a-z_]+)*)'/g)) found.set(m[1]!, path);
   }
 
+  found.delete('communications.legal_hold'); // an advisory-lock key in the erasure SQL, not an action
   it('finds the actions the plan lists (a guard against the scan going blind)', () => {
     for (const action of ['membership.suspended', 'customer.created', 'finance.document.issued', 'communications.erasure.requested', 'business.created', 'invitation.accepted']) {
       expect(found.has(action), action).toBe(true);
@@ -150,8 +182,30 @@ describe('coverage: every audited action resolves to a family rule', () => {
   });
 
   it('has no audited action without a family rule (add a rule, or an explicit decision, in the PR that adds the action)', () => {
-    const unknown = [...found.keys()].filter((action) => resolveRule(action).unknown).sort();
+    const unknown = [...found.keys()].filter((action) => resolveRule(action).unmatched).sort();
     expect(unknown).toEqual([]);
+  });
+
+  it('has no audited action that is not on the reviewed list (add it to reviewed-actions.ts, with its key and type review)', () => {
+    const unreviewed = [...found.keys()].filter((action) => !REVIEWED_ACTIONS.has(action)).sort();
+    expect(unreviewed).toEqual([]);
+  });
+
+  it('has no reviewed action the source no longer records (keeps the list honest)', () => {
+    const templated = /^(communications\.system\.(reauth_required|owner_inactive|holder_inactive)|finance\.system\.(reminder|recurring)\.(failed|retrying))$/;
+    const stale = [...REVIEWED_ACTIONS].filter((action) => !found.has(action) && !templated.test(action)).sort();
+    expect(stale).toEqual([]);
+  });
+
+  it('records each action only under a target type its family is reviewed to carry', () => {
+    const mismatched: string[] = [];
+    for (const path of files(SRC, /\.ts$/)) {
+      const text = readFileSync(path, 'utf8');
+      for (const m of text.matchAll(/(?:recordAudit|recordSystemAudit|\baudit)\(\s*db\s*,\s*(?:[A-Za-z_.]+\s*,\s*)?'([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)'\s*,\s*\{\s*type:\s*'([a-z_]+)'/g)) {
+        if (!resolveRule(m[1]!).types.has(m[2]!)) mismatched.push(`${m[1]} ${m[2]}`);
+      }
+    }
+    expect(mismatched).toEqual([]);
   });
 
   it('only names target types from the safe list in the rules it can show', () => {

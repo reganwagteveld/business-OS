@@ -336,6 +336,41 @@ describe('audit viewer: filters, windows and paging', () => {
     expect(same.status).toBe(200);
   });
 
+  it('refuses a forged cursor with a valid shape: reversed, over-long or off-window bounds', async () => {
+    const t = await team();
+    for (let i = 0; i < 3; i++) await seed(t.id, { action: 'customer.created', actor: t.people.OWNER!.id, at: daysAgo(1, i) });
+    const owner = t.people.OWNER!;
+    const page = await events(owner, t.slug, { actionPrefix: 'customer', limit: '1' });
+    const issued = JSON.parse(Buffer.from(page.nextCursor!, 'base64url').toString('utf8')) as Record<string, string>;
+    const forge = (patch: Record<string, string>) => Buffer.from(JSON.stringify({ ...issued, ...patch }), 'utf8').toString('base64url');
+    const yearsAgo = '2000-01-01T00:00:00.000Z';
+    const bad = [
+      forge({ a: yearsAgo, b: '2030-01-01T00:00:00.000Z' }),
+      forge({ a: yearsAgo }),
+      forge({ a: issued.b!, b: issued.a! }),
+      forge({ t: '2001-01-01T00:00:00.000000Z' }),
+      forge({ t: '2999-01-01T00:00:00.000000Z' }),
+    ];
+    for (const cursor of bad) {
+      const res = await list(owner, t.slug, { actionPrefix: 'customer', cursor });
+      expect(res.status, cursor).toBe(400);
+    }
+    expect((await list(owner, t.slug, { actionPrefix: 'customer', cursor: forge({}) })).status).toBe(200);
+  });
+
+  it('shows no metadata and no target id for a new action in a known family or a mismatched target type', async () => {
+    const t = await team();
+    const secret = randomUUID();
+    await seed(t.id, { action: 'finance.unreviewed_future_action', actor: t.people.OWNER!.id, targetType: 'finance_document', targetId: secret, metadata: { number: 'INV-0001', fields: ['x'] } });
+    await seed(t.id, { action: 'customer.created', actor: t.people.OWNER!.id, targetType: 'unreviewed_private_type', targetId: secret });
+    await seed(t.id, { action: 'customer.updated', actor: t.people.OWNER!.id, targetType: 'finance_settings', targetId: secret, metadata: { fields: ['name'] } });
+    const page = await events(t.people.OWNER!, t.slug, { actionPrefix: 'customer' });
+    const future = (await events(t.people.OWNER!, t.slug, { actionPrefix: 'finance' })).events.find((e) => e.action === 'finance.unreviewed_future_action')!;
+    expect(future).toMatchObject({ label: 'Finance record unreviewed future action', group: 'finance', metadata: {}, target: { type: 'record' } });
+    for (const e of page.events) expect(e.target, e.action).toEqual({ type: 'record' });
+    expect(JSON.stringify([future, page])).not.toContain(secret);
+  });
+
   it('answers in the shape of the contract with 50 rows by default and caps the limit at 100', async () => {
     const t = await team();
     expect((await list(t.people.OWNER!, t.slug, { limit: '0' })).status).toBe(400);

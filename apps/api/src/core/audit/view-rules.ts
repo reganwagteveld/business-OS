@@ -7,6 +7,7 @@
 // contacts, amounts, user ids of other people, provider payloads. Keys that hold ids (customerId, userId,
 // from/to where they are user or record ids) are simply not listed.
 import type { AuditGroup } from '@business-os/contracts';
+import { REVIEWED_ACTIONS } from './reviewed-actions';
 
 /** show: type and id. type_only: the type, never the id. hidden: no target at all. */
 export type TargetMode = 'show' | 'type_only' | 'hidden';
@@ -18,42 +19,49 @@ export interface ViewRule {
   group: AuditGroup;
   keys: readonly string[];
   target: TargetMode;
+  /** Target types this family's actions are reviewed to carry. A row with any other type never shows its id. */
+  types: readonly string[];
 }
 
-const family = (prefix: string, noun: string, group: AuditGroup, target: TargetMode, keys: readonly string[] = []): ViewRule => ({ prefix, noun, group, keys, target });
+const family = (prefix: string, noun: string, group: AuditGroup, target: TargetMode, types: readonly string[], keys: readonly string[] = []): ViewRule => ({ prefix, noun, group, keys, target, types });
+const FIN = [
+  'finance_document', 'finance_payment', 'finance_payment_allocation', 'finance_credit_application', 'finance_expense', 'finance_expense_allocation', 'finance_catalog_item',
+  'finance_settings', 'finance_document_branding', 'finance_document_pdf', 'finance_recurring_template', 'finance_recurring_run', 'finance_reminder', 'finance_reminder_policy',
+  'finance_reminder_hold', 'finance_tax_rate', 'finance_number_series', 'finance_expense_category', 'customer',
+];
 
 export const VIEW_RULES: readonly ViewRule[] = [
-  family('business', 'Business', 'business', 'show', ['fields', 'countryCodeFrom', 'countryCodeTo', 'timeZoneFrom', 'timeZoneTo', 'localeFrom', 'localeTo', 'currencyFrom', 'currencyTo', 'fiscalYearStartMonthFrom', 'fiscalYearStartMonthTo']),
-  family('membership', 'Member', 'team', 'show', ['role', 'from', 'to', 'via', 'mailboxesStopped', 'stopped', 'stepDown']),
-  family('invitation', 'Invitation', 'team', 'type_only', ['role', 'reason']),
-  family('customer', 'Customer', 'customers', 'show', ['fields']),
-  family('contact', 'Contact', 'customers', 'show', ['fields']),
-  family('activity', 'Note or activity', 'customers', 'type_only', ['activityType', 'fields', 'visibility']),
-  family('sales.pipeline', 'Sales pipeline', 'sales', 'show', ['stages']),
-  family('sales', 'Opportunity', 'sales', 'show', ['fields', 'currencyCode', 'hasAmount', 'hasReason']),
-  family('projects', 'Project', 'projects', 'show', ['fields', 'status']),
-  family('scheduling', 'Scheduling', 'scheduling', 'show', ['fields', 'enforced', 'blocksAvailability', 'overlaps', 'resourceType', 'status']),
-  family('people', 'People record', 'people', 'type_only', ['fields', 'status', 'category', 'unit', 'entitlementMethod', 'statusFrom', 'statusTo', 'change', 'effectiveDate']),
-  family('finance.system', 'Billing automation', 'finance', 'show', ['attempts', 'code', 'errorCode', 'state', 'previousState', 'reason', 'stage', 'offsetDays', 'periodIndex']),
-  family('finance.document_pdf', 'Document PDF', 'finance', 'show', ['kind', 'versionNumber', 'pageCount', 'documentStatus', 'hasNote']),
-  family('finance.statement_pdf', 'Customer statement PDF', 'finance', 'show', ['currencyCode']),
-  family('finance', 'Finance record', 'finance', 'show', [
+  family('business', 'Business', 'business', 'show', ['business'], ['fields', 'countryCodeFrom', 'countryCodeTo', 'timeZoneFrom', 'timeZoneTo', 'localeFrom', 'localeTo', 'currencyFrom', 'currencyTo', 'fiscalYearStartMonthFrom', 'fiscalYearStartMonthTo']),
+  family('membership', 'Member', 'team', 'show', ['membership'], ['role', 'from', 'to', 'via', 'mailboxesStopped', 'stopped', 'stepDown']),
+  family('invitation', 'Invitation', 'team', 'type_only', ['invitation'], ['role', 'reason']),
+  family('customer', 'Customer', 'customers', 'show', ['customer'], ['fields']),
+  family('contact', 'Contact', 'customers', 'show', ['contact'], ['fields']),
+  family('activity', 'Note or activity', 'customers', 'type_only', ['activity'], ['activityType', 'fields', 'visibility']),
+  family('sales.pipeline', 'Sales pipeline', 'sales', 'show', ['sales_pipeline'], ['stages']),
+  family('sales', 'Opportunity', 'sales', 'show', ['opportunity'], ['fields', 'currencyCode', 'hasAmount', 'hasReason']),
+  family('projects', 'Project', 'projects', 'show', ['project', 'project_task'], ['fields', 'status']),
+  family('scheduling', 'Scheduling', 'scheduling', 'show', ['scheduling_calendar', 'scheduling_event', 'scheduling_resource'], ['fields', 'enforced', 'blocksAvailability', 'overlaps', 'resourceType', 'status']),
+  family('people', 'People record', 'people', 'type_only', ['people_employee', 'people_leave_policy', 'people_leave_type', 'people_department', 'people_location'], ['fields', 'status', 'category', 'unit', 'entitlementMethod', 'statusFrom', 'statusTo', 'change', 'effectiveDate']),
+  family('finance.system', 'Billing automation', 'finance', 'show', ['finance_document', 'finance_recurring_template', 'finance_recurring_run', 'finance_reminder'], ['attempts', 'code', 'errorCode', 'state', 'previousState', 'reason', 'stage', 'offsetDays', 'periodIndex']),
+  family('finance.document_pdf', 'Document PDF', 'finance', 'show', ['finance_document_pdf', 'finance_document'], ['kind', 'versionNumber', 'pageCount', 'documentStatus', 'hasNote']),
+  family('finance.statement_pdf', 'Customer statement PDF', 'finance', 'show', ['customer'], ['currencyCode']),
+  family('finance', 'Finance record', 'finance', 'show', FIN, [
     'fields', 'kind', 'number', 'currencyCode', 'itemType', 'hasReason', 'direction', 'method', 'isDefault', 'wasDefault', 'scope', 'trigger',
     'frequency', 'intervalCount', 'lineCount', 'catalogLineCount', 'fromStatus', 'statusFrom', 'statusTo', 'taxTreatment', 'paidInFull',
     'reversedAllocations', 'skippedRuns', 'skippedPeriods', 'skippedReminders', 'cause', 'offsetDays',
   ]),
-  family('reporting', 'Saved report', 'reporting', 'show', ['fields', 'visibility']),
+  family('reporting', 'Saved report', 'reporting', 'show', ['reporting_saved_view'], ['fields', 'visibility']),
   // Mailbox, history and erasure records. Mailbox, conversation and message ids are private references: never shown.
-  family('communications.erasure', 'Erasure', 'communications', 'hidden', ['scope', 'reason', 'reviewRequired', 'deferred', 'messages', 'conversations', 'participants', 'activities', 'ordinaryRetentionDays', 'previousDays']),
-  family('communications.legal_hold', 'Legal hold', 'communications', 'hidden', ['scope', 'reasonCode']),
-  family('communications.retention', 'Mail retention', 'communications', 'type_only', ['ordinaryRetentionDays', 'previousDays']),
-  family('communications.system', 'Mailbox system event', 'communications', 'type_only', ['provider']),
-  family('communications', 'Mailbox', 'communications', 'type_only', [
+  family('communications.erasure', 'Erasure', 'communications', 'hidden', ['erasure'], ['scope', 'reason', 'reviewRequired', 'deferred', 'messages', 'conversations', 'participants', 'activities', 'ordinaryRetentionDays', 'previousDays']),
+  family('communications.legal_hold', 'Legal hold', 'communications', 'hidden', ['legal_hold'], ['scope', 'reasonCode']),
+  family('communications.retention', 'Mail retention', 'communications', 'type_only', ['business'], ['ordinaryRetentionDays', 'previousDays']),
+  family('communications.system', 'Mailbox system event', 'communications', 'type_only', ['mail_connection'], ['provider']),
+  family('communications', 'Mailbox', 'communications', 'type_only', ['mail_connection', 'mail_business_domain', 'mail_business_address'], [
     'provider', 'kind', 'reason', 'revocation', 'syncQueued', 'sharing', 'syncEnabled', 'access', 'previousAccess', 'cause', 'method', 'basis', 'fields',
   ]),
-  family('conversation', 'Conversation', 'communications', 'hidden', ['channel']),
-  family('message', 'Message', 'communications', 'hidden', ['direction', 'source']),
-  family('messages', 'Messages', 'communications', 'hidden', ['created', 'duplicates']),
+  family('conversation', 'Conversation', 'communications', 'hidden', ['conversation'], ['channel']),
+  family('message', 'Message', 'communications', 'hidden', ['message'], ['direction', 'source']),
+  family('messages', 'Messages', 'communications', 'hidden', ['conversation'], ['created', 'duplicates']),
 ];
 
 /**
@@ -87,8 +95,12 @@ export interface ResolvedRule {
   group: AuditGroup;
   keys: ReadonlySet<string>;
   target: TargetMode;
-  /** True when no family matched (the action is listed with no metadata). */
+  /** Target types the action is reviewed to carry (empty when it is not reviewed). */
+  types: ReadonlySet<string>;
+  /** True when the action is not an explicitly reviewed one: listed with label and group only (no metadata, no target id). */
   unknown: boolean;
+  /** True when no family matched at all (fixed label, group "other"). */
+  unmatched: boolean;
 }
 
 const ACTION_SHAPE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/;
@@ -105,21 +117,28 @@ export function matchFamily(action: string): ViewRule | undefined {
   return best;
 }
 
-/** The rule for an action. Total: any string, including one a future module invents, gets a safe answer. */
+/**
+ * The rule for an action. Total: any string, including one a future module invents, gets a safe answer.
+ * Disclosure is per action, not per family: only an action in REVIEWED_ACTIONS may show metadata or a target id.
+ * An unreviewed action inside a known family keeps its label and group and nothing else.
+ */
 export function resolveRule(action: string): ResolvedRule {
   const rule = ACTION_SHAPE.test(action) ? matchFamily(action) : undefined;
-  if (!rule) return { label: FALLBACK_LABEL, group: 'other', keys: new Set(), target: 'type_only', unknown: true };
+  if (!rule) return { label: FALLBACK_LABEL, group: 'other', keys: new Set(), target: 'type_only', types: new Set(), unknown: true, unmatched: true };
   const rest = words(action.slice(rule.prefix.length));
   const label = sentence(rest ? `${rule.noun} ${rest}` : rule.noun).slice(0, 120);
-  return { label, group: rule.group, keys: new Set([...rule.keys, ...(EXTRA_KEYS[action] ?? [])]), target: rule.target, unknown: false };
+  if (!REVIEWED_ACTIONS.has(action)) return { label, group: rule.group, keys: new Set(), target: rule.target === 'hidden' ? 'hidden' : 'type_only', types: new Set(), unknown: true, unmatched: false };
+  return { label, group: rule.group, keys: new Set([...rule.keys, ...(EXTRA_KEYS[action] ?? [])]), target: rule.target, types: new Set(rule.types), unknown: false, unmatched: false };
 }
 
 type Metadata = Record<string, string | number | boolean | string[]>;
 
 const MAX_STRING = 200;
 const MAX_ITEMS = 20;
+/** A value is shown only when it is code-like (a status, a field name, a document number): no spaces, no `@`, no free text. */
+export const CODE_VALUE = /^[A-Za-z0-9_.:/+-]{1,64}$/;
 
-/** Only allow-listed keys, only plain values (string, finite number, boolean, short string list), strings truncated. */
+/** Only allow-listed keys, only plain values (code-like string, finite number, boolean, short code list). */
 export function sanitizeMetadata(raw: unknown, keys: ReadonlySet<string>): Metadata {
   const out: Metadata = {};
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
@@ -127,20 +146,25 @@ export function sanitizeMetadata(raw: unknown, keys: ReadonlySet<string>): Metad
   for (const key of [...keys].sort()) {
     if (!Object.hasOwn(record, key)) continue;
     const value = record[key];
-    if (typeof value === 'string') out[key] = value.slice(0, MAX_STRING);
-    else if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    if (typeof value === 'string') {
+      if (CODE_VALUE.test(value)) out[key] = value;
+    } else if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
     else if (typeof value === 'boolean') out[key] = value;
-    else if (Array.isArray(value) && value.every((v) => typeof v === 'string')) out[key] = (value as string[]).slice(0, MAX_ITEMS).map((v) => v.slice(0, MAX_STRING));
+    else if (Array.isArray(value) && value.every((v) => typeof v === 'string' && CODE_VALUE.test(v))) out[key] = (value as string[]).slice(0, MAX_ITEMS);
   }
   return out;
 }
 
-/** The target as the viewer may show it. Null when the rule hides it or the row has none. */
+/**
+ * The target as the viewer may show it. Null when the rule hides it or the row has none. The id is shown only for
+ * a reviewed action whose target type is one of its family's reviewed types; any other type is the fixed "record".
+ */
 export function viewTarget(rule: ResolvedRule, targetType: string | null, targetId: string | null): { type: string; id?: string } | null {
   if (rule.target === 'hidden' || (targetType === null && targetId === null)) return null;
-  const type = targetType !== null && SAFE_TARGET_TYPES.has(targetType) && !rule.unknown ? targetType : FALLBACK_TARGET_TYPE;
-  if (rule.target === 'show' && targetId !== null && !rule.unknown) return { type, id: targetId };
-  return { type };
+  const reviewed = !rule.unknown && targetType !== null && rule.types.has(targetType) && SAFE_TARGET_TYPES.has(targetType);
+  if (!reviewed) return { type: FALLBACK_TARGET_TYPE };
+  if (rule.target === 'show' && targetId !== null) return { type: targetType, id: targetId };
+  return { type: targetType };
 }
 
 /** Dotted-boundary LIKE pattern for an action prefix, with LIKE metacharacters escaped (escape character is a backslash). */

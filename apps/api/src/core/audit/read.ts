@@ -7,7 +7,7 @@ import type { AuditEventView, ListAuditEventsQuery, ListAuditEventsResponse } fr
 import { emptySql, sql, type AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { RuleViolationError } from '@/core/http/errors';
-import { prefixLikePattern, resolveRule, resolveWindow, sanitizeMetadata, viewTarget } from './view-rules';
+import { MAX_WINDOW_MS, prefixLikePattern, resolveRule, resolveWindow, sanitizeMetadata, viewTarget } from './view-rules';
 
 const LIST = 'audit-events';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,6 +32,10 @@ function windowFor(query: ListAuditEventsQuery, cursor: Record<'t' | 'i' | 'f' |
     const from = new Date(cursor.a);
     const to = new Date(cursor.b);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return invalidCursor();
+    // A cursor is data the client holds, so it is held to the rules of a first-page request: ordered bounds, at
+    // most 92 days, and a position inside them. Anything else is refused, never widened.
+    const at = Date.parse(cursor.t);
+    if (to.getTime() < from.getTime() || to.getTime() - from.getTime() > MAX_WINDOW_MS || at < from.getTime() || at > to.getTime() + 1) return invalidCursor();
     if ((query.from !== undefined && Date.parse(query.from) !== from.getTime()) || (query.to !== undefined && Date.parse(query.to) !== to.getTime())) return invalidCursor();
     return { from, to };
   }
