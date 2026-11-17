@@ -246,12 +246,12 @@
       "createdAt": "2026-11-17T10:22:50Z",
       "parentLsn": "0/333EF50",
       "migration": {
-        "status": "pending",
-        "evidence": "recovery point created/verified; migration not yet applied"
+        "status": "verified",
+        "evidence": "applied 12:14:58–12:15:09 UTC from PR #110 head f5829a0 under APPROVED — EXECUTE: MIGRATION (issuecomment-6947713118) and Regan 12:13 UTC; 25/25 finished, checksum matches, 3 I1 keys validated, FORCE RLS on 5 tables, trigger and grants verified, row totals unchanged, health 200 (issuecomment-6947773614)"
       },
       "deployment": {
         "status": "pending",
-        "evidence": "PR #110 not merged"
+        "evidence": "PR #110 not merged; awaiting separate merge verdict"
       },
       "recoveryPoint": {
         "status": "verified",
@@ -259,7 +259,8 @@
       },
       "restoreDrill": {
         "status": "not-run"
-      }
+      },
+      "appliedAt": "2026-11-17T12:15:08Z"
     }
   ],
   "deleted": [

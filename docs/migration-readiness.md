@@ -275,3 +275,22 @@ Approved by Regan in the A2-B project thread at 12:32 UTC (recovery branch, migr
 | Health | `GET /api/v1/health` 200 |
 
 Keep `pre-a2b-migration` until the next migration is verified.
+
+### WF-1B-1 workflow links (2026-11-17)
+
+Delegated operation under ChatGPT's `APPROVED — EXECUTE: MIGRATION` ([verdict](https://github.com/reganwagteveld/business-OS/pull/110#issuecomment-6947713118); connector-origin and unedited), and approved by Regan in the Mac thread at 12:13 UTC for one production execution. Applied from PR #110's head `f5829a0` **before** the merge. Delegated operation record: [PR #110 comment](https://github.com/reganwagteveld/business-OS/pull/110#issuecomment-6947773614).
+
+| Step | Result (UTC) |
+|---|---|
+| Preflight (read-only, `scripts/workflow-links-preflight.sql`), 09:4x and again at 12:14 | `PREFLIGHT PASS`. 24 applied, newest `20261206000000_search_indexes`, none failed or rolled back, all checksums match, fingerprint matches. `20261207000000_workflow_links` the only pending migration. I1 violations 0, A6 0, no open transactions. Rows: businesses 2, projects 1, opportunities 1, documents 3, expenses 0, templates 0 |
+| Rehearsal | Branch `rehearsal-workflow-links-20261117`: deploy 11.2 s, migration window 1.52 s, longest concurrent `bos_app` read 328 ms. GO against 2 s |
+| Recovery branch | `pre-workflow-links-migration`, from production at 10:22:50 (LSN `0/333EF50`), read-only compute. Ledger identical to production; re-verified reachable at 12:14 |
+| `prisma migrate deploy` | Applied only `20261207000000_workflow_links` (one transaction): 12:14:58–12:15:09 wall time, migration window 1.60 s, 1 step, no rollback. 25 applied, up to date. Longest concurrent `bos_app` read 363 ms |
+| Constraints | 7/7 link constraints; the three `*_project_customer_fkey` validated |
+| RLS | `relrowsecurity` and `relforcerowsecurity` true on `projects`, `finance_documents`, `finance_expenses`, `finance_recurring_templates`, `workflow_requests` |
+| Schema | 3 new `projects` columns; 4 new indexes, all valid; trigger `projects_guard_links` (SECURITY INVOKER function) |
+| Grants | `workflow_requests`: `bos_app` SELECT and INSERT only; policies `tenant_isolation` and restrictive `actor_is_session_user` |
+| Data | Row totals and A6 unchanged; `workflow_requests` empty |
+| Health | `GET /api/v1/health` 200. No signed-in smoke test: no production test account is available to the operator session |
+
+Not done, by instruction: PR #110 not merged (a separate merge verdict is needed). Keep `pre-workflow-links-migration` until the next migration is verified.
