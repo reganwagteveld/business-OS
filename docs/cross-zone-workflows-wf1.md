@@ -14,6 +14,8 @@
 > preflight with exact, tenant-visible counts (§10.2); correction path for the convert gap tested (T-48);
 > decision ranges updated to D-WF1-07..16; real-PostgreSQL T-49/T-51/T-52 made entry conditions (§14).
 > **Version 1.3 (2026-11-17):** Regan accepted D-WF1-07..16 as recommended (§13.2). Architecture only.
+> **Version 1.4 (2026-11-17, WF-1B-1 #110):** §5.4 and §6.10 P9 vs P4 corrected to the behaviour observed on real
+> PostgreSQL (quote lock serialises the pair; loser gets `23505`, no `40P01`); T-51(e) wording aligned. Audit item 4.
 >
 > **Base:** `main` at `ccfcc93` (2026-11-17); `main` has since advanced to `4134636` (GS1-A, #93), which adds no
 > migration and does not change any file this spec cites in Sales, Projects or Finance services. Every "verified" statement below cites a file on that commit.
@@ -380,10 +382,12 @@ with every quote transition.** It is not "the quote is still accepted now" (void
 by design). The same holds for direct SQL that bypasses the service, because the lock is inside the trigger.
 
 **Liveness.** Service paths always lock the quote before the project (§6.10), so they cannot deadlock with each
-other. A **direct SQL** link (no product path does this) locks the project row first and the quote second; racing a
-`from-quote` request on the same quote it can form a cycle with the unique index on `source_quote_id`, which
-PostgreSQL breaks with `40P01`. Both outcomes keep every invariant (one side rolls back); this is stated as tested
-behaviour, not hidden (T-51).
+other. A **direct SQL** link (no product path does this) locks the project row first and the quote second. Racing a
+`from-quote` request on the same quote, it does **not** deadlock: the BEFORE ROW trigger takes the quote `FOR SHARE`
+lock before the row's unique index entry on `source_quote_id` exists, so both sessions queue on the quote and the
+later one fails on the unique key with `23505` (observed on PostgreSQL 16 in WF-1B-1, #110; T-51e and T-52 assert it
+in both orders). Every invariant holds (the loser rolls back). Any `40P01` that did occur would also roll back
+cleanly and is still handled as a retryable failure (§8).
 
 It runs as `bos_app` under forced RLS (the Finance guard pattern, `20261115000000_finance/migration.sql:556-557`),
 so it can only ever see the current tenant's rows. Prisma cannot express it; it lives in the migration SQL and is
@@ -605,7 +609,7 @@ Global class order for service paths (extends W1 §9.2): idempotency lock → **
 | P3 vs P4 on the same quote | P3 `FOR SHARE` and P4 `FOR NO KEY UPDATE` conflict on the quote, taken first by both | No cycle; the later one hits the unique key → `409 quote_has_project` |
 | P3 vs P3 on the same quote, different projects | Both hold `FOR SHARE` (compatible), each locks its own project, then the second waits on the first's unique index entry; the first holds nothing the second holds exclusively | No cycle; second gets `409 quote_has_project` |
 | P8 convert vs P3 `link-quote` (D-WF1-10 lookup) | P8 reads without a lock; if P3 commits after P8's read, the draft is created without `project_id`. Accepted gap: the draft is editable and shows no project, so the person can set it; a retry with the same key replays that draft unchanged | No deadlock; a narrow, visible, correctable gap (T-48) |
-| P9 direct SQL vs P4 `from-quote` on the same quote | P9 holds project `FOR UPDATE` + its unique index entry and waits for the quote (`FOR SHARE` vs P4's `FOR NO KEY UPDATE`); P4 holds the quote and may wait on P9's unique index entry | **Possible `40P01`**, broken by PostgreSQL; one side rolls back; invariants hold (T-51e). No product path does P9 |
+| P9 direct SQL vs P4 `from-quote` on the same quote | P9 holds project `FOR UPDATE` and its BEFORE ROW trigger waits for the quote (`FOR SHARE` vs P4's `FOR NO KEY UPDATE`) **before** P9's unique index entry exists, so the quote lock serialises the two | **No deadlock (observed, #110):** the later session fails with `23505` on `projects_source_quote_key` and rolls back; invariants hold (T-51e, T-52, both orders). Earlier versions predicted a possible `40P01`; the real-PostgreSQL tests disproved it. No product path does P9 |
 | P6 vs P2 on the same project | Both update the project row; conditional `UPDATE` with `version` makes the loser `409 stale` | No cycle |
 | P7 vs P7 on the same opportunity | Advisory lock serialises them; the second recounts and gets `409 opportunity_projects_changed` unless its count already includes the first | No cycle |
 
@@ -869,7 +873,7 @@ roles OWNER, MANAGER, MEMBER unless noted.
 | T-47 | Trigger and CHECK refusals by direct SQL (§9 G-TRG) | S | 1B |
 | T-48 | Convert of a source quote puts the project on the draft (D-WF1-10); convert of a quote with `project_id` unchanged; the §6.10 P8-vs-P3 gap forced with a barrier: the draft is created without `project_id`, the person sets the project on the draft through the normal draft edit (I1 checked) and the summary then counts it (the correction path) | I | 1B |
 | T-49 | Project summary per currency (§6.6.1): two currencies; a quote linked while draft **and** the same project's source quote linked after issue (counted once each, never twice); a quote that is both (dedup); void invoice; issued credit note applied and one unapplied; partial payment and a reversed payment; expense; discarded draft; void source quote; identity `paymentsAllocated + creditApplied + outstanding = invoicedGross` | I | 1B |
-| T-51 | H1 race, direct SQL and service: (a) void commits first → link refused; (b) void holds lock, link waits, void commits → refused; (c) void rolls back → link allowed; (d) link first → void waits, then succeeds, link kept; (e) direct-SQL link vs `from-quote` on one quote → at most one link, any `40P01` rolls back cleanly; deterministic with advisory-lock barriers | C, S | 1B |
+| T-51 | H1 race, direct SQL and service: (a) void commits first → link refused; (b) void holds lock, link waits, void commits → refused; (c) void rolls back → link allowed; (d) link first → void waits, then succeeds, link kept; (e) direct-SQL link vs `from-quote` on one quote → at most one link, the loser gets `23505` and rolls back cleanly (both orders); deterministic with advisory-lock barriers | C, S | 1B |
 | T-52 | M1 pairs in §6.10, each as a deterministic two-session test: customer change vs draft link (both orders), customer change vs `link-quote`, customer change vs quote void, `link-quote` vs void, `from-quote` vs `link-quote`; assert final rows, error codes and no `40P01` on service paths. Explicitly verifies the referenced-side `NO ACTION` behaviour while a concurrent draft insert is uncommitted, and asserts each barrier actually produced the intended interleaving (lock-wait observed in `pg_locks`) so a test cannot pass by running serially. Until these pass, §6.10 is a hypothesis | C | 1B |
 | T-53 | `MATCH SIMPLE`: an expense without a customer links a customer-owned project and a customerless project, before and after the migration; preflight queries return the expected rows on a seeded violating fixture | I, S | 1B |
 | T-50 | Contracts: additive only (`pnpm contracts:check`), absent-key schema for redacted fields | U | 1B |
