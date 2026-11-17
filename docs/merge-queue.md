@@ -102,3 +102,4 @@ Branch protection is **not changed** by this process. Whether "Require branches 
 ## 9. Reporting
 
 After each queue session the merge-queue thread reports to Regan: PRs merged (with SHAs and links to their delegated operation records), CI duration on each final head, sync runs triggered, PRs skipped and why, any halt, outstanding risks, and what needs Regan. The report is oversight after the fact, not a request for approval.
+
