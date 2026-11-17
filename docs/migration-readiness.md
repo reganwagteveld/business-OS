@@ -151,6 +151,8 @@ Then: `curl https://app.pixakova.com/api/v1/health` (200 `ok`), sign in, and ope
 
 ## 6. Proposed execution sequence for the next migration
 
+> **Superseded for approvals.** The current procedure and who approves each step are in `docs/agent-task-protocol.md` "Production migrations" and "Approvals", which win over this section. The "Regan's written approval" wording below is historical.
+
 There is no migration to run today. For the next one:
 
 1. **Read-only pre-check** (Mac session, owner URL): `prisma migrate status` from a clean checkout of
@@ -164,7 +166,7 @@ There is no migration to run today. For the next one:
      migration, then promote the deployment. Safer; one manual step per release.
    Recommended: **B**, because A still deploys code before migrations for anything not applied in
    advance, and leaves a window if the merge is delayed.
-4. **Apply** with Regan's written approval in the owning thread:
+4. **Apply** under the approval the protocol requires (an `APPROVED — EXECUTE: MIGRATION` verdict, or Regan's approval where it escalates):
    `MIGRATION_DATABASE_URL=<owner direct URL> pnpm --filter @business-os/api exec prisma migrate deploy`.
    Run `db:privileged` only if the migration notes say so (none of 1–11 after tenancy needed it again).
 5. **Verify** with §5, the health check and a signed-in pass through each Zone.
@@ -197,6 +199,8 @@ across two releases.
 | STAB-L7 | `20261119300000` encodes hour 30 | Accepted; cannot rename applied migration | — |
 
 ## 9. Production migration log
+
+Entries before 2026-11-17 record Regan's own approvals under the rules of the time. Later entries link their delegated operation record (protocol, "Delegated operation record").
 
 ### F6-3 payment reminders (2026-11-16)
 

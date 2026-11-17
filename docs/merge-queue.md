@@ -2,13 +2,13 @@
 
 **Status:** Phase 1 of the CI and merge pipeline plan (owner decisions D-CI-1, D-CI-4 and D-CI-5, 2026-11-16), amended for delegated technical approval (owner directive, 2026-11-17). Process only: no workflow, branch protection or production change. The measurements and later phases are in the CI and merge pipeline proposal (`docs/ci-merge-pipeline-proposal.md`).
 
-This document is the procedure for getting approved PRs onto `main`. Who approves is defined in `docs/agent-task-protocol.md` "Approvals": a recorded ChatGPT **APPROVED** verdict on the exact reviewed content authorises the merge-queue thread to merge, with no further approval from Regan unless an escalation condition applies. In this document a **valid approval** means exactly that definition.
+This document is the procedure for getting approved PRs onto `main`. Who approves is defined in `docs/agent-task-protocol.md` "Approvals": a verified `APPROVED — EXECUTE: MERGE` verdict on the exact reviewed content authorises the merge-queue thread to merge, with no further approval from Regan unless an escalation condition applies. In this document a **valid approval** means such a verdict that passes the provenance check there (or Regan's own approval for an escalated PR).
 
 ## 1. Roles
 
 - **Development threads** build, test and fix their own PR. They **never merge**, never sync for the queue's sake, and never change queue labels on another thread's PR.
 - **The merge-queue thread** (one at a time) owns the queue: ordering, the final sync, final CI verification, the merge, post-merge verification, the delegated operation record and the queue table. It is the only thread that merges, and only with a valid approval for that PR's current content.
-- **ChatGPT** audits each PR and holds delegated technical approval. Only a recorded **APPROVED** verdict on the exact reviewed head is approval. A CONDITIONAL PASS, a recommendation or any other verdict is not, until ChatGPT records that its conditions are satisfied or cleared.
+- **ChatGPT** audits each PR and holds delegated technical approval. Only an `APPROVED — EXECUTE` verdict it posts itself, for the exact reviewed head and the named operation, is approval. A CONDITIONAL PASS, an audit pass, a recommendation or any other verdict is not.
 - **Regan** decides every escalation (`docs/agent-task-protocol.md` "Escalate to Regan"), remains the final authority, and may hold, reorder or stop the queue at any time.
 
 ## 2. Syncing with `main` (D-CI-1)
@@ -28,12 +28,12 @@ Always merge `main` into the branch. Never rebase or force-push a shared branch.
 The queue is ordered by **priority**: security fixes first, then dependency order (a PR another PR depends on goes first), then approval time. A PR is **eligible** to merge only when all of these hold:
 
 1. **Not a draft**, or its valid approval explicitly says "ready and merge".
-2. **A valid approval** is recorded for the current content: a ChatGPT APPROVED verdict naming the reviewed head SHA, linked from the queue table. Conflict-free sync merges from `main` are ignored when comparing heads.
+2. **A valid approval** is recorded for the current content: an `APPROVED — EXECUTE: MERGE` verdict naming the reviewed head SHA, provenance-checked and linked from the queue table. Sync merges from `main` are judged by "Approval follows content" in the protocol.
 3. **No escalation condition applies**, or Regan's own approval for the escalated part is recorded, with a link to his message.
-4. Any **production migration** has been applied and verified under its valid approval (and any **privileged SQL** under Regan's approval), with the mandatory safeguards, following the production migration order in `docs/agent-task-protocol.md`. The queue never merges a migration PR before its migration is recorded as applied.
+4. Any **production migration** has been applied and verified under its own `APPROVED — EXECUTE: MIGRATION` verdict (and any **privileged SQL** under Regan's approval), with the mandatory safeguards, following the production migration order in `docs/agent-task-protocol.md`. The queue never merges a migration PR before its migration is recorded as applied.
 5. No `queue:held` label and no open blocker in the queue table.
 
-**Approval follows content.** A conflict-free sync merge from `main` keeps the audit and the approval. New commits that change content, a conflict resolution, any substantive code change or an unexpected semantic change from a sync **invalidate the earlier verdict**: the PR goes back for a fresh ChatGPT audit (and Regan's approval again if it escalates), and keeps its priority slot while it waits.
+**Approval follows content.** A conflict-free sync merge from `main` keeps the verdict only if the PR's own patch is unchanged (same `git patch-id`) and `CI gate` passes on the final head (protocol, "Approval follows content"). New commits that change content, a conflict resolution, any substantive code change or an unexpected semantic change from a sync **invalidate the earlier verdict**: the PR goes back for a fresh ChatGPT audit (and Regan's approval again if it escalates), and keeps its priority slot while it waits.
 
 ## 4. Skipping without bypassing
 
@@ -46,10 +46,10 @@ At each step the merge-queue thread takes the **first eligible PR**, not simply 
 
 For the first eligible PR (call it PR *k*):
 
-1. **Confirm eligibility** (§3) against GitHub, the PR thread and the queue table, not from memory. Check that the approved SHA matches the head being merged, or that every commit after it is a conflict-free sync from `main`.
+1. **Confirm eligibility** (§3) against GitHub, the PR thread and the queue table, not from memory. Re-run the provenance check on the verdict comment. Check that the approved SHA is the head being merged, or that every later commit is a conflict-free sync from `main` and the PR's patch is unchanged.
 2. **Sync:** merge current `main` into the branch. If the merge conflicts, **halt that PR**: resolution is a content change, so it needs a fix in the PR's own thread, then re-audit and re-approval (§3). Move on to the next eligible PR.
 3. **Final-head verification (D-CI-5):** wait for `CI gate` to succeed **on the exact final head commit**, and confirm that this commit contains the current `main` (the branch is up to date: `git merge-base --is-ancestor origin/main <head>`). Do this **regardless of the branch protection setting**, because the integration cannot read whether "Require branches to be up to date" is enabled. If `main` moves before the merge, sync again and re-verify. Never bypass, re-label or fabricate a green `CI gate`.
-4. **Complete approved migration prerequisites** if the PR has a migration (preflight, verified recovery branch, apply, verify), then **merge** under the valid approval, recording the merged commit SHA.
+4. **Migration prerequisites:** if the PR has a migration, confirm it was applied and verified under its own migration verdict (protocol, "Production migrations"). A merge verdict never covers it. Then **merge**, recording the approved SHA and the merged commit SHA.
 5. **Post-merge verification:** wait for the `main` CI run on the merge commit, the Vercel production deploy and the production smoke check (`GET /api/v1/health` returns `status: ok`, plus any PR-specific check named in the PR). Record the results in the queue table.
 6. **Record** the delegated operation record (`docs/agent-task-protocol.md`) as a PR comment, then **continue to the next eligible PR** without asking Regan, unless an escalation or halt condition applies.
 
