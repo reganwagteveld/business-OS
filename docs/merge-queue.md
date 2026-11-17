@@ -28,7 +28,7 @@ Always merge `main` into the branch. Never rebase or force-push a shared branch.
 The queue is ordered by **priority**: security fixes first, then dependency order (a PR another PR depends on goes first), then approval time. A PR is **eligible** to merge only when all of these hold:
 
 1. **Not a draft**, or its valid approval explicitly says "ready and merge".
-2. **A valid approval** is recorded for the current content: an `APPROVED — EXECUTE: MERGE` verdict naming the reviewed head SHA, provenance-checked, and linked from the queue table. Sync merges from `main` are judged by "Approval follows content" in the protocol.
+2. **A valid approval** is recorded for the current content: an `APPROVED — EXECUTE: MERGE` verdict naming the reviewed head SHA, provenance-checked, confirmed by Regan's own message in the merge-queue thread while the interim confirmation applies (protocol, "Provenance"), and linked from the queue table. Sync merges from `main` are judged by "Approval follows content" in the protocol.
 3. **No escalation condition applies**, or Regan's own approval for the escalated part is recorded, with a link to his message.
 4. Any **production migration** has been applied and verified under its own `APPROVED — EXECUTE: MIGRATION` verdict (and any **privileged SQL** under Regan's approval), with the mandatory safeguards, following the production migration order in `docs/agent-task-protocol.md`. The queue never merges a migration PR before its migration is recorded as applied.
 5. No `queue:held` label and no open blocker in the queue table.
