@@ -37,6 +37,7 @@ import { CatalogItemResponse, ListCatalogItemsResponse } from '@business-os/cont
 import { devOutbox } from '@/core/email';
 import { lineDefaultsOf } from '@/modules/finance';
 import { backendPid, waitUntilBlocked } from './support/locks';
+import { withoutUuids } from './support/uuid';
 
 const BASE = process.env.APP_BASE_URL!;
 const ORIGIN = new URL(BASE).origin;
@@ -545,7 +546,8 @@ describe('audit', () => {
     expect(rows.map((r) => r.action)).toEqual(['finance.catalog.created', 'finance.catalog.updated', 'finance.catalog.archived', 'finance.catalog.restored']);
     expect(rows[0].metadata).toEqual({ itemType: 'SERVICE' });
     expect(rows[1].metadata).toEqual({ itemType: 'SERVICE', fields: ['name', 'status', 'unitPrice'], statusFrom: 'ACTIVE', statusTo: 'INACTIVE' });
-    const text = JSON.stringify(rows);
+    // UUIDs stripped: a random uuid can contain '4321' or '1234' by chance.
+    const text = withoutUuids(JSON.stringify(rows));
     for (const secret of ['Secret', 'SECRET-1', 'leak', '4321', '1234', 'Renamed']) expect(text).not.toContain(secret);
     // Reads write nothing.
     await own.get(it1.id);
@@ -694,6 +696,8 @@ describe('database guard (G), as bos_app under RLS', () => {
     expect(indexes).toEqual([
       'finance_catalog_items_business_id_archived_at_status_name_i_idx', 'finance_catalog_items_business_id_id_key',
       'finance_catalog_items_business_id_tax_rate_id_idx', 'finance_catalog_items_code_key', 'finance_catalog_items_pkey',
+      // Global search GS1-A (migration 20261206000000_search_indexes, docs/global-search-gs1.md §9.2): read-only lookups.
+      'finance_catalog_items_search_code_idx', 'finance_catalog_items_search_name_idx', 'finance_catalog_items_search_words_idx',
     ]);
   });
 });

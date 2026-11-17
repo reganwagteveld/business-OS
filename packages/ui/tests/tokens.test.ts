@@ -180,6 +180,7 @@ describe('design tokens: structure', () => {
       ...STATUSES.flatMap((s) => ['fg', 'bg', 'border', 'solid', 'on-solid'].map((p) => `--status-${s}-${p}`)),
       '--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--chart-comparison', '--chart-grid',
       '--overlay', '--disabled-fg', '--disabled-bg', '--shadow-raised', '--shadow-overlay',
+      '--bg-bezel',
     ];
     expect(required.filter((k) => !(k in light))).toEqual([]);
   });
@@ -193,6 +194,7 @@ describe('design tokens: structure', () => {
       '--duration-fast': '100ms', '--duration-base': '160ms', '--duration-slow': '240ms',
       '--font-size-caption': '12px', '--font-size-small': '13px', '--font-size-body': '14px', '--font-size-lead': '16px',
       '--font-size-section': '18px', '--font-size-title': '22px', '--font-size-display': '28px',
+      '--inspector-w': '360px', '--bezel-gutter': '8px', '--marker-size': '6px', '--marker-radius': '1.5px',
     });
     expect(scale['--font-family-sans']).toMatch(/^'Inter Variable', 'Inter Fallback'/);
   });
@@ -254,6 +256,63 @@ for (const [name, resolve] of THEMES) {
   });
 }
 
+// Pixa identity (V2-B2, docs/ui/pixa-visual-identity-v2-b2.md §7 and §11.4).
+describe('design tokens: Pixa identity (V2-B2)', () => {
+  const [, lightResolve] = THEMES[0];
+  const [, darkResolve] = THEMES[1];
+
+  it('gives the bezel one ink in both themes, equal to the dark canvas, so the frame and the dark-scope rail match', () => {
+    expect(light['--bg-bezel']).toBe('#0b0f1e');
+    expect(darkClass['--bg-bezel']).toBe('#0b0f1e');
+    expect(darkMedia['--bg-bezel']).toBe('#0b0f1e');
+    expect(darkClass['--bg-canvas']).toBe(light['--bg-bezel']);
+    expect(themeMap['--color-bezel']).toBe('var(--bg-bezel)');
+  });
+
+  it('keeps the marker square: small radius, never a pill', () => {
+    expect(parseFloat(scale['--marker-radius']!)).toBeLessThanOrEqual(2);
+    expect(parseFloat(scale['--marker-radius']!) * 2).toBeLessThan(parseFloat(scale['--marker-size']!));
+    expect(themeMap['--radius-marker']).toBe('var(--marker-radius)');
+  });
+
+  it('changes no V2-B1 value (the V2-B1 tokens keep their B1 values)', () => {
+    expect(light['--bg-canvas']).toBe('#f7f7fb');
+    expect(light['--bg-surface']).toBe('#ffffff');
+    expect(darkClass['--bg-surface']).toBe('#121729');
+    expect(scale['--radius-pill']).toBe('9999px');
+  });
+
+  // The rail is a dark-scope island (§6.2): in both themes its text uses the dark tokens on the bezel.
+  it.each([['--fg-default'], ['--fg-muted'], ['--fg-subtle'], ['--fg-accent']])('rail text %s on the bezel meets 4.5:1', (fg) => {
+    expect(contrast(darkResolve, fg, '--bg-bezel')).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('rail current bar and focus ring on the bezel meet 3:1', () => {
+    expect(contrast(darkResolve, '--fg-accent', '--bg-bezel')).toBeGreaterThanOrEqual(3);
+    expect(contrast(darkResolve, '--focus-ring', '--bg-bezel')).toBeGreaterThanOrEqual(3);
+  });
+
+  for (const [name, resolve] of THEMES) {
+    it(`${name}: the selected-row bar meets 3:1 on the selected row`, () => {
+      expect(contrast(resolve, '--fg-accent', '--bg-selected', '--bg-surface')).toBeGreaterThanOrEqual(3);
+    });
+
+    it.each([...STATUSES.map((s) => `--status-${s}-solid`), '--fg-subtle'])(`${name}: marker %s on the sheet meets 3:1`, (marker) => {
+      expect(contrast(resolve, marker, '--bg-surface')).toBeGreaterThanOrEqual(3);
+      expect(contrast(resolve, marker, '--bg-sunken')).toBeGreaterThanOrEqual(3);
+    });
+
+    it(`${name}: a filled progress square meets 3:1 on the sheet (squares are decorative; the text carries the value)`, () => {
+      expect(contrast(resolve, '--accent-solid', '--bg-surface')).toBeGreaterThanOrEqual(3);
+    });
+  }
+
+  it('records the light sheet against the bezel as strongly separated and the dark one as needing its 1 px edge', () => {
+    expect(contrast(lightResolve, '--bg-surface', '--bg-bezel')).toBeGreaterThan(15);
+    expect(contrast(darkResolve, '--bg-surface', '--bg-bezel')).toBeLessThan(1.5);
+  });
+});
+
 describe('design tokens: recipes, preferences and fallbacks', () => {
   const utility = (name: string) => block(new RegExp(`@utility ${name} \\{`));
 
@@ -280,6 +339,15 @@ describe('design tokens: recipes, preferences and fallbacks', () => {
   it('drops every motion duration to 0 ms when reduced motion is requested', () => {
     const reduced = vars(block(/@media \(prefers-reduced-motion: reduce\)/));
     expect(reduced).toEqual({ '--duration-fast': '0ms', '--duration-base': '0ms', '--duration-slow': '0ms' });
+  });
+
+  it('draws markers as squares that become CanvasText in forced colours', () => {
+    const body = utility('pixel-marker');
+    expect(body).toContain('width: var(--marker-size)');
+    expect(body).toContain('border-radius: var(--marker-radius)');
+    expect(body).toMatch(/forced-colors: active[\s\S]*forced-color-adjust: none[\s\S]*CanvasText/);
+    expect(utility('pixel-track')).toMatch(/forced-colors: active[\s\S]*CanvasText/);
+    expect(utility('pixel-track-fill')).toMatch(/forced-colors: active[\s\S]*CanvasText/);
   });
 
   it('raises control and target sizes on coarse pointers', () => {
