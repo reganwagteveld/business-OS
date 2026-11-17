@@ -12,8 +12,8 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import pg from 'pg';
-import { readdirSync, readFileSync } from 'node:fs';
-import { assertCleanEnv, assertDisposableName, assertLocalPostgres, assertNoDotenvInjection, pgConfig, serverEnv } from './guard.mjs';
+import { readdirSync } from 'node:fs';
+import { assertCleanEnv, assertDisposableName, assertLocalPostgres, assertNoDotenvFiles, pgConfig, serverEnv } from './guard.mjs';
 
 const root = resolve(import.meta.dirname, '../../..');
 const e2eDir = resolve(import.meta.dirname, '..');
@@ -144,8 +144,7 @@ async function waitHealthy(base, child) {
 let exitCode = 1;
 try {
   // Before any connection or DDL: nothing on disk may inject variables into the build, server or Prisma.
-  const controlled = new Set(['PATH', 'HOME', 'MIGRATION_DATABASE_URL', 'ADMIN_DATABASE_URL', 'DEPLOYMENT_REGION', ...Object.keys(serverEnv({ appUrl: '', authUrl: '', secret: '', baseUrl: '', path: '' }))]);
-  for (const dir of [resolve(root, 'apps/api'), e2eDir]) assertNoDotenvInjection(dir, controlled, readdirSync, (f) => readFileSync(f, 'utf8'));
+  for (const dir of [resolve(root, 'apps/api'), e2eDir]) assertNoDotenvFiles(dir, readdirSync);
   log(`provisioning disposable database ${dbName} on ${adminBase.hostname}:${adminBase.port}`);
   await provision();
 

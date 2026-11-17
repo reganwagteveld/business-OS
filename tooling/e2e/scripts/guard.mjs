@@ -70,35 +70,17 @@ export function assertCleanEnv(env) {
 }
 
 /**
- * Next.js (`next build`, `next start`) and Prisma (`dotenv/config`) load .env files from their working directory
- * and fill in every variable the process environment does not already define, whatever the clean child
- * environment says. Forbidden or unknown variables could therefore arrive from a developer's file.
- * Fail closed: every key in every such file must be one the harness itself sets (and so shadows).
+ * Next.js (`next build`, `next start`) and Prisma (`dotenv/config`) load .env files from their working
+ * directory and fill in every variable the process environment does not already define, whatever the clean
+ * child environment says. Each loader has its own parser and its own set of shadowed keys, so no per-key
+ * allow-list can be made faithful. Fail closed instead: none of the files the loaders read may exist in a
+ * directory a child process runs in, whatever they contain. Contents are never read or printed.
  */
 export const DOTENV_FILES = ['.env', '.env.local', '.env.production', '.env.production.local', '.env.development', '.env.development.local', '.env.test', '.env.test.local'];
 
-export function dotenvKeys(text) {
-  const keys = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=/.exec(raw);
-    if (m) keys.push(m[1]);
-  }
-  return keys;
-}
-
-/** `files` is [{ name, text }] read from one directory. Returns the offending keys (never their values). */
-export function injectableKeys(files, allowed) {
-  const out = [];
-  for (const { name, text } of files) {
-    for (const key of dotenvKeys(text)) if (!allowed.has(key)) out.push(`${name}: ${key}`);
-  }
-  return out;
-}
-
-export function assertNoDotenvInjection(dir, allowed, readDir, readFile) {
+export function assertNoDotenvFiles(dir, readDir) {
   const present = readDir(dir).filter((f) => DOTENV_FILES.includes(f));
-  const bad = injectableKeys(present.map((name) => ({ name, text: readFile(`${dir}/${name}`) })), allowed);
-  if (bad.length) {
-    throw new Error(`${dir} has environment files that would inject variables the harness does not control (${bad.join(', ')}). Move them aside for this run; values are never printed.`);
+  if (present.length) {
+    throw new Error(`${dir} has environment files (${present.join(', ')}) that Next.js or Prisma would load into the build, server or migration. Move them aside for this run; their contents were not read.`);
   }
 }
