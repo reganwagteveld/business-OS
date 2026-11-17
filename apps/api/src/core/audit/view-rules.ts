@@ -37,7 +37,9 @@ export const VIEW_RULES: readonly ViewRule[] = [
   family('customer', 'Customer', 'customers', 'show', ['customer'], ['fields']),
   family('contact', 'Contact', 'customers', 'show', ['contact'], ['fields']),
   family('activity', 'Note or activity', 'customers', 'type_only', ['activity'], ['activityType', 'fields', 'visibility']),
-  family('sales.pipeline', 'Sales pipeline', 'sales', 'show', ['sales_pipeline'], ['stages']),
+  family('sales.pipeline', 'Sales pipeline', 'sales', 'show', ['sales_pipeline'], ['stages', 'fields']),
+  // S-CFG stage configuration. pipelineId and movedTo are record ids: not listed. reordered targets the pipeline.
+  family('sales.stage', 'Sales stage', 'sales', 'show', ['sales_stage', 'sales_pipeline'], ['fields', 'moved', 'stages']),
   family('sales', 'Opportunity', 'sales', 'show', ['opportunity'], ['fields', 'currencyCode', 'hasAmount', 'hasReason']),
   family('projects', 'Project', 'projects', 'show', ['project', 'project_task'], ['fields', 'status']),
   family('scheduling', 'Scheduling', 'scheduling', 'show', ['scheduling_calendar', 'scheduling_event', 'scheduling_resource'], ['fields', 'enforced', 'blocksAvailability', 'overlaps', 'resourceType', 'status']),
@@ -78,7 +80,7 @@ const EXTRA_KEYS: Readonly<Record<string, readonly string[]>> = {
 
 /** Target types that may be named. Anything else is reported as the fixed fallback "record". */
 export const SAFE_TARGET_TYPES: ReadonlySet<string> = new Set([
-  'business', 'membership', 'invitation', 'customer', 'contact', 'activity', 'opportunity', 'sales_pipeline', 'project', 'project_task',
+  'business', 'membership', 'invitation', 'customer', 'contact', 'activity', 'opportunity', 'sales_pipeline', 'sales_stage', 'project', 'project_task',
   'scheduling_calendar', 'scheduling_event', 'scheduling_resource', 'people_employee', 'people_leave_policy', 'people_leave_type',
   'people_department', 'people_location', 'finance_document', 'finance_payment', 'finance_payment_allocation', 'finance_credit_application',
   'finance_expense', 'finance_expense_allocation', 'finance_catalog_item', 'finance_settings', 'finance_document_branding', 'finance_document_pdf',
