@@ -34,6 +34,9 @@ jobs:
       desktop: ${{ steps.classify.outputs.desktop }}
       tier: ${{ steps.classify.outputs.tier }}
       desktop_reason: ${{ steps.classify.outputs.desktop_reason }}
+      # CIQ-A1: which gated jobs run (docs, client or full). Separate from the CI-2A desktop decision.
+      gate_tier: ${{ steps.gate-tier.outputs.gate_tier }}
+      gate_reason: ${{ steps.gate-tier.outputs.gate_reason }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,7 +46,11 @@ jobs:
       - name: Self-test the change classifier and the gate verdict
         run: |
           .github/scripts/classify-changes.test.sh
+          .github/scripts/classify-gate-tier.test.sh
+          .github/scripts/scan-doc-credentials.test.sh
+          .github/scripts/doc-credential-gate.test.sh
           .github/scripts/ci-gate.test.sh
+          .github/scripts/db-shard-completeness.test.sh
           .github/scripts/changed-files.test.sh
           .github/scripts/check-migration-order.test.sh
           .github/scripts/release-gate.test.sh
@@ -84,9 +91,48 @@ jobs:
               .github/scripts/classify-changes.sh < "$RUNNER_TEMP/changed-files" || full "classifier failed (fail closed)"
             fi
           } | tee -a "$GITHUB_OUTPUT"
+      # CIQ-A1 (docs/ci.md "Gate tiers"): docs skips static, unit, build and database; client skips only
+      # database; everything else is full. Any failure to establish or classify the diff selects full.
+      - name: Decide which gated jobs are needed
+        id: gate-tier
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          GATE_REF: ${{ github.ref }}
+        run: |
+          full() {
+            echo "gate_tier=full"
+            echo "gate_reason=$1"
+          }
+          {
+            if [ "$EVENT_NAME" != pull_request ] && [ "$EVENT_NAME" != push ]; then
+              full "full validation for $EVENT_NAME on $GATE_REF"
+            elif ! .github/scripts/changed-files.sh > "$RUNNER_TEMP/gate-files" 2> "$RUNNER_TEMP/gate-files.err"; then
+              full "changed files could not be established (fail closed): $(head -c 120 "$RUNNER_TEMP/gate-files.err" | tr '\n' ' ')"
+            elif ! out="$(.github/scripts/classify-gate-tier.sh < "$RUNNER_TEMP/gate-files")"; then
+              full "gate tier classifier failed (fail closed)"
+            else
+              echo "$out"
+            fi
+          } | tee -a "$GITHUB_OUTPUT"
+      # Every tier, every event: documentation must not contain credentials. A pull request is scanned
+      # over its whole change (merge commit against the base tip, every PR commit included); a
+      # single-step push over that step; anything else scans every documentation file at HEAD.
+      # Never skipped (doc-credential-gate.sh).
+      - name: Added documentation lines contain no credentials
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/doc-credential-gate.sh
 
+  # CIQ-A1: static, unit and build are skipped only for the docs tier; database also for the client tier.
+  # The conditions are "run unless the classifier explicitly said otherwise", so an empty or unknown
+  # tier runs the job. If Detect changes fails, these jobs are skipped and CI gate fails on its result.
   static:
     name: Static checks (contracts, types, lint, boundaries)
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env: &workspace-env
@@ -126,6 +172,8 @@ jobs:
 
   unit:
     name: Unit, contract and architecture tests
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env: *workspace-env
@@ -137,8 +185,65 @@ jobs:
       - name: Unit, contract and architecture tests
         run: pnpm test
 
+  # CIQ-A2 (docs/ciq-1-merge-queue-throughput.md §4.A.3, decision D-CI-3): the integration suite runs in
+  # three shards, each with its own PostgreSQL service, roles, migrations and privileged SQL, so no shard
+  # shares database state with another. RLS isolation and every pooler suite run in their own job, and
+  # `database-complete` proves the shards together ran every integration file exactly once.
   database:
-    name: Database tests (roles, migrations, integration, RLS isolation)
+    name: Database tests (integration shard ${{ matrix.shard }}/3)
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs' && needs.changes.outputs.gate_tier != 'client'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    services:
+      postgres:
+        image: postgres:16.10
+        env:
+          POSTGRES_DB: business_os
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_postgres_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d business_os"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env: *workspace-env
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-workspace
+      - name: Provision database roles (same script as local docker compose)
+        run: psql "postgresql://postgres:ci_postgres_only@localhost:5432/business_os" -v ON_ERROR_STOP=1 -f docker/init/01-roles.sql
+      - name: Apply migrations as the owner role
+        run: pnpm --filter @business-os/api exec prisma migrate deploy
+      - name: Apply privileged SQL (app_private functions) as an administrative role
+        run: pnpm --filter @business-os/api db:privileged
+        env:
+          ADMIN_DATABASE_URL: ${{ env.TEST_ADMIN_URL }}
+          DEPLOYMENT_REGION: ${{ env.REGION }}
+      - name: Integration tests, shard ${{ matrix.shard }}/3 (API, RBAC, tenancy, PostgreSQL roles and isolation prerequisites)
+        working-directory: apps/api
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts --shard=${{ matrix.shard }}/3
+          --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/shard-${{ matrix.shard }}.json"
+      # Uploaded even when tests fail, so the completeness job sees a failing report rather than none.
+      - name: Upload shard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-integration-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  database-pooler:
+    name: Database tests (RLS isolation and pooler suites)
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs' && needs.changes.outputs.gate_tier != 'client'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
@@ -167,8 +272,6 @@ jobs:
         env:
           ADMIN_DATABASE_URL: ${{ env.TEST_ADMIN_URL }}
           DEPLOYMENT_REGION: ${{ env.REGION }}
-      - name: Integration tests (API, RBAC, tenancy, PostgreSQL roles and isolation prerequisites)
-        run: pnpm test:integration
       # Cached .deb files from the signed Ubuntu archive, keyed by the pinned version and runner image.
       - name: PgBouncer cache key
         id: pgbouncer-key
@@ -236,8 +339,34 @@ jobs:
       - name: Migrations match schema
         run: pnpm db:check-migrations
 
+  # Fails unless every integration file in the repository ran in exactly one shard and passed with at
+  # least one test (.github/scripts/db-shard-completeness.sh). Runs even when a shard failed.
+  database-complete:
+    name: Database tests (shard completeness)
+    needs: [changes, database]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.gate_tier != 'docs' && needs.changes.outputs.gate_tier != 'client'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download shard reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: db-integration-shard-*
+          path: ${{ runner.temp }}/shards
+          merge-multiple: true
+        continue-on-error: true
+      - name: Every integration file ran exactly once and passed
+        run: |
+          git ls-files -- 'apps/api/tests/integration/*.test.ts' > "$RUNNER_TEMP/expected-integration-files"
+          .github/scripts/db-shard-completeness.sh "$RUNNER_TEMP/expected-integration-files" 3 "$RUNNER_TEMP/shards"
+
   build:
     name: Build verification (API, web, desktop frontend, startup, bundle security)
+    needs: changes
+    if: needs.changes.outputs.gate_tier != 'docs'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env: *workspace-env
@@ -315,12 +444,13 @@ jobs:
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
 
   # The single required status check. It runs even when jobs before it fail, are cancelled or are
-  # skipped, and passes only if every applicable check succeeded. A skipped job satisfies it only
-  # when it is the desktop matrix and the change classifier said the desktop matrix was not needed.
+  # skipped, and passes only if every applicable check succeeded. A skipped job satisfies it only when
+  # the classifier succeeded and its explicit output permits that skip: the desktop matrix by the CI-2A
+  # desktop decision, static/unit/build/database by the CIQ-A1 gate tier (.github/scripts/ci-gate.sh).
   gate:
     name: CI gate
     if: always()
-    needs: [changes, static, unit, database, build, desktop]
+    needs: [changes, static, unit, database, database-pooler, database-complete, build, desktop]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -331,11 +461,15 @@ jobs:
       STATIC: ${{ needs.static.result }}
       UNIT: ${{ needs.unit.result }}
       DATABASE: ${{ needs.database.result }}
+      DATABASE_POOLER: ${{ needs.database-pooler.result }}
+      DATABASE_COMPLETE: ${{ needs.database-complete.result }}
       BUILD: ${{ needs.build.result }}
       DESKTOP: ${{ needs.desktop.result }}
       DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
       DESKTOP_TIER: ${{ needs.changes.outputs.tier }}
       DESKTOP_REASON: ${{ needs.changes.outputs.desktop_reason }}
+      GATE_TIER: ${{ needs.changes.outputs.gate_tier }}
+      GATE_REASON: ${{ needs.changes.outputs.gate_reason }}
     steps:
       - name: Summary
         continue-on-error: true
@@ -360,11 +494,15 @@ jobs:
             echo "|---|---|---|"
             echo "| Static checks (contracts, types, lint, boundaries) | $(icon "$STATIC") $STATIC | $(dur 'Static checks') |"
             echo "| Unit, contract and architecture tests | $(icon "$UNIT") $UNIT | $(dur 'Unit, contract') |"
-            echo "| Database (roles, migrations, integration, RLS isolation) | $(icon "$DATABASE") $DATABASE | $(dur 'Database tests') |"
+            echo "| Database integration shards (roles, migrations, integration) | $(icon "$DATABASE") $DATABASE | $(dur 'Database tests (integration') (slowest shard) |"
+            echo "| Database RLS isolation and pooler suites | $(icon "$DATABASE_POOLER") $DATABASE_POOLER | $(dur 'Database tests (RLS') |"
+            echo "| Database shard completeness | $(icon "$DATABASE_COMPLETE") $DATABASE_COMPLETE | $(dur 'Database tests (shard') |"
             echo "| Build verification (API, web, desktop frontend, startup, bundles) | $(icon "$BUILD") $BUILD | $(dur 'Build verification') |"
             echo "| Desktop shell (Linux, macOS, Windows) | $(icon "$DESKTOP") $DESKTOP | $(dur 'Desktop shell') (slowest OS) |"
             echo
-            echo "Tier: **${DESKTOP_TIER:-unknown}**. Desktop matrix required: **${DESKTOP_REQUIRED:-unknown}** ($DESKTOP_REASON)"
+            echo "Gate tier: **${GATE_TIER:-unknown}** ($GATE_REASON)"
+            echo
+            echo "Desktop tier: **${DESKTOP_TIER:-unknown}**. Desktop matrix required: **${DESKTOP_REQUIRED:-unknown}** ($DESKTOP_REASON)"
             started="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT" --jq .run_started_at 2>/dev/null || true)"
             if [ -n "$started" ]; then
               total=$(( $(date +%s) - $(date -d "$started" +%s) ))
