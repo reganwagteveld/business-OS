@@ -2,6 +2,8 @@
 
 **Revision 2 (2026-11-17):** answers the ChatGPT audit of `bbb76db` (CHANGES REQUIRED): exclusive reservation and locking protocol (§8.3), lease fencing, late writes and crash table (§8.4), removal journal outside the rollback boundary with restore runbook and failed-delete inventory (§12.2 to §12.5), guard exception for the removal hash and terminal states (§7.1), no automatic provider fallback and residency evidence (§5, G-1b), corrected branching claim (§5) and the PDF risk wording (§11.2).
 
+**Revision 3 (2026-11-17):** answers the conditional pass on `b54c7b3`: a storage-side bucket fence (create-only puts and tombstones) or a provider-confirmed completion bound or quarantine, with `clock_timestamp()` after locks (§8.4, G-1c); isolated object namespace, journal high-water marks and usage recomputation for restores (§12.5); unknown journal outcomes and the `REMOVING` state (§12.2, §7.1).
+
 **Status:** proposal, docs only. Nothing here is built, enabled, signed up for or decided. Owner decisions are in §17.
 **Date:** 2026-11-17. Base: `main` at `06405a5`.
 **Closes, when accepted:** FD-P6 (receipt storage) and F3-D2 (receipts deferred), `docs/finance-data-model.md` §19.6.
@@ -211,9 +213,9 @@ because isolation is enforced before any storage call (§7.2).
 | `business_id` | uuid | RLS key, leading index |
 | `expense_id` | uuid null | composite FK `(business_id, expense_id)` → `finance_expenses` |
 | *(later)* `document_id`, `payment_id` | uuid null | composite FKs; CHECK exactly one owner column is set |
-| `status` | enum `PENDING`, `AVAILABLE`, `FAILED`, `REMOVED` | §8.3, §8.4 |
+| `status` | enum `PENDING`, `AVAILABLE`, `FAILED`, `REMOVING`, `REMOVED` | §8.3, §8.4, §12.2 |
 | `idempotency_key` | text | from the request; UNIQUE `(business_id, expense_id, idempotency_key)` |
-| `lease_expires_at` | timestamptz | database time, set in tx1 (§8.4). Fences finalize against cleanup |
+| `lease_origin`, `lease_expires_at` | timestamptz | database `clock_timestamp()` in tx1 (§8.4). Fence finalize against cleanup |
 | `journaled_at` | timestamptz null | removal intent durably written to the journal (§12.2) |
 | `purged_at` | timestamptz null | object deleted and absence verified; bytes released from the quota |
 | `storage_key` | text, **generated** | `'b/' || business_id || '/finance/attachments/' || id`. Never written by the app |
@@ -234,13 +236,14 @@ Constraints and guards:
   and the schema test.
 - Index `(business_id, expense_id, created_at)`; partial index on `(business_id, sha256)` where `AVAILABLE`.
 - Guard trigger:
-  - `content_type`, `byte_size`, owner columns, `idempotency_key`, `lease_expires_at` and `created_*` are
+  - `content_type`, `byte_size`, owner columns, `idempotency_key`, `lease_origin`, `lease_expires_at` and `created_*` are
     immutable.
-  - `sha256` and `file_name` are immutable **with one exception**: in the transition into `REMOVED`, and when a
-    `FAILED` row is purged, `file_name` becomes NULL and `sha256` becomes `sha256('removed:' || id)` (as E1
-    does for content hashes). No other change to either column is accepted.
-  - Status moves only `PENDING → AVAILABLE | FAILED` and `AVAILABLE → REMOVED`. `FAILED` and `REMOVED` are
-    final; `purged_at` (and `journaled_at` for removals) may then be set once and never cleared.
+  - `sha256` and `file_name` are immutable **with one exception**: in the transition into `REMOVING` or
+    `REMOVED` (`file_name` becomes NULL; `sha256` becomes `sha256('removed:' || id)` on `REMOVED`, as E1 does
+    for content hashes), and when a `FAILED` row is purged (both). No other change to either column is accepted.
+  - Status moves only `PENDING → AVAILABLE | FAILED`, `AVAILABLE → REMOVING | REMOVED` and
+    `REMOVING → REMOVED`. `REMOVING` never returns to `AVAILABLE`. `FAILED` and `REMOVED` are final;
+    `purged_at` (and `journaled_at` for removals) may then be set once and never cleared.
   - **Terminal states:** `AVAILABLE` (live), `REMOVED` with `purged_at`, and `FAILED` with `purged_at`.
     Every other state is transient and appears in the cleanup inventory (§12.2).
 - The per-expense limit and the business quota are enforced by the locking protocol of §8.3, not by a
@@ -314,12 +317,12 @@ tx1 (reserve):
   UPDATE usage SET reserved_bytes = reserved_bytes + size
       WHERE business_id = $b AND reserved_bytes + size <= quota_bytes   -- row lock: serialises the quota
       (0 rows → 409 storage_quota_exceeded)
-  INSERT row PENDING, lease_expires_at = now() + 10 min (database clock)
+  INSERT row PENDING, lease_origin = clock_timestamp(), lease_expires_at = lease_origin + 10 min
   commit
 put object at storage_key (client-side abort after 30 s; route maxDuration 60 s)
 tx2 (finalize):
   SELECT expense FOR UPDATE → SELECT row FOR UPDATE
-  row still PENDING and now() <= lease_expires_at, else → FAILED
+  row still PENDING and clock_timestamp() <= lease_expires_at (read after the locks), else → FAILED
   expense not VOID (and, for a draft, not discarded), else → FAILED, 409 expense_not_open
   re-resolve membership and finance:expenses for the uploader, else → FAILED, 403
   HEAD object: size matches, else → FAILED
@@ -338,30 +341,49 @@ tx2 (finalize):
 
 ### 8.4 Fencing, late writes and crashes
 
-**The fence is the lease on the row, checked under the row lock.** Finalize (tx2) succeeds only while
-`now() <= lease_expires_at`. Cleanup of a `PENDING` row acts only when `now() > lease_expires_at`. Both take
-the row `FOR UPDATE`, so for any row exactly one of them wins, and neither can act on a row the other has
-already moved.
+**Two different fences.** The lease on the row fences the **database** decisions: finalize (tx2) succeeds only
+while `clock_timestamp() <= lease_expires_at`, and cleanup acts on a `PENDING` row only when
+`clock_timestamp() > lease_expires_at`. Both read the clock with `clock_timestamp()` **after** acquiring the
+row lock (never the transaction-start `now()`), so a finalizer that waited on the lock across the expiry
+sees the expiry and fails. For any row exactly one of them wins.
 
-**Late puts.** A put can only be in flight while the upload function is alive. The put is aborted after
-30 seconds and the route's `maxDuration` is 60 seconds, both far inside the 10-minute lease. Cleanup does not
-delete the object of a `FAILED` or expired row until a further **10-minute grace** after the lease, and then
-deletes, waits, and verifies absence with `HEAD` before setting `purged_at`. A put that somehow lands after
-that is found by the orphan sweep (below) because its key still names a row that is purged. The design
-therefore depends on one stated assumption: the provider does not complete a request more than 20 minutes
-after the client stopped sending it. G-1 asks the provider to confirm request expiry; SigV4 requests are also
-rejected by S3-compatible services once their signing time is too old (to be confirmed per provider).
+The lease does **not** fence the **bucket**: it cannot cancel a put that the storage service has already
+accepted. Client abort, process death and signature age prove nothing about when an accepted write completes
+(AWS documents that signature expiry is checked when a request starts, and a request may continue after it).
+So the bucket needs its own fence, chosen by what the provider supports (G-1c):
+
+1. **Preferred: conditional writes (storage-side fence).** Every upload put uses `If-None-Match: *`
+   (create only). Cleanup never leaves a key empty: it **replaces** the object with a zero-byte *tombstone*
+   object (no content, no metadata), unconditionally if the upload's object is present and with
+   `If-None-Match: *` if it is absent. Once the tombstone exists, any late or replayed create-only put of the
+   upload fails its precondition, so bytes cannot be resurrected. A tombstone holds nothing personal, costs
+   effectively nothing, and is removed only with the business prefix (§12.6). `purged_at` is set once the
+   tombstone is verified (HEAD shows zero bytes).
+2. **Otherwise: a provider-confirmed completion bound.** Only if G-1 obtains a written upper bound `B` on how
+   long the service can complete a request after it stops receiving it. The grace is computed from the
+   database time at which tx1 committed (`lease_origin`, recorded with `clock_timestamp()`): deletion of a
+   key is allowed only after `lease_origin + put_abort (30 s) + route maxDuration (60 s) + B + margin (10 min)`.
+   Delete, then verify absence, then set `purged_at`.
+3. **Neither available: quarantine.** The row stays `FAILED` with its reservation held; the object is deleted
+   but the row is **not** marked purged and the reservation is **not** released; the key is re-checked by
+   the inventory indefinitely. This keeps the quota hard (bytes that might come back are still counted) at
+   the cost of permanently reserved space for failed uploads. Activation with this option needs Regan's
+   explicit acceptance.
+
+The orphan sweep (below) is **eventual repair**, not the fence: it is never relied on for the no-resurrection
+or hard-quota guarantees.
 
 **Crash at every boundary:**
 
 | Crash or loss | State left | Recovery |
 |---|---|---|
 | Before tx1 commits | Nothing | Client retries with the same key |
-| After tx1, before or during put | `PENDING` row, maybe a partial or no object | Lease expires → cleanup marks `FAILED`, grace, delete, verify, purge, release bytes |
-| Put succeeded, response lost | `PENDING` row, object present | Same as above if tx2 never runs (the upload is discarded, the client retries with a new key); tx2 succeeds if it runs inside the lease |
-| After put, during tx2 | `PENDING` (tx2 rolled back) | Same as above |
+| After tx1, before or during put | `PENDING` row, maybe an object later | Lease expires → `FAILED` → bucket fence (above) → `purged_at`, release bytes |
+| Put accepted, response lost | `PENDING` row, object present or pending | tx2 if it runs inside the lease; otherwise as above (the client retries with a new key) |
+| After put, during tx2 | `PENDING` (tx2 rolled back) | As above |
 | tx2 committed, response lost | `AVAILABLE` | Client retry with the same key returns the row (200) |
-| Expense voided or discarded during upload | tx2 sees it under the expense lock | Row → `FAILED`, purged later |
+| Finalizer waits on the row lock across expiry | `PENDING` | tx2 reads `clock_timestamp()` after the lock, sees expiry, marks `FAILED` |
+| Expense voided or discarded during upload | tx2 sees it under the expense lock | Row → `FAILED` |
 | Uploader loses Finance access during upload | tx2 re-resolves permission | Row → `FAILED`, 403 |
 
 **Who runs cleanup without cron.** Cleanup is an idempotent function over the **cleanup inventory**: every
@@ -369,10 +391,10 @@ row not in a terminal state (§7.1). It runs (a) at the start of every upload, l
 expense, for that expense's rows, bounded to a few rows per request, and (b) from an operations script for the
 whole business or bucket. No scheduler is introduced; enabling one later is Regan's decision.
 
-**Orphan sweep.** Lists `b/<business_id>/finance/attachments/` and compares with rows: a key whose row is
-missing, `FAILED` or `REMOVED`, and whose lease plus grace has passed, is deleted and verified. Keys whose row
-is still in its lease are left alone. The sweep is part of the restore runbook (§12.5) and of the periodic
-operations check.
+**Orphan sweep.** Lists `b/<business_id>/finance/attachments/` **in the environment's own namespace** and
+compares with that environment's rows: a non-tombstone object whose row is missing, `FAILED` or `REMOVED`, and
+whose fence condition is met, is tombstoned (option 1) or deleted (options 2 and 3). Keys whose row is still in
+its lease are left alone. It never runs against a namespace that belongs to a different database (§12.5).
 
 ### 8.5 Why not direct-to-bucket uploads now
 
@@ -455,29 +477,41 @@ Previews are audited because F5-D4 audits PDF previews; if that is too noisy, D-
 ### 12.2 Removal: journal first
 
 A removal must survive a database restore, so it is decided by a **removal journal that lives outside the
-database's rollback boundary** (§12.3), not by the tombstone alone.
+database's rollback boundary** (§12.3), not by the tombstone alone. A journal entry is keyed by the attachment
+id (unique), so appending is idempotent and the journal can be asked whether an intent exists.
 
 ```text
 tx (remove):
   SELECT expense FOR UPDATE → SELECT row FOR UPDATE
   row AVAILABLE; permission (§10); reason when the expense is recorded or void
   append journal entry REMOVE {attachment id, business id, storage key, time, actor id, reason code}
-      -- idempotent by attachment id; on failure: roll back, 503 retryable, nothing changed
-  status REMOVED, file_name NULL, sha256 marker, journaled_at = now(), audit finance.attachment.removed
-  commit                       -- if the commit fails after the append, the intent exists: see below
-after commit: delete object → wait → HEAD absent → tx (usage → row): purged_at, release bytes
+  outcome:
+    committed            → status REMOVED, file_name NULL, sha256 marker, journaled_at = clock_timestamp(),
+                           audit finance.attachment.removed, commit, 200 "Removed"
+    definitely rejected  → roll back, 503 retryable: "Couldn't remove the file. Nothing changed."
+                           (only when the journal answered with a refusal and no intent exists)
+    unknown              → look up the intent by attachment id, retrying the idempotent append, for a bounded
+                           time (a few seconds):
+                             found or committed → as "committed"
+                             still unknown      → status REMOVING (hidden, not downloadable), file_name NULL,
+                                                  commit, 202 removal_pending: "The file is hidden and its
+                                                  removal is being completed."
+after commit: bucket fence of §8.4 (tombstone, or delete and verify) → tx (usage → row): purged_at, release bytes
 ```
 
-- **The journal entry is the decision.** A journal entry whose row is not `REMOVED` (the commit failed, or a
-  restore lost it) is completed by cleanup: the removal was authorised and requested, so finishing it is
-  correct. Removals are never cancelled after the journal append.
-- The response says "removed" once the transaction commits. Purging the bytes can lag (delete failures are
-  retried from the inventory).
-- **Failed-delete inventory:** every `REMOVED` or `FAILED` row with `purged_at` NULL, plus every journal entry
-  whose row is not purged. The operations script and the per-expense cleanup work this list until it is empty;
-  the operations check reports its size and its oldest entry.
-- `FAILED` uploads need no journal entry: they were never visible, and the orphan sweep removes their bytes in
-  any environment, restored or not.
+- **A durable, authorised intent is never cancelled.** `REMOVING` only moves forward: cleanup looks the intent
+  up; if present it completes `REMOVED`; if the journal answers definitively that none exists (the earlier
+  append rolled back), it appends again (the user's authorised request still stands) and then completes.
+  `REMOVING` never returns to `AVAILABLE`.
+- **A journal entry whose row is not `REMOVED`** (the commit failed, or a restore lost it) is completed by
+  cleanup for the same reason.
+- "Definitely rejected" is used only when the journal returned a refusal (for example a constraint or
+  permission error) and a lookup confirms no intent. Network errors, timeouts and lost acknowledgements are
+  always "unknown".
+- **Failed-delete inventory:** every `REMOVING` row; every `REMOVED` or `FAILED` row with `purged_at` NULL; every
+  journal entry whose row is not purged. The operations script and the per-expense cleanup work this list until
+  it is empty; the operations check reports its size and its oldest entry.
+- `FAILED` uploads need no journal entry: they were never visible, and the bucket fence (§8.4) covers them.
 - On recorded and void expenses removal needs `finance:manage` and a reason (a wrong file or someone's private
   document must be removable). The UI warns that the receipt may be a tax record.
 
@@ -489,7 +523,7 @@ decision 3 (an erasure record outside the database), so one journal should serve
 
 | Option | New vendor | Outside rollback | Notes |
 |---|---|---|---|
-| **Separate Neon project** in `aws-us-east-1` with an append-only table (API role: INSERT and SELECT only; no UPDATE or DELETE) | No | Yes: restoring or resetting the production project does not touch another project | **Recommended.** Small scale-to-zero compute; cost estimated at a few dollars a month at most (unverified). Its own credential: Regan |
+| **Separate Neon project** in `aws-us-east-1` with an append-only table (API role: INSERT and SELECT only; no UPDATE or DELETE) | No | Yes: restoring or resetting the production project does not touch another project | **Recommended.** Small scale-to-zero compute; cost **not checked** (any figure is an unverified estimate until priced). Its own credential: Regan |
 | Append-only objects in a bucket with a retention lock (R2 bucket lock or S3 Object Lock) | Yes | Yes | Residency rules of §5 apply even though entries hold no content |
 | A table in the production database | No | **No** | Rejected: rolled back with the data it protects |
 | Objects in the Neon Object Storage bucket | No | **No** | Rejected: it branches and restores with the database |
@@ -509,20 +543,37 @@ before removals are restore-safe.
 | Event | Option A (Neon OS) | Option C (S3) or B (R2) |
 |---|---|---|
 | Recovery branch before a migration | Contains the bucket as of the branch point (not atomic with in-flight uploads, §5) | Contains rows only; objects stay live in the bucket |
-| Restore from a branch | Rows and objects both go back. Objects removed since then come back | Rows go back; objects removed since then stay gone (`410 attachment_unavailable`); objects uploaded since then have no row |
+| Restore from a branch | A restored branch has its own view of the bucket. Objects removed since then come back in that view | Rows go back; the live bucket still holds objects uploaded after the backup, and lacks objects removed since |
 | Old recovery branches | Hold removed files until the branch is deleted (same as database content today) | No copies unless versioning or replication is added |
+
+**The restored environment is isolated in both namespaces.** A sweep or replay run against an older restored
+database must never touch the live bucket: legitimate production uploads made after the backup would look like
+orphans and be deleted.
+
+- **Neon OS:** the restored branch's bucket view is its own; its credential is minted on that branch with no
+  access to the production branch.
+- **S3 or R2:** reconciliation runs only against an **isolated copy** (a separate restore bucket or prefix,
+  copied from the live bucket at a recorded moment) with a credential that has **no rights on the live
+  namespace**. Rehearsals use the same arrangement and never hold delete rights on the live bucket.
+- Pointing production at a restored database is a **production cutover**: writes are stopped (uploads and
+  removals answer `503`), the steps below run, and the cutover itself needs Regan's separate approval.
 
 **Restore runbook (extends E1 §10; every restore, whatever its source):**
 
-1. Restore into a branch or database that no deployment points at.
-2. **Replay the journal** (read from the journal, never from the restored database): for every entry, tombstone
-   the row if it exists and is not `REMOVED`, delete the object, verify absence, set `purged_at`.
-3. Reconcile transient rows: `PENDING` rows past their lease → `FAILED` → purge. Leases are database time, so a
-   restored row from long ago is already expired.
-4. Run the orphan sweep (§8.4): objects with no row, or whose row is `FAILED` or `REMOVED`, are deleted.
-5. Rows `AVAILABLE` whose object is missing are reported (and answer `410`); they are not silently dropped.
-6. **Gate:** journal replay shows zero pending entries, the inventory is empty, and the sweep found nothing
-   left. Only then may any deployment, variable or person point at the restored environment.
+1. Restore into a database **and** object namespace that no deployment points at (above).
+2. Record the journal's **high-water mark** `W1` (latest entry id and time).
+3. **Replay the journal up to `W1`** (read from the journal, never from the restored database): for every entry,
+   tombstone the row if it exists and is not `REMOVED`, apply the bucket fence (§8.4), set `purged_at`.
+4. Reconcile transient rows: `PENDING` past their lease → `FAILED` → fence and purge; `REMOVING` → completed per
+   §12.2. Leases use database time, so a restored row from long ago is already expired.
+5. Run the orphan sweep against the **restored namespace only**.
+6. Rows `AVAILABLE` whose object is missing are reported (and answer `410`); they are not silently dropped.
+7. **Recompute usage:** set each business's `reserved_bytes` to the sum of `byte_size` over its rows with
+   `purged_at` NULL, and verify it equals the stored value (or record and correct the difference).
+8. **Catch-up gate (at cutover):** stop writes, record `W2`, replay `(W1, W2]`, repeat step 7. The environment
+   is released only when no journal entry after the last replayed mark exists, the inventory is empty, the
+   sweep found nothing, and usage verification passed. Only then may any deployment, variable or person point
+   at the restored environment.
 
 ### 12.6 Business deletion
 
@@ -548,7 +599,7 @@ today) keeps everything.
 | `GET …/finance/expenses/:id/attachments` | List `AVAILABLE` attachments | 404 |
 | `POST …/finance/expenses/:id/attachments` (raw body, `Content-Type`, `X-File-Name`, required `Idempotency-Key`) | Upload | 409 `expense_not_open`, `attachment_duplicate`, `attachment_limit`, `storage_quota_exceeded`, `idempotency_mismatch`, `upload_in_progress`, `upload_failed`; 403; 413; 415; 422; 503 `storage_unconfigured`, `retryable` |
 | `GET …/finance/attachments/:id/content?disposition=` | Bytes | 404, 410 `attachment_unavailable`, 500 `integrity_error` |
-| `POST …/finance/attachments/:id/remove` (`reason`, `version`) | Journal, tombstone, then purge (§12.2) | 403, 409 `version_conflict`, 503 `retryable` (journal unreachable: nothing changed) |
+| `POST …/finance/attachments/:id/remove` (`reason`, `version`) | Journal, tombstone, then purge (§12.2) | 200 removed; 202 `removal_pending` (outcome unknown, file hidden, completed by cleanup); 403; 409 `version_conflict`; 503 `retryable` only on a definite journal refusal (nothing changed) |
 
 Expense list and detail DTOs gain `attachmentCount` (additive), so the list can show a paperclip.
 
@@ -559,7 +610,11 @@ Expense list and detail DTOs gain `attachmentCount` (additive), so the list can 
 - **G-1 Provider verification (A).** Written confirmation from Neon docs or support of: encryption at rest;
   what "soft-delete" means and how a deleted object is permanently purged (and when); GA status and SLA;
   that the Neon DPA covers Object Storage; that the bucket is in `aws-us-east-1`; how long after a client
-  stops sending the service can still complete a request (the §8.4 assumption). Unfulfilled until evidenced.
+  stops sending the service can still complete a request. Unfulfilled until evidenced.
+- **G-1c Bucket fence.** Evidence that the chosen provider honours create-only conditional puts
+  (`If-None-Match: *`, §8.4 option 1), **or** a provider-written completion bound `B` with the grace
+  calculation of option 2, **or** Regan's explicit acceptance of quarantine (option 3). A hard prerequisite for
+  activation; not inferred from signature expiry or client aborts.
   If any answer is unsatisfactory, the provider choice returns to Regan (D-RCPT-14); there is no automatic
   fallback.
 - **G-1b Residency.** Whichever provider is chosen, evidence that it satisfies ADR 0002 (US region), or an
@@ -567,7 +622,8 @@ Expense list and detail DTOs gain `attachmentCount` (additive), so the list can 
 - **G-2 Isolation proof.** Tests T-1..T-6 green in `tests/isolation`.
 - **G-3 Restore runbook and journal.** The removal journal exists outside the production project (D-RCPT-13),
   and the runbook of §12.5 is written into `docs/operations/` and rehearsed once on a disposable branch,
-  including a restore to a point before a journaled removal.
+  including a restore to a point before a journaled removal, with an isolated namespace, credentials without
+  rights on the live namespace, the `W1`/`W2` catch-up gate and usage recomputation.
 - **G-4 Residency and sub-processors.** ADR 0002 table gains an "Object storage" row.
 - **G-5 Legal.** L1 answered before any automatic purge (not before stage 1).
 
@@ -587,14 +643,19 @@ Expense list and detail DTOs gain `attachmentCount` (additive), so the list can 
     quota, losers get `409 storage_quota_exceeded`, and the sum of reservations equals the sum of unpurged rows;
   - two requests with the same `Idempotency-Key` → one row; same key with different bytes → `idempotency_mismatch`;
   - reservations of `FAILED` rows are held until purge and released exactly once.
-- Fencing and crashes (fault injection in the store adapter and between steps): put error; put succeeds but
-  response lost; crash after tx1, after put, during tx2; tx2 after lease expiry → `FAILED`; cleanup before lease
-  expiry → no-op; a put that completes after cleanup deleted the key is removed by the orphan sweep.
+- Fencing and crashes (fault injection in the store adapter and between steps): put error; put accepted but
+  response lost; crash after tx1, after put, during tx2; tx2 after lease expiry → `FAILED`; **a finalizer that
+  acquires the row lock only after the expiry** (blocked by a concurrent holder) → `FAILED`, proving
+  `clock_timestamp()` is read after the lock; cleanup before expiry → no-op; with conditional writes, a
+  create-only put arriving after the tombstone fails its precondition and no bytes reappear; reservations of
+  quarantined rows are never released.
 - Upload against concurrent state changes: void or discard during upload (row `FAILED`, never `AVAILABLE` on a
   void expense); removal of another attachment during upload; uploader demoted or removed during upload (403,
   `FAILED`).
-- Removal and erasure: journal append failure leaves nothing changed; commit failure after append is completed
-  by cleanup; removal nulls name and hash (guard refuses any other change to them); failed object delete stays in
+- Removal and erasure: journal refusal leaves nothing changed (503); **journal commits but the acknowledgement
+  is lost** → lookup finds the intent → `REMOVED` (or `REMOVING` → completed by cleanup), never back to
+  `AVAILABLE`; intent definitively absent after an unknown outcome → re-appended and completed; commit failure
+  after append is completed by cleanup; removal nulls name and hash (guard refuses any other change to them); failed object delete stays in
   the inventory until it succeeds; restoring the database to before a journaled removal and running the runbook
   removes the row's content and object; orphan sweep after a restore deletes objects with no row.
 - Headers: `nosniff`, sandbox CSP, `no-store`, `filename*` encoding of non-Latin names.
@@ -609,7 +670,7 @@ Expense list and detail DTOs gain `attachmentCount` (additive), so the list can 
 | F-RCPT-0 | This document | ChatGPT audit, Regan's decisions |
 | F-RCPT-1 | `core/storage` (store and journal adapters), migration for `finance_attachments` and `finance_attachment_usage`, API, cleanup and sweep functions, operations script, contracts, tests. Ships **dark** (`503 storage_unconfigured`) | Migration verdict and recovery branch per protocol; merge verdict |
 | F-RCPT-2 | Expense UI (upload, list, preview, download, remove) | Merge verdict |
-| F-RCPT-3 | Activation: journal project, bucket and credentials created, Vercel variables set, smoke on preview then production | **Regan** (credentials, deploy config, provider product enabled), G-1, G-1b, G-3, G-4, D-RCPT-5 |
+| F-RCPT-3 | Activation: journal project, bucket and credentials created, Vercel variables set, smoke on preview then production | **Regan** (credentials, deploy config, provider product enabled), G-1, G-1b, G-1c, G-3, G-4, D-RCPT-5 |
 | Later | Attachments on documents and payments; scanning and third-party sources; OCR | Separate approvals |
 
 F-RCPT-1 and 2 can be built and tested without any provider account.
@@ -630,7 +691,7 @@ F-RCPT-1 and 2 can be built and tested without any provider account.
 | D-RCPT-10 | Limits | 4 MB, 10 per expense, 2 GB per business in beta | Cost and abuse control |
 | D-RCPT-11 | Application-level encryption | Not in stage 1, **unless** G-1 cannot confirm encryption at rest | Key management cost |
 | D-RCPT-12 | First scope | Expenses only; documents and payments later | Scope |
-| D-RCPT-13 | Removal journal location (shared with E1 open decision 3) | A separate Neon project with an append-only table | New project and credential; small cost |
+| D-RCPT-13 | Removal journal location (shared with E1 open decision 3) | A separate Neon project with an append-only table | New project and credential; cost not yet checked (the earlier "few dollars" is an unverified estimate) |
 | D-RCPT-14 | Provider if G-1 fails | AWS S3 `us-east-1` (exact residency); R2 only with ADR 0002 evidence or an approved residency amendment | New vendor or residency change |
 
 ## 18. Open legal questions (not answered here)
