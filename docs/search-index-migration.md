@@ -34,10 +34,10 @@ The output is a JSON report. It contains no connection strings, and the host is 
 
 - **Local:** every URL is a loopback host or a local socket.
 - **Neon branch:** the Neon control plane confirms all of the following, using `NEON_API_KEY` held by the operator on the Mac, with `NEON_PROJECT_ID` and `REHEARSAL_NEON_BRANCH_ID`:
-  - the branch is **not** the project's default branch;
-  - it is **not** protected;
+  - the branch is **not** the project's default branch (`default` must be present and `false`);
+  - it is **not** protected (`protected` must be present and `false`; a missing or malformed flag refuses);
   - it is named `rehearsal-search-indexes-…`;
-  - it is less than 72 hours old;
+  - it is less than 72 hours old, and not dated in the future beyond 5 minutes of clock skew;
   - every URL's host (direct or `-pooler`) is one of **that branch's** endpoints;
   - independently, no URL's host is an endpoint of the **default (production) branch**.
 
@@ -121,9 +121,10 @@ The SQL runs inside `BEGIN READ ONLY … ROLLBACK`. It selects no SQL text, ids,
 ### 4.2 Neon branch rehearsal
 
 1. Create a temporary Neon branch from production in the production region. Follow the standing Neon policy and the recovery-branch registry. If the branch would exceed the limit, add cost or need a deletion the policy does not cover, stop and ask.
-2. Name the branch `rehearsal-search-indexes-<yyyymmdd>`. Run the rehearsal with `--seed --drill`, using the branch's owner, app (`bos_app`) and admin roles, plus `NEON_API_KEY`, `NEON_PROJECT_ID` and `REHEARSAL_NEON_BRANCH_ID` so the guard can verify the branch. The seed must be **at least** the production size from §4.1. The design point is the default; use `--scale` below 1 only to match a smaller measured production size, and say so in the PR.
-3. If production is larger than the design point, run again with `--scale` above 1.
-4. Attach the JSON report to the PR. Delete the temporary branch per policy and log it.
+2. Before the first rehearsal, make one **read-only** Neon API request for the new branch, its endpoints and the branch list. Confirm the fields the guard relies on are present and have the expected meaning: `default`, `protected`, `created_at`, and endpoint `host`. If the schema differs, stop and fix the guard in a reviewed PR. **Never bypass a guard refusal to make the rehearsal run.**
+3. Name the branch `rehearsal-search-indexes-<yyyymmdd>`. Run the rehearsal with `--seed --drill`, using the branch's owner, app (`bos_app`) and admin roles, plus `NEON_API_KEY`, `NEON_PROJECT_ID` and `REHEARSAL_NEON_BRANCH_ID` so the guard can verify the branch. The seed must be **at least** the production size from §4.1. The design point is the default; use `--scale` below 1 only to match a smaller measured production size, and say so in the PR.
+4. If production is larger than the design point, run again with `--scale` above 1.
+5. Attach the JSON report to the PR. Delete the temporary branch per policy and log it.
 
 ### 4.3 Go / no-go
 

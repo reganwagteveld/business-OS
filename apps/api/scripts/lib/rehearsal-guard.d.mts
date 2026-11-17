@@ -1,5 +1,6 @@
 export declare const BRANCH_NAME_PATTERN: RegExp;
 export declare const MAX_BRANCH_AGE_HOURS: number;
+export declare const CLOCK_SKEW_MINUTES: number;
 export declare class RehearsalTargetError extends Error {}
 export declare function endpointHost(hostname: string): string;
 export declare function verifyRehearsalTarget(input: {

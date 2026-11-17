@@ -21,11 +21,11 @@ const urls = (host: string, overrides: Partial<Record<'owner' | 'app' | 'admin',
   ...overrides,
 });
 
-interface FakeBranch { id: string; name: string; default?: boolean; primary?: boolean; protected?: boolean; created_at: string; hosts: string[] }
+interface FakeBranch { id: string; name: string; default?: boolean | null; primary?: boolean; protected?: boolean | null | string; created_at: string; hosts: string[] }
 const rehearsalBranch = (over: Partial<FakeBranch> = {}): FakeBranch => ({
-  id: BRANCH, name: 'rehearsal-search-indexes-20261117', created_at: '2026-11-17T08:00:00Z', hosts: [BRANCH_HOST], ...over,
+  id: BRANCH, name: 'rehearsal-search-indexes-20261117', default: false, protected: false, created_at: '2026-11-17T08:00:00Z', hosts: [BRANCH_HOST], ...over,
 });
-const productionBranch: FakeBranch = { id: PROD, name: 'production', default: true, created_at: '2026-11-01T00:00:00Z', hosts: [PROD_HOST] };
+const productionBranch: FakeBranch = { id: PROD, name: 'production', default: true, protected: true, created_at: '2026-11-01T00:00:00Z', hosts: [PROD_HOST] };
 
 function fakeNeon(branches: FakeBranch[], opts: { failWith?: number; throws?: boolean } = {}) {
   const calls: string[] = [];
@@ -66,6 +66,11 @@ describe('rehearsal target guard: accepted targets', () => {
     expect(neon.calls).toEqual([]);
   });
 
+  it('tolerates a few minutes of clock skew on a just-created branch', async () => {
+    const neon = fakeNeon([productionBranch, rehearsalBranch({ created_at: '2026-11-17T12:03:00Z' })]);
+    await expect(verifyRehearsalTarget({ urls: urls(BRANCH_HOST), env: NEON_ENV, fetchImpl: neon.fetchImpl, now: NOW })).resolves.toMatchObject({ mode: 'neon-branch' });
+  });
+
   it('accepts a verified temporary rehearsal branch, through its pooled host too', async () => {
     const neon = fakeNeon([productionBranch, rehearsalBranch()]);
     const pooled = 'ep-rehearsal-abc-pooler.us-east-1.aws.neon.tech';
@@ -103,12 +108,18 @@ describe('rehearsal target guard: refusals', () => {
     expect(await refusal({ urls: urls(BRANCH_HOST), env: {} })).toMatch(/needs NEON_API_KEY/);
   });
 
-  it('refuses a branch that is protected, wrongly named, too old or undated', async () => {
+  it('refuses a branch that is protected, wrongly named, too old, undated, dated in the future, or missing its default or protection flag', async () => {
     for (const [over, pattern] of [
       [{ protected: true }, /protected/],
       [{ name: 'production-copy' }, /not a temporary rehearsal branch/],
       [{ created_at: '2026-11-01T00:00:00Z' }, /older than/],
       [{ created_at: '' }, /older than|no creation time/],
+      [{ created_at: '2026-11-17T12:10:00Z' }, /in the future/],
+      [{ protected: undefined }, /protection flag is missing/],
+      [{ protected: null }, /protection flag is missing/],
+      [{ protected: 'false' }, /protection flag is missing/],
+      [{ default: undefined }, /default flag is missing/],
+      [{ default: null }, /default flag is missing/],
     ] as const) {
       const neon = fakeNeon([productionBranch, rehearsalBranch(over)]);
       expect(await refusal({ urls: urls(BRANCH_HOST), env: NEON_ENV, fetchImpl: neon.fetchImpl })).toMatch(pattern);

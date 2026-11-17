@@ -5,8 +5,8 @@
 //
 //   local       every URL is a loopback host or a local socket (a developer or CI database);
 //   neon-branch the Neon control plane (API key held by the operator) confirms that the named branch is a
-//               temporary rehearsal branch: not the project's default branch, not protected, named
-//               `rehearsal-search-indexes-…`, created within the last 72 hours; that every URL's host is
+//               temporary rehearsal branch: explicitly not the default branch, explicitly not protected, named
+//               `rehearsal-search-indexes-…`, created within the last 72 hours (and not in the future beyond 5 minutes of clock skew); that every URL's host is
 //               one of THAT branch's endpoints; and, independently, that no URL's host is an endpoint of
 //               the project's default (production) branch.
 //
@@ -14,6 +14,8 @@
 
 export const BRANCH_NAME_PATTERN = /^rehearsal-search-indexes-[a-z0-9-]{1,40}$/;
 export const MAX_BRANCH_AGE_HOURS = 72;
+/** Tolerated difference between this machine's clock and Neon's for a just-created branch. */
+export const CLOCK_SKEW_MINUTES = 5;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '']);
 const NEON_API = 'https://console.neon.tech/api/v2';
 
@@ -99,11 +101,13 @@ export async function verifyRehearsalTarget({ urls, env, fetchImpl = globalThis.
 
   const { branch } = (await neonGet(fetchImpl, apiKey, `/projects/${p}/branches/${b}`)) ?? {};
   if (!branch || branch.id !== branchId) refuse('The Neon API did not return the named branch.');
-  if (branch.default === true || branch.primary === true) refuse('The named branch is the project default (production) branch.');
-  if (branch.protected === true) refuse('The named branch is protected.');
+  // Fail closed on missing or malformed metadata: both flags must be present and explicitly false.
+  if (branch.default !== false || branch.primary === true) refuse('The named branch is the project default (production) branch, or its default flag is missing.');
+  if (branch.protected !== false) refuse('The named branch is protected, or its protection flag is missing.');
   if (!BRANCH_NAME_PATTERN.test(branch.name ?? '')) refuse('The named branch is not a temporary rehearsal branch (rehearsal-search-indexes-…).');
   const created = Date.parse(branch.created_at ?? '');
   if (!Number.isFinite(created) || now.getTime() - created > MAX_BRANCH_AGE_HOURS * 3600_000) refuse(`The named branch is older than ${MAX_BRANCH_AGE_HOURS} hours or has no creation time.`);
+  if (created - now.getTime() > CLOCK_SKEW_MINUTES * 60_000) refuse('The named branch has a creation time in the future.');
 
   const { branches } = (await neonGet(fetchImpl, apiKey, `/projects/${p}/branches`)) ?? {};
   const defaults = (branches ?? []).filter((x) => x.default === true || x.primary === true);
