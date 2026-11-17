@@ -78,7 +78,15 @@ export const ZONES: readonly ZoneDefinition[] = [
       { id: 'saved', label: 'Saved reports', route: '/reporting/saved' },
     ],
   },
-  { id: 'settings', name: 'Settings', description: 'Workspace preferences', icon: 'settings', route: '/settings', order: 80, requires: [], availability: 'planned' },
+  // A3 / A2-D stage 1: two scopes (the signed-in person, the active business). Pages inside a scope come from
+  // zones/settings/pages.ts and are only listed when the backend behind them exists. Every member holds business:read.
+  {
+    id: 'settings', name: 'Settings', description: 'Your account and your business', icon: 'settings', route: '/settings', order: 80, requires: ['business:read'], availability: 'built',
+    children: [
+      { id: 'business', label: 'Business', route: '/settings/business' },
+      { id: 'account', label: 'Account', route: '/settings/account' },
+    ],
+  },
 ];
 
 /** Where the person is inside the shell. `target` opens one record; `intent` opens a create form. */
