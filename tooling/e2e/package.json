@@ -1,0 +1,18 @@
+{
+  "name": "@business-os/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dev and CI-only full-stack golden-path E2E suite (WP-T1): the built API served over real HTTP against a disposable local PostgreSQL with test-only credentials. Never built or shipped; no production credentials, data, email or payment provider.",
+  "type": "module",
+  "scripts": {
+    "e2e": "node scripts/run.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.0",
+    "pg": "^8.16.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
