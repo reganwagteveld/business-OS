@@ -47,16 +47,35 @@ model Project {
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime?     @map("archived_at") @db.Timestamptz
+  /// WF-1 (docs/cross-zone-workflows-wf1.md §5.1): the opportunity this work came from. Provenance, editable
+  /// through the workflows module (D-WF1-07); customer agreement is checked when the link is made.
+  sourceOpportunityId String?             @map("source_opportunity_id") @db.Uuid
+  /// WF-1 §5.2: the accepted quote this project delivers. Set once (trigger projects_guard_links), one
+  /// project per quote; the FK includes the customer, so the project's customer cannot drift from it.
+  sourceQuoteId       String?             @map("source_quote_id") @db.Uuid
+  /// Pinned to QUOTE by CHECK, so the FK can name the kind.
+  sourceQuoteKind     FinanceDocumentKind @default(QUOTE) @map("source_quote_kind")
 
   business                  Business                   @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "projects_business_fkey")
   customer                  Customer?                  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "projects_customer_fkey")
   owner                     Membership?                @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "projects_owner_fkey")
+  sourceOpportunity         Opportunity?               @relation(fields: [businessId, sourceOpportunityId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "projects_source_opportunity_fkey")
+  sourceQuote               FinanceDocument?           @relation("ProjectSourceQuote", fields: [businessId, sourceQuoteId, sourceQuoteKind, customerId], references: [businessId, id, kind, customerId], onDelete: NoAction, onUpdate: NoAction, map: "projects_source_quote_fkey")
   tasks                     ProjectTask[]
-  financeDocuments          FinanceDocument[]
-  financeExpenses           FinanceExpense[]
-  financeRecurringTemplates FinanceRecurringTemplate[]
+  financeDocuments          FinanceDocument[]          @relation("FinanceDocumentProject")
+  financeExpenses           FinanceExpense[]           @relation("FinanceExpenseProject")
+  financeRecurringTemplates FinanceRecurringTemplate[] @relation("FinanceRecurringTemplateProject")
+  /// W1 invariant I1 (WF-1 §5.3): records with a customer link only a project of the same customer.
+  customerFinanceDocuments  FinanceDocument[]          @relation("FinanceDocumentProjectCustomer")
+  customerFinanceExpenses   FinanceExpense[]           @relation("FinanceExpenseProjectCustomer")
+  customerRecurringTemplates FinanceRecurringTemplate[] @relation("FinanceRecurringTemplateProjectCustomer")
 
   @@unique([businessId, id])
+  /// Referenced by the I1 FKs (implied by the primary key).
+  @@unique([businessId, id, customerId], map: "projects_customer_key")
+  /// One project per accepted quote (W1-D10).
+  @@unique([businessId, sourceQuoteId], map: "projects_source_quote_key")
+  @@index([businessId, sourceOpportunityId])
   @@index([businessId, createdAt(sort: Desc), id])
   @@index([businessId, status])
   @@index([businessId, customerId])
