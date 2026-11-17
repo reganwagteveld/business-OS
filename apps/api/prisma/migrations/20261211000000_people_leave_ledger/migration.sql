@@ -593,9 +593,12 @@ BEGIN
     IF NEW.actor_basis <> 'DERIVED' THEN
       RAISE EXCEPTION 'a derived posting has basis DERIVED' USING ERRCODE = 'PE016';
     END IF;
-    IF NEW.request_hash IS NOT NULL OR NEW.reason_code IS NOT NULL OR NEW.external_ref IS NOT NULL
-       OR NEW.source_id IS NOT NULL OR NEW.checked_by_user_id IS NOT NULL THEN
-      RAISE EXCEPTION 'a derived posting carries no request hash, reason, reference, source id or checker' USING ERRCODE = 'PE016';
+    IF NEW.reason_code IS NOT NULL OR NEW.external_ref IS NOT NULL OR NEW.source_id IS NOT NULL OR NEW.checked_by_user_id IS NOT NULL THEN
+      RAISE EXCEPTION 'a derived posting carries no reason, reference, source id or checker' USING ERRCODE = 'PE016';
+    END IF;
+    -- The digest of the posting's canonical payload, so a retried key can be compared with what it posted (§D.3).
+    IF NEW.request_hash IS NULL THEN
+      RAISE EXCEPTION 'a derived posting records the digest of its canonical payload' USING ERRCODE = 'PE016';
     END IF;
     IF NEW.source_kind <> (CASE NEW.kind WHEN 'ACCRUAL' THEN 'POLICY_ACCRUAL' WHEN 'YEAR_OPEN' THEN 'YEAR_BOUNDARY'
                                          WHEN 'CONSUME' THEN 'LEAVE_REQUEST' WHEN 'FREEZE' THEN 'EMPLOYMENT' ELSE 'TRANSACTION' END) THEN

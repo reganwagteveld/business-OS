@@ -83,7 +83,8 @@ model PeopleLeaveTransaction {
   kind                 String
   /// Unique per business; derived for system kinds (§D.3, prefix checked by the guard).
   idempotencyKey       String              @map("idempotency_key")
-  /// sha256 of the canonical request body for manual kinds; null for system kinds (CHECK).
+  /// sha256 of the canonical request body: required for derived kinds (the primitive's payload digest, so a retried
+  /// key is compared with what it posted) and for manual kinds when they are enabled (CHECK, guard).
   requestHash          String?             @map("request_hash")
   /// LEAVE_REQUEST | POLICY_ACCRUAL | YEAR_BOUNDARY | MANUAL | IMPORT_BATCH | PAYROLL | TRANSACTION | EMPLOYMENT (CHECK).
   sourceKind           String              @map("source_kind")

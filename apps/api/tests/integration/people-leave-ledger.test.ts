@@ -10,7 +10,7 @@
  * an adjustment or a reversed consumption are written by a superuser with only the stage-gate trigger
  * disabled for that one transaction; every other guard and deferred check still runs on them.
  */
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { withTenant } from '@/core/db';
 import { ROLE_PERMISSIONS } from '@/modules/access/server/permissions';
 import {
-  bucketTotals, postDerived, takeSeal, transactionsBetweenSeals, verifyLedger, type DerivedPosting, type EntryInput,
+  bucketTotals, payloadDigest, postDerived, takeSeal, transactionsBetweenSeals, verifyLedger, type DerivedPosting, type EntryInput,
 } from '@/modules/people/server/leave-ledger';
 import { backendPid, waitUntilBlocked } from './support/locks';
 
@@ -145,17 +145,17 @@ type Q = pg.ClientBase;
 const bump = (c: Q, accountId: string) => c.query('UPDATE people_leave_accounts SET version = version + 1 WHERE id = $1', [accountId]);
 
 interface TxIn { account: string; employee: string; type: string; kind: string; key: string; basis?: string; source?: string;
-  related?: string | null; sensitive?: boolean; reason?: string | null; actor?: string }
+  related?: string | null; sensitive?: boolean; reason?: string | null; actor?: string; hash?: string | null }
 async function tx(c: Q, t: TxIn): Promise<string> {
   const id = randomUUID();
   const source = t.source ?? ({ ACCRUAL: 'POLICY_ACCRUAL', YEAR_OPEN: 'YEAR_BOUNDARY', CONSUME: 'LEAVE_REQUEST', FREEZE: 'EMPLOYMENT',
     CARRY_PROPAGATION: 'TRANSACTION', RESERVE: 'LEAVE_REQUEST', REVERSE_CONSUMPTION: 'LEAVE_REQUEST' } as Record<string, string>)[t.kind] ?? 'MANUAL';
   await c.query(
     `INSERT INTO people_leave_transactions (id, business_id, account_id, employee_id, leave_type_id, kind, idempotency_key, source_kind,
-       related_transaction_id, reason_code, actor_user_id, actor_basis, posted_on, account_version, sensitive)
-     VALUES ($1, current_setting('app.business_id')::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, DATE '2000-01-01', 0, $12)`,
+       related_transaction_id, reason_code, actor_user_id, actor_basis, posted_on, account_version, sensitive, request_hash)
+     VALUES ($1, current_setting('app.business_id')::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, DATE '2000-01-01', 0, $12, $13)`,
     [id, t.account, t.employee, t.type, t.kind, t.key, source, t.related ?? null, t.reason ?? null, t.actor ?? randomUUID(),
-      t.basis ?? 'DERIVED', t.sensitive ?? false]);
+      t.basis ?? 'DERIVED', t.sensitive ?? false, t.hash === undefined ? randomBytes(32).toString('hex') : t.hash]);
   return id;
 }
 async function bucket(c: Q, a: { account: string; employee: string; type: string; year: { start: string; end: string }; state?: string; id?: string; period?: number }) {
@@ -864,7 +864,7 @@ describe('idempotency of system keys (T-C10)', () => {
     const y1 = randomUUID();
     const p = accrual(f, { bucketId: y1, hours: '12.6667', periodStart: '2025-01-01', periodEnd: '2025-02-01', create: { year: Y1 } });
     const first = await viaApp(own(f), (db) => postDerived(db, p));
-    const again = await viaApp(own(f), (db) => postDerived(db, { ...p, bucketChanges: [] }));
+    const again = await viaApp(own(f), (db) => postDerived(db, p));
     expect(again).toEqual({ ...first, status: 'duplicate' });
     const q = accrual(f, { bucketId: y1, hours: '12.6666', periodStart: '2025-02-01', periodEnd: '2025-03-01' });
     const results = await Promise.all([1, 2, 3, 4].map(() => viaApp(own(f), (db) => postDerived(db, q))));
@@ -885,7 +885,7 @@ describe('idempotency of system keys (T-C10)', () => {
     const p = accrual(f, { bucketId: y1, hours: '12.6667', periodStart: '2025-01-01', periodEnd: '2025-02-01', create: { year: Y1 } });
     const first = await viaApp(own(f), (db) => postDerived(db, p));
     const retry = (change: (e: EntryInput) => EntryInput, extra: Partial<DerivedPosting> = {}) =>
-      viaApp(own(f), (db) => postDerived(db, { ...p, bucketChanges: [], ...extra, entries: p.entries.map((e) => change({ ...e, id: randomUUID() })) }));
+      viaApp(own(f), (db) => postDerived(db, { ...p, ...extra, entries: p.entries.map((e) => change({ ...e, id: randomUUID() })) }));
     // Same meaning, new caller-chosen ids and an equivalent decimal spelling: a duplicate.
     expect(await retry((e) => ({ ...e, hours: '012.6667' }))).toEqual({ ...first, status: 'duplicate' });
     // Different hours, period, policy version or an extra entry: refused, nothing written.
@@ -894,12 +894,42 @@ describe('idempotency of system keys (T-C10)', () => {
     expect(await refused(retry((e) => ({ ...e, hours: '-12.6667' })))).toBe('LedgerIdempotencyConflict');
     expect(await refused(retry((e) => ({ ...e, appliesOn: '2025-01-30' })))).toBe('LedgerIdempotencyConflict');
     expect(await refused(retry((e) => ({ ...e, policyVersion: 2 })))).toBe('LedgerIdempotencyConflict');
-    expect(await refused(viaApp(own(f), (db) => postDerived(db, { ...p, bucketChanges: [], entries: [...p.entries, { ...p.entries[0]!, id: randomUUID() }] }))))
+    expect(await refused(viaApp(own(f), (db) => postDerived(db, { ...p, entries: [...p.entries, { ...p.entries[0]!, id: randomUUID() }] }))))
       .toBe('LedgerIdempotencyConflict');
     expect(await refused(retry((e) => e, { kind: 'FREEZE' }))).toBe('LedgerIdempotencyConflict');
+    // Side effects and security-relevant fields are part of the payload: year changes and requested sensitivity.
+    expect(await refused(retry((e) => e, { bucketChanges: [] }))).toBe('LedgerIdempotencyConflict');
+    expect(await refused(retry((e) => e, { bucketChanges: [{ create: { id: y1, servicePeriod: 1, yearStart: Y1.start, yearEnd: Y1.end, state: 'FUTURE' } }] })))
+      .toBe('LedgerIdempotencyConflict');
+    expect(await refused(retry((e) => e, { sensitive: true }))).toBe('LedgerIdempotencyConflict');
+    expect(await refused(retry((e) => ({ ...e, sensitive: true })))).toBe('LedgerIdempotencyConflict');
     const rows = await admin.query('SELECT count(*)::int AS n, sum(hours)::text AS h FROM people_leave_entries WHERE transaction_id = $1', [first.transactionId]);
     expect(rows.rows[0]).toEqual({ n: 1, h: '12.6667' });
     expect((await admin.query('SELECT version FROM people_leave_accounts WHERE id = $1', [first.accountId])).rows[0].version).toBe(2);
+  });
+
+  it('the payload digest sees carry pairing by meaning: new ids hash the same, a different pairing does not; a derived row needs a digest', async () => {
+    const [a, b, c, d, y, z] = [1, 2, 3, 4, 5, 6].map(() => randomUUID());
+    const half = (id: string, bucketId: string, kind: 'CARRY_OUT' | 'CARRY_IN', hours: string, pairEntryId: string): EntryInput =>
+      ({ id, bucketId, book: 'BALANCE', kind, hours, appliesOn: '2025-12-31', pairEntryId, policyId: A.pol.capped, policyVersion: 1 });
+    const posting = (entries: EntryInput[]): DerivedPosting => ({ employeeId: A.e1, leaveTypeId: A.annual, kind: 'CARRY_PROPAGATION', idempotencyKey: 'k', entries });
+    const paired = (ids: string[], outFor: Record<string, string>) => posting([
+      half(ids[0]!, y!, 'CARRY_OUT', '-5', outFor[ids[0]!]!), half(ids[1]!, y!, 'CARRY_OUT', '-7', outFor[ids[1]!]!),
+      half(ids[2]!, z!, 'CARRY_IN', '5', outFor[ids[2]!]!), half(ids[3]!, z!, 'CARRY_IN', '7', outFor[ids[3]!]!)]);
+    const straight = paired([a!, b!, c!, d!], { [a!]: c!, [c!]: a!, [b!]: d!, [d!]: b! });
+    const [a2, b2, c2, d2] = [1, 2, 3, 4].map(() => randomUUID());
+    const renamed = paired([a2!, b2!, c2!, d2!], { [a2!]: c2!, [c2!]: a2!, [b2!]: d2!, [d2!]: b2! });
+    const crossed = paired([a!, b!, c!, d!], { [a!]: d!, [d!]: a!, [b!]: c!, [c!]: b! });
+    expect(payloadDigest(renamed)).toBe(payloadDigest(straight));
+    expect(payloadDigest({ ...straight, entries: [...straight.entries].reverse() })).toBe(payloadDigest(straight));
+    expect(payloadDigest(crossed)).not.toBe(payloadDigest(straight));
+    // The database requires the digest on every derived posting.
+    const y1 = randomUUID();
+    const res = await viaApp(own(A), (db) => postDerived(db, accrual(A, { bucketId: y1, hours: '1', periodStart: '2025-01-01', periodEnd: '2025-02-01', create: { year: Y1 } })));
+    expect(await sqlState(as(own(A), async (c2) => {
+      await bump(c2, res.accountId);
+      await tx(c2, { account: res.accountId, employee: A.e1, type: A.annual, kind: 'ACCRUAL', key: `ac:${res.accountId}:1:2025-02-01`, hash: null });
+    }))).toBe('PE016');
   });
 
   it('a raw duplicate key is refused by the unique index', async () => {

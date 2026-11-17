@@ -69,12 +69,14 @@ These go beyond, or narrow, the spec. Each is fail-closed.
 9. **Sensitivity** is computed: the statement's value OR the type's flag OR any cited row's flag, so it only ever
    grows (T-C42d/e). A cited row the writer cannot read is refused with PE018 (D-P3C-37 (a)).
 
-10. **Idempotent retries must say the same thing** (audit of e2093ba). A derived key that was already posted
-    returns `duplicate` only if the retry has the same kind, account, related transaction and entries (compared
-    by meaning: year, book, kind, hours at 4 places, dates, policy version, references; caller-chosen entry ids
-    may differ). Any other payload under a posted key throws `LedgerIdempotencyConflict` and writes nothing, so a
-    C2 engine whose inputs changed between attempts fails loudly instead of being silently ignored. V-08 (C2)
-    remains the gate for a wrong amount posted under a new key: C1 trusts caller-supplied accrual amounts.
+10. **Idempotent retries must say the same thing** (audits of e2093ba and 8c70706). Every derived posting stores
+    `request_hash` = sha256 of its canonical payload (`payloadDigest`), and the guard requires it for derived
+    kinds. The payload covers kind, employee, type, related transaction, requested sensitivity, every bucket
+    change in order and every entry. Caller-chosen entry ids are replaced by meaning, and a carry pair is the pair
+    of its halves' meanings, so new ids hash the same but a different pairing does not. A retried key returns
+    `duplicate` only on an equal digest; anything else throws `LedgerIdempotencyConflict` and writes nothing. V-08
+    (C2) remains the gate for a wrong amount posted under a new key: C1 trusts caller-supplied accrual amounts.
+    This reuses the column §D.3 reserves for manual request hashes; manual kinds keep their own 409 rule in C5.
 
 ## 3. The revision back-fill (J.2): preflight, rehearsal and lock limits
 

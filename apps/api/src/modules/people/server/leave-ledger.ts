@@ -17,6 +17,7 @@ import 'server-only';
 //
 // No days↔hours assumption lives here (revised D-P3C-23): the hours are always explicit, and the database
 // refuses any posting under a DAYS policy until the per-policy conversion basis exists.
+import { createHash } from 'node:crypto';
 import type { AppTenantDb } from '@/core/db';
 import { joinSql, sql } from '@/core/db';
 
@@ -93,30 +94,37 @@ export class LedgerIdempotencyConflict extends LedgerInputError {
   }
 }
 
-interface StoredEntry {
-  bucket_id: string; book: string; kind: string; hours: string; applies_on: string; leave_date: string | null; period_start: string | null;
-  period_end: string | null; policy_id: string; policy_version: number; reverses_entry_id: string | null; reservation_entry_id: string | null;
-  paired: boolean; release_reason: string | null; expiry_reason: string | null;
-}
-
-/** "12.6667", "-5" → canonical numeric(12,4) text ("-5.0000"), without going through a float. */
 function hours4(h: string): string {
   const neg = h.startsWith('-');
   const [int, frac = ''] = (neg ? h.slice(1) : h).split('.');
   return `${neg ? '-' : ''}${String(int).replace(/^0+(?=\d)/, '')}.${frac.padEnd(4, '0')}`;
 }
 
-/** Same entries as a multiset of their meaning. Caller-chosen entry ids may differ between attempts; carry pair
- *  references are compared by presence (their targets are entries of the same transaction). */
-function sameEntries(stored: StoredEntry[], input: EntryInput[]): boolean {
-  const norm = (e: StoredEntry) => JSON.stringify([e.bucket_id, e.book, e.kind, e.hours, e.applies_on, e.leave_date, e.period_start,
-    e.period_end, e.policy_id, e.policy_version, e.reverses_entry_id, e.reservation_entry_id, e.paired, e.release_reason, e.expiry_reason]);
-  const a = stored.map(norm).sort();
-  const b = input.map((e) => norm({ bucket_id: e.bucketId.toLowerCase(), book: e.book, kind: e.kind, hours: hours4(e.hours), applies_on: e.appliesOn,
-    leave_date: e.leaveDate ?? null, period_start: e.periodStart ?? null, period_end: e.periodEnd ?? null, policy_id: e.policyId.toLowerCase(),
-    policy_version: e.policyVersion, reverses_entry_id: e.reversesEntryId?.toLowerCase() ?? null, reservation_entry_id: e.reservationEntryId?.toLowerCase() ?? null,
-    paired: e.pairEntryId != null, release_reason: e.releaseReason ?? null, expiry_reason: e.expiryReason ?? null })).sort();
-  return a.length === b.length && a.every((x, i) => x === b[i]);
+const lower = (id: string | null | undefined) => (id == null ? null : id.toLowerCase());
+
+/**
+ * sha256 of the posting's canonical meaning, stored as the transaction's `request_hash` (required for derived
+ * kinds by the database). Covers kind, employee, type, related transaction, the requested sensitivity, every
+ * bucket change in order and every entry. Caller-chosen entry ids are replaced by meaning: an entry is its
+ * fields, and a carry pair is the pair of its two halves' meanings, so the same pairing with new ids hashes the
+ * same while a different pairing does not. Ids of persisted rows (years, cited entries, policies) stay as ids.
+ */
+export function payloadDigest(posting: DerivedPosting): string {
+  const base = (e: EntryInput) => JSON.stringify([lower(e.bucketId), e.book, e.kind, hours4(e.hours), e.appliesOn, e.leaveDate ?? null,
+    e.periodStart ?? null, e.periodEnd ?? null, lower(e.policyId), e.policyVersion, lower(e.reversesEntryId), lower(e.reservationEntryId),
+    e.releaseReason ?? null, e.expiryReason ?? null, e.sensitive === true]);
+  const byId = new Map(posting.entries.map((e) => [e.id.toLowerCase(), e]));
+  const entries = posting.entries.map((e) => {
+    if (e.pairEntryId == null) return [base(e), null];
+    const partner = byId.get(e.pairEntryId.toLowerCase());
+    return [base(e), partner ? base(partner) : `outside:${e.pairEntryId.toLowerCase()}`];
+  }).map((x) => JSON.stringify(x)).sort();
+  const changes = (posting.bucketChanges ?? []).map((c) => ('create' in c
+    ? ['create', lower(c.create.id), c.create.servicePeriod, c.create.yearStart, c.create.yearEnd, c.create.state]
+    : ['move', lower(c.bucketId), c.to]));
+  const canonical = JSON.stringify({ v: 1, kind: posting.kind, employee: lower(posting.employeeId), type: lower(posting.leaveTypeId),
+    related: lower(posting.relatedTransactionId), sensitive: posting.sensitive === true, changes, entries });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 function check(posting: DerivedPosting) {
@@ -163,31 +171,24 @@ export async function postDerived(db: AppTenantDb, posting: DerivedPosting): Pro
   const accountId = await ensureAccount(db, posting.employeeId, posting.leaveTypeId);
   await db.$queryRaw`SELECT id FROM people_leave_accounts WHERE id = ${accountId}::uuid FOR UPDATE`;
   const key = typeof posting.idempotencyKey === 'function' ? posting.idempotencyKey(accountId) : posting.idempotencyKey;
-  const existing = await db.$queryRaw<{ id: string; kind: string; account_id: string }[]>`
-    SELECT id::text, kind, account_id::text FROM people_leave_transactions WHERE idempotency_key = ${key}`;
+  const digest = payloadDigest(posting);
+  const existing = await db.$queryRaw<{ id: string; kind: string; account_id: string; request_hash: string | null }[]>`
+    SELECT id::text, kind, account_id::text, request_hash FROM people_leave_transactions WHERE idempotency_key = ${key}`;
   if (existing[0]) {
     if (existing[0].kind !== posting.kind || existing[0].account_id !== accountId) throw new LedgerIdempotencyConflict('idempotency key belongs to another posting');
-    // A retry is a duplicate only if it says the same thing. A different payload under a posted key is a caller
-    // bug (e.g. an engine whose inputs changed between attempts) and must not be silently swallowed.
-    const related = (await db.$queryRaw<{ related: string | null }[]>`
-      SELECT related_transaction_id::text AS related FROM people_leave_transactions WHERE id = ${existing[0].id}::uuid`)[0]?.related ?? null;
-    const stored = await db.$queryRaw<StoredEntry[]>`
-      SELECT bucket_id::text, book, kind, hours::text, applies_on::text, leave_date::text, period_start::text, period_end::text,
-             policy_id::text, policy_version, reverses_entry_id::text, reservation_entry_id::text, (pair_entry_id IS NOT NULL) AS paired,
-             release_reason, expiry_reason
-        FROM people_leave_entries WHERE transaction_id = ${existing[0].id}::uuid`;
-    if ((posting.relatedTransactionId ?? null) !== related || !sameEntries(stored, posting.entries)) {
-      throw new LedgerIdempotencyConflict('idempotency key already posted with a different payload');
-    }
+    // A retry is a duplicate only if it says exactly the same thing (same canonical payload digest). Anything
+    // else under a posted key is a caller bug and must not be silently swallowed; a row without a digest cannot
+    // be proven equal, so it fails closed too.
+    if (existing[0].request_hash !== digest) throw new LedgerIdempotencyConflict('idempotency key already posted with a different payload');
     return { status: 'duplicate', transactionId: existing[0].id, accountId };
   }
   await db.$queryRaw`UPDATE people_leave_accounts SET version = version + 1 WHERE id = ${accountId}::uuid RETURNING version`;
   const tx = await db.$queryRaw<{ id: string }[]>`
     INSERT INTO people_leave_transactions
-      (id, business_id, account_id, employee_id, leave_type_id, kind, idempotency_key, source_kind, related_transaction_id,
+      (id, business_id, account_id, employee_id, leave_type_id, kind, idempotency_key, request_hash, source_kind, related_transaction_id,
        actor_user_id, actor_basis, posted_on, account_version, sensitive)
     VALUES (gen_random_uuid(), nullif(current_setting('app.business_id', true), '')::uuid, ${accountId}::uuid, ${posting.employeeId}::uuid,
-            ${posting.leaveTypeId}::uuid, ${posting.kind}, ${key}, ${SOURCE_KIND[posting.kind]}, ${posting.relatedTransactionId ?? null}::uuid,
+            ${posting.leaveTypeId}::uuid, ${posting.kind}, ${key}, ${digest}, ${SOURCE_KIND[posting.kind]}, ${posting.relatedTransactionId ?? null}::uuid,
             '00000000-0000-0000-0000-000000000000'::uuid, 'DERIVED', CURRENT_DATE, 0, ${posting.sensitive ?? false})
     RETURNING id::text`;
   const transactionId = tx[0]!.id;
