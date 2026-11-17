@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
 import { createCustomersClient, type CustomersClient } from './api/customers';
 import { createDashboardClient, type DashboardClient } from './api/dashboard';
+import { createCommunicationsClient, type CommunicationsClient } from './api/communications';
 import { createPeopleClient, type PeopleClient } from './api/people';
 import { createProjectsClient, type ProjectsClient } from './api/projects';
 import { createFinanceClient, type FinanceClient } from './api/finance';
@@ -23,6 +24,7 @@ import { useLoad } from './zones/use-load';
 import type { BusinessContext } from './api/tenancy';
 import type { CurrentUser } from '@business-os/contracts';
 import { CustomerZone, customerTarget } from './zones/customers/customer-zone';
+import { CommunicationsZone } from './zones/communications/communications-zone';
 import { PeopleZone } from './zones/people/people-zone';
 import { ProjectsZone } from './zones/projects/projects-zone';
 import { FinanceZone } from './zones/finance/finance-zone';
@@ -49,6 +51,7 @@ export interface AppProps {
   sales?: SalesClient;
   projects?: ProjectsClient;
   people?: PeopleClient;
+  communications?: CommunicationsClient;
   finance?: FinanceClient;
   reporting?: ReportingClient;
   /** The operational dashboard's own reads (pipeline summary, business activity, upcoming events). */
@@ -68,12 +71,13 @@ type Mode = 'default' | 'choose' | 'new';
  * open the right one. Offline, server errors and an ended session each get their own screen, and
  * the active business is only ever one the server lists for you.
  */
-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, dashboard: dashboardOverride, storage: storageOverride }: AppProps) {
+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, communications: communicationsOverride, finance: financeOverride, reporting: reportingOverride, dashboard: dashboardOverride, storage: storageOverride }: AppProps) {
   const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
   const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
   const customers = useMemo(() => customersOverride ?? createCustomersClient(apiBaseUrl, resolvedTransport), [customersOverride, apiBaseUrl, resolvedTransport]);
   const sales = useMemo(() => salesOverride ?? createSalesClient(apiBaseUrl, resolvedTransport), [salesOverride, apiBaseUrl, resolvedTransport]);
+  const communications = useMemo(() => communicationsOverride ?? createCommunicationsClient(apiBaseUrl, resolvedTransport), [communicationsOverride, apiBaseUrl, resolvedTransport]);
   const people = useMemo(() => peopleOverride ?? createPeopleClient(apiBaseUrl, resolvedTransport), [peopleOverride, apiBaseUrl, resolvedTransport]);
   const projects = useMemo(() => projectsOverride ?? createProjectsClient(apiBaseUrl, resolvedTransport), [projectsOverride, apiBaseUrl, resolvedTransport]);
   const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
@@ -90,7 +94,11 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
    */
   const [route, setRouteState] = useState<{ slug: string | null; route: ShellRoute }>({ slug: null, route: HOME });
   const activeSlug = 'context' in phase ? phase.context.business.slug : null;
-  const setRoute = (next: ShellRoute) => setRouteState({ slug: activeSlug, route: next });
+  // Any navigation by the person ends the one-time mailbox-return result.
+  const setRoute = (next: ShellRoute) => {
+    setMailboxReturn(null);
+    setRouteState({ slug: activeSlug, route: next });
+  };
   const open = (next: ShellRoute) => setRoute(next);
 
   const params = new URLSearchParams(location?.search ?? '');
@@ -102,6 +110,14 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   useEffect(() => {
     if (location?.pathname === '/invite' && replaceLocation) replaceLocation('/invite');
   }, [location?.pathname, replaceLocation]);
+
+  // The mailbox connection page sends the browser back to `/?mailbox=<code>`. The code is read once, removed from the
+  // address bar and only ever mapped to fixed wording; it opens the Communications Zone when this person can use it.
+  const [mailboxReturn, setMailboxReturn] = useState<string | null>(() => params.get('mailbox'));
+  useEffect(() => {
+    if (mailboxReturn && replaceLocation) replaceLocation('/');
+  }, [mailboxReturn, replaceLocation]);
+  const returnReady = mailboxReturn !== null && phase.kind === 'ready' && phase.context.membership.permissions.includes('communications:read');
 
   const user = 'user' in phase ? phase.user : null;
 
@@ -217,7 +233,9 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const navigation = resolveNavigation(phase.kind === 'switching' ? { state: 'loading' } : { state: 'ready', permissions });
   // A route is only ever honoured for a Zone the server's permissions open, and only in the business
   // it was chosen in: a switch, or a role change on refresh, lands on Home.
-  const current = route.slug === phase.context.business.slug && canOpen(route.route, navigation) ? route.route : HOME;
+  // Coming back from the provider shows Communications until the person navigates (which clears `mailboxReturn`).
+  const shown = returnReady ? { slug: phase.context.business.slug, route: { zone: 'communications' } as ShellRoute } : route;
+  const current = shown.slug === phase.context.business.slug && canOpen(shown.route, navigation) ? shown.route : HOME;
   const canReadProjects = navigation.available.some((z) => z.id === 'projects');
   const canReadCustomers = navigation.available.some((z) => z.id === 'customers');
   const canReadFinance = navigation.available.some((z) => z.id === 'finance');
@@ -259,6 +277,16 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       <PeopleZone
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
         client={people} customers={customers} context={active} userLabel={userLabel} initialEmployeeId={target} initialAction={intent}
+        onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
+      />
+    );
+  } else if (active && current.zone === 'communications') {
+    screen = (
+      <CommunicationsZone
+        key={slug}
+        client={communications} customers={customers} context={active} userLabel={userLabel} returnResult={mailboxReturn ?? undefined}
+        // On the desktop the provider consent opens in the system browser, where the sign-in to Pixa OS must also exist.
+        openConsent={platform === 'desktop' ? (url) => { window.open(url, '_blank', 'noopener,noreferrer'); } : undefined}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );

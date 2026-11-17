@@ -11,7 +11,7 @@ import type { IconName } from './icons';
  * because its entry exists, and the API still checks every request.
  */
 
-export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'people' | 'operations' | 'reporting' | 'settings';
+export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'people' | 'operations' | 'reporting' | 'communications' | 'settings';
 
 export interface ZoneChild {
   /** Stable within its Zone. */
@@ -77,6 +77,12 @@ export const ZONES: readonly ZoneDefinition[] = [
       { id: 'explore', label: 'Explore', route: '/reporting/explore' },
       { id: 'saved', label: 'Saved reports', route: '/reporting/saved' },
     ],
+  },
+  // Communications C2-UI-C (docs/communications-c2-ui.md, D-UI-1): mailbox management only. There is no Inbox child
+  // until provider mail is stored and readable (C2-B3): nothing here pretends otherwise.
+  {
+    id: 'communications', name: 'Communications', description: 'Connected mailboxes and their settings', icon: 'mail', route: '/communications', order: 75, requires: ['communications:read'], availability: 'built',
+    children: [{ id: 'mailboxes', label: 'Mailboxes', route: '/communications' }],
   },
   { id: 'settings', name: 'Settings', description: 'Workspace preferences', icon: 'settings', route: '/settings', order: 80, requires: [], availability: 'planned' },
 ];

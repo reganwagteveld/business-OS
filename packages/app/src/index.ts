@@ -11,6 +11,7 @@ export { browserStorage, memoryStorage, type WorkspaceStorage } from './workspac
 export { createCustomersClient, type CustomersClient } from './api/customers';
 export { createSalesClient, type SalesClient } from './api/sales';
 export { createProjectsClient, type ProjectsClient } from './api/projects';
+export { createCommunicationsClient, type CommunicationsClient } from './api/communications';
 export { createPeopleClient, type PeopleClient } from './api/people';
 export { createFinanceClient, type FinanceClient } from './api/finance';
 export { createReportingClient, type ReportingClient } from './api/reporting';

@@ -30,6 +30,7 @@ const PATHS = {
   signOut: 'M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10',
   swap: 'M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7',
   activity: 'M3 12h4l3-8 4 16 3-8h4',
+  mail: 'M3 6h18v12H3zM3 7l9 7 9-7',
 } as const;
 
 export type IconName = keyof typeof PATHS;
