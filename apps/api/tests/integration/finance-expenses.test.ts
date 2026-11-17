@@ -578,8 +578,9 @@ describe('payment direction (F3-D1) and allocation reversal (F3-D3)', () => {
 
 describe('links, search and pagination', () => {
   it('links projects and customers of this business only; archived links are refused for new use', async () => {
-    const proj = (await own.createProject({ name: `Fit-out ${randomUUID().slice(0, 4)}` })).body.project;
     const cust = (await own.createCustomer({ displayName: 'Client One' })).body.customer;
+    // I1 (WF-1 §5.3): an expense with a customer links only a project of that customer.
+    const proj = (await own.createProject({ name: `Fit-out ${randomUUID().slice(0, 4)}`, customerId: cust.id })).body.project;
     const e = await draft({ projectId: proj.id, customerId: cust.id });
     expect(e).toMatchObject({ projectId: proj.id, customerId: cust.id });
     const b = api(B.people.OWNER!, B.slug);

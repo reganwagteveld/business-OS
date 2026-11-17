@@ -59,6 +59,7 @@ model Business {
   activities                     Activity[]
   projects                       Project[]
   projectTasks                   ProjectTask[]
+  workflowRequests               WorkflowRequest[]
   financeSettings                FinanceSettings?
   financeNumberSeries            FinanceNumberSeries[]
   financeTaxRates                FinanceTaxRate[]
