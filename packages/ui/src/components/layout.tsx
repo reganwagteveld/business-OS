@@ -27,10 +27,35 @@ export function PageHeader({ title, description, eyebrow, actions, className, ..
   );
 }
 
-/** Heading for a section within a page (h2 by default), with an optional description and actions. */
-export function SectionHeader({ title, description, actions, as: Heading = 'h2', className, ...props }: Omit<ComponentProps<'div'>, 'title'> & { title: ReactNode; description?: ReactNode; actions?: ReactNode; as?: 'h2' | 'h3' }) {
+type SectionHeaderBase = Omit<ComponentProps<'div'>, 'title'> & { title: ReactNode; as?: 'h2' | 'h3' };
+
+/**
+ * Heading for a section within a page (h2 by default).
+ *
+ * - Default: the heading with an optional description and actions.
+ * - `variant="ruled"` (V2-B2 §6.6): a 40 px line with the heading (13 px, semibold), a 1 px rule filling
+ *   the line, a short meta (period, "as of", source) and at most one action, usually a ghost link such
+ *   as "Open Finance ›". It replaces a section title over a card: the rule, not a box, groups the content.
+ */
+type DefaultSectionHeaderProps = SectionHeaderBase & { variant?: 'default'; description?: ReactNode; actions?: ReactNode };
+type RuledSectionHeaderProps = SectionHeaderBase & { variant: 'ruled'; meta?: ReactNode; action?: ReactNode };
+
+export function SectionHeader({ variant = 'default', ...props }: DefaultSectionHeaderProps | RuledSectionHeaderProps) {
+  if (variant === 'ruled') {
+    const { title, meta, action, as: Heading = 'h2', className, ...rest } = props as Omit<RuledSectionHeaderProps, 'variant'>;
+    return (
+      <div className={cn('flex h-row-default min-w-0 items-center gap-3', className)} {...rest}>
+        <Heading className="shrink-0 text-small font-semibold">{title}</Heading>
+        {/* A border, not a fill, so the rule survives forced colours. */}
+        <span aria-hidden className="min-w-6 flex-1 border-t border-line" />
+        {meta != null && <p className="shrink-0 truncate text-caption text-fg-subtle">{meta}</p>}
+        {action != null && <div className="flex shrink-0 items-center">{action}</div>}
+      </div>
+    );
+  }
+  const { title, description, actions, as: Heading = 'h2', className, ...rest } = props as Omit<DefaultSectionHeaderProps, 'variant'>;
   return (
-    <div className={cn('flex flex-wrap items-end justify-between gap-3', className)} {...props}>
+    <div className={cn('flex flex-wrap items-end justify-between gap-3', className)} {...rest}>
       <div className="min-w-0">
         <Heading className="text-lg font-semibold tracking-tight">{title}</Heading>
         {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}

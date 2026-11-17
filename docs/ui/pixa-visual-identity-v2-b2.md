@@ -306,7 +306,7 @@ Each is checkable in review or by a source scan; the counts are on `ccfcc93` and
 | AT-8 | No uppercase labels or letter-spaced eyebrows | Scan `uppercase tracking` (now 7) |
 | AT-9 | No widget without a source (§9); no "Soon" or disabled placeholders | Endpoint-to-widget map in every V2-D PR (V2-A §10) |
 | AT-10 | One primary action per view, at most two secondary visible | Review |
-| AT-11 | No pills: no `rounded-full`, `rounded-pill` or `--radius-pill` on controls, chips, fields, tabs, badges or labels in new or migrated code | Source scan (now 21 uses in `packages/app/src`, 5 in `packages/ui/src/components`), to 0 per migrated Zone; new `packages/ui` components start at 0 |
+| AT-11 | No pills: no capsule or fully round shape on controls, chips, fields, tabs, badges or labels in new or migrated code, however it is written: `rounded-full`, `rounded-pill`, side and corner forms (`rounded-l-full`, `rounded-tr-full`, `rounded-s-full`), large radius tokens (`rounded-dialog`, `rounded-3xl`, `rounded-4xl`), arbitrary values (`rounded-[9999px]`, `rounded-[50%]`, any radius of 16 px / 1 rem or more, `rounded-(--radius-pill)`), CSS or inline `border-radius` of 50 %, 100 %, 9999 px or `var(--radius-pill)`, **and shapes inherited from a component variant** (a `packages/ui` component whose own source is round makes every `<Component` use count). Loading spinners (`animate-spin`) are exempt: a progress ring, not a control | `node packages/ui/scripts/pill-scan.ts` (added in B2-2; `packages/ui/tests/no-pills.test.ts` tests the matcher, keeps the B2-2 components at 0 and stops `packages/ui` from growing). On `main` at `4134636`: `packages/ui/src/components` 3 direct (round components: `Badge`, `EmptyState`, `StatusIndicator`); `packages/app/src` 23 direct plus 52 uses of those components (37 `Badge`, 15 `EmptyState`). Both fall to 0 per migrated Zone; the earlier literal-only count (21 / 5) under-counted |
 
 ## 11. Responsive desktop, keyboard and focus, motion, contrast
 
@@ -324,7 +324,7 @@ Heights: at 600 px tall, the figure strip stays one band (about 90 px); the titl
 ### 11.2 Keyboard and focus
 
 - Tab order: skip link, rail (switcher, Home, Zones, children), top bar (breadcrumbs, Jump, account), title row actions, filters, content, inspector.
-- `Esc` closes the inspector (when it has focus or is an overlay) and returns focus to the row that opened it.
+- `Esc` closes the inspector (when it has focus or is an overlay), the same as its close button, and focus follows the §6.9 rule: it returns to the control that opened it (the row's Preview button, or the task item where a record has no page of its own); if that row is no longer in the list, the polite live region announces it and focus goes to the list's heading (`h1`).
 - Rows: links or buttons in the first cell, normal Tab navigation; arrow keys only if a `DataTable` uses the ARIA grid mode (V2-A §8.3). Selecting a row is the link's action; there is no hidden selection state.
 - Inspector as a column is a labelled `aside` (`aria-label="Invoice INV-0001"`), not modal; as an overlay it is a modal dialog with a focus trap.
 - Focus never hidden by the sticky top bar or table header (WCAG 2.4.11): `scroll-margin-top` equal to the sticky height.
@@ -414,7 +414,7 @@ Order: B2-1 and B2-2 in parallel (disjoint paths), each a **separately audited d
 - [ ] No cards around sections, figures, tables or lists; nesting depth ≤ 2.
 - [ ] Rules: section headers ruled; figure strips ruled; table full bleed with 24 px insets.
 - [ ] Status: square marker plus word everywhere; danger word coloured.
-- [ ] No pills: no capsule or `rounded-full` shape on any control, chip, field, tab, badge or label; radii only 8 / 6 / 4 / 2 px as in §4 rule 4.
+- [ ] No pills: no capsule or fully round shape on any control, chip, field, tab, badge or label, including through a component variant (`pill-scan.ts`, AT-11); radii only 8 / 6 / 4 / 2 px as in §4 rule 4.
 - [ ] Numbers: tabular, right-aligned in tables, currency stated, no mixed-currency totals, period or "as of" stated.
 - [ ] Density: 40 px rows, 32 px controls, 24 px sheet padding, no arbitrary values.
 - [ ] 900 × 600: data above the fold (AT-7); inspector becomes overlay; secondary actions folded.
@@ -429,7 +429,9 @@ Order: B2-1 and B2-2 in parallel (disjoint paths), each a **separately audited d
 
 None of these authorises a merge, a deploy or work beyond the slice it names.
 
-| ID | Decision | Recommendation | Alternatives |
+**Status: all eight accepted by Regan on 2026-11-17, exactly as recommended below.** Recorded in the B2-2 PR so that PR #103 kept its audited head. D-V2B2-8 authorises B2-1 and B2-2 only; V2-C and V2-D still need their own audit and approval.
+
+| ID | Decision | Recommendation (accepted 2026-11-17) | Alternatives (not chosen) |
 |---|---|---|---|
 | D-V2B2-1 | Naming: the approved plan's V2-B2 is the harness | Keep "V2-B2 identity" for this package and run the harness as its slice **B2-1** | Rename this package (for example V2-B6) and keep B2 as the harness |
 | D-V2B2-2 | Identity direction | **A. Ledger** (§5) | B. Workbench; C. Tiles (V2-A reference as drawn) |
@@ -453,3 +455,5 @@ None of these authorises a merge, a deploy or work beyond the slice it names.
 | B2-1 and B2-2 as separate draft PRs, not authorisation for the shell or Zone rework | §14 order note; D-V2B2-8 |
 
 The audit's recommendations on D-V2B2-1..8 are recommendations, not decisions; §16 records only Regan's own decisions.
+
+**After approval (recorded in the B2-2 PR, 2026-11-17).** Two non-blocking notes from the audit of `0ffd4ce`, folded in with the decision record: §11.2 `Esc` now follows the §6.9 disappearing-row rule instead of always "the row that opened it"; AT-11 (§10) and the §15.2 checklist now catch round shapes however they are written, including through component variants, with a runnable scan and corrected counts.
