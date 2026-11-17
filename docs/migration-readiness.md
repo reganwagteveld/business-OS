@@ -275,3 +275,19 @@ Approved by Regan in the A2-B project thread at 12:32 UTC (recovery branch, migr
 | Health | `GET /api/v1/health` 200 |
 
 Keep `pre-a2b-migration` until the next migration is verified.
+
+### GS1-A search indexes (2026-11-17)
+
+Approved by Regan in the GS1-A project thread at 07:08 UTC: the recovery branch and the migration, for PR #97 at `db3c092`. Applied **before** the merge. Regan accepted a one-time write stall of about 6 s at today's size; the Neon rehearsal and that decision are recorded in [search-index-migration.md](search-index-migration.md) §3a. The merge was approved separately through a recorded ChatGPT merge verdict. The redacted operator record is the PR #97 comment of 08:38 UTC.
+
+| Step | Result (UTC) |
+|---|---|
+| Preflight (read-only), 07:09 | 23 applied, migration fingerprint matches the repository, none unfinished or rolled back; `20261206000000_search_indexes` the only pending migration (`prisma migrate status`); no search index or migration row; no long transaction; the 8 indexed tables unchanged from the morning baseline (0–3 rows, 48–240 kB each) |
+| Recovery branch | `pre-search-indexes-migration`, from production at 07:09:16, no compute; verified before the apply: `ready`, accepted a connection through a temporary read-only endpoint (since deleted), 23 migrations with the same fingerprint; LSN recorded privately |
+| `prisma migrate deploy` | Run as the owner role from the Mac; applied only `20261206000000_search_indexes` (one transaction), 07:11:37–07:11:57, exit 0. 24 applied, all finished |
+| Ledger | The new row is finished, not rolled back, and its checksum equals the SHA-256 of the repository `migration.sql` |
+| Indexes | All 22 search indexes exist with names matching the migration; `indisvalid` and `indisready` true for each |
+| Health and search | `GET /api/v1/health` 200 on app.pixakova.com and the Vercel production URL; POST to `b/[slug]/search` and `b/[slug]/search/resolve` 404 `not_found`; `SEARCH_API_ENABLED = false` |
+| Merge | PR #97 synced with main as `0f37d7e` (same patch as `db3c092`), CI gate green, squash-merged as `06405a5` |
+
+Also kept, pending a separate decision: the temporary branches `rehearsal-search-indexes-20261117-prod` and `rehearsal-search-indexes-20261117-seed`, which already have the migration applied. Keep `pre-search-indexes-migration` until the next migration is verified.
