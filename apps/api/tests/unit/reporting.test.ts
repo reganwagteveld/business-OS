@@ -118,6 +118,34 @@ describe('registry', () => {
     expect(def('people.headcount').minimumGroupSize).toBeGreaterThanOrEqual(5);
   });
 
+  it('WP-R1: expenses, tasks and events are available with their own source, detail and Zone key; headcount and messages stay planned', () => {
+    for (const [id, source, key] of [
+      ['finance.expenses_recorded', 'finance.expenses', 'finance:read'], ['projects.tasks_completed', 'projects.tasks_done', 'projects:read'],
+      ['scheduling.events_scheduled', 'scheduling.events', 'scheduling:read'],
+    ] as const) {
+      const m = def(id);
+      expect(m, id).toMatchObject({ availability: 'available', source, requires: [key], hasDetail: true, plannedNote: null });
+      expect(m.statusTreatment.length).toBeGreaterThan(20);
+    }
+    expect(def('projects.tasks_completed').dimensions).toEqual([]);
+    expect(def('projects.tasks_completed').filters).toEqual([]);
+    // Expenses are a cost incurred, kept apart from invoiced and received, and never called revenue or profit.
+    expect(def('finance.expenses_recorded').semantics).toMatch(/not money paid out/);
+    expect(def('finance.expenses_recorded').semantics).toMatch(/Not a profit figure/);
+    for (const id of ['people.headcount', 'communications.messages_recorded']) {
+      expect(def(id).availability).toBe('planned');
+      expect(code(() => resolveMetric({ id, version: 1 }))).toBe('metric_unavailable');
+    }
+  });
+
+  it('Communications isolation (C2-B2): no executable metric reads Communications or any synced mailbox data', () => {
+    for (const m of METRICS.filter((x) => x.availability === 'available')) {
+      expect(m.zone, m.id).not.toBe('communications');
+      expect(m.requires.some((k) => k.startsWith('communications:')), m.id).toBe(false);
+      expect(m.source ?? '', m.id).not.toMatch(/communications|mail|message/);
+    }
+  });
+
   it('keeps invoiced, received and outstanding apart, and never calls invoicing revenue', () => {
     const [invoiced, received, outstanding] = ['finance.invoiced_amount', 'finance.payments_received', 'finance.receivables_outstanding'].map(def);
     expect(new Set([invoiced!.source, received!.source, outstanding!.source]).size).toBe(3);

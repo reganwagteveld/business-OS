@@ -12,6 +12,7 @@
 // Run: node packages/ui/scripts/pill-scan.ts  (prints counts for packages/ui and packages/app)
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SIDE = String.raw`(?:-(?:t|r|b|l|tl|tr|br|bl|s|e|ss|se|es|ee))?`;
 const CLASS = new RegExp(String.raw`(?<![\w-])rounded${SIDE}-(full|pill|dialog|3xl|4xl|\(--radius-(?:pill|dialog)\)|\[[^\]\s]+\])`, 'g');
@@ -101,7 +102,7 @@ export function scan(uiComponents: string, appRoots: string[] = [], base = proce
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const root = new URL('../../../', import.meta.url).pathname;
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
   const { ui, app } = scan(join(root, 'packages/ui/src/components'), [join(root, 'packages/app/src')], root);
   const print = (label: string, hits: PillHit[]) => {
     console.log(`${label}: ${hits.length}`);

@@ -775,7 +775,8 @@ describe('lists', () => {
     const own = api(C.people.OWNER!, C.slug);
     const c1 = (await own.createCustomer({ displayName: 'One' })).body.customer.id;
     const c2 = (await own.createCustomer({ displayName: 'Two' })).body.customer.id;
-    const p = (await own.createProject({ name: 'P' })).body.project.id;
+    // I1 (WF-1 §5.3): an invoice links only a project of its own customer.
+    const p = (await own.createProject({ name: 'P', customerId: c2 })).body.project.id;
     const mk = async (customerId: string, issueDate: string | null, dueDate: string, projectId?: string) => {
       const d = (await own.createInvoice({ customerId, projectId, dueDate, lines: [line()] })).body.document;
       return issueDate ? (await own.issue('invoices', d.id, { version: 1, issueDate })).body.document : d;

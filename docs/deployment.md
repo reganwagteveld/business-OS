@@ -60,6 +60,7 @@ Both URLs need `sslmode=require`. The app refuses to start if either variable is
 2. `apps/api/vercel.json` pins functions to `iad1`. Confirm under Project Settings → Functions.
 3. Add the variables above for Preview and Production.
 4. Deploy and check `GET /api/v1/health` returns `{"status":"ok","service":"business-os-api","apiVersion":"v1"}` with `Cache-Control: private, no-store`; a mismatched function region fails the check at startup.
+5. **Only `main` deploys (INFRA-VC-1).** `apps/api/vercel.json` sets `git.deploymentEnabled` to `{ "main": true, "**": false }`, so pushes to other branches create no API preview. CI's build verification already builds and boots the API on every PR. Details, evidence and rollback: [vercel-builds.md](./vercel-builds.md).
 
 ## 4a. Browser app (same origin as the API, D9b)
 
@@ -69,6 +70,7 @@ A second Vercel project, `business-os-web`, with Root Directory `apps/web` (fram
 - Variable for the web project: `VITE_API_BASE_URL` = the web project's own public origin (public value, no secrets).
 - API project: `APP_BASE_URL` must equal that same origin. It drives the cookie, the Origin check on auth requests and the links in emails. Changing it signs everyone out.
 - The desktop app calls the API cross-origin, so the API project needs `CORS_ALLOWED_ORIGINS=tauri://localhost,http://tauri.localhost` (exact origins only).
+- `vercel.json` sets `ignoreCommand` to `scripts/vercel/ignore-build.sh`: a preview is skipped only when every change since the branch's last successful deployment is documentation or under `apps/api/`. Production always builds, and anything uncertain builds ([vercel-builds.md](./vercel-builds.md)).
 - A custom domain (for example `app.pixakova.com`) can be added later: attach it to the web project and update `APP_BASE_URL` and `VITE_API_BASE_URL` to it.
 
 ## 4b. Desktop app
