@@ -15,7 +15,8 @@ check() {
   DATABASE_POOLER="${DBP-$6}" DATABASE_COMPLETE="${DBC-$6}" \
   CHANGES="$3" STATIC="$4" UNIT="$5" DATABASE="$6" BUILD="$7" DESKTOP="$8" DESKTOP_REQUIRED="$9" \
     DESKTOP_TIER="${10-$([ "$9" = false ] && echo docs || echo full)}" DESKTOP_REASON=test \
-    GATE_TIER="${11-full}" GATE_REASON=test "$here/ci-gate.sh" > /dev/null 2>&1 || got=fail
+    GATE_TIER="${11-full}" GATE_REASON=test MACOS_REQUIRED="${MAC-}" MACOS_REASON=test EVENT_NAME="${EV-pull_request}" \
+    "$here/ci-gate.sh" > /dev/null 2>&1 || got=fail
   if [ "${11-}" = - ]; then
     got=pass
     env -u GATE_TIER DATABASE_POOLER="${DBP-$6}" DATABASE_COMPLETE="${DBC-$6}" CHANGES="$3" STATIC="$4" UNIT="$5" DATABASE="$6" BUILD="$7" DESKTOP="$8" DESKTOP_REQUIRED="$9" \
@@ -113,5 +114,20 @@ DBP=skipped DBC=skipped check "client tier, all database jobs skipped" pass $S $
 DBP=failure DBC=skipped check "client tier, pooler ran and failed" fail $S $S $S $sk $S $S true full client
 DBP=skipped DBC=failure check "docs tier, completeness ran and failed" fail $S $sk $sk $sk $sk $sk false docs docs
 DBP=skipped DBC=skipped check "unset tier, all database jobs skipped" fail $S $S $S $sk $S $S true full -
+
+# CIQ-A4: macOS left out of the matrix (MAC=false) is valid only on a pull request with a green classifier.
+MAC=false check "PR, macOS left out, Linux+Windows passed"   pass $S $S $S $sk $S $S true full client
+MAC=true  check "PR, macOS required, matrix passed"          pass $S $S $S $sk $S $S true full client
+MAC=false EV=push check "push, macOS left out"               fail $S $S $S $S $S $S true full full
+MAC=false EV=schedule check "schedule, macOS left out"       fail $S $S $S $S $S $S true full full
+MAC=false EV=workflow_dispatch check "manual, macOS left out" fail $S $S $S $S $S $S true full full
+MAC=false EV="" check "unknown event, macOS left out"        fail $S $S $S $S $S $S true full full
+MAC=false check "classifier failed, macOS left out"          fail failure $S $S $S $S $S true full full
+MAC=false check "PR, macOS left out, matrix failed"          fail $S $S $S $S $S failure true full full
+MAC=false check "PR, macOS left out, matrix cancelled"       fail $S $S $S $S $S cancelled true full full
+MAC=false check "docs tier, matrix skipped"                  pass $S $sk $sk $sk $sk $sk false docs docs
+MAC=true  check "macOS required, matrix cancelled (no runner)" fail $S $S $S $S $S cancelled true full full
+MAC="" check "macOS output missing, matrix passed"           pass $S $S $S $S $S $S true full full
+MAC="" check "macOS output missing, matrix cancelled"        fail $S $S $S $S $S cancelled true full full
 
 exit "$fail"

@@ -3,7 +3,8 @@
 # (success, failure, cancelled, skipped, or empty if unknown) from the `needs` context:
 #   CHANGES STATIC UNIT DATABASE DATABASE_POOLER DATABASE_COMPLETE BUILD DESKTOP, plus DESKTOP_REQUIRED (classifier output)
 #   plus DESKTOP_TIER (docs, server or full) and DESKTOP_REASON (CI-2A desktop decision),
-#   plus GATE_TIER (docs, client or full) and GATE_REASON (CIQ-A1 gated-job decision).
+#   plus GATE_TIER (docs, client or full) and GATE_REASON (CIQ-A1 gated-job decision),
+#   plus MACOS_REQUIRED, MACOS_REASON and EVENT_NAME (CIQ-A4 macOS leg of the desktop matrix).
 # Exits 0 only when every applicable check succeeded.
 set -uo pipefail
 fail=0
@@ -69,11 +70,27 @@ fi
 
 if [ "$desktop_may_skip" != true ]; then
   require "Desktop shell" "${DESKTOP:-}"
+  if [ "${DESKTOP:-}" = cancelled ]; then
+    echo "::error title=Desktop shell cancelled::A cancelled leg is often a hosted runner that was never allocated (infrastructure). The CI runner retry workflow re-runs a confirmed allocation failure once; if it fails again, CI stays blocked."
+  fi
 elif [ "${DESKTOP:-}" != skipped ] && [ "${DESKTOP:-}" != success ]; then
   echo "::error title=Desktop shell did not pass::Desktop shell ran and finished as '${DESKTOP:-unknown}'."
   fail=1
 else
   echo "skip Desktop shell (not needed, tier ${DESKTOP_TIER}: ${DESKTOP_REASON:-})"
+fi
+
+# CIQ-A4: the desktop matrix leaves out its macOS leg only when the classifier said macos=false (the
+# matrix expression keeps macOS for any other value, so a successful matrix otherwise includes a
+# successful macOS leg). That is valid only for a pull request whose classifier succeeded and needed
+# the matrix. Any other combination means the run is inconsistent: fail closed.
+if [ "${MACOS_REQUIRED:-}" = false ] && [ "$desktop_may_skip" != true ]; then
+  if [ "${CHANGES:-}" = success ] && [ "${DESKTOP_REQUIRED:-}" = true ] && [ "${EVENT_NAME:-}" = pull_request ]; then
+    echo "note macOS leg left out (${MACOS_REASON:-}); Linux and Windows built it, and every push, nightly and release run builds macOS"
+  else
+    echo "::error title=macOS leg left out without permission::macOS may be left out only on a pull request whose change classifier succeeded (event '${EVENT_NAME:-unknown}', desktop '${DESKTOP_REQUIRED:-unknown}')."
+    fail=1
+  fi
 fi
 
 exit "$fail"
