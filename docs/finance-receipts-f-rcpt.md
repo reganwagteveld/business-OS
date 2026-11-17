@@ -2,6 +2,8 @@
 
 **Revision 2 (2026-11-17):** answers the ChatGPT audit of `bbb76db` (CHANGES REQUIRED): exclusive reservation and locking protocol (§8.3), lease fencing, late writes and crash table (§8.4), removal journal outside the rollback boundary with restore runbook and failed-delete inventory (§12.2 to §12.5), guard exception for the removal hash and terminal states (§7.1), no automatic provider fallback and residency evidence (§5, G-1b), corrected branching claim (§5) and the PDF risk wording (§11.2).
 
+**Revision 4 (2026-11-17):** records Regan's decisions D-RCPT-1, 5, 13 and 14 (§17); scan-from-day-one quarantine design and the finding that Neon has no managed scanner, raised as D-RCPT-15 (§11); provider evidence checklist (§20); itemised usage estimates (§21); Regan's timing gate, D-RCPT-16: no paid provisioning, billable usage or activation before client outreach begins (§16, §17, §21).
+
 **Revision 3 (2026-11-17):** answers the conditional pass on `b54c7b3`: a storage-side bucket fence (create-only puts and tombstones) or a provider-confirmed completion bound or quarantine, with `clock_timestamp()` after locks (§8.4, G-1c); isolated object namespace, journal high-water marks and usage recomputation for restores (§12.5); unknown journal outcomes and the `REMOVING` state (§12.2, §7.1).
 
 **Status:** proposal, docs only. Nothing here is built, enabled, signed up for or decided. Owner decisions are in §17.
@@ -148,7 +150,10 @@ also grows every recovery branch, restore and logical backup.
      owner-approved residency amendment to ADR 0002. R2 is also not covered by Neon recovery branches.
 4. **Not recommended now:** Vercel Blob (D) is not S3-compatible, so it locks the code to Vercel, and proxied
    reads pay transfer twice. S3 (C) is the only option with managed malware scanning (GuardDuty).
-5. **Design so the provider can be swapped.** All S3-compatible providers (A, B, C) share one adapter. The
+5. **Update after Regan's decisions (revision 4):** D-RCPT-1 keeps Neon first only if it passes the evidence
+   gates, D-RCPT-14 makes S3 `us-east-1` the fallback, and D-RCPT-5 requires scanning from day one. Neon has no
+   managed scanner (§11.2), so the recommendation is now **S3 + GuardDuty**, put to Regan as D-RCPT-15.
+6. **Design so the provider can be swapped.** All S3-compatible providers (A, B, C) share one adapter. The
    database row, not the bucket, is the source of truth, so moving providers is a copy-and-verify job.
 
 ## 6. Architecture
@@ -213,7 +218,7 @@ because isolation is enforced before any storage call (§7.2).
 | `business_id` | uuid | RLS key, leading index |
 | `expense_id` | uuid null | composite FK `(business_id, expense_id)` → `finance_expenses` |
 | *(later)* `document_id`, `payment_id` | uuid null | composite FKs; CHECK exactly one owner column is set |
-| `status` | enum `PENDING`, `AVAILABLE`, `FAILED`, `REMOVING`, `REMOVED` | §8.3, §8.4, §12.2 |
+| `status` | enum `PENDING`, `SCANNING`, `AVAILABLE`, `QUARANTINED`, `FAILED`, `REMOVING`, `REMOVED` | §8.3, §8.4, §11.3, §12.2 |
 | `idempotency_key` | text | from the request; UNIQUE `(business_id, expense_id, idempotency_key)` |
 | `lease_origin`, `lease_expires_at` | timestamptz | database `clock_timestamp()` in tx1 (§8.4). Fence finalize against cleanup |
 | `journaled_at` | timestamptz null | removal intent durably written to the journal (§12.2) |
@@ -240,11 +245,11 @@ Constraints and guards:
     immutable.
   - `sha256` and `file_name` are immutable **with one exception**: in the transition into `REMOVING` or
     `REMOVED` (`file_name` becomes NULL; `sha256` becomes `sha256('removed:' || id)` on `REMOVED`, as E1 does
-    for content hashes), and when a `FAILED` row is purged (both). No other change to either column is accepted.
-  - Status moves only `PENDING → AVAILABLE | FAILED`, `AVAILABLE → REMOVING | REMOVED` and
-    `REMOVING → REMOVED`. `REMOVING` never returns to `AVAILABLE`. `FAILED` and `REMOVED` are final;
+    for content hashes), and when a `FAILED` or `QUARANTINED` row is purged (both). No other change to either column is accepted.
+  - Status moves only `PENDING → SCANNING | FAILED`, `SCANNING → AVAILABLE | QUARANTINED`,
+    `AVAILABLE → REMOVING | REMOVED` and `REMOVING → REMOVED`. Only a clean scan result reaches `AVAILABLE`. `REMOVING` never returns to `AVAILABLE`. `FAILED`, `QUARANTINED` and `REMOVED` are final;
     `purged_at` (and `journaled_at` for removals) may then be set once and never cleared.
-  - **Terminal states:** `AVAILABLE` (live), `REMOVED` with `purged_at`, and `FAILED` with `purged_at`.
+  - **Terminal states:** `AVAILABLE` (live), and `REMOVED`, `FAILED` or `QUARANTINED` with `purged_at`.
     Every other state is transient and appears in the cleanup inventory (§12.2).
 - The per-expense limit and the business quota are enforced by the locking protocol of §8.3, not by a
   count trigger alone (a trigger count is not safe under concurrency).
@@ -326,7 +331,7 @@ tx2 (finalize):
   expense not VOID (and, for a draft, not discarded), else → FAILED, 409 expense_not_open
   re-resolve membership and finance:expenses for the uploader, else → FAILED, 403
   HEAD object: size matches, else → FAILED
-  status AVAILABLE, audit finance.attachment.added, commit
+  status SCANNING (not AVAILABLE: §11.3), audit finance.attachment.added, commit, 202 scanning
 ```
 
 - `FOR UPDATE` on the expense (not `FOR SHARE`) means two uploads to one expense never count at the same
@@ -438,30 +443,63 @@ Audit events (ids, sizes, types and result codes only; never file names, keys or
 `finance.attachment.added`, `.removed`, `.downloaded`, `.previewed`, `.integrity_failed`, `.upload_failed`.
 Previews are audited because F5-D4 audits PDF previews; if that is too noisy, D-RCPT-9 lets Regan drop previews only.
 
-## 11. Malware scanning
+## 11. Malware scanning and quarantine
 
-### 11.1 Options (pricing verified 2026-11-17 unless marked)
+**Owner decision D-RCPT-5 (accepted 2026-11-17): scan from day one.** No file is previewed or downloaded until a
+scan has succeeded. Pending, failed, inconclusive or unscannable files stay quarantined and unavailable. There
+is no unscanned-PDF risk acceptance. Scanning lowers the risk; it does not prove a file is harmless, so the
+validation and header rules of §8.1 and §9 stay in force.
 
-| Option | Cost | Data leaves our providers? | Notes |
-|---|---|---|---|
-| None, with strict validation (§8.1, §9) | $0 | No | Image re-encoding removes most image risk. PDFs and the OS viewer remain the gap |
-| GuardDuty Malware Protection for S3 | $0.09/GB scanned + per-object charge (amount unverified); free tier 1,000 objects and 1 GB/month | No (AWS) | Only with S3 (option C). Asynchronous: needs a quarantine state until the result arrives |
-| Scanning API (Scanii from $49/month; AttachmentScanner $99 to $849/month) | Fixed monthly | **Yes**: a new sub-processor sees receipts | DPA, residency and ADR 0002 table update needed |
-| Self-hosted ClamAV on a small container | Host cost (unverified), operations work | No, if hosted in-region | Needs a new always-on service; ClamAV detection of targeted documents is modest |
-| VirusTotal | n/a | Yes, shared with its community | **Rejected**: uploads become visible to third parties |
+### 11.1 Options (prices verified 2026-11-17 unless marked)
 
-### 11.2 Recommendation (D-RCPT-5)
+| Option | Works with | Cost | New vendor or processor? | Notes |
+|---|---|---|---|---|
+| **GuardDuty Malware Protection for S3** | S3 only | $0.09 per GB scanned and $0.215 per 1,000 objects evaluated, after a monthly free tier of 1 GB and 1,000 objects (verified, AWS price list for us-east-1) | AWS (the D-RCPT-14 fallback provider) | Scans each new object asynchronously and can tag it with the result. Runs in the bucket's region |
+| GuardDuty on an S3 *quarantine* bucket, then copy clean files to Neon | S3 + Neon | As above, plus both providers' storage | AWS **and** Neon | Bytes live in two providers; two fences, two deletion paths, two restore stories. Not recommended |
+| Scanning API (Scanii from $49/month; AttachmentScanner $99 to $849/month) | Any | Fixed monthly | **Yes**: a new processor sees every receipt | Synchronous inside the upload. Needs DPA, US residency evidence, ADR 0002 row. Not approved |
+| Self-hosted ClamAV | Any | Host cost unverified | **Yes**: a new hosting service | Needs an always-on service with ~1 to 2 GB of signatures in memory and its own updates |
+| Neon Functions running a scanner | Neon | Not priced | No | Neon Functions run Node.js 24 with 2 GiB memory (verified, runtime limits page). The usual engine (ClamAV) is a native program, so no workable path was found. Neon offers no managed scanning |
+| VirusTotal | Any | n/a | Yes, shared with its community | **Rejected** |
 
-- **Proposal for stage 1 (staff uploads only): no scanner, as an explicit risk acceptance by Regan.** Staff-only
-  upload does **not** make PDFs safe: a PDF from a supplier can carry an exploit for the operating system's
-  viewer, and "Open" on the desktop hands it to that viewer. What stage 1 offers instead is narrower exposure
-  (only members with Finance access upload and view), image re-encoding, PDF parse checks, PDF.js previews with
-  scripting off, and hardened download headers. Whether that is acceptable without a scanner is Regan's decision
-  (D-RCPT-5); the alternative is to scan from day one (S3 with GuardDuty, or a paid scanning API). The
-  `scan_status` column is in place from day one (`NOT_SCANNED`), and the UI never implies a scan happened.
-- **Scanning becomes mandatory before any third-party content** enters (receipts by email, saving C2 mail
-  attachments, customer uploads). That stage adds a quarantine flow: `PENDING_SCAN` rows are not downloadable
-  until `CLEAN`. Choosing and paying for a scanner is Regan's decision then.
+### 11.2 What this means for the provider choice (new evidence for D-RCPT-1)
+
+D-RCPT-1 prefers Neon Object Storage, provided it passes the evidence gates. **Scanning from day one is the
+first requirement Neon cannot meet on its own:** it has no managed scanner, and its Functions cannot run the
+standard engine. Every way to keep Neon as the store adds something Regan has not approved: a scanning
+vendor, a hosting service, or AWS on top of Neon. **S3 in `us-east-1` with GuardDuty** meets storage, US
+residency and scanning with one provider, and S3 is already the accepted fallback (D-RCPT-14).
+
+This is new evidence that changes D-RCPT-1's consequences, so it goes back to Regan as **D-RCPT-15**
+(§17). Recommendation: **S3 + GuardDuty as the single integrated path.** Nothing is created until Regan decides
+and the evidence checklist (§20) is complete.
+
+### 11.3 Quarantine design (applies to any scanner; written for GuardDuty)
+
+States (extends §7.1): `PENDING` (reserved, put in progress) → `SCANNING` (stored, scan not finished) →
+`AVAILABLE` (clean) or `QUARANTINED` (threat found, failed, unsupported, access error or timed out).
+`QUARANTINED` is final: never previewed or downloaded, bytes destroyed through the bucket fence (§8.4), row kept
+for audit with name and hash removed as for `REMOVED`. Its bytes stay reserved until purged.
+
+- **tx2 (finalize) now sets `SCANNING`, not `AVAILABLE`**, under the same lease, expense-state and permission
+  checks as §8.3. The client gets `202 scanning`.
+- **Reading the result without cron or webhooks.** GuardDuty tags the object with its result
+  (`NO_THREATS_FOUND`, `THREATS_FOUND`, `UNSUPPORTED`, `ACCESS_DENIED`, `FAILED`; names to be confirmed in G-2c).
+  Whenever the client asks for the attachment, or a list or cleanup runs on the expense, the API reads the
+  object's tags and settles the row under the row lock: `NO_THREATS_FOUND` → `AVAILABLE`; anything else →
+  `QUARANTINED`; no tag after 15 minutes → `QUARANTINED` with reason `scan_timeout` (the user may re-upload).
+  The UI shows "Checking the file…" and polls with back-off.
+- **The tag cannot be forged by the app.** The API's AWS role has no `PutObjectTagging` permission; only the
+  GuardDuty service role can tag. A bucket policy denies `GetObject` to the API role unless the object carries
+  `NO_THREATS_FOUND` (AWS-documented tag-based access control), so even an application bug cannot serve an
+  unscanned or infected file. G-2c verifies both.
+- **One scan per object.** Create-only puts (§8.4) mean the key's bytes never change after the scan. A tombstone
+  written later is also scanned, harmlessly.
+- **Downloads re-check.** The content route serves only rows that are `AVAILABLE` and still tagged clean.
+- **Audit:** `finance.attachment.scanned` with the result code only. Infected files raise an audit entry and a
+  visible message to the uploader ("This file was blocked by the malware check").
+- **Tests:** every result code; tag missing; tag arrives after the timeout (row stays `QUARANTINED`, never becomes
+  available); API role cannot tag (permission test in the provider smoke); bucket policy refuses an untagged
+  `GetObject`; download of a `SCANNING` row → `409 attachment_scanning`; the EICAR test file is quarantined.
 
 ## 12. Retention, erasure, backups
 
@@ -675,15 +713,25 @@ Expense list and detail DTOs gain `attachmentCount` (additive), so the list can 
 
 F-RCPT-1 and 2 can be built and tested without any provider account.
 
+**Owner timing gate (D-RCPT-16, Regan, 2026-11-17):** "we will not activate or pay for this until we actually start going to potential clients". Until Regan begins approaching potential clients:
+
+- no receipt store, scanner or separate journal project is provisioned, no billable usage is created and live receipt processing is not enabled (F-RCPT-3 cannot start);
+- F-RCPT-1 and F-RCPT-2 do not start just because this document merges. They need their own authorisation, and any authorised local work uses local or test doubles only and creates no paid resources;
+- proposal, evidence (§20) and cost (§21) preparation may continue.
+
+Starting client outreach is the earliest point to revisit setup, not permission to execute. Provider evidence, security and design review, budget approval and the operation-specific owner, setup and activation approvals still apply.
+
 ## 17. Owner decisions (Regan)
+
+D-RCPT-1, 5, 13, 14 and 16 were decided by Regan on 2026-11-17 (owner decision records on PR #128). D-RCPT-15 is a proposal: the timing gate does not select a primary provider. They are policy decisions only: they do not authorise implementation, provisioning, spending, credentials or activation.
 
 | # | Decision | Recommendation | Why it is Regan's |
 |---|---|---|---|
-| D-RCPT-1 | Storage provider | **Neon Object Storage** if G-1 passes. Not Postgres for receipts | Enables a usage-billed product (beta cost under $1/month) |
+| D-RCPT-1 | Storage provider | **ACCEPTED CONDITIONALLY (Regan, 2026-11-17):** Neon Object Storage first, only after evidence of encryption, permanent deletion (soft delete is not enough), US residency and the upload-safety gates. See D-RCPT-15 | Decided |
 | D-RCPT-2 | Transfer model | Through the API only, 4 MB cap, no presigned URLs to clients in stage 1 | Security posture |
 | D-RCPT-3 | Allowed types | JPEG, PNG, WebP, PDF; HEIC converted on the client where the platform can, refused otherwise | Product scope |
 | D-RCPT-4 | Image re-encoding and metadata removal | Yes, using an image library in the API | New native dependency |
-| D-RCPT-5 | Malware scanning | Either accept the stage-1 risk explicitly (no scanner, staff uploads only, §11.2 mitigations; PDFs are **not** thereby safe) or scan from day one. Scanning is mandatory before any third-party source | Risk acceptance; possible paid service |
+| D-RCPT-5 | Malware scanning | **ACCEPTED (Regan, 2026-11-17):** scan from day one; nothing previewed or downloaded until a scan succeeds; failed, inconclusive or unscannable files stay quarantined. No scanner vendor or deployment is approved by this | Decided (arrangement: D-RCPT-15) |
 | D-RCPT-6 | Permissions | As §10, no new keys | Role policy |
 | D-RCPT-7 | Removal | Drafts: removable, and discarding a draft removes its files. Recorded and void: OWNER/ADMIN with reason, bytes deleted | Records vs privacy trade-off |
 | D-RCPT-8 | Retention | Kept with the expense; no automatic purge until L1 | Legal |
@@ -691,8 +739,10 @@ F-RCPT-1 and 2 can be built and tested without any provider account.
 | D-RCPT-10 | Limits | 4 MB, 10 per expense, 2 GB per business in beta | Cost and abuse control |
 | D-RCPT-11 | Application-level encryption | Not in stage 1, **unless** G-1 cannot confirm encryption at rest | Key management cost |
 | D-RCPT-12 | First scope | Expenses only; documents and payments later | Scope |
-| D-RCPT-13 | Removal journal location (shared with E1 open decision 3) | A separate Neon project with an append-only table | New project and credential; cost not yet checked (the earlier "few dollars" is an unverified estimate) |
-| D-RCPT-14 | Provider if G-1 fails | AWS S3 `us-east-1` (exact residency); R2 only with ADR 0002 evidence or an approved residency amendment | New vendor or residency change |
+| D-RCPT-13 | Removal journal location (shared with E1 open decision 3) | **ACCEPTED IN PRINCIPLE (Regan, 2026-11-17):** a separate Neon project outside the production rollback boundary, separate credentials, append-only app access. Usage estimate in §21 must be presented before provisioning; no budget approved | Decided in principle |
+| D-RCPT-14 | Provider if G-1 fails | **ACCEPTED (Regan, 2026-11-17):** AWS S3 `us-east-1`. US data-location rule kept; no R2 exception | Decided |
+| D-RCPT-16 | Timing of spending and activation | **ACCEPTED (Regan, 2026-11-17):** no receipt-provider, scanner or journal provisioning, billable usage or activation before Regan begins approaching potential clients; implementation does not start merely because a docs PR merges. See §16 | Decided |
+| D-RCPT-15 | Scanning arrangement and therefore the store (new evidence, §11.2) | **S3 `us-east-1` + GuardDuty as one integrated path**, since Neon has no managed scanner. Alternatives keep Neon but add a scanning vendor, a hosted ClamAV, or AWS alongside Neon | Changes D-RCPT-1's outcome; adds AWS (already the accepted fallback) and usage-billed scanning (§21) |
 
 ## 18. Open legal questions (not answered here)
 
@@ -719,3 +769,45 @@ F-RCPT-1 and 2 can be built and tested without any provider account.
 - GuardDuty Malware Protection for S3 price reduction (Feb 2025, $0.09/GB in us-east-1) and free tier:
   aws.amazon.com/about-aws/whats-new/2025/02/…; GuardDuty user guide "Pricing and usage cost for Malware Protection for S3".
 - Scanii and AttachmentScanner public pricing pages.
+
+## 20. Provider evidence checklist (to complete before any setup)
+
+Each item needs a dated link to the provider's own documentation or a written support answer, attached to the PR
+that asks for activation. "Not found" fails the item.
+
+| # | Evidence | S3 + GuardDuty (recommended, D-RCPT-15) | Neon Object Storage (D-RCPT-1, if a scanner is approved) |
+|---|---|---|---|
+| E-1 | Encryption at rest, by default | SSE-S3 default encryption | Not stated in docs read |
+| E-2 | Permanent deletion: when a deleted object stops being recoverable, including backups | Unversioned bucket delete; confirm no provider-side retention | "Soft-delete" wording; purge timing unknown |
+| E-3 | Data stays in the US region, including backups and the scanner | Bucket and GuardDuty in `us-east-1` | Region `aws-us-east-1`; backup location unknown |
+| E-4 | Create-only conditional put (`If-None-Match: *`) honoured (G-1c option 1) | Confirm on a test bucket | Unknown |
+| E-5 | Otherwise, a written request completion bound (G-1c option 2) | Only if E-4 fails | Only if E-4 fails |
+| E-6 | Scanner result delivery and tag names; tag permissions limited to the scanner | GuardDuty object tagging | n/a without a scanner |
+| E-7 | Bucket policy can deny reads of untagged or non-clean objects | Tag-condition policy | n/a |
+| E-8 | DPA covers storage and scanning; listed as sub-processor | AWS DPA | Neon DPA |
+| E-9 | Least-privilege credentials, no console users with delete on prod | IAM role per environment | Branch-scoped credentials |
+| E-10 | Isolated restore namespace possible (§12.5) | Separate restore bucket | Restored branch view |
+| E-11 | Service status, SLA and maturity | S3 and GuardDuty SLAs | No GA or SLA statement found |
+
+## 21. Itemised usage estimates (estimated, list prices of 2026-11-17)
+
+Assumptions as §4.1: average stored receipt 0.5 MB, each opened three times. Tombstones, tags and lists are
+negligible and left out. Egress assumes AWS's monthly free data-transfer allowance (**unverified**) and is shown
+without it in brackets.
+
+| Item | Unit price (source) | Beta: 1,000 uploads/month, ~6 GB after a year | Growth: 50,000 uploads/month, ~300 GB after a year |
+|---|---|---|---|
+| S3 Standard storage | $0.023/GB-month (verified) | $0.14 | $6.90 |
+| S3 PUT requests | $0.005 per 1,000 (unverified in this pass) | $0.01 | $0.25 |
+| S3 GET requests | $0.0004 per 1,000 (verified) | < $0.01 | $0.06 |
+| Egress to clients | free allowance, then $0.09/GB (unverified) | $0 ($0.14) | $0 ($6.75) |
+| GuardDuty objects evaluated | $0.215 per 1,000 after 1,000 free (verified) | $0 | $10.54 |
+| GuardDuty data scanned | $0.09/GB after 1 GB free (verified) | $0 | $2.16 |
+| **Storage and scanning total** | | **≈ $0.15 to $0.30/month** | **≈ $20 to $27/month** |
+| Removal journal, separate Neon project (D-RCPT-13): compute | $0.106 per CU-hour at 0.25 CU minimum; scales to zero after 5 minutes (verified, Neon plans) | ≈ $0.22 (about 100 wake-ups) | ≈ $2 to $19.35 (bursty to fully always-on, worst case) |
+| Journal storage | $0.35/GB-month (verified) | < $0.01 | < $0.01 |
+| Journal project count | Launch allows 100 projects (verified) | no charge | no charge |
+| **Journal total** | | **≈ $0.25/month** | **≈ $2 to $20/month (worst case)** |
+
+These are estimates for discussion, not a budget, a spending cap or independently verified costs. No spending ceiling has been approved, and under D-RCPT-16 nothing is paid for before client outreach begins. Before provisioning,
+the activation PR re-prices them from the providers' pages on that day.
