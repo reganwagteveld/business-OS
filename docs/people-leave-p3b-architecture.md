@@ -41,7 +41,13 @@
 > (window limits new requests only; approved bookings always protected), 8c accrual basis separate from leave
 > duration, estimate labelling, and 8d; §9.6 entitlement `NONE` exempt from all balance checks; §11.4 errors
 > `outside_booking_window`, `leave_year_closed`; §14.2 estimate and "decision order" wording; C-26; D-P3-52..54
-> wording with the audit's recommendations; tests T-48a, T-59a..c. D-P3-52..54 remain proposed.
+> wording with the audit's recommendations; tests T-48a, T-59a..c.
+>
+> **Version 1.5 (2026-11-17)** after the owner decision record on #116 (posted through the ChatGPT connector,
+> 10:18 UTC): **D-P3-52, D-P3-53 and D-P3-54 accepted** as recommended by the re-audit of `c1dbecc`. D-P3-53 is the
+> initial product limit (new requests no later than the end of the next leave year, subject to later review) and
+> never truncates approved leave. Changed: §15.3 rows and the status line of rule 8b. No design change; design and
+> product decisions only, no build, migration or merge authority.
 >
 > **Consolidation note.** An earlier draft of this spec was opened as #115 from a separate local session. This
 > version supersedes it and folds in its distinct findings: leave-year attribution (D-P3-45, a conflict with the
@@ -364,7 +370,7 @@ requirement on P3-C's design, to be confirmed in P3-C's own spec and audit; P3-B
      an event, and its remaining days are not debited again. A new candidate request that starts on or before today
      (backdating allowed) is debited as the first event, at today.
 
-   **8b. Booking window and horizon (D-P3-53 as proposed, one rule).**
+   **8b. Booking window and horizon (D-P3-53 accepted, one rule).**
    - **Window (new requests only):** a new request must be charged to the current leave year or the next one. Because
      a request cannot cross a leave-year boundary (D-P3-45), this is the same as `e` ≤ the last day of the next
      leave year, computed from the employee's policy leave year (CALENDAR, ANNIVERSARY from `start_date`, CUSTOM)
@@ -1165,9 +1171,9 @@ delegated approval policy.
 | D-P3-47 | What "verified" user link means | require user confirmation (new People change) / **accept the admin-asserted, audited link; show the linked employee to the user** | **Accept for P3-B**; confirmation can follow if pilots need it |
 | D-P3-48 | Restrictive RLS on notes | service check only / transaction-flag RLS / **service check plus restrictive RLS derived from the session user and the data** | **Data-derived RLS** (revised after audit): a writable flag proves nothing; the session user is the existing trust anchor |
 | D-P3-50 | Future availability | **ACCEPTED AS REVISED (owner decision record on #116, 2026-11-17):** projected entitlement on the leave dates: earned balance and carry-over, forecast accrual through the dates, grants, caps and year boundaries, approved and pending bookings in date order, negative-balance allowance; submission distinct from approval; re-evaluated under the lock at decision time. The earlier conservative proposal is **withdrawn** | §5.6 rule 8 |
-| D-P3-52 | Pending requests at approval | block on all pending / **pending reserve at submission; at approval only approved bookings + this request count, other pending ones are re-checked at their own approval and listed as affected** | **As stated**: first decided, first served; no deadlock between two pending requests that each fit alone. "Decision order, not submission order" is shown in the form and inbox (§14.2) and recorded in the decision's computation. ChatGPT audit recommends YES |
-| D-P3-53 | Booking window for new requests | unlimited / configurable / **new requests charged to the current or next leave year only (`e` ≤ last day of the next leave year); fixed for the first release, a configurable window flagged as later work** | **Bounded**: forecasts beyond about two years are unreliable. The window limits new requests only; the projection horizon is the latest booking and is never cut, so approved leave beyond the window stays protected (§5.6 rule 8b). ChatGPT audit recommends YES as an initial documented window |
-| D-P3-54 | Shortfall at submission | refuse / **warn and allow submission for manager review; refuse only under auto-approval; no approver override of a shortfall in P3-B** | **Warn**: matches the owner record ("submit with a clear warning"); a leave manager fixes entitlement by adjustment, not by override. Warnings are visible to approvers. ChatGPT audit recommends YES |
+| D-P3-52 | Pending requests at approval | **ACCEPTED (owner decision record on #116, 2026-11-17)** as recommended. Options were: block on all pending / **pending reserve at submission; at approval only approved bookings + this request count, other pending ones are re-checked at their own approval and listed as affected** | **As stated**: first decided, first served; no deadlock between two pending requests that each fit alone. "Decision order, not submission order" is shown in the form and inbox (§14.2) and recorded in the decision's computation. ChatGPT audit recommends YES |
+| D-P3-53 | Booking window for new requests | **ACCEPTED (owner decision record on #116, 2026-11-17)** as the initial product limit, subject to later review, never truncating approved leave. Options were: unlimited / configurable / **new requests charged to the current or next leave year only (`e` ≤ last day of the next leave year); fixed for the first release, a configurable window flagged as later work** | **Bounded**: forecasts beyond about two years are unreliable. The window limits new requests only; the projection horizon is the latest booking and is never cut, so approved leave beyond the window stays protected (§5.6 rule 8b). ChatGPT audit recommends YES as an initial documented window |
+| D-P3-54 | Shortfall at submission | **ACCEPTED (owner decision record on #116, 2026-11-17)**: warn and allow manual-review submission; refuse insufficient approval and auto-approval; no silent override. Options were: refuse / **warn and allow submission for manager review; refuse only under auto-approval; no approver override of a shortfall in P3-B** | **Warn**: matches the owner record ("submit with a clear warning"); a leave manager fixes entitlement by adjustment, not by override. Warnings are visible to approvers. ChatGPT audit recommends YES |
 | D-P3-51 | How the database proves who made a transition | service-written actor (v1.0) / **session user + basis re-derived in SQL by the trigger** / privileged session-token function | **Session user + SQL re-derivation**: no privileged SQL; same trust boundary as tenant isolation; the privileged option stays available if Regan wants it |
 | D-P3-49 | Team leave audience | approvers only / **`people:read` holders (sensitive as "Away") plus approvers for their reports; MEMBER own only** | **As stated** (§12.3): the brief asks for filtered team visibility without fixing the audience |
 | D-P3-44 | Release switch | ship enabled / **routes off (`available`) until B4 and Regan's explicit switch-on** | **Off**: enabling a feature in production escalates to Regan anyway (protocol "Merges are deployments") |
