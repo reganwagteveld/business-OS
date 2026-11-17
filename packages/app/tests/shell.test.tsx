@@ -648,3 +648,6 @@ describe('private beta: business creation is offered only with the platform gran
     await h1('Make it yours.');
   });
 });
+
+import { it, expect } from "vitest";
+it("CIQ-A1 injected failure", () => { expect(1).toBe(2); });
