@@ -44,6 +44,7 @@ export * from './communications.ts';
 export * from './communications-connections.ts';
 export * from './communications-erasure.ts';
 export * from './reporting.ts';
+export * from './search.ts';
 import {
   ConversationResponse, CreateConversationRequest, ImportMessagesRequest, ImportMessagesResponse, ListConversationsQuery, ListConversationsResponse,
   ListMessagesQuery, ListMessagesResponse, MessageResponse, RecordMessageRequest,
@@ -121,6 +122,7 @@ import {
   CreateSavedViewRequest, DeleteSavedViewResponse, ListSavedViewsQuery, ListSavedViewsResponse, ReportingCatalogResponse, ReportingDetailsRequest,
   ReportingDetailsResponse, ReportingQueryRequest, ReportingQueryResponse, RunSavedViewResponse, SavedViewResponse, UpdateSavedViewRequest,
 } from './reporting.ts';
+import { SearchRequest, SearchResolveRequest, SearchResolveResponse, SearchResponse } from './search.ts';
 
 export const API_VERSION = 'v1' as const;
 
@@ -552,6 +554,10 @@ export const endpoints = {
   deleteSavedView: { method: 'DELETE', path: '/api/v1/b/:slug/reporting/views/:viewId', response: DeleteSavedViewResponse },
   /** Runs the stored configuration as the caller; metrics the caller may not read come back as per-metric errors. */
   runSavedView: { method: 'POST', path: '/api/v1/b/:slug/reporting/views/:viewId/run', response: RunSavedViewResponse },
+  // Global search GS1-A (docs/global-search-gs1.md §7). POST bodies keep search text out of URLs. Not enabled yet:
+  // both answer 404 until the reviewed enablement constant is flipped after the readiness gate (GS2 §12.1).
+  search: { method: 'POST', path: '/api/v1/b/:slug/search', request: SearchRequest, response: SearchResponse },
+  resolveSearchRecords: { method: 'POST', path: '/api/v1/b/:slug/search/resolve', request: SearchResolveRequest, response: SearchResolveResponse },
 
   // Finance F5 (docs/finance-documents-f5.md): document branding and PDF versions of quotes and invoices.
   // The files themselves are served by fileEndpoints below. Nothing here sends a document.

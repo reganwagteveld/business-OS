@@ -4,3 +4,5 @@ export {
 } from './server/projects';
 export type { Viewer } from './server/projects';
 export { archiveTask, createTask, listTasks, moveTask, restoreTask, updateTask } from './server/tasks';
+// Global search GS1-A (docs/global-search-gs1.md §6.2).
+export { projectSearchProvider, PROJECTS_SEARCH_INDEXES, taskSearchProvider } from './server/search';

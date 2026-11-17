@@ -9,9 +9,11 @@ import { NextResponse } from 'next/server';
 import { ForbiddenError, authorize, permissionsFor, type Permission } from '@/modules/access';
 import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser } from '@/modules/identity';
 import { NotFoundError, type Actor } from '@/modules/tenancy';
-import { betaSessionAdmitted, myMemberships, TenantScopeError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
+import { betaSessionAdmitted, myMemberships, TenantScopeError, TransactionStartTimeoutError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
 import { apiHeaders } from '@/core/http';
-import { isUniqueViolation, RateLimitedError, RecordNotFoundError, RuleViolationError, ServiceFailureError, sqlState, StateConflictError } from '@/core/http/errors';
+import {
+  isUniqueViolation, RateLimitedError, RecordNotFoundError, RuleViolationError, SearchBusyError, SearchTimeoutError, ServiceFailureError, sqlState, StateConflictError,
+} from '@/core/http/errors';
 
 type Params = Promise<Record<string, string | string[] | undefined>>;
 type RouteContext = { params: Params };
@@ -95,6 +97,15 @@ function errorResponse(request: Request, error: unknown): Response {
   if (error instanceof StateConflictError) return fail(request, 409, error.code);
   if (error instanceof ServiceFailureError) return fail(request, error.status, error.code);
   if (error instanceof RateLimitedError) return fail(request, 429, 'rate_limited');
+  // Global search only (GS1 §5.5, §6.9): no concurrency slot (429, retry after 1 s), no pooled connection
+  // in time or the search statement's own timeout (503). Other routes never raise these.
+  if (error instanceof SearchBusyError) {
+    if (error.reason === 'pool') return fail(request, 503, 'search_busy');
+    const response = fail(request, 429, 'search_busy');
+    response.headers.set('Retry-After', '1');
+    return response;
+  }
+  if (error instanceof SearchTimeoutError) return fail(request, 503, 'search_timeout');
   if (error instanceof RuleViolationError) return json(request, 400, { error: error.code, message: error.detail });
   if (error instanceof TrustedPathError) {
     const status = { not_allowed: 403, invalid: 400, slug_unavailable: 409, rate_limited: 429, invitation_invalid: 400, business_creation_not_permitted: 403 }[error.reason];
@@ -238,6 +249,17 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
      * after-commit work runs once, after the attempt that committed.
      */
     retryOnConflict?: boolean;
+    /**
+     * Global search (GS1 §5.5): Prisma `maxWait` for a pooled connection. When the unit of work could not
+     * start in time, the route answers 503 search_busy instead of the generic 500. Only the search routes set it.
+     */
+    maxWaitMs?: number;
+    /**
+     * A route that is not switched on yet (global search, GS2 §12.1): while this returns false the route
+     * answers 404 not_found to every caller before any authentication, tenant or database work, exactly as
+     * if it did not exist.
+     */
+    available?: () => boolean;
   },
   handler: (args: {
     request: Request;
@@ -250,6 +272,7 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
   }) => Promise<Result<T>>,
 ) {
   return async (request: Request, context: RouteContext): Promise<Response> => {
+    if (opts.available && !opts.available()) return fail(request, 404, 'not_found');
     try {
       const resolved = await resolveTenant(request, context, opts.permission);
       if (resolved instanceof Response) return resolved;
@@ -264,8 +287,15 @@ export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodT
       }
       const attempt = () => withTenant({ businessId: membership.businessId, userId: auth.user.id }, (db) =>
         handler({ request, actor, db, params, input: input.data as never, query: query as never, sessionToken: opts.sessionToken ? auth.sessionToken : null }),
-      opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
-      const result = opts.retryOnConflict ? await withConflictRetry(attempt) : await attempt();
+      opts.timeoutMs || opts.maxWaitMs ? { timeoutMs: opts.timeoutMs, maxWaitMs: opts.maxWaitMs } : undefined);
+      let result: Result<T>;
+      try {
+        result = opts.retryOnConflict ? await withConflictRetry(attempt) : await attempt();
+      } catch (error) {
+        // The unit of work never started: no pooled connection within maxWait (only routes that set it: search).
+        if (opts.maxWaitMs && error instanceof TransactionStartTimeoutError) throw new SearchBusyError('pool');
+        throw error;
+      }
       await result.afterCommit?.();
       return json(request, result.status ?? 200, opts.response.parse(result.body));
     } catch (error) {
