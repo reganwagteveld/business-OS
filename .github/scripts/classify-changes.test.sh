@@ -55,6 +55,28 @@ check "package.json hidden in docs"     $PR   true/full docs/package.json
 check "lockfile hidden in docs"         $PR   true/full docs/pnpm-lock.yaml
 check "API tool config"                 $PR   true/full apps/api/vitest.config.ts
 check "API json config"                 $PR   true/full apps/api/tsconfig.json
+check "nested hidden tool config"       $PR   true/full apps/api/src/feature/.toolrc
+check "nested Cargo lockfile"           $PR   true/full apps/web/src/feature/Cargo.lock
+check "nested Cargo manifest"           $PR   true/full apps/web/src/Cargo.toml
+check "nested YAML"                     $PR   true/full apps/api/src/config/settings.yaml
+check "nested yml"                      $PR   true/full apps/web/src/ci.yml
+check "nested package.json"             $PR   true/full apps/api/src/feature/package.json
+check "nested pnpm lockfile"            $PR   true/full apps/web/src/pnpm-lock.yaml
+check "nested json"                     $PR   true/full apps/api/tests/fixtures/data.json
+check "nested config.ts"                $PR   true/full apps/api/src/vitest.config.ts
+check "nested tsconfig"                 $PR   true/full apps/web/src/tsconfig.json
+check "nested tsconfig variant"         $PR   true/full apps/api/tests/tsconfig.test.json
+check "nested env file"                 $PR   true/full apps/api/src/.env
+check "API unknown extension"           $PR   true/full apps/api/src/feature/data.bin
+check "API shell script"                $PR   true/full apps/api/src/run.sh
+check "API script directory"            $PR   true/full apps/api/scripts/apply-privileged.mjs
+check "web index.html"                  $PR   true/full apps/web/index.html
+check "web public js"                   $PR   true/full apps/web/public/theme-boot.js
+check "web vercel config"               $PR   true/full apps/web/vercel.json
+check "Prisma migration lock"           $PR   true/full apps/api/prisma/migrations/migration_lock.toml
+check "name containing lock is still source"   $PR   false/server apps/api/src/lib/clock.ts apps/api/src/lib/deadlock.ts
+check "lockfile named like source"      $PR   true/full apps/api/src/pnpm-lock.ts
+check "web css"                         $PR   false/server apps/web/src/styles/app.css
 
 # 4. CI workflow and CI scripts cannot bypass.
 check "CI workflow"                     $PR   true/full .github/workflows/ci.yml

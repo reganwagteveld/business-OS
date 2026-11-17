@@ -23,7 +23,7 @@ The native desktop matrix (Linux compile check, macOS, Windows) is the only cond
 | Tier | Paths (every changed path must match) | Matrix |
 |---|---|---|
 | `docs` | `docs/**` markdown and images, root `*.md` | skipped on pull requests and on pushes to `main` |
-| `server` | `docs` paths plus `apps/api/**` and `apps/web/**` source, but not manifests, JSON or `*.config.*` files | skipped on pull requests only; the push to `main` still runs it |
+| `server` | `docs` paths plus files under `apps/api/{src,tests,prisma}/` or `apps/web/src/` whose extension is `.ts`, `.tsx`, `.sql`, `.prisma` or `.css`, at any depth (hidden files, `*.config.*`, `tsconfig*`, manifests and lockfiles are never `server`) | skipped on pull requests only; the push to `main` still runs it |
 | `full` | anything else: desktop source, `packages/**`, manifests and lockfiles anywhere, tool config, `.github/**`, unknown paths | runs |
 
 Always `full`: pushes to `release/**`, `v*` tags, manual runs and the weekly schedule. Fail-closed rules: an empty list, a diff that cannot be established (checkout is not a merge commit, a push that is not a single step from the previous tip, missing or zero `before`), a path with `..`, `//` or a leading `/`, and a classifier error all select `full`. Renames and copies are listed as a deletion plus an addition, so moving code into `docs/` still lists the code path. A mixed change is `full` as soon as one path is not on the allow-list.

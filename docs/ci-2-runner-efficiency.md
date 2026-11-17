@@ -44,7 +44,7 @@ Current gate behaviour (read from `ci-gate.sh`): every job must be `success`, ex
 | Change | Tier | Native matrix |
 |---|---|---|
 | `docs/**` markdown and images, root `*.md` only | `docs` | skipped (PR and push) |
-| Plus `apps/api/**`, `apps/web/**` source (not manifests, JSON, `*.config.*`) | `server` | skipped on PR only |
+| Plus files under `apps/api/{src,tests,prisma}/` or `apps/web/src/` with extension `.ts`, `.tsx`, `.sql`, `.prisma`, `.css` (positive allow-list at every depth; hidden files, `*.config.*`, `tsconfig*`, manifests, lockfiles, YAML/TOML/JSON, scripts and unknown extensions are `full`) | `server` | skipped on PR only |
 | Desktop source, desktop build config, `packages/**` (shared code), manifests and lockfiles anywhere, root and tool config, `.github/**`, any unknown path | `full` | runs |
 | Empty list, undeterminable diff, odd path names, classifier error, scheduled/manual/tag/release runs | `full` | runs |
 
@@ -64,7 +64,7 @@ Static checks, lint, typecheck, boundaries, unit, database (including RLS isolat
 ### Deliberate policy differences (for Regan to confirm)
 
 1. **Shared code now runs the native matrix on pull requests** (`packages/**`, `apps/desktop/src/**`), as the CI-2 brief requires. Previously those PRs deferred it to the push to `main`. This adds macOS load on code PRs and is the opposite of the stall problem. If wanted, the alternative is to keep deferring shared code to the push to `main` and list those paths in `server`. I implemented the brief as written.
-2. **API and web-only source still skips the matrix on PRs** (existing behaviour, kept), but not on the push to `main`. It is a visible tier (`server`) so it cannot hide behind the docs rule. If you prefer docs-only to be the only skip, delete the `is_server_only` branch.
+2. **API and web-only source (positive allow-list, see section 2) still skips the matrix on PRs** (existing behaviour, kept), but not on the push to `main`. It is a visible tier (`server`) so it cannot hide behind the docs rule. If you prefer docs-only to be the only skip, delete the `is_server_only` branch.
 3. The old classifier treated unknown paths as "skip"; they are now `full`. This is the fail-closed requirement and increases matrix runs for repo areas such as `tests/**`, `ops/**`, `docker/**` and root config.
 
 ### Known limitations
@@ -102,7 +102,7 @@ Owner requirements of 2026-11-17 (CI-2-G, CI-2-H). Proposed design:
 
 ## 5. Verification (CI-2A)
 
-Local fixtures: `classify-changes.test.sh` (58 cases), `changed-files.test.sh` (20 cases built from throwaway git repositories), `ci-gate.test.sh` (all gate combinations including failed required checks). They run in "Detect changes" on every run, so a broken rule fails CI.
+Local fixtures: `classify-changes.test.sh` (80 cases), `changed-files.test.sh` (20 cases built from throwaway git repositories), `ci-gate.test.sh` (all gate combinations including failed required checks). They run in "Detect changes" on every run, so a broken rule fails CI.
 
 Brief item to evidence:
 
@@ -118,3 +118,7 @@ Brief item to evidence:
 | 8 | Failing required check fails the gate | gate cases, demo run |
 
 Real Actions demonstrations and the before/after report are in the PR description.
+
+## 6. Audit follow-up
+
+ChatGPT audit of head 75b4590 (M1): the `server` tier matched any descendant of `apps/api` or `apps/web`, so nested tool settings, lockfiles or YAML could land in `server`. Fixed: `server` is now a positive allow-list of source directories and extensions, with hidden files, tool config, manifests and lockfiles excluded at every depth, and 22 new fixtures cover nested `package.json`, lockfiles, `Cargo.*`, `*.config.*`, YAML/YML, hidden config and unknown extensions. Docs-only `main` pushes rely on the weekly scheduled full run until CI-2B lands.

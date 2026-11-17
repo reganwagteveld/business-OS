@@ -30,15 +30,21 @@ is_docs() {
 }
 
 # Server-side or web-only source that the native build never installs or imports (the desktop job
-# installs only @business-os/desktop and its dependencies). Manifests and tool config inside these
-# trees are excluded because they can change the dependency graph or the shared toolchain.
+# installs only @business-os/desktop and its dependencies). This is a positive allow-list at every
+# depth: the file must sit under a known source directory AND have a known source extension. Hidden
+# files, tool configuration (*.config.*, tsconfig*), manifests, lockfiles, scripts, YAML/TOML/JSON and
+# every unknown extension are not listed, so they are full.
 is_server_only() {
   case "$1" in
-    apps/api/package.json|apps/web/package.json) return 1 ;;
-    apps/api/*.json|apps/web/*.json) return 1 ;;
-    apps/api/*.config.*|apps/web/*.config.*) return 1 ;;
-    apps/api/*/package.json|apps/web/*/package.json) return 1 ;;
-    apps/api/*|apps/web/*) return 0 ;;
+    apps/api/src/*|apps/api/tests/*|apps/api/prisma/*|apps/web/src/*) ;;
+    *) return 1 ;;
+  esac
+  local base="${1##*/}"
+  case "$base" in
+    .*|*.config.*|tsconfig*|package.json|*-lock.*|*.lock) return 1 ;;
+  esac
+  case "$base" in
+    *.ts|*.tsx|*.sql|*.prisma|*.css) return 0 ;;
   esac
   return 1
 }
