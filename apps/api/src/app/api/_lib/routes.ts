@@ -59,6 +59,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   CM008: [409, 'holder_change_not_allowed'], CM009: [409, 'retention_not_set'], CM010: [409, 'business_mailbox_rule'],
   // Communications E1 (migration 20261201000000_communications_erasure): erased history, legal holds, the ledger.
   CM011: [409, 'erased'], CM012: [409, 'legal_hold_rule'], CM013: [409, 'immutable'],
+  // WF-1B-1 (migration 20261207000000_workflow_links, docs/cross-zone-workflows-wf1.md §5.4): projects_guard_links.
+  WF001: [409, 'project_has_quote'], WF002: [409, 'quote_not_accepted'], WF003: [409, 'quote_has_project'], WF004: [409, 'opportunity_mismatch'],
 };
 
 /**
@@ -129,6 +131,16 @@ function errorResponse(request: Request, error: unknown): Response {
     const hit = FINANCE_CONSTRAINTS.find(([pattern]) => pattern.test(text));
     if (hit) return fail(request, 409, hit[1]);
   }
+  // WF-1B-1 (§5.2, §5.3): the customer-consistency FKs, behind the service checks. On the referencing side
+  // (a Finance record links a project of another customer) the record is refused; on the referenced side (a
+  // project's customer changes while customer-specific records or its source quote link it) the project is locked.
+  if (state === '23503') {
+    const text = `${error instanceof Error ? error.message : ''} ${JSON.stringify((error as { meta?: unknown } | null)?.meta ?? {})}`;
+    if (/projects_source_quote_fkey/.test(text) || (/_project_customer_fkey/.test(text) && /update or delete on table \\?"projects\\?"/.test(text))) {
+      return fail(request, 409, 'project_customer_locked');
+    }
+    if (/_project_customer_fkey/.test(text)) return fail(request, 400, 'project_customer_mismatch');
+  }
   if (state === '22003') return fail(request, 400, 'invalid_amount');
   const message = error instanceof Error ? error.message : '';
   const code = (error as { code?: string } | null)?.code;
@@ -196,7 +208,7 @@ type Resolved = { auth: { user: CurrentUser; sessionToken: string }; params: Rec
  * own active memberships (in the database, from the verified session token) and authorises. An unknown
  * slug and a business the caller does not belong to both answer 404.
  */
-async function resolveTenant(request: Request, context: RouteContext, permission: Permission): Promise<Resolved | Response> {
+async function resolveTenant(request: Request, context: RouteContext, permission: Permission | readonly Permission[]): Promise<Resolved | Response> {
   const auth = await authenticate(request);
   if (auth instanceof Response) return auth;
   const raw = await context.params;
@@ -209,7 +221,8 @@ async function resolveTenant(request: Request, context: RouteContext, permission
     role: membership.role,
     permissions: new Set(permissionsFor(membership.role)),
   };
-  authorize(actor, permission);
+  // All-of (WF-1 §7, W1 §10): a cross-Zone route names every key it needs; each is checked.
+  for (const key of typeof permission === 'string' ? [permission] : permission) authorize(actor, key);
   return { auth, params, membership, actor };
 }
 
@@ -235,7 +248,12 @@ async function withConflictRetry<R>(attempt: () => Promise<R>): Promise<R> {
  */
 export function tenantRoute<S extends z.ZodType | undefined, T, Q extends z.ZodType | undefined = undefined>(
   opts: {
-    permission: Permission; input?: S; query?: Q; response: z.ZodType<T>; /** Unit-of-work timeout; default 5 s (F5 rendering: 15 s). */ timeoutMs?: number;
+    /**
+     * The key the caller must hold. A cross-Zone route (WF-1 §7) lists several: all of them are required
+     * (all-of), so holding one Zone's key never grants another Zone's data.
+     */
+    permission: Permission | readonly [Permission, ...Permission[]];
+    input?: S; query?: Q; response: z.ZodType<T>; /** Unit-of-work timeout; default 5 s (F5 rendering: 15 s). */ timeoutMs?: number;
     /**
      * E1 (docs/communications-e1.md §8): hand the raw session token to the handler, which passes it to a
      * privileged database function that verifies the caller itself. Only the erasure routes set it

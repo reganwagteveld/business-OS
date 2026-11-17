@@ -43,7 +43,9 @@ model FinanceRecurringTemplate {
   business Business              @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_recurring_templates_business_fkey")
   customer Customer              @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_templates_customer_fkey")
   contact  Contact?              @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_templates_contact_fkey")
-  project  Project?              @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_templates_project_fkey")
+  project  Project?              @relation("FinanceRecurringTemplateProject", fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_templates_project_fkey")
+  /// W1 invariant I1 (WF-1 §5.3): the linked project has this schedule's customer.
+  projectCustomer Project?       @relation("FinanceRecurringTemplateProjectCustomer", fields: [businessId, projectId, customerId], references: [businessId, id, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_recurring_templates_project_customer_fkey")
   runs     FinanceRecurringRun[]
 
   @@unique([businessId, id])

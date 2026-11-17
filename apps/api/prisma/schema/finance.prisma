@@ -210,7 +210,11 @@ model FinanceDocument {
   customer          Customer                   @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_customer_fkey")
   contact           Contact?                   @relation(fields: [businessId, contactId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_contact_fkey")
   opportunity       Opportunity?               @relation(fields: [businessId, opportunityId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_opportunity_fkey")
-  project           Project?                   @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_project_fkey")
+  project           Project?                   @relation("FinanceDocumentProject", fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_project_fkey")
+  /// W1 invariant I1 (WF-1 §5.3): the linked project has this document's customer.
+  projectCustomer   Project?                   @relation("FinanceDocumentProjectCustomer", fields: [businessId, projectId, customerId], references: [businessId, id, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_project_customer_fkey")
+  /// WF-1 §5.2: the project that has this accepted quote as its source (at most one).
+  sourceOfProjects  Project[]                  @relation("ProjectSourceQuote")
   sourceQuote       FinanceDocument?           @relation("QuoteConversions", fields: [businessId, sourceQuoteId, sourceQuoteKind, currencyCode, customerId], references: [businessId, id, kind, currencyCode, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_source_quote_fkey")
   convertedInvoices FinanceDocument[]          @relation("QuoteConversions")
   creditedInvoice   FinanceDocument?           @relation("CreditNotes", fields: [businessId, creditedInvoiceId, creditedInvoiceKind, currencyCode, customerId], references: [businessId, id, kind, currencyCode, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_documents_credited_invoice_fkey")
@@ -227,6 +231,8 @@ model FinanceDocument {
   @@unique([businessId, id])
   @@unique([businessId, id, kind], map: "finance_documents_kind_key")
   @@unique([businessId, id, kind, currencyCode, customerId], map: "finance_documents_link_key")
+  /// Referenced by projects_source_quote_fkey (WF-1 §5.2; implied by the primary key).
+  @@unique([businessId, id, kind, customerId], map: "finance_documents_kind_customer_key")
   @@unique([businessId, kind, numberValue])
   @@unique([businessId, kind, number])
   @@index([businessId, kind, status, issueDate])
@@ -442,7 +448,9 @@ model FinanceExpense {
 
   business    Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "finance_expenses_business_fkey")
   category    FinanceExpenseCategory     @relation(fields: [businessId, categoryId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_category_fkey")
-  project     Project?                   @relation(fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_project_fkey")
+  project     Project?                   @relation("FinanceExpenseProject", fields: [businessId, projectId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_project_fkey")
+  /// W1 invariant I1 (WF-1 §5.3). MATCH SIMPLE: an expense without a customer may link any project.
+  projectCustomer Project?               @relation("FinanceExpenseProjectCustomer", fields: [businessId, projectId, customerId], references: [businessId, id, customerId], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_project_customer_fkey")
   customer    Customer?                  @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_customer_fkey")
   taxRate     FinanceTaxRate?            @relation(fields: [businessId, taxRateId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "finance_expenses_tax_rate_fkey")
   allocations FinanceExpenseAllocation[]
