@@ -490,6 +490,23 @@
         "reason": "temporary GS1-A rehearsal branch; rehearsal finished, migration applied and verified in production, evidence preserved in the repo",
         "verification": "PR #97 merged 2026-11-17T09:27:30Z; 20261206000000_search_indexes finished, not rolled back, in live production _prisma_migrations (read-only); rehearsal results recorded in docs/search-index-migration.md §3a on main. Read-only Neon API: exact id/name/created_at, not default, not protected, state ready, no child branches, compute idle, no operation in progress."
       }
+    },
+    {
+      "branchId": "br-plain-brook-bbyxy6vz",
+      "name": "rehearsal-workflow-links-20261117",
+      "kind": "testing",
+      "prs": [
+        110
+      ],
+      "createdAt": "2026-11-17T09:45:31Z",
+      "deletion": {
+        "at": "2026-11-17T14:50:46Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-17 14:50 UTC: \"Delete rehearsal-workflow-links-20261117 if nothing depends on it and is not required for rollback or future use\"",
+        "reason": "temporary WF-1B-1 rehearsal branch; migration applied, verified and merged; not a recovery point (it already contains the migration); nothing depends on it",
+        "verification": "PR #110 merged 2026-11-17T12:31:07Z; 20261207000000_workflow_links finished, not rolled back, in live production _prisma_migrations (read-only); rehearsal evidence preserved in PR #110 issuecomment-6944525543 and docs/migration-readiness.md §9; rollback point is pre-workflow-links-migration (kept, present after deletion). Read-only Neon API: exact id/name/created_at, not default, not protected, ready, no child branches, compute idle, no running operations. Runbook §4.2 step 5 says delete after verification. Post-check: production health 200.",
+        "recoveryRef": "pre-workflow-links-migration"
+      }
     }
   ],
   "//deleted": "Recovery branches deleted from Neon, with the approval, verification and outcome of each deletion. Kept for history; not used for decisions."
