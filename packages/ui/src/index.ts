@@ -13,3 +13,5 @@ export { StatCard } from './components/stat-card';
 export { StatusIndicator, type StatusTone } from './components/status-indicator';
 export { Atmosphere, Surface, glassClass, type AtmosphereVariant, type GlassStrength, type SurfaceVariant } from './components/surface';
 export { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from './components/table';
+
+// CI-2 demo: shared-code touch (not for merge).
