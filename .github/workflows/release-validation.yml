@@ -52,6 +52,7 @@ jobs:
         run: |
           .github/scripts/release-gate.test.sh
           .github/scripts/release-resolve.test.sh
+          .github/scripts/release-nightly-status.test.sh
           .github/scripts/release-workflow-guard.test.sh
       - name: Resolve and validate the candidate
         id: resolve
@@ -329,23 +330,14 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: .github/scripts
-      # Unresolved nightly failure blocks the gate. An unreadable status is not "clear".
+      # Unresolved nightly failure blocks the gate. Reads every page of open issues; an unreadable status or a
+      # missing nightly history is not "clear" (release-nightly-status.sh, self-tested).
       - name: Nightly status
         id: nightly
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-        run: |
-          status=unknown
-          if open="$(gh issue list --repo "$REPO" --state open --limit 100 --json title --jq '[.[] | select(.title == "Nightly validation failed")] | length')" \
-             && last="$(gh run list --repo "$REPO" --workflow nightly.yml --branch main --status completed --limit 1 --json conclusion --jq '.[0].conclusion // "none"')"; then
-            if [ "$open" != 0 ]; then status=blocked
-            elif [ "$last" = success ] || [ "$last" = none ]; then status=clear
-            else status=blocked
-            fi
-            echo "open nightly-failure issues: $open; latest nightly run on main: $last"
-          fi
-          echo "status=$status" >> "$GITHUB_OUTPUT"
+        run: .github/scripts/release-nightly-status.sh | tee -a "$GITHUB_OUTPUT"
       - name: Evidence summary
         continue-on-error: true
         env:
