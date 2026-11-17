@@ -127,7 +127,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
           sudo apt-get install -y ./apps/desktop/src-tauri/target/release/bundle/deb/*.deb
-          bin="$(dpkg-deb --contents apps/desktop/src-tauri/target/release/bundle/deb/*.deb | grep -oE '/usr/bin/[A-Za-z0-9_-]+$' | head -n1)"
+          bin="$(dpkg -L "$(dpkg-deb --field apps/desktop/src-tauri/target/release/bundle/deb/*.deb Package)" | grep -E '^/usr/bin/[^/]+$' | head -n1)"
           test -x "$bin"
           xvfb-run -a "$bin" > "$RUNNER_TEMP/evidence/smoke.log" 2>&1 &
           sleep 13
@@ -239,6 +239,9 @@ jobs:
       VITE_API_BASE_URL: ${{ vars.DESKTOP_API_BASE_URL || 'https://api.business-os.invalid' }}
       API_ORIGIN_IS_PRODUCTION: ${{ vars.DESKTOP_API_BASE_URL != '' }}
     steps:
+      # The repository is LF; a CRLF checkout would make the token-sheet tests see different text than CI does.
+      - name: Check out with LF line endings
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.sha }}

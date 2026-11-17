@@ -44,6 +44,27 @@ Concurrency: one nightly run at a time (`nightly` group, never cancelled by a ne
 
 Not validated, and never reported as passed: code signing, notarisation, auto-update, and anything needing production credentials or an interactive signed-in session. Set the repository variable `DESKTOP_API_BASE_URL` to make the macOS build production-configured; without it the summary says the placeholder origin was used.
 
+## Release validation (CI-2C)
+
+`.github/workflows/release-validation.yml` is the three-platform release gate (design: [ci-2-runner-efficiency.md](ci-2-runner-efficiency.md) section 4). It **validates** a release candidate and **cannot publish**: workflow permission is `contents: read`, no job has a write permission, secret, environment, release step or deploy step, and `release-workflow-guard.test.sh` fails CI if one is added. It is not a required check, does not run for ordinary pull requests and leaves `CI gate` unchanged.
+
+Triggers: push of a `v*` tag; manual run (Actions → Release validation → Run workflow) with `expected_sha`; pull requests that change this workflow or its scripts (self-validation only, **not release evidence**).
+
+| Job | What it does |
+|---|---|
+| Resolve candidate commit | Self-tests the release scripts. Fixes the commit under validation: the run's commit must be on `main` (ancestor of `origin/main`), and for manual runs `expected_sha` (40 lower-case hex) must equal it. Otherwise the run fails. |
+| Full CI suite | Calls `ci.yml`: static, unit, database with RLS isolation and pooler suites, build verification, and the Linux, macOS and Windows desktop matrix. Tag and manual events are always the `full` tier. Skipped on pull-request self-validation runs only. |
+| Package and verify (Linux, macOS, Windows) | Each platform, on the exact candidate commit: desktop typecheck, lint and package tests; `tauri build` in the release profile (unsigned) with `.deb` and AppImage, `.app` and `.dmg`, NSIS installer; `cargo test`; package verification and SHA-256 checksums (`verify-release-bundle.sh`, `verify-macos-bundle.sh`); install-and-launch smoke test (Linux `.deb` under Xvfb, Windows silent NSIS install, macOS app launch); candidate packages and evidence uploaded as Actions artifacts for 30 days. |
+| Release gate | `if: always()`. Passes only if Resolve, Full CI suite, Linux, macOS and Windows are all exactly `success` (`release-gate.sh`; failed, cancelled, skipped and missing all fail) **and** there is no unresolved nightly failure (no open "Nightly validation failed" issue and the latest completed nightly run on `main` did not fail; an unreadable status fails). Writes per-OS runner-minutes, queue wait and slowest-job durations to the summary. |
+
+Freshness: every job checks out the resolved SHA and asserts `git rev-parse HEAD` equals it. A run is evidence for exactly that commit. Release validations are keyed by commit and never cancelled by a newer run.
+
+What a consumer must check before releasing: a successful **Release gate** job of a `push` (tag) or `workflow_dispatch` run of `release-validation.yml` whose `head_sha` equals the release commit, and the build summaries must say `production-configured: true` (set the `DESKTOP_API_BASE_URL` variable).
+
+Not validated, never reported as passed: code signing, notarisation, Authenticode, SmartScreen, MSI, auto-update, and anything needing production credentials or an interactive signed-in session. The smoke tests prove only that the installed app starts and stays running for 10 to 13 seconds.
+
+Nothing publishes. Any future publish workflow must be a separate PR with a GitHub Environment that has required reviewers (see the settings list in PR 113 and the CI-2 doc).
+
 ## The gate
 
 `.github/scripts/ci-gate.sh` (self-tested by `ci-gate.test.sh`) fails when any of these is not `success`: Detect changes, Static checks, Unit tests, Database tests, Build verification. The desktop matrix must also be `success` unless the classifier job succeeded and explicitly reported `desktop=false` with tier `docs` or `server`; a skip with any other tier, a missing tier or a failed classifier fails the gate. The gate uses `if: always()`, so it reports a failure (not a skip) when jobs before it fail or are cancelled. A run that never completes leaves `CI gate` pending, which blocks merge.

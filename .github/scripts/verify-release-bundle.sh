@@ -28,7 +28,7 @@ case "$platform" in
     [ "$ver" = "$want_version" ] && check ".deb version" ok || check ".deb version" bad "got $ver, want $want_version"
     arch="$(dpkg-deb --field "$deb" Architecture)"
     echo "deb architecture: $arch" > "$evidence/deb-arch.txt"
-    grep -Eq '/usr/bin/[A-Za-z0-9_-]+$' "$evidence/deb-contents.txt" && check ".deb contains an executable in /usr/bin" ok || check ".deb contains an executable in /usr/bin" bad "none listed"
+    grep -Eq '/usr/bin/[^/]+$' "$evidence/deb-contents.txt" && check ".deb contains an executable in /usr/bin" ok || check ".deb contains an executable in /usr/bin" bad "none listed"
     grep -Eq '\.desktop$' "$evidence/deb-contents.txt" && check ".deb contains a desktop entry" ok || check ".deb contains a desktop entry" bad "none listed"
     unpack="$(mktemp -d)"; dpkg-deb --extract "$deb" "$unpack"
     exe="$(ls "$unpack"/usr/bin/* | head -n1)"
