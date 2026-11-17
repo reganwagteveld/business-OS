@@ -1,4 +1,5 @@
 import { inviteForSignup, admitFixture } from './support/admission';
+import { withoutUuids } from './support/uuid';
 /**
  * Global search GS1-A (docs/global-search-gs1.md §14) through the real route handlers, against PostgreSQL
  * with the migrations and privileged SQL applied (the search indexes arrive in a separate migration PR; results do not depend on them), as bos_app with
@@ -304,7 +305,8 @@ describe('field leakage and logging', () => {
     }
     const all = await search(A.people.OWNER!, A.slug, { q: 'kelp', limit: 25 });
     expect(all.text).not.toContain(TOKEN_A);
-    expect(all.text).not.toMatch(/99000|150\.00|0400|0411|0422/);
+    // Strip UUIDs first: a random id can contain '0422' or similar by chance (about 1 run in 4,000 per needle).
+    expect(withoutUuids(all.text)).not.toMatch(/99000|150\.00|0400|0411|0422/);
     const resolved = await resolve(A.people.OWNER!, A.slug, { items: [{ type: 'employee', id: a.kat }, { type: 'customer', id: a.kelp }] });
     expect(resolved.text).not.toContain(TOKEN_A);
   });
