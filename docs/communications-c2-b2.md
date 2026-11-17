@@ -1,6 +1,6 @@
 # Communications C2-B2: provider-mail storage, isolation, retention and sync design
 
-**Status:** docs-only design for audit. Revised after the ChatGPT conditional design pass on `1ab55f6`
+**Status:** docs-only design; owner decisions D-B2-1 to D-B2-6 accepted 2026-11-17 (§13). Revised after the ChatGPT conditional design pass on `1ab55f6`
 (customer-link visibility narrowed, Keep as record deferred, personal sharing semantics, follow-up exception,
 definer hygiene, attachment proxy, erasure privacy). No code, schema, migration, privileged SQL, worker, cron, provider
 call or deployment change. Nothing here is authorised for implementation until its own package is approved.
@@ -490,8 +490,15 @@ Owner decisions (Regan):
 
 | # | Decision | Recommendation |
 |---|---|---|
-Revised on 2026-11-17 after the ChatGPT audit of `1ab55f6` (conditional design pass). None of these is
-accepted yet.
+Revised on 2026-11-17 after the ChatGPT audit of `1ab55f6` (conditional design pass) and its re-audit of
+`783ce01`, which recommended YES to each as revised.
+
+**ACCEPTED by Regan on 2026-11-17 (09:51 UTC, in the project thread: "Yes I approve the recommendations"):
+D-B2-1 to D-B2-6 exactly as recommended below**, including the stored-thread follow-up exception (D-B2-1),
+no new readers through customer links (D-B2-3), sticky ORDINARY expiry for shared personal mail (D-B2-4) and
+"Keep as record" disabled until the E1 §13.1 durations are approved (D-B2-6). This accepts the design only.
+It does not authorise B2-1 implementation, any migration, privileged SQL, worker, cron or real mail; each
+still needs its own approval.
 
 | # | Decision | Recommendation |
 |---|---|---|
