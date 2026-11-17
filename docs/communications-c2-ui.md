@@ -94,7 +94,13 @@ C2-UI-C touches only new files plus the nav registry and `app.tsx` entry. UI-A, 
 - Light and dark screenshots per PR, using the existing showcase and fake-API harness.
 - Tests per PR: component and integration tests against the fake API, permission matrices (MEMBER, MANAGER, ADMIN, OWNER, READ vs SEND member, personal-owner-only), plus API cross-tenant and private-mailbox tests wherever backend behaviour changes.
 
-## 7. Decisions needing the owner
+## 7. Decisions
+
+**Accepted by Regan on 2026-11-17** (recorded on PR #114, confirmed by Regan in the project thread): D-UI-1 to D-UI-10 as recommended below, with the ChatGPT review conditions: (a) D-UI-4 is an explicit, limited amendment of D-C2-6. Unmatched provider mail may be stored only in segregated, mailbox-scoped storage under server-enforced mailbox visibility and tenant isolation; it is never attached to customers or contacts automatically and never appears in C1 activity, timeline, global search or reporting; any link or promotion is explicit, user-directed and audited; the opt-in 30-day enquiry staging is kept; PERSONAL and BUSINESS stay separate; the `conversations_linked` invariant is not removed unless every C1 read path is proven safe, and independent provider-mail tables are preferred. The detailed design is the C2-B2 docs-only thread. (b) Management UI states "sync not available yet" and shows no simulated state; providers are fixture-tested, not live verified. (c) The OAuth return is an allowlisted redirect that keeps PKCE, signed expiring state and session binding and puts no secrets in URLs. (d) Sending needs `communications:send` and per-mailbox SEND, enforced server-side.
+
+**Authorised now:** C2-UI-C as one draft PR; C2-B2 as a docs-only design. Not authorised: C2-UI-A, B, D, C2-C, any worker, cron, ingestion, real mailbox connection, migration or activation. Merges and migrations need their own verified approval.
+
+Original options and recommendations:
 
 | # | Decision | Recommendation |
 |---|---|---|
