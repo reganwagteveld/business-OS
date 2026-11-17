@@ -10,6 +10,9 @@
 > (§6.10, §10.2); M2 duplicate guard reworded, deliberate repeat creation allowed (§6.2, D-WF1-15); M3 exact,
 > disjoint project summary definitions (§6.6); opportunity status scope made explicit, new D-WF1-16 (§6.2);
 > D-WF1-12 wording; PR #93 merged and #97 migration stamp noted (§10.1, §15).
+> **Version 1.2 (2026-11-17)** after the focused re-audit (pass with build conditions at `b09b152`): fail-closed
+> preflight with exact, tenant-visible counts (§10.2); correction path for the convert gap tested (T-48);
+> decision ranges updated to D-WF1-07..16; real-PostgreSQL T-49/T-51/T-52 made entry conditions (§14).
 >
 > **Base:** `main` at `ccfcc93` (2026-11-17); `main` has since advanced to `4134636` (GS1-A, #93), which adds no
 > migration and does not change any file this spec cites in Sales, Projects or Finance services. Every "verified" statement below cites a file on that commit.
@@ -718,16 +721,21 @@ If review finds one is needed, it is listed in the PR and applied with `db:privi
 ### 10.2 Production steps (Mac session, each needs Regan's own approval in that thread)
 
 1. Read production `_prisma_migrations` read-only; confirm exactly this migration is pending, checksums match.
-2. **Preflight (gate G-3):** read-only (`BEGIN TRANSACTION READ ONLY; … ROLLBACK;`). **Forced RLS also applies to
-   the table owner**, so a role without `BYPASSRLS` that has no `app.business_id` set sees **no rows** and every
-   count below would be a false zero. The preflight therefore runs the queries once per business, with
-   `SET LOCAL app.business_id` to each id from `businesses`, and first runs a **control query** per business
-   (`SELECT count(*) FROM projects`, `… FROM finance_documents`) whose totals must be non-zero wherever data exists
-   and match the row counts reported by `pg_stat_user_tables.n_live_tup` within tolerance. Which production role
-   may read `businesses` and set the variable is confirmed from the Mac session before the run (assumption to
-   verify; `docs/migration-readiness.md` §5 uses `bos_owner` for catalogue checks only). Each I1 query must return
-   **0** for every business; **stop if any does not, or if the control query shows rows are hidden.** Last recorded
-   state: no customer businesses in production, so zero is expected.
+2. **Preflight (gate G-3), fail closed.** Read-only (`BEGIN TRANSACTION READ ONLY; … ROLLBACK;`). **Forced RLS
+   also applies to the table owner**, so a role without `BYPASSRLS` that has no `app.business_id` set sees **no
+   rows** and every count below would be a false zero. Requirements, each a stop condition:
+   - **A tenant-visible method is confirmed first** from the Mac session: either a role whose row visibility over
+     these tables is proven (for example `BYPASSRLS`, verified in `pg_roles`), or a per-business loop that sets
+     `SET LOCAL app.business_id` for each business id. Which role can enumerate `businesses` is an **assumption to
+     verify**, not known here (`docs/migration-readiness.md` §5 uses `bos_owner` for catalogue checks only).
+   - **Visibility is proven with exact counts, not estimates.** For each table (`projects`, `finance_documents`,
+     `finance_expenses`, `finance_recurring_templates`) the sum of per-business `count(*)` must equal an
+     independently obtained exact total (`count(*)` under a role whose full visibility was proven above). `pg_stat_user_tables.n_live_tup` is approximate and is
+     **not** acceptable evidence. If the two totals differ, stop.
+   - **The empty case is explicit.** If production holds no business data in these tables (last recorded state),
+     the record says "0 businesses with rows; totals 0 by exact count under <role>", not merely "queries returned 0".
+   - Each I1 query below must return **0** for every business; **stop if any does not**, or if any visibility check
+     fails or cannot be run.
 
    ```sql
    -- I1 on finance documents (customer always set): project customer must equal document customer.
@@ -746,7 +754,7 @@ If review finds one is needed, it is listed in the PR and applied with `db:privi
    cannot fail; the new `projects` columns start NULL, so their FKs, CHECKs and unique key cannot fail either.
    The migration adds the I1 FKs `NOT VALID` and then `VALIDATE`s them in the same migration; validation runs the
    same check as above inside PostgreSQL's FK machinery (not subject to RLS) and fails the whole migration if a row
-   appeared between preflight and apply.
+   appeared between preflight and apply, so the migration itself also fails closed.
 3. Create and verify the `pre-wf1b-migration` Neon recovery branch; record it in `ops/neon/recovery-points.json`.
 4. `prisma migrate deploy`; verify constraints exist and are validated (`pg_constraint.convalidated`), trigger
    present, RLS flags on `workflow_requests`.
@@ -858,10 +866,10 @@ roles OWNER, MANAGER, MEMBER unless noted.
 | T-43 | Audit rows exact; none on rollback or repeat; no free text | I | 1B |
 | T-44..46 | Archived opportunity/project, void/declined/expired quote, archived customer | I | 1B |
 | T-47 | Trigger and CHECK refusals by direct SQL (§9 G-TRG) | S | 1B |
-| T-48 | Convert of a source quote puts the project on the draft (D-WF1-10); convert of a quote with `project_id` unchanged | I | 1B |
+| T-48 | Convert of a source quote puts the project on the draft (D-WF1-10); convert of a quote with `project_id` unchanged; the §6.10 P8-vs-P3 gap forced with a barrier: the draft is created without `project_id`, the person sets the project on the draft through the normal draft edit (I1 checked) and the summary then counts it (the correction path) | I | 1B |
 | T-49 | Project summary per currency (§6.6.1): two currencies; a quote linked while draft **and** the same project's source quote linked after issue (counted once each, never twice); a quote that is both (dedup); void invoice; issued credit note applied and one unapplied; partial payment and a reversed payment; expense; discarded draft; void source quote; identity `paymentsAllocated + creditApplied + outstanding = invoicedGross` | I | 1B |
 | T-51 | H1 race, direct SQL and service: (a) void commits first → link refused; (b) void holds lock, link waits, void commits → refused; (c) void rolls back → link allowed; (d) link first → void waits, then succeeds, link kept; (e) direct-SQL link vs `from-quote` on one quote → at most one link, any `40P01` rolls back cleanly; deterministic with advisory-lock barriers | C, S | 1B |
-| T-52 | M1 pairs in §6.10, each as a deterministic two-session test: customer change vs draft link (both orders), customer change vs `link-quote`, customer change vs quote void, `link-quote` vs void, `from-quote` vs `link-quote`; assert final rows, error codes and no `40P01` on service paths | C | 1B |
+| T-52 | M1 pairs in §6.10, each as a deterministic two-session test: customer change vs draft link (both orders), customer change vs `link-quote`, customer change vs quote void, `link-quote` vs void, `from-quote` vs `link-quote`; assert final rows, error codes and no `40P01` on service paths. Explicitly verifies the referenced-side `NO ACTION` behaviour while a concurrent draft insert is uncommitted, and asserts each barrier actually produced the intended interleaving (lock-wait observed in `pg_locks`) so a test cannot pass by running serially. Until these pass, §6.10 is a hypothesis | C | 1B |
 | T-53 | `MATCH SIMPLE`: an expense without a customer links a customer-owned project and a customerless project, before and after the migration; preflight queries return the expected rows on a seeded violating fixture | I, S | 1B |
 | T-50 | Contracts: additive only (`pnpm contracts:check`), absent-key schema for redacted fields | U | 1B |
 | T-60..69 | UI behaviours in §11.7 | UI | 1C |
@@ -908,7 +916,7 @@ Each item is one thread, one branch, one draft PR, ChatGPT audit, Regan's approv
 
 | Order | Package | Scope | Depends on | Migration | Parallel with |
 |---|---|---|---|---|---|
-| 1 | **WF-1B-1** Schema and Finance link rules | §10.1 migration; I1 service checks (`project_customer_mismatch`, `project_customer_locked`) in Finance and Projects; D-WF1-11 key checks; `opportunityId` filters; `GET finance/projects/:id/summary`; convert rule D-WF1-10; `Viewer` finance/sales redaction; `all-of` route helper; tests T-01..16, 20..30, 40..42, 47..50 | WF-1A approval, D-WF1-07..15 | **Yes** (production approval) | WF-1C-1 |
+| 1 | **WF-1B-1** Schema and Finance link rules | §10.1 migration; I1 service checks (`project_customer_mismatch`, `project_customer_locked`) in Finance and Projects; D-WF1-11 key checks; `opportunityId` filters; `GET finance/projects/:id/summary`; convert rule D-WF1-10; `Viewer` finance/sales redaction; `all-of` route helper; tests T-01..16, 20..30, 40..42, 47..53 (T-49, T-51, T-52 on real PostgreSQL are entry conditions for the production migration approval) | WF-1A approval, D-WF1-07..16 | **Yes** (production approval) | WF-1C-1 |
 | 2 | **WF-1B-2** Workflows module and endpoints | `apps/api/src/modules/workflows`, four `workflows/projects/*` routes, Projects functions, `sourceOpportunityId` filter, contracts; tests T-31..39, 43..46 | 1 merged (schema) | No | WF-1C-1 |
 | 2′ | **WF-1C-1** Links on existing API | Finance form pickers, customer Opportunities panel, `RelatedRecords` component, opportunity quotes/invoices panel (filter from 1) | 1 for the opportunity filter only; pickers need nothing | No | 2 |
 | 3 | **WF-1C-2** Workflow UI | Create/link actions, assisted creation, project Finance panel and source chips, quote actions; UI tests | 2 merged | No | — |
@@ -935,7 +943,7 @@ largest test addition; 2 ≈ 15–20 files; 2′ ≈ 8–12; 3 ≈ 12–18; 4 �
 | R-9 | Over-billing from a project before FD-P3 enforcement exists | Product/finance | Same exposure as today's convert | Summary shows quoted vs invoiced; FD-P3 package next in the W1 sequence |
 | R-10 | Naming clash between W1's WF-1..8 and this WF-1 | Process | Confusion in threads | D-WF1-13 renumbering |
 | R-11 | Merging `main` deploys production | Process | Code before schema | Protocol §"Production migrations": migrate first, merge after |
-| D-1 | Depends on Regan's approval of this spec and D-WF1-07..15 | Dependency | Blocks WF-1B | — |
+| D-1 | Depends on Regan's approval of this spec and D-WF1-07..16 | Dependency | Blocks WF-1B | — |
 | D-2 | Depends on merge-queue capacity and the Mac session for the migration | Dependency | Timing | — |
 
 ---
