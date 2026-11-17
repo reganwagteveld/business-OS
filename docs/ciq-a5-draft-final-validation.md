@@ -14,14 +14,14 @@
 
 1. **Draft pushes run a suppressed CI.** On a draft PR, `ci.yml` still starts, runs the cheap `Detect changes` job (classifier self-tests, migration-order check, documentation credential scan) and then the `CI gate` job **fails** with an explicit "not validated: draft" verdict. Static, unit, build, the three database jobs and the desktop matrix do not start. Nothing is skipped into a green gate: GitHub counts a skipped required job as passing, so the gate always runs and fails closed.
 2. **Final-head validation is triggered by the merge-queue thread marking the PR ready for review** at the front of the queue, after it has synced `main` into the branch. `ready_for_review` is added to the `pull_request` trigger types (today it is not one, measured in §1.3), so the run is an ordinary `pull_request` run on GitHub's merge ref for the exact final head: CIQ-A1 tiers, CIQ-A2 shards, CIQ-A4 selective macOS and the STAB-01 migration-order check all apply unchanged.
-3. **Early CI stays available** two ways: automatically for drafts whose changed paths are security- or governance-sensitive (same keyword list as the A1 classifier plus `.github/**`, migrations and privileged SQL), and on request by a manual `workflow_dispatch` of CI on the branch, recorded in a PR comment. Early CI is supplementary and never replaces final-head validation.
+3. **Early CI stays available** two ways (recommended scope **S1**, D-A5-3): automatically only for drafts that change `.github/**` or a CI/approval governance document (§4.4); and **on request**, by a recorded manual `workflow_dispatch` of CI on the branch, which is expected before the code audit for authentication, RBAC, RLS, tenant-isolation, migration and critical-fix work and may be required by ChatGPT. Widening the automatic scope to migrations or security keywords is an explicit owner choice (S2/S3, §9.3), not part of this recommendation. Early CI is supplementary, is never counted as the final run, and never replaces final-head validation.
 4. **Merge authority does not move.** It still comes only from a provenance-checked `APPROVED — EXECUTE: MERGE` verdict, a green `CI gate` on the exact up-to-date final head, and the merge API call pinned to that SHA (CIQ-A3). Triggering CI confers nothing, so no privileged dispatcher is needed.
 
 **Why not Option B (trusted queue dispatcher):** the probe on this PR (§1.4) shows that a `workflow_dispatch` run of `ci.yml` on a PR branch attaches a green `CI gate` check run to the PR head commit, which GitHub links to the PR, **and branch protection still reports the PR `blocked`**. Minutes later, on the same PR and settings, an ordinary `pull_request` run's green gate made it `clean`. So a dispatched run, as this repository is configured, does **not** satisfy the required check, and B as specified cannot produce final-head validation without either a `pull_request` event or a privileged commit-status write (rejected below). Even if it could, a dispatched run is a different event: the A1 tier and A4 macOS decision both force `full` for non-`pull_request` events, the migration-order check is `pull_request`-only, the credential scan falls back to scanning every document, and the CIQ-A4 retry workflow ignores dispatched runs. Making B as cheap and as safe as A means rewriting A1/A4 logic and adding a privileged workflow (`actions: write`) for no security gain, because CI itself holds no privilege. B is kept as the early-CI and recovery path only.
 
 **Measured effect on recent history (§9):** 79 merged PRs, 306 PR CI runs, 3.87 runs per PR. 200 runs (2.53 per PR) were development-stage runs that A5 would suppress; 106 (1.34 per PR) were final-candidate runs the queue still needs. With the recommended early-CI scope (S1: CI and governance changes only) A5 avoids 146 of the 200 development-stage full runs (73%, target 70%), 150 database jobs and about 1,400 Linux runner-minutes over these 2.5 days, and changes final-head verification not at all. Only 3 of 200 development-stage runs failed, so the risk of failures surfacing later is measured as low.
 
-**Owner decisions needed (§11):** D-A5-1 verdict timing relative to final CI (changes the approval procedure, so Regan's own approval), D-A5-2 PRs stay draft until the queue marks them ready, D-A5-3 automatic early CI for sensitive paths, D-A5-4 a red `CI gate` on draft heads is acceptable, D-A5-5 rollout order and measurement window.
+**Owner decisions needed (§11):** D-A5-1 verdict timing relative to final CI (changes the approval procedure, so Regan's own approval), D-A5-2 PRs stay draft until the queue marks them ready, D-A5-3 automatic early-CI scope (S1 recommended), D-A5-4 a red `CI gate` on draft heads is acceptable, D-A5-5 rollout order and measurement window.
 
 ---
 
@@ -119,8 +119,8 @@ flowchart LR
   M -->|runner failure| RETRY[A4 retry once / A3 operator retry once]
   RETRY --> M
   MG -->|main CI, deploy, smoke<br/>D-CIQ-4 unchanged| DONE[Next PR]
-  D1 -.->|sensitive paths: automatic early CI| E[Full tiered CI on draft]
-  D1 -.->|on request: workflow_dispatch,<br/>recorded on PR| E
+  D1 -.->|S1: .github or governance docs,<br/>automatic early CI| E[Full tiered CI on draft]
+  D1 -.->|on request: workflow_dispatch,<br/>recorded on PR, never counted| E2[Full CI on branch tip<br/>review evidence only]
 ```
 
 ### 2.3 Trust boundaries
@@ -187,7 +187,7 @@ A for draft suppression and final validation; B's mechanism (`workflow_dispatch`
 | Draft and same-repo branches | yes; all PR branches are same-repo here | yes (dispatch needs a branch ref) | yes |
 | Merge refs and head SHAs | final run tests the merge ref; check attaches to head | tests head only; migration-order check lost | as A |
 | A1/A2/A4 reuse | complete | A1 tiers and A4 macOS lost unless rewritten | complete |
-| Workflow-run reduction | all draft full runs except sensitive PRs (§9) | same, but each final run costs more (full tier + macOS) | as A, plus a few early runs |
+| Workflow-run reduction | all draft full runs except S1 PRs (§9) | same, but each final run costs more (full tier + macOS) | as A, plus a few early runs |
 | Operational complexity | one mode output, one gate rule, one trigger type | dispatcher workflow, SHA race handling, A1/A4 rework | as A, plus a documented manual dispatch |
 | Rollback | revert one PR; draft runs return to full CI | revert dispatcher and queue procedure | revert one PR |
 
@@ -199,7 +199,7 @@ A for draft suppression and final validation; B's mechanism (`workflow_dispatch`
 
 A new script (`.github/scripts/ci-run-mode.sh`, self-tested like the A1 classifiers) prints `run_mode` from the event, never from PR text:
 
-| Event | Draft | Sensitive paths (§4.4) | `run_mode` | Jobs that run |
+| Event | Draft | S1 path changed (§4.4) | `run_mode` | Jobs that run |
 |---|---|---|---|---|
 | `pull_request` `opened`/`synchronize`/`reopened`/`ready_for_review` | false | any | `final` | today's tiered CI, unchanged |
 | `pull_request` same actions | true | yes (S1 list) | `early` | today's tiered CI, unchanged; gate passes or fails on results |
@@ -207,7 +207,9 @@ A new script (`.github/scripts/ci-run-mode.sh`, self-tested like the A1 classifi
 | `pull_request`, draft field missing or not a boolean | — | — | `final` | fail closed to full validation |
 | `workflow_dispatch` | — | — | `manual` | full tier, as today |
 | `push`, `schedule`, `workflow_call`, tags | — | — | unchanged | as today |
-| classifier error, unreadable diff | — | — | `final` (or `early` on a draft) | fail closed to running everything |
+| run-mode script error, missing output, unreadable or empty diff, unsafe path | — | — | `final` (or `early` on a draft) | fail closed to running everything: **an error never selects `suppressed`** |
+
+`suppressed` is the only mode that removes jobs, and it is printed only on the single positive path: `pull_request` event, `draft` is the boolean `true`, the changed-file list was established, every path classified, and none matched S1. In every mode, including `suppressed`, `Detect changes` keeps all of its current steps: the classifier and gate self-tests, the STAB-01 migration-order check and the documentation credential scan.
 
 Run-mode is independent of the A1 gate tier and the A4 desktop/macOS decision: those still decide *which* jobs a validating run needs.
 
@@ -256,7 +258,7 @@ V2 needs no change to `docs/agent-task-protocol.md`. V1 changes the approval pro
 | test, lint, type, build or DB failure | job logs, gate summary | convert to draft, return to dev thread; queue moves to next eligible PR (merge-queue §4) | yes if the fix changes behaviour (new commit always needs a fresh verdict) |
 | runner never allocated (macOS) | A4 `runner-retry-decide.sh` | A4 retries once automatically; A3 allows one operator re-run per SHA; second failure: infra-failure report, PR keeps its slot | no (same SHA) |
 | cancelled (superseded by push) | run conclusion | the newer run is the candidate; the older is ignored | per the push |
-| run never created or stuck queued | no check run / `queued` after 15 min | treat as not validated; re-mark ready is a no-op, so dispatch is **not** used as a substitute: convert to draft and back to ready once, recorded | no |
+| run never created or stuck queued | no check run / `queued` after 15 min | treat as not validated. Re-marking ready is a no-op and a dispatch never counts, so the **merge-queue thread** converts the PR to draft and back to ready **once**, recorded in the delegated operation record; a second miss is reported to Regan and the PR keeps its slot | no |
 | credential scan failure | Detect changes | stop; treat as a security incident per protocol | yes |
 
 A failed candidate never stalls unrelated PRs: the queue already takes the first *eligible* PR.
@@ -295,7 +297,7 @@ A failed candidate never stalls unrelated PRs: the queue already takes the first
 | T7 | Crash or missed event leaves a silent green | runner lost, workflow never triggered | never-created = blocked (probe); cancelled = failure; `ci-gate.sh` treats empty results as failure; queue requires an observed run id | none |
 | T8 | Privileged code runs PR content | `pull_request_target`/`workflow_run` | not used by A5; A4's retry runs default-branch code only and never checks out PR code | as reviewed in #156 |
 | T9 | Early-CI bypass of final validation | early green on a draft head treated as final | early never counts (§4.3); draft cannot merge | none |
-| T10 | Late discovery: defects surface only at the queue front | fewer intermediate runs | local validation evidence required before audit; sensitive paths keep early CI; nightly full suite on `main` unchanged | measured in §9.3; owner trade-off D-A5-3 |
+| T10 | Late discovery: defects surface only at the queue front | fewer intermediate runs | local validation evidence required before audit; S1 paths keep automatic early CI; security, migration and critical-fix work requests early CI before audit (§4.4); nightly full suite on `main` unchanged | measured in §9.3; owner trade-off D-A5-3 |
 | T11 | Credential pushed to a draft | suppressed mode | the documentation credential scan stays in `Detect changes` on every draft push | the repo is public: a push is exposure regardless; scan only detects |
 | T12 | Token scope creep | new workflows | A5 adds no workflow and no permission; `ci.yml` stays `contents: read` | none |
 
@@ -305,7 +307,7 @@ A failed candidate never stalls unrelated PRs: the queue already takes the first
 
 | Package | What it does | A5 touches | Compatibility | Regression coverage in A5B |
 |---|---|---|---|---|
-| A1 tiers (#143, merged) | `classify-gate-tier.sh`, tier-aware `ci-gate.sh`, credential gate | adds `RUN_MODE` to `ci-gate.sh`; reuses governance and keyword lists for §4.4 (source them, do not copy) | tiers apply unchanged in `early`/`final`; `suppressed` short-circuits before tiers | every existing `ci-gate.test.sh` case re-run with `RUN_MODE=final` and with empty mode; new cases for `suppressed` × every job result |
+| A1 tiers (#143, merged) | `classify-gate-tier.sh`, tier-aware `ci-gate.sh`, credential gate | adds `RUN_MODE` to `ci-gate.sh`; reuses the A1 governance list for the S1 scope in §4.4 (source it, do not copy) | tiers apply unchanged in `early`/`final`; `suppressed` short-circuits before tiers | every existing `ci-gate.test.sh` case re-run with `RUN_MODE=final` and with empty mode; new cases for `suppressed` × every job result |
 | A2 shards (#150, merged) | 3 shards + pooler + completeness | job `if:` gains `run_mode != 'suppressed'` | completeness job keeps its `always()` + tier condition plus mode | a suppressed run must show all four DB jobs skipped and the gate red |
 | A3 queue (#152, open) | verdict detection, SHA-pinned merge, bounded operator retry | merge-queue §5 step 2–4 refinements (§4.3); `verdict-status.sh` should report "not validated (draft)" separately from a real failure | additive; A5C edits `docs/merge-queue.md` only after #152 merges, as a governance change needing Regan's own approval | `verdict-status.test.sh` fixture for a suppressed gate |
 | A4 macOS (#156, open) | macOS only for native-affecting PRs; one retry of unallocated runners | desktop job `if:` gains mode condition | macOS decision unchanged in `early`/`final`; retry workflow sees suppressed runs as `failure` with no cancelled jobs → decides "not retried" (one ~10 s job per draft push; A5B may filter on the gate's error title to skip even that) | `runner-retry-decide.test.sh` fixture: suppressed run is never retried |
@@ -336,14 +338,23 @@ End-to-end (A5A harness `scripts/ci-probe/` run by hand or by the A5D measuremen
 | 9 | failed CI prevents merge | probe commit with a failing unit test, ready: gate `failure`, `mergeable_state: blocked` | e2e |
 | 10 | retries respect A4 | `runner-retry-decide.test.sh` fixtures: suppressed run → no retry; allocation failure → one retry; attempt 2 → none | unit |
 | 11 | `main`, nightly, release intact | `ci-run-mode.test.sh`: push/schedule/workflow_call/tag never `suppressed`; first `main` run after A5B merges checked by the queue | unit + post-merge |
-| 12 | security-sensitive early CI | draft touching `.github/` and a path with `tenant`: mode `early`, full tiered jobs run | e2e |
+| 12 | security-sensitive early CI | draft touching `.github/`: mode `early`, full tiered jobs run. Draft touching only a `tenant` path: `suppressed` (S1), and a recorded dispatch runs full CI on its head whose gate never satisfies protection or the queue | e2e |
 | 13 | sync conflict and content change trigger re-audit | A3 patch-id check fixture with a changed patch → `NOT COVERED` | unit |
 | 14 | stale or duplicate requests cannot merge | double ready; dispatch on old SHA then push; assert old SHA's green gate is not on the new head and merge with `sha` pin of old SHA is refused (409) | e2e |
 | 15 | crash or missed event cannot be green | gate with every upstream result empty or `cancelled` in every mode fails; never-created check = `blocked` | unit + e2e |
 
+### 8.1a Pre-implementation acceptance gate (audit of `ea244db`, correction 3)
+
+A5B may not merge, and A5C may not start, until A5A's automated probes show all of these on throwaway probe PRs, with run ids and SHAs posted on the A5A PR:
+
+1. **Ready event:** marking a synced draft ready starts a `pull_request` run with action `ready_for_review`, whose checkout is the PR's merge ref (`refs/pull/<n>/merge`, first parent = current `main` tip, second parent = the final head), and whose completed `CI gate` check run sits on the exact final head SHA; the PR then reads `clean`.
+2. **Early gate never counts:** on one probe PR, a recorded dispatch turns green on head X; then the PR is converted to draft and back to ready without a new commit. The queue procedure (§4.3 rule 4) selects only the post-ready `pull_request` gate, and before that run completes the PR reads `blocked`. Repeat with a new commit between the dispatch and the ready.
+3. **Suppressed run keeps its checks:** a suppressed run executes every self-test, the migration-order check and the documentation credential scan; a probe commit adding an out-of-order migration and one adding a test credential pattern each fail `Detect changes` while the PR is a draft.
+4. **Errors never suppress:** unit fixtures for a failed diff, an empty list, an unsafe path, a script error and a missing `draft` field each produce `early` or `final`, never `suppressed`; one e2e probe forces the diff failure (no merge commit available) and shows full jobs run.
+
 ### 8.2 Rollback
 
-Each package is one revertible PR. Reverting A5B restores full CI on every draft push with no other change: the queue's final-head rule never relied on drafts being suppressed. A "break glass" path needs no revert at all: any thread can mark a draft ready (full CI) or dispatch CI on the branch. If the suppressed gate ever misbehaves (for example, shows green), the queue halts per merge-queue §6 and A5B is reverted through the queue.
+Each package is one revertible PR. Reverting A5B restores full CI on every draft push with no other change: the queue's final-head rule never relied on drafts being suppressed. There is no development-thread bypass. Marking ready stays with the merge-queue thread even for testing; a development thread that needs CI evidence uses a recorded early dispatch, which never counts as the final run (§1.4, §4.3). Operational recovery (a final run never created or stuck) is the merge-queue thread's single, logged draft-and-ready cycle in §4.6, then Regan. If the suppressed gate ever misbehaves (for example, shows green), the queue halts per merge-queue §6 and A5B is reverted through the queue.
 
 ---
 
@@ -401,7 +412,7 @@ The defects that draft CI found were rare: 3 failing dev-stage runs out of 200. 
 | Package | Scope | Depends on | Owner gate |
 |---|---|---|---|
 | **CIQ-A5A** | `ci-run-mode.sh` + tests; `ci-gate.sh` `RUN_MODE` input + tests; e2e probe harness under `scripts/ci-probe/` (read-only API calls and throwaway PRs) | #156 merged (avoids `ci-gate.sh` conflict) | ChatGPT audit + merge verdict; touches CI governance (full tier) |
-| **CIQ-A5B** | `ci.yml`: `ready_for_review` trigger type, `run_mode` output, job conditions, gate input; `docs/ci.md` section; early-CI dispatch note | A5A | ChatGPT audit; e2e evidence from probe PRs 1–3, 5, 7–9, 12, 14, 15 before merge |
+| **CIQ-A5B** | `ci.yml`: `ready_for_review` trigger type, `run_mode` output, job conditions, gate input; `docs/ci.md` section; early-CI dispatch note | A5A, and every §8.1a probe passed | ChatGPT audit; e2e evidence from probe PRs 1–3, 5, 7–9, 12, 14, 15 before merge |
 | **CIQ-A5C** | `docs/merge-queue.md` §5 refinement (§4.3), `verdict-status.sh` "not validated (draft)" state, protocol wording for D-A5-1/D-A5-2 | A5B merged, #152 merged | Regan's own approval (approval-model documents) |
 | **CIQ-A5D** | measurement: runs per PR, suppressed vs final, macOS and DB jobs, late failures; compare against §9 after 2 weeks or 40 merges; rollback drill (revert on a probe branch) | A5B live | report only |
 
@@ -414,8 +425,8 @@ A5A and A5B can be one PR if the reviewer prefers; A5C must stay separate becaus
 | ID | Question | Options | Recommendation |
 |---|---|---|---|
 | **D-A5-1** | When may ChatGPT post the executable merge verdict? | V1: after final CI is green (adds ~36 min per PR at the queue front). V2: on the audited head before final CI, conditional on the existing mandatory green-final-gate safeguard (today's protocol) | **V2.** CI binds the commit, the verdict binds the code; both still required. V1 changes the approval procedure and needs Regan's own approval |
-| **D-A5-2** | Who marks a PR ready? | queue thread only, at the front, after sync / anyone when audit passes | **Queue thread only.** Early marking only wastes runs, never weakens safety |
-| **D-A5-3** | Automatic early CI for sensitive paths (§4.4)? | yes, as listed / no (request-only) | **Yes, scope S1** (`.github/**` and governance documents): measured 73% reduction of draft-stage full runs. Wider scopes S2 (plus migrations, 55%) and S3 (plus security keywords, 50%) miss the 70% target because nearly every module PR touches `tenancy.prisma` and `permissions.ts`; those PRs get early CI on request instead (§4.4, §9.3) |
+| **D-A5-2** | Who marks a PR ready? | merge-queue thread only, at the front, after sync / anyone when audit passes | **Merge-queue thread only**, with no development-thread exception, even for testing. Development threads that need CI evidence use a recorded early dispatch, which never counts (§4.4, §8.2) |
+| **D-A5-3** | Automatic early-CI scope (§4.4)? | S0 request-only / **S1** `.github/**` + governance docs / S2 S1 + migrations and privileged SQL / S3 S2 + A1 security keywords | **Yes, scope S1** (`.github/**` and governance documents): measured 73% reduction of draft-stage full runs. Wider scopes S2 (plus migrations, 55%) and S3 (plus security keywords, 50%) miss the 70% target because nearly every module PR touches `tenancy.prisma` and `permissions.ts`; those PRs get early CI on request instead (§4.4, §9.3) |
 | **D-A5-4** | Accept a red `CI gate` with title "Not validated (draft)" on every draft head? | yes / no (the only alternatives are green, forbidden, or no CI at all, which also drops the credential scan) | **Yes** |
 | **D-A5-5** | Rollout | A5A+A5B, then A5C, then 2-week A5D measurement / all at once | **Sequential**, after #152 and #156 merge |
 
