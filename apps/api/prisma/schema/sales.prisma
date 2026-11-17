@@ -91,6 +91,8 @@ model Opportunity {
   owner            Membership?          @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_owner_fkey")
   outcomes         OpportunityOutcome[]
   financeDocuments FinanceDocument[]
+  /// WF-1 §5.1: projects started from this opportunity (Sales itself never reads them).
+  sourceOfProjects Project[]
 
   @@unique([businessId, id])
   @@index([businessId, status, createdAt(sort: Desc), id])

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
 import { createCustomersClient, type CustomersClient } from './api/customers';
 import { createDashboardClient, type DashboardClient } from './api/dashboard';
+import { createSearchClient } from './api/search';
 import { createPeopleClient, type PeopleClient } from './api/people';
 import { createProjectsClient, type ProjectsClient } from './api/projects';
 import { createFinanceClient, type FinanceClient } from './api/finance';
@@ -83,6 +84,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const reporting = useMemo(() => reportingOverride ?? createReportingClient(apiBaseUrl, resolvedTransport), [reportingOverride, apiBaseUrl, resolvedTransport]);
   const scheduling = useMemo(() => schedulingOverride ?? createSchedulingClient(apiBaseUrl, resolvedTransport), [schedulingOverride, apiBaseUrl, resolvedTransport]);
   const dashboard = useMemo(() => dashboardOverride ?? createDashboardClient(apiBaseUrl, resolvedTransport), [dashboardOverride, apiBaseUrl, resolvedTransport]);
+  const searchClient = useMemo(() => createSearchClient(apiBaseUrl, resolvedTransport), [apiBaseUrl, resolvedTransport]);
   const dashboardClients = useMemo<DashboardClients>(() => ({ reporting, dashboard, projects, finance }), [reporting, dashboard, projects, finance]);
   const storage = useMemo(() => storageOverride ?? browserStorage(), [storageOverride]);
   const workspace = useWorkspace({ auth, tenancy, storage });
@@ -224,6 +226,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const current = route.slug === phase.context.business.slug && canOpen(route.route, navigation) ? route.route : HOME;
   const canReadProjects = navigation.available.some((z) => z.id === 'projects');
   const canReadCustomers = navigation.available.some((z) => z.id === 'customers');
+  const canReadSales = navigation.available.some((z) => z.id === 'sales');
   const canReadFinance = navigation.available.some((z) => z.id === 'finance');
   const userLabel = phase.user.name || phase.user.email;
   const target = current.zone === 'home' ? undefined : current.target;
@@ -237,6 +240,8 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
         client={customers} context={active} userLabel={userLabel} initialCustomerId={customerTarget(target).customerId} initialContactId={customerTarget(target).contactId} initialAction={intent}
         projects={canReadProjects ? { client: projects, onOpen: (id) => open({ zone: 'projects', target: id }) } : undefined}
+        sales={canReadSales ? { client: sales, onOpen: (id) => open({ zone: 'sales', target: id }), onViewAll: () => open({ zone: 'sales' }) } : undefined}
+        userId={phase.user.id}
         finance={canReadFinance ? { client: finance, onOpen: (target) => open({ zone: 'finance', child: target.startsWith('quote:') ? 'quotes' : target.startsWith('payment:') ? 'payments' : target.startsWith('statement:') ? 'receivables' : 'invoices', target }) } : undefined}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
@@ -315,6 +320,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       notice={phase.kind === 'ready' ? phase.notice ?? null : null}
       onDismissNotice={workspace.dismissNotice}
       onNavigate={open}
+      search={{ client: searchClient, onSessionEnded: workspace.retry }}
       onSelectBusiness={(next) => {
         setRoute(HOME);
         workspace.switchTo(next);

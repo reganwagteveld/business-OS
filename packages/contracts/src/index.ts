@@ -26,6 +26,7 @@ import {
 export { HealthResponse } from './health.ts';
 export * from './auth.ts';
 export * from './tenancy.ts';
+export * from './audit.ts';
 export * from './customers.ts';
 export * from './sales.ts';
 export * from './projects.ts';
@@ -72,7 +73,7 @@ import {
 import {
   ConvertQuoteRequest, CreateCreditNoteRequest, CreateInvoiceRequest, CreateQuoteRequest, CreateTaxRateRequest, DiscardDraftRequest, FinanceDocumentResponse,
   FinanceSettingsResponse, IssueDocumentRequest, ListCreditNotesQuery, ListFinanceDocumentsResponse, ListInvoicesQuery, ListNumberSeriesResponse,
-  ListQuotesQuery, ListTaxRatesQuery, ListTaxRatesResponse, NumberSeriesResponse, QuoteTransitionRequest, TaxRateResponse, UpdateCreditNoteRequest,
+  ListQuotesQuery, ListTaxRatesQuery, ProjectFinanceSummaryResponse, ListTaxRatesResponse, NumberSeriesResponse, QuoteTransitionRequest, TaxRateResponse, UpdateCreditNoteRequest,
   UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
   AllocatePaymentRequest, ApplyCreditRequest, CreditNoteCreditResponse, FinancePaymentResponse, InvoiceSettlementResponse, ListCustomerBalancesQuery,
   ListCustomerBalancesResponse, ListPaymentsQuery, ListPaymentsResponse, ReconciliationResponse, RecordPaymentRequest, ReverseAllocationRequest,
@@ -122,6 +123,7 @@ import {
   CreateSavedViewRequest, DeleteSavedViewResponse, ListSavedViewsQuery, ListSavedViewsResponse, ReportingCatalogResponse, ReportingDetailsRequest,
   ReportingDetailsResponse, ReportingQueryRequest, ReportingQueryResponse, RunSavedViewResponse, SavedViewResponse, UpdateSavedViewRequest,
 } from './reporting.ts';
+import { ListAuditEventsQuery, ListAuditEventsResponse } from './audit.ts';
 import { SearchRequest, SearchResolveRequest, SearchResolveResponse, SearchResponse } from './search.ts';
 
 export const API_VERSION = 'v1' as const;
@@ -138,6 +140,8 @@ export const endpoints = {
   getBusinessProfile: { method: 'GET', path: '/api/v1/b/:slug/business', response: BusinessProfileResponse },
   updateBusinessProfile: { method: 'PATCH', path: '/api/v1/b/:slug/business', request: UpdateBusinessProfileRequest, response: BusinessProfileResponse },
   listMembers: { method: 'GET', path: '/api/v1/b/:slug/members', response: MembersResponse },
+  /** Recorded changes, newest first (audit:read: OWNER and ADMIN). Follow nextCursor; each request covers at most 92 days. */
+  listAuditEvents: { method: 'GET', path: '/api/v1/b/:slug/audit-events', query: ListAuditEventsQuery, response: ListAuditEventsResponse },
   /** Role change ({ role }) or, A2-B, suspend/reactivate ({ status }). */
   changeMemberRole: { method: 'PATCH', path: '/api/v1/b/:slug/members/:membershipId', request: UpdateMemberRequest, response: MemberResponse },
   removeMember: { method: 'DELETE', path: '/api/v1/b/:slug/members/:membershipId', response: OkResponse },
@@ -289,6 +293,8 @@ export const endpoints = {
   moveTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/move', request: MoveTaskRequest, response: TaskResponse },
   // Finance Zone F1 (docs/finance-data-model.md). No DELETE endpoints: drafts are discarded, issued documents voided.
   listQuotes: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes', query: ListQuotesQuery, response: ListFinanceDocumentsResponse },
+  /** WF-1 §6.6.1: a project's figures per currency, derived from the ledger. finance:read + projects:read. */
+  getProjectFinanceSummary: { method: 'GET', path: '/api/v1/b/:slug/finance/projects/:projectId/summary', response: ProjectFinanceSummaryResponse },
   /** Optional Idempotency-Key header: a retried create returns the first draft. */
   createQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes', request: CreateQuoteRequest, response: FinanceDocumentResponse },
   getQuote: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes/:documentId', response: FinanceDocumentResponse },
