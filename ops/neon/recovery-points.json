@@ -314,6 +314,16 @@
         "status": "not-run"
       },
       "appliedAt": "2026-11-17T12:15:08Z"
+    },
+    {
+      "branchId": "br-lingering-salad-bbaxtnck",
+      "name": "rehearsal-sales-configuration-20261118b",
+      "kind": "testing",
+      "prs": [
+        135
+      ],
+      "createdAt": "2026-11-17T16:50:39Z",
+      "note": "Temporary S-CFG-1A rehearsal branch with the migration applied; kept for ChatGPT review. Deleting it needs Regan's approval."
     }
   ],
   "deleted": [
@@ -559,6 +569,22 @@
         "reason": "temporary WF-1B-1 rehearsal branch; migration applied, verified and merged; not a recovery point (it already contains the migration); nothing depends on it",
         "verification": "PR #110 merged 2026-11-17T12:31:07Z; 20261207000000_workflow_links finished, not rolled back, in live production _prisma_migrations (read-only); rehearsal evidence preserved in PR #110 issuecomment-6944525543 and docs/migration-readiness.md §9; rollback point is pre-workflow-links-migration (kept, present after deletion). Read-only Neon API: exact id/name/created_at, not default, not protected, ready, no child branches, compute idle, no running operations. Runbook §4.2 step 5 says delete after verification. Post-check: production health 200.",
         "recoveryRef": "pre-workflow-links-migration"
+      }
+    },
+    {
+      "branchId": "br-polished-recipe-bb3q6t3r",
+      "name": "rehearsal-sales-configuration-20261118",
+      "kind": "testing",
+      "prs": [
+        135
+      ],
+      "createdAt": "2026-11-17T16:33:20Z",
+      "deletion": {
+        "at": "2026-11-17T16:53:28Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-17 16:49:58 UTC: \"Create a fresh rehearsal branch rehearsal-sales-configuration-20261118b from production, re-run the persistent-connection timing probe at the current PR #135 head, then delete rehearsal-sales-configuration-20261118.\"",
+        "reason": "temporary S-CFG-1A rehearsal branch (PR #135); superseded by rehearsal-sales-configuration-20261118b for the re-measure. It had been reset to production at 16:49:24 UTC on Regan's 16:49:07 instruction and was not used again",
+        "verification": "Read-only Neon API before delete: exact id/name/created_at (16:33:20Z), not default, not protected, ready, no child branches, no running operations; its read_write compute was still awake from the post-reset read-only check (no session in use). Its first-run evidence is on PR #135 issuecomment-6954353326. After delete: 15 branches, production and the new 20261118b present."
       }
     }
   ],
