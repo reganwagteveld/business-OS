@@ -1,9 +1,15 @@
 # S-CFG: Sales pipeline and stage configuration (architecture and migration design)
 
-**Status:** v1.2, design only (v1.1 answered the ChatGPT audit of `5d30982`; v1.2 answers the focused re-audit of `8da7170`; see the revision notes below). Nothing in this document is implemented, no migration file exists and no production change is proposed for execution here.
+**Status:** v1.3, design only. Architecture AUDIT PASS at `0caeca0`; owner decisions D-SCFG-1..8 ACCEPTED by Regan on 2026-11-17 as recommended (v1.3 records them and applies the two non-blocking audit notes; no design change) (v1.1 answered the ChatGPT audit of `5d30982`; v1.2 answers the focused re-audit of `8da7170`; see the revision notes below). Nothing in this document is implemented, no migration file exists and no production change is proposed for execution here.
 **Base:** `main` at `06405a5` (2026-11-17). Latest migration on `main`: `20261206000000_search_indexes`. Open PR #110 (WF-1B-1) reserves `20261207000000_workflow_links`.
 **Owner of the work package:** Sales. Settings only links to it (Settings A3 §5 "Settings is a hub, not a second copy").
 **Related:** `docs/sales-data-model.md` (§2, §5, §8 rows 17 and 18), `docs/settings-a3-architecture.md` (§7.4, §8 row "Zone settings: Sales pipelines", gap G-A3-17), `docs/cross-zone-workflows-wf1.md` (D-WF1-04, D-WF1-16, §6.10 lock order), ZCR-1 draft PR #117 (S-CFG, D-ZCR-8), A3/A2-D draft PR #122 (Zone configuration hub).
+
+## Revision 1.3 (after AUDIT PASS at `0caeca0`)
+
+- Owner decisions D-SCFG-1..8 accepted by Regan on 2026-11-17, all as recommended (§15). Implementation (S-CFG-1A), the migration and any merge still need their own approvals.
+- Audit note 1: the D-SCFG-6 "Why" no longer says the stage cap bounds the bulk move (aligned with §11).
+- Audit note 2: §11 now says `statement_timeout` bounds each statement, not the archive as a whole; S-CFG-1A must also enforce a transaction deadline and prove rollback after a late audit-write failure (T-SC-15b).
 
 ## Revision 1.2 (re-audit of `8da7170`)
 
@@ -422,7 +428,7 @@ Any non-zero "must be 0" count is a data issue, and fixing it is a data change t
 - **Bulk move scope:** `UPDATE opportunities … WHERE stage_id = $archived` runs in the tenant client (business filter injected) and under RLS; the archived stage id has been re-read in this business first.
 - **No new external effect, job or provider.** No privileged SQL. No auth, admission or RLS policy change.
 - **Information exposure:** `openCount` per stage is visible to `sales:read`, which already lists every opportunity. Audit metadata carries ids and counts only, never names (names are tenant data, consistent with §6 of the Sales data model).
-- **Denial of service:** configuration sizes are bounded (20 active stages per pipeline, 10 active pipelines). The **bulk move is not bounded by those caps**: one stage can hold any number of open opportunities. It runs as one locking `SELECT` plus one `UPDATE` (plus one audit row per moved opportunity) under the configuration `statement_timeout` (30 s) and `lock_timeout` (5 s); if it exceeds them, the whole archive rolls back and returns `409 busy`, leaving nothing half-moved. The rehearsal (§8.2) times an archive that moves a populated stage, and if a realistic stage cannot be moved within the timeout the design falls back to batched moves before the archive (a later revision, not assumed here).
+- **Denial of service:** configuration sizes are bounded (20 active stages per pipeline, 10 active pipelines). The **bulk move is not bounded by those caps**: one stage can hold any number of open opportunities. It runs as one locking `SELECT` plus one `UPDATE` (plus one audit row per moved opportunity) under the configuration `statement_timeout` (30 s) and `lock_timeout` (5 s). `statement_timeout` bounds each statement separately, not the sum of the locking `SELECT`, the `UPDATE` and the per-opportunity audit inserts, so S-CFG-1A also enforces a transaction-level deadline (`SET LOCAL idle_in_transaction_session_timeout` plus an application deadline checked between statements, within the route's own time limit); if it exceeds them, the whole archive rolls back and returns `409 busy`, leaving nothing half-moved. The rehearsal (§8.2) times an archive that moves a populated stage, and if a realistic stage cannot be moved within the timeout the design falls back to batched moves before the archive (a later revision, not assumed here).
 
 ## 12. Audit
 
@@ -462,6 +468,7 @@ S-CFG-1A must pass all of these; T-SC-20..27 on real PostgreSQL (`pnpm test:inte
 | T-SC-13 | Trigger G1 via direct SQL as `bos_app`: change `pipeline_id` → `SA004`; archive with open opportunity → `SA002`; last stage → `SA003` |
 | T-SC-14 | Trigger G2 via direct SQL: insert OPEN into archived stage → `SA001`; update a WON row's other columns in an archived stage → allowed |
 | T-SC-15 | Stage archive with ≥ 1 live (OPEN, non-archived) opportunity and a target: all moved, stage archived, `config_version` +1. Without a target: `409 has_open_opportunities`, nothing changed. Fault injection through a test-only hook between steps 6 and 7 that inserts an OPEN opportunity into the stage in the same transaction, so G1 raises `SA002` at step 7 → whole transaction rolled back, no opportunity moved, no audit rows |
+| T-SC-15b | Late failure: an injected error on the last per-opportunity audit insert (and, separately, an exceeded transaction deadline) rolls back every move, the archive and the `config_version` bump |
 | T-SC-16 | Restore of an OPEN archived opportunity in an archived pipeline, with and without `stageId` → `409 archived_reference` |
 | T-SC-20 | Race: stage archive vs opportunity move into that stage (both orders, with a barrier) → never an OPEN row in an archived stage |
 | T-SC-21 | Race: stage archive vs opportunity create into that stage |
@@ -493,7 +500,7 @@ S-CFG-1A and S-CFG-1B can be built in parallel against the contract in §6 if th
 
 ## 15. Owner decisions
 
-Recommendations are marked. None changes security, cost or an external effect.
+**All eight ACCEPTED by Regan on 2026-11-17 as recommended** (decision card in the S-CFG project thread). None changes security, cost or an external effect.
 
 | ID | Decision | Options | Recommendation | Why |
 |---|---|---|---|---|
@@ -502,7 +509,7 @@ Recommendations are marked. None changes security, cost or an external effect.
 | **D-SCFG-3** | Stage names unique within a pipeline (case-insensitive, active stages only) | Yes / No | **Yes** | Duplicate names make the board, filters and reports ambiguous |
 | **D-SCFG-4** | Stage default probability | (a) hint only: pre-fills new opportunities, never changes an existing opportunity's probability (b) a stage move also sets probability to the stage default | **(a)** | Keeps user-entered values authoritative (same spirit as D-WF1-04); weighted forecast is deferred (D-R2D-5) |
 | **D-SCFG-5** | Who configures | (a) OWNER and ADMIN (`sales:manage`), MANAGER read-only (b) also MANAGER | **(a)** | Matches the existing role policy and Settings A3 §8 |
-| **D-SCFG-6** | Limits | 1–20 active stages per pipeline; 10 active pipelines per business | **Accept** | 20 matches the existing create contract; bounds the bulk move and the UI |
+| **D-SCFG-6** | Limits | 1–20 active stages per pipeline; 10 active pipelines per business | **Accept** | 20 matches the existing create contract and keeps the configuration screen usable. It does not bound the bulk move, which depends on how many open opportunities one stage holds (§11) |
 | **D-SCFG-7** | Renames apply to history | (a) live names everywhere, including won/lost history (b) snapshot the stage name on each outcome | **(a)** | No schema or data duplication; ids in audit keep the true record; rename is the user's intent |
 | **D-SCFG-8** | Stage-transition history for funnel and conversion reporting | (a) defer; the audit log is the record (b) add an `opportunity_stage_events` table in S-CFG-1 | **(a)** | Not needed for configuration. **Not a promise of later reconstruction:** stage history before a ledger exists may be incomplete or unrecoverable (opportunity creation writes no stage-entry event, and audit retention and completeness are not designed for analytics). Accurate funnel and conversion reporting needs a separate, complete event ledger designed with WF-7 / R-series and counted only from its start date |
 
