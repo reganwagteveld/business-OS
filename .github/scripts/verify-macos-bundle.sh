@@ -34,6 +34,7 @@ else
 fi
 
 dmg="$(ls "$bundle"/dmg/*.dmg 2>/dev/null | head -n1 || true)"
+[ -z "$dmg" ] || dmg="$(cd "$(dirname "$dmg")" && pwd)/$(basename "$dmg")"
 if [ -n "$dmg" ] && hdiutil verify "$dmg" > "$evidence/hdiutil-verify.txt" 2>&1; then check "disk image verifies" ok; else check "disk image verifies" bad "${dmg:-no dmg}"; fi
 
 tar -C "$(dirname "$app")" -czf "$evidence/app.tar.gz" "$(basename "$app")"
