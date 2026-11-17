@@ -15,9 +15,9 @@ Production is an **invite-only private beta**: platform admission and the right 
 
 ## Working model
 
-- **Regan** is the owner and makes every final decision.
+- **Regan** is the owner and the final authority on business strategy, significant risk acceptance and every escalation. Routine technical approval is delegated to ChatGPT; `docs/agent-task-protocol.md` "Approvals" is the canonical approval policy and wins over any other doc.
 - **Claude on Regan's Mac** (a Remote Control session in the local checkout) is the primary developer and owns each active PR end to end: code, tests, CI, Vercel and Neon. Cloud threads cannot reach the production database.
-- **ChatGPT** does independent architecture, security and quality audits. Regan relays its findings.
+- **ChatGPT** does independent architecture, security and quality audits and posts them, and its `APPROVED — EXECUTE` verdicts, directly as PR comments through its GitHub connector.
 - **One thread, one branch and one draft PR per numbered piece of work** (for example A2-B, P3-A, GS1). Fixes for that work stay in the same thread and PR.
 - The roadmap is GitHub issue #55.
 
@@ -34,7 +34,7 @@ Always confirm framework versions, paths, commands, migrations and API contracts
 - **Tenant isolation** (architecture.md §7.3, ADR 0004): every tenant table has `ENABLE` and `FORCE ROW LEVEL SECURITY`; the app connects as `bos_app` (no owner rights, no `BYPASSRLS`); tenant code runs inside `withTenant` / `TenantDb`; child rows use **composite tenant foreign keys** `(business_id, parent_id)`; tenant data is never cached without `businessId` in the key; `tests/isolation` and a schema test enforce all of this in CI.
 - **Roles:** Owner, Admin, Manager, Member with module-specific permission keys. Do not assume any role can read a record or field without checking the implementation.
 - **Security invariants:** enforce tenant isolation server-side and in SQL; check record-level and field-level authority; never rely on UI gating alone; preserve audit logs and optimistic concurrency/locking (ADR 0007, ADR 0008) where they exist.
-- **Protected:** the production database, authentication and admission policies, migration execution, live integrations, scheduled jobs and credentials. Nothing touches production without Regan's explicit approval (see the protocol).
+- **Protected:** the production database, authentication and admission policies, migration execution, live integrations, scheduled jobs and credentials. Nothing touches production without a verified approval for that exact operation: a ChatGPT `APPROVED — EXECUTE` verdict for routine merges and additive migrations, Regan's explicit approval for every escalation and non-delegated action (see the protocol, "Approvals").
 
 ## Current product map — verify against main
 
