@@ -93,6 +93,12 @@ describe('connecting', () => {
     expect(api.callsTo(/POST .*\/connections\/authorize$/)[0]!.body).toEqual({ provider: 'GOOGLE' });
   });
 
+  it('says so, with no usable button, when connecting is not switched on for the deployment', async () => {
+    setup({ comms: { providers: [{ provider: 'GOOGLE', configured: false, revokesOnDisconnect: false }, { provider: 'MICROSOFT', configured: false, revokesOnDisconnect: false }] } });
+    expect(await screen.findByText('Connecting mailboxes is not switched on for this deployment yet')).toBeTruthy();
+    for (const b of screen.getAllByRole('button', { name: /Connect (Google|Microsoft 365) mailbox/ })) expect((b as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('refuses a consent address on any other host', async () => {
     const { user, openConsent, api } = setup();
     await screen.findByText('No mailboxes connected');

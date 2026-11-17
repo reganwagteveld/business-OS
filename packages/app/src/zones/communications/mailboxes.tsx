@@ -17,8 +17,8 @@ export function ConnectButtons({ providers, busy, onConnect }: { providers: Mail
     <div className="flex flex-wrap gap-2">
       {providers.map((p) => (
         <Button key={p.provider} variant="outline" disabled={busy || !p.configured} onClick={() => onConnect(p.provider)}
-          title={p.configured ? undefined : 'Not set up for this deployment yet'}>
-          Connect {PROVIDER_NAME[p.provider]} mailbox{p.configured ? '' : ' (not set up)'}
+          title={p.configured ? undefined : 'Not switched on for this deployment yet'}>
+          Connect {PROVIDER_NAME[p.provider]} mailbox{p.configured ? '' : ' (not available)'}
         </Button>
       ))}
     </div>
@@ -59,7 +59,8 @@ export function Mailboxes({ client, slug, perms, providers, team, locale, onConn
       {perms.canConnect && providers ? (
         <section aria-labelledby="connect-heading" className="space-y-2">
           <h2 id="connect-heading" className="text-sm font-semibold">Connect your own mailbox</h2>
-          <p className="text-sm text-muted-foreground">Signs you in at the provider. Connections are still being tested with approved accounts only; only providers set up for this deployment can be used.</p>
+          <p className="text-sm text-muted-foreground">Signs you in at the provider. Connections are still being tested with approved accounts only.</p>
+          {providers.every((p) => !p.configured) ? <Alert tone="warning"><AlertTitle>Connecting mailboxes is not switched on for this deployment yet</AlertTitle></Alert> : null}
           <ConnectButtons providers={providers} busy={connecting} onConnect={(p) => void connect(p)} />
           {connectError ? <Alert tone="danger"><AlertTitle>{connectError}</AlertTitle></Alert> : null}
         </section>

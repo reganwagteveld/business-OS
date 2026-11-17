@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 // Provider configuration for this suite only (test doubles, never real values). Set before any
 // module reads the environment.
 process.env.COMMUNICATIONS_CREDENTIAL_KEYS = `test-k2:${randomBytes(32).toString('base64')},test-k1:${randomBytes(32).toString('base64')}`;
+process.env.COMMUNICATIONS_CONNECT_ENABLED = 'true';
 process.env.GOOGLE_OAUTH_CLIENT_ID = 'fake-google-client';
 process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'fake-google-secret';
 process.env.MICROSOFT_OAUTH_CLIENT_ID = 'fake-microsoft-client';
