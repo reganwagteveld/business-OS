@@ -2,7 +2,7 @@
 
 **Revision 2 (2026-11-17):** answers the ChatGPT audit of `bbb76db` (CHANGES REQUIRED): exclusive reservation and locking protocol (§8.3), lease fencing, late writes and crash table (§8.4), removal journal outside the rollback boundary with restore runbook and failed-delete inventory (§12.2 to §12.5), guard exception for the removal hash and terminal states (§7.1), no automatic provider fallback and residency evidence (§5, G-1b), corrected branching claim (§5) and the PDF risk wording (§11.2).
 
-**Revision 4 (2026-11-17):** records Regan's decisions D-RCPT-1, 5, 13 and 14 (§17); scan-from-day-one quarantine design and the finding that Neon has no managed scanner, raised as D-RCPT-15 (§11); provider evidence checklist (§20); itemised usage estimates (§21).
+**Revision 4 (2026-11-17):** records Regan's decisions D-RCPT-1, 5, 13 and 14 (§17); scan-from-day-one quarantine design and the finding that Neon has no managed scanner, raised as D-RCPT-15 (§11); provider evidence checklist (§20); itemised usage estimates (§21); Regan's timing gate, D-RCPT-16: no paid provisioning, billable usage or activation before client outreach begins (§16, §17, §21).
 
 **Revision 3 (2026-11-17):** answers the conditional pass on `b54c7b3`: a storage-side bucket fence (create-only puts and tombstones) or a provider-confirmed completion bound or quarantine, with `clock_timestamp()` after locks (§8.4, G-1c); isolated object namespace, journal high-water marks and usage recomputation for restores (§12.5); unknown journal outcomes and the `REMOVING` state (§12.2, §7.1).
 
@@ -713,9 +713,17 @@ Expense list and detail DTOs gain `attachmentCount` (additive), so the list can 
 
 F-RCPT-1 and 2 can be built and tested without any provider account.
 
+**Owner timing gate (D-RCPT-16, Regan, 2026-11-17):** "we will not activate or pay for this until we actually start going to potential clients". Until Regan begins approaching potential clients:
+
+- no receipt store, scanner or separate journal project is provisioned, no billable usage is created and live receipt processing is not enabled (F-RCPT-3 cannot start);
+- F-RCPT-1 and F-RCPT-2 do not start just because this document merges. They need their own authorisation, and any authorised local work uses local or test doubles only and creates no paid resources;
+- proposal, evidence (§20) and cost (§21) preparation may continue.
+
+Starting client outreach is the earliest point to revisit setup, not permission to execute. Provider evidence, security and design review, budget approval and the operation-specific owner, setup and activation approvals still apply.
+
 ## 17. Owner decisions (Regan)
 
-D-RCPT-1, 5, 13 and 14 were decided by Regan on 2026-11-17 (owner decision record on PR #128). They are policy decisions only: they do not authorise implementation, provisioning, spending, credentials or activation.
+D-RCPT-1, 5, 13, 14 and 16 were decided by Regan on 2026-11-17 (owner decision records on PR #128). D-RCPT-15 is a proposal: the timing gate does not select a primary provider. They are policy decisions only: they do not authorise implementation, provisioning, spending, credentials or activation.
 
 | # | Decision | Recommendation | Why it is Regan's |
 |---|---|---|---|
@@ -733,6 +741,7 @@ D-RCPT-1, 5, 13 and 14 were decided by Regan on 2026-11-17 (owner decision recor
 | D-RCPT-12 | First scope | Expenses only; documents and payments later | Scope |
 | D-RCPT-13 | Removal journal location (shared with E1 open decision 3) | **ACCEPTED IN PRINCIPLE (Regan, 2026-11-17):** a separate Neon project outside the production rollback boundary, separate credentials, append-only app access. Usage estimate in §21 must be presented before provisioning; no budget approved | Decided in principle |
 | D-RCPT-14 | Provider if G-1 fails | **ACCEPTED (Regan, 2026-11-17):** AWS S3 `us-east-1`. US data-location rule kept; no R2 exception | Decided |
+| D-RCPT-16 | Timing of spending and activation | **ACCEPTED (Regan, 2026-11-17):** no receipt-provider, scanner or journal provisioning, billable usage or activation before Regan begins approaching potential clients; implementation does not start merely because a docs PR merges. See §16 | Decided |
 | D-RCPT-15 | Scanning arrangement and therefore the store (new evidence, §11.2) | **S3 `us-east-1` + GuardDuty as one integrated path**, since Neon has no managed scanner. Alternatives keep Neon but add a scanning vendor, a hosted ClamAV, or AWS alongside Neon | Changes D-RCPT-1's outcome; adds AWS (already the accepted fallback) and usage-billed scanning (§21) |
 
 ## 18. Open legal questions (not answered here)
@@ -800,5 +809,5 @@ without it in brackets.
 | Journal project count | Launch allows 100 projects (verified) | no charge | no charge |
 | **Journal total** | | **≈ $0.25/month** | **≈ $2 to $20/month (worst case)** |
 
-These are estimates for discussion, not a budget. No spending ceiling has been approved. Before provisioning,
+These are estimates for discussion, not a budget, a spending cap or independently verified costs. No spending ceiling has been approved, and under D-RCPT-16 nothing is paid for before client outreach begins. Before provisioning,
 the activation PR re-prices them from the providers' pages on that day.
