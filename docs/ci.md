@@ -18,17 +18,17 @@ Static, unit, database and build jobs never depend on which files changed. Only 
 
 ## When the desktop matrix runs
 
-- Every push to `main` or `release/**`, every `v*` tag, every manual run (Actions → CI → Run workflow) and the weekly scheduled run on `main`.
-- On pull requests, when any changed path matches `.github/scripts/classify-changes.sh`:
-  - `apps/desktop/src-tauri/**` (Rust, Cargo files, `tauri.conf.json`, capabilities, icons, `build.rs`)
-  - `apps/desktop/scripts/**`, `apps/desktop/package.json`, `apps/desktop/vite.config.*`, `apps/desktop/index.html`
-  - `pnpm-lock.yaml`, `pnpm-workspace.yaml`, root `package.json`, `.nvmrc`, `rust-toolchain*`
-  - `.github/**`
-- If the changed files cannot be listed, the classifier selects the desktop matrix (fail closed).
+The native desktop matrix (Linux compile check, macOS, Windows) is the only conditional job. Static checks, unit tests, database tests and build verification run on every run, including documentation-only ones. `.github/scripts/changed-files.sh` lists the changed paths and `.github/scripts/classify-changes.sh` classifies them (CI-2A, design in [ci-2-runner-efficiency.md](ci-2-runner-efficiency.md)). The result is a **tier**:
 
-Desktop frontend source (`apps/desktop/src/**`) and shared packages (`packages/**`) do not trigger the native matrix: the build verification job type-checks and builds the desktop frontend on every pull request, and the boundary and client-security tests cover them. The native build is repeated on the next push to `main`.
+| Tier | Paths (every changed path must match) | Matrix |
+|---|---|---|
+| `docs` | `docs/**` markdown and images, root `*.md` | skipped on pull requests and on pushes to `main` |
+| `server` | `docs` paths plus files under `apps/api/{src,tests,prisma}/` or `apps/web/src/` whose extension is `.ts`, `.tsx`, `.sql`, `.prisma` or `.css`, at any depth (hidden files, `*.config.*`, `tsconfig*`, manifests and lockfiles are never `server`) | skipped on pull requests only; the push to `main` still runs it |
+| `full` | anything else: desktop source, `packages/**`, manifests and lockfiles anywhere, tool config, `.github/**`, unknown paths | runs |
 
-When you change the rules, update the self-test (`classify-changes.test.sh`) in the same commit.
+Always `full`: pushes to `release/**`, `v*` tags, manual runs and the weekly schedule. Fail-closed rules: an empty list, a diff that cannot be established (checkout is not a merge commit, a push that is not a single step from the previous tip, missing or zero `before`), a path with `..`, `//` or a leading `/`, and a classifier error all select `full`. Renames and copies are listed as a deletion plus an addition, so moving code into `docs/` still lists the code path. A mixed change is `full` as soon as one path is not on the allow-list.
+
+Change the rules only together with `classify-changes.test.sh` (and `changed-files.test.sh` for diff handling). The self-tests run in "Detect changes" before the classifier is used.
 
 ## Nightly validation (CI-2B)
 
@@ -46,7 +46,7 @@ Not validated, and never reported as passed: code signing, notarisation, auto-up
 
 ## The gate
 
-`.github/scripts/ci-gate.sh` (self-tested by `ci-gate.test.sh`) fails when any of these is not `success`: Detect changes, Static checks, Unit tests, Database tests, Build verification. The desktop matrix must also be `success` unless the classifier explicitly reported `desktop=false`. The gate uses `if: always()`, so it reports a failure (not a skip) when jobs before it fail or are cancelled. A run that never completes leaves `CI gate` pending, which blocks merge.
+`.github/scripts/ci-gate.sh` (self-tested by `ci-gate.test.sh`) fails when any of these is not `success`: Detect changes, Static checks, Unit tests, Database tests, Build verification. The desktop matrix must also be `success` unless the classifier job succeeded and explicitly reported `desktop=false` with tier `docs` or `server`; a skip with any other tier, a missing tier or a failed classifier fails the gate. The gate uses `if: always()`, so it reports a failure (not a skip) when jobs before it fail or are cancelled. A run that never completes leaves `CI gate` pending, which blocks merge.
 
 Do not mark individual jobs as required: GitHub treats a skipped required job as passing.
 
