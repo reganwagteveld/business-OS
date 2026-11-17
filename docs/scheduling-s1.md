@@ -217,14 +217,9 @@ Further rules:
 
 The UI ships no fake appointments.
 
-## 7. Integration step (deferred)
+## 7. Integration step (done in S3)
 
-The approved plan was to keep shared navigation untouched while People P1 is active, so **this PR does not register the Zone** in the shell. To switch it on, apply [scheduling-s1-integration.patch](./scheduling-s1-integration.patch) (`git apply docs/scheduling-s1-integration.patch`). It makes two edits:
-
-- `packages/app/src/shell/registry.ts` gets a `scheduling` ZoneId and a registry entry: "Schedule", route `/schedule`, order 45, `requires: ['scheduling:read']`, and the existing `operations` icon, so no new icon is needed.
-- `packages/app/src/app.tsx` gets a `scheduling` client prop and override, and a `current.zone === 'scheduling'` branch that renders `<SchedulingZone>`.
-
-The patch applies cleanly on top of this branch. The screenshots in the PR were taken with it applied. It was regenerated in S2 (2026-11-16) against main at `f91669e`, after People P2 (#56) changed both files. With it applied, app typecheck and all 430 app tests pass. It is **not applied**: navigation stays off until Regan approves switching it on.
+The Zone was built unregistered while People P1 was active. S3 (docs/scheduling-s3.md) registered it in the shell and removed the old integration patch, which no longer applied.
 
 ## 8. Shared files touched (minimal, additive)
 

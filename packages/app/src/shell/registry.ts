@@ -11,7 +11,7 @@ import type { IconName } from './icons';
  * because its entry exists, and the API still checks every request.
  */
 
-export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'people' | 'operations' | 'reporting' | 'settings';
+export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'scheduling' | 'people' | 'operations' | 'reporting' | 'settings';
 
 export interface ZoneChild {
   /** Stable within its Zone. */
@@ -63,6 +63,17 @@ export const ZONES: readonly ZoneDefinition[] = [
       { id: 'expenses', label: 'Expenses', route: '/finance/expenses' },
       { id: 'catalog', label: 'Products & services', route: '/finance/catalog' },
       { id: 'settings', label: 'Settings', route: '/finance/settings' },
+    ],
+  },
+  // S3: Scheduling, after Finance and before People. `scheduling:read` opens the Zone; every write inside it checks its own
+  // key (create, update, cancel, manage_calendars, manage_resources) and the API enforces all of them again.
+  // "Resource schedule" is the existing S2 timeline of resource bookings: there is no separate bookings API.
+  {
+    id: 'scheduling', name: 'Scheduling', description: 'Calendars, events and resources', icon: 'calendar', route: '/scheduling', order: 45, requires: ['scheduling:read'], availability: 'built',
+    children: [
+      { id: 'calendar', label: 'Calendar', route: '/scheduling' },
+      { id: 'timeline', label: 'Resource schedule', route: '/scheduling/resource-schedule' },
+      { id: 'resources', label: 'Resources', route: '/scheduling/resources' },
     ],
   },
   { id: 'people', name: 'People', description: 'Your team and their work', icon: 'people', route: '/people', order: 50, requires: ['people:read'], availability: 'built' },

@@ -203,7 +203,7 @@ describe('Scheduling Zone', () => {
   it('sets up the default calendar on first open, then shows this week with its events', async () => {
     const api = fakeApi({ calendars: [], events: [] });
     renderZone(api);
-    expect(await screen.findByRole('heading', { level: 1, name: 'Schedule' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Scheduling' })).toBeTruthy();
     await waitFor(() => expect(api.calls.some((c) => c.path === '/calendars/default' && c.method === 'POST')).toBe(true));
     expect(await screen.findByText('Nothing scheduled this week.')).toBeTruthy();
     // en-AU weeks start on Monday: 7–13 July 2031, as instants of Perth midnight.
