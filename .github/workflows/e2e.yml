@@ -1,0 +1,80 @@
+name: E2E golden path
+# WP-T1: full-stack golden-path E2E suite (tooling/e2e). NON-GATING: this workflow is separate from CI, is not
+# part of `CI gate`, changes no existing job or script, and must not be made a required check until it has a
+# documented flake rate and Regan has decided to promote it (same rule as the visual-regression workflow).
+# It builds the real API, serves it with `next start` against a throwaway PostgreSQL service container with
+# generated test-only credentials, and drives it over HTTP. No production credentials, data, email or payment
+# provider are reachable: the server environment is built from scratch (tooling/e2e/scripts/guard.mjs).
+on:
+  pull_request:
+    paths:
+      - 'tooling/e2e/**'
+      - 'apps/api/**'
+      - 'packages/contracts/**'
+      - 'docker/init/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    name: E2E golden path (full stack, non-gating)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.10
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: e2e_ci_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      E2E_ADMIN_URL: postgresql://postgres:e2e_ci_only@127.0.0.1:5432/postgres
+      E2E_REPORT_JSON: ${{ github.workspace }}/tooling/e2e/test-results/results.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-workspace
+      - name: Run the suite (provision, migrate, build, serve, test, drop)
+        id: suite
+        run: pnpm --filter @business-os/e2e e2e
+      - name: Summary
+        if: always()
+        env:
+          OUTCOME: ${{ steps.suite.outcome }}
+        run: |
+          {
+            echo "## E2E golden path (non-gating)"
+            echo
+            if [ -f tooling/e2e/test-results/results.json ]; then
+              node -e '
+                const r = require("./tooling/e2e/test-results/results.json");
+                console.log(`Tests: ${r.numPassedTests} passed, ${r.numFailedTests} failed, ${r.numPendingTests} skipped, in ${r.numTotalTestSuites} suites.`);
+                for (const f of r.testResults) console.log(`- ${f.name.split("/tooling/e2e/")[1]}: ${f.status}`);
+              '
+            else
+              echo "No results file: the suite did not run to the end ($OUTCOME)."
+            fi
+            echo
+            echo "Disposable PostgreSQL, generated test-only credentials, e-mail transport \`log\`, no payment provider. Not a substitute for the desktop-shell, pooler or production smoke checks."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: tooling/e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
