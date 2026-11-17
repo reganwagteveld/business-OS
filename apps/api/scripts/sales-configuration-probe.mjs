@@ -48,9 +48,11 @@ async function run(kind, sql, end) {
   if (rows[0]?.bypass) stop('the probe must connect as bos_app, not a role that bypasses RLS');
   await client.query(sql); // warm-up, not timed
   const samples = [];
+  const starts = [];
   let errors = 0;
   while (Date.now() < end) {
     const t = performance.now();
+    const startedAt = Date.now();
     try {
       await client.query(sql);
     } catch {
@@ -59,18 +61,30 @@ async function run(kind, sql, end) {
     }
     const d = performance.now() - t;
     samples.push(d);
+    starts.push(startedAt);
     if (d < interval) await sleep(interval - d);
   }
   await client.end();
   const median = quantile(samples, 0.5);
   const max = samples.length ? Math.max(...samples) : 0;
-  return { kind, rounds: samples.length, errors, median, p99: quantile(samples, 0.99), max, stall: max - median };
+  const at = samples.indexOf(max);
+  // Samples clearly above the round trip (median + 100 ms): the window in which the probe was blocked.
+  const slow = samples.map((d, i) => ({ d, i })).filter(({ d }) => d > median + 100);
+  const window = slow.length
+    ? `${new Date(starts[slow[0].i]).toISOString()} to ${new Date(starts[slow.at(-1).i] + slow.at(-1).d).toISOString()}`
+    : 'none';
+  return {
+    kind, rounds: samples.length, errors, median, p99: quantile(samples, 0.99), max, stall: max - median,
+    longestAt: at >= 0 ? new Date(starts[at]).toISOString() : 'none', slowCount: slow.length, window,
+  };
 }
 
 const end = Date.now() + seconds * 1000;
+console.log(`probe start ${new Date().toISOString()}, interval ${interval} ms, ${seconds} s (run the deploy now, and record its start and end times in UTC)`);
 const results = await Promise.all(Object.entries(kinds).map(([k, sql]) => run(k, sql, end)));
 const ms = (x) => `${Math.round(x)} ms`;
 for (const r of results) {
   console.log(`probe ${r.kind}: rounds ${r.rounds}, errors ${r.errors}, median ${ms(r.median)}, p99 ${ms(r.p99)}, longest ${ms(r.max)}, longest minus median ${ms(r.stall)}`);
+  console.log(`probe ${r.kind}: longest sample started ${r.longestAt}; samples over median + 100 ms: ${r.slowCount}; blocked window: ${r.window}`);
 }
 if (results.some((r) => r.errors > 0)) stop('probe statements failed; check the URL and business id');

@@ -111,8 +111,8 @@ Keep the raw output in the private Mac session. Post only the pass/fail summary 
    node scripts/sales-configuration-probe.mjs    # terminal 2, runs 30 s
    pnpm exec prisma migrate deploy               # terminal 1, against the rehearsal branch
    ```
-   The probe keeps two connections open and samples every 100 ms, so connection set-up is never timed. Its median is the network round trip; **longest minus median** is the stall the migration caused.
-   **Repeating a measurement** on a branch where the migration is already applied: `SCFG_RESET_TARGET=rehearsal psql "$ADMIN_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/sales-configuration-rehearsal-reset.sql` drops the migration's objects and ledger rows on the **rehearsal branch only**. Re-run §3 on the branch (PASS, 0 resolved attempts), then repeat this step and step 8. No new Neon branch is needed.
+   The probe keeps two connections open and samples every 100 ms (10 Hz), so connection set-up is never timed. Its median is the network round trip; **longest minus median** is the stall the migration caused. It also prints when the longest sample started and the **blocked window** (first to last sample over median + 100 ms), in UTC. Record the deploy's start and end in UTC (`date -u` before and after) so the blocked window can be matched to the apply. Post both probe lines per kind, the deploy times, and the round and error counts.
+   **Repeating a measurement.** Preferred (ChatGPT review, 2026-11-17): a fresh rehearsal branch from production, after the branch-budget check in step 1 and any cost approval Regan must give. If Regan prefers no extra branch, the existing rehearsal branch can be reset instead: `SCFG_RESET_TARGET=rehearsal psql "$ADMIN_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/sales-configuration-rehearsal-reset.sql` drops the migration's objects and ledger rows on the **rehearsal branch only**. Re-run §3 on the branch (PASS, 0 resolved attempts), then repeat this step and step 8. No new Neon branch is needed.
 8. **Rehearsal checks** on the branch:
    ```sh
    export SCFG_REHEARSAL_APP_URL=<bos_app URL, rehearsal branch, direct>
