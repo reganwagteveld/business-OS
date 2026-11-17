@@ -114,6 +114,11 @@ model Business {
   peopleLeavePolicies            PeopleLeavePolicy[]
   peopleLeaveRevisions           PeopleLeavePolicyRevision[]
   peopleLeaveAssignments         PeopleLeavePolicyAssignment[]
+  peopleLeaveAccounts            PeopleLeaveAccount[]
+  peopleLeaveBuckets             PeopleLeaveBucket[]
+  peopleLeaveTransactions        PeopleLeaveTransaction[]
+  peopleLeaveEntries             PeopleLeaveEntry[]
+  peopleLeaveAuthorisations      PeopleLeaveAuthorisation[]
 
   @@map("businesses")
 }
@@ -133,12 +138,13 @@ model Membership {
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  ownedCustomers     Customer[]
-  ownedOpportunities Opportunity[]
-  ownedProjects      Project[]
-  assignedTasks      ProjectTask[]
-  linkedEmployees    PeopleEmployee[]
-  mailboxGrants      MailConnectionMember[]
+  ownedCustomers      Customer[]
+  ownedOpportunities  Opportunity[]
+  ownedProjects       Project[]
+  assignedTasks       ProjectTask[]
+  linkedEmployees     PeopleEmployee[]
+  mailboxGrants       MailConnectionMember[]
+  leaveAuthorisations PeopleLeaveAuthorisation[]
 
   @@unique([businessId, userId])
   @@unique([businessId, id])

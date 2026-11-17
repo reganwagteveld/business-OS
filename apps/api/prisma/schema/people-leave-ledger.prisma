@@ -1,0 +1,216 @@
+// People P3-C1 (docs/people-leave-p3c-ledger-architecture.md §C, §L): the leave balance ledger core.
+// Accounts (one per employee and leave type, the lock anchor), leave-year buckets, immutable ledger
+// transactions and their signed hour entries, and the (empty, write-gated) correction authorisations.
+//
+// Tenant tables with forced RLS, a fail-closed restrictive read policy and composite (business_id, …)
+// foreign keys. The CHECKs, guard and stage-gate triggers, deferred invariants, partial unique indexes,
+// deferrable self-references, column grants and read policies that Prisma cannot express live in
+// migration 20261211000000_people_leave_ledger. No DELETE or TRUNCATE grant on any of them.
+//
+// C1 only: no accrual engine, no routes, nothing switched on. The stage gate accepts only the derived
+// transaction kinds (ACCRUAL, YEAR_OPEN, CONSUME, FREEZE, CARRY_PROPAGATION); request and manual kinds
+// are refused until the packages that add their backstops (C3/B2, C5). Balances are never stored: every
+// figure is a sum of entries (D-P3C-10).
+
+/// One employee's balance of one leave type: the serialisation anchor. Every ledger transaction bumps
+/// `version` first (an UPDATE, holding the row lock until commit); the guards check that bump.
+model PeopleLeaveAccount {
+  id          String   @id @db.Uuid
+  businessId  String   @map("business_id") @db.Uuid
+  employeeId  String   @map("employee_id") @db.Uuid
+  leaveTypeId String   @map("leave_type_id") @db.Uuid
+  /// Always HOURS (D-P3C-01, CHECK). A column so a later unit decision is explicit.
+  unit        String   @default("HOURS")
+  /// 1 at creation, +1 per ledger transaction (guard). version − 1 = number of transactions (V-06).
+  version     Int      @default(1)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  business     Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_accounts_business_fkey")
+  employee     PeopleEmployee           @relation(fields: [businessId, employeeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_accounts_employee_fkey")
+  leaveType    PeopleLeaveType          @relation(fields: [businessId, leaveTypeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_accounts_leave_type_fkey")
+  buckets      PeopleLeaveBucket[]
+  transactions PeopleLeaveTransaction[]
+  entries      PeopleLeaveEntry[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, employeeId, leaveTypeId])
+  @@unique([businessId, id, employeeId, leaveTypeId])
+  @@map("people_leave_accounts")
+}
+
+/// One leave year of one account in one service period (D-P3-45). FUTURE (reservations only) → OPEN →
+/// CLOSED (carried out, sums to zero), or FUTURE/OPEN → FROZEN (service ended).
+model PeopleLeaveBucket {
+  id            String    @id @db.Uuid
+  businessId    String    @map("business_id") @db.Uuid
+  accountId     String    @map("account_id") @db.Uuid
+  employeeId    String    @map("employee_id") @db.Uuid
+  leaveTypeId   String    @map("leave_type_id") @db.Uuid
+  /// 1 for the first employment, +1 per rehire.
+  servicePeriod Int       @map("service_period")
+  /// Inclusive.
+  yearStart     DateTime  @map("year_start") @db.Date
+  /// Exclusive; after year_start (CHECK).
+  yearEnd       DateTime  @map("year_end") @db.Date
+  /// FUTURE | OPEN | CLOSED | FROZEN (CHECK; transitions by guard).
+  state         String
+  openedAt      DateTime? @map("opened_at") @db.Timestamptz
+  closedAt      DateTime? @map("closed_at") @db.Timestamptz
+  version       Int       @default(1)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  business Business           @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_buckets_business_fkey")
+  account  PeopleLeaveAccount @relation(fields: [businessId, accountId, employeeId, leaveTypeId], references: [businessId, id, employeeId, leaveTypeId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_buckets_account_fkey")
+  entries  PeopleLeaveEntry[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, accountId, servicePeriod, yearStart])
+  @@unique([businessId, id, accountId])
+  @@index([businessId, employeeId, leaveTypeId, yearStart])
+  @@map("people_leave_buckets")
+}
+
+/// One atomic business event on one account (§D.2). Immutable from the moment it exists (no UPDATE
+/// grant). The detail level of the ledger: actor, basis, reason and references (§I.3).
+model PeopleLeaveTransaction {
+  id                   String              @id @db.Uuid
+  businessId           String              @map("business_id") @db.Uuid
+  accountId            String              @map("account_id") @db.Uuid
+  employeeId           String              @map("employee_id") @db.Uuid
+  leaveTypeId          String              @map("leave_type_id") @db.Uuid
+  /// §D.2 catalogue (CHECK). C1 stage gate: ACCRUAL | YEAR_OPEN | CONSUME | FREEZE | CARRY_PROPAGATION.
+  kind                 String
+  /// Unique per business; derived for system kinds (§D.3, prefix checked by the guard).
+  idempotencyKey       String              @map("idempotency_key")
+  /// sha256 of the canonical request body for manual kinds; null for system kinds (CHECK).
+  requestHash          String?             @map("request_hash")
+  /// LEAVE_REQUEST | POLICY_ACCRUAL | YEAR_BOUNDARY | MANUAL | IMPORT_BATCH | PAYROLL | TRANSACTION | EMPLOYMENT (CHECK).
+  sourceKind           String              @map("source_kind")
+  sourceId             String?             @map("source_id") @db.Uuid
+  /// External system reference for IMPORT and PAYOUT. Never personal data.
+  externalRef          String?             @map("external_ref")
+  /// The transaction this one corrects or propagates from (same account).
+  relatedTransactionId String?             @map("related_transaction_id") @db.Uuid
+  /// §D.4 closed list (CHECK); mandatory for manual kinds.
+  reasonCode           String?             @map("reason_code")
+  /// 1–500 characters; detail level only.
+  reasonText           String?             @map("reason_text")
+  /// From current_setting('app.user_id'), set by the guard, never by the statement.
+  actorUserId          String              @map("actor_user_id") @db.Uuid
+  /// DERIVED for system kinds (§I.2a matrix, guard).
+  actorBasis           String              @map("actor_basis")
+  /// Business date of the posting (business time zone, set by the guard).
+  postedOn             DateTime            @map("posted_on") @db.Date
+  /// now() = the start of the database transaction (§F.1a). Informational; never seals anything.
+  recordedAt           DateTime            @default(now()) @map("recorded_at") @db.Timestamptz
+  /// pg_current_xact_id() of the inserting transaction (set by the guard): the commit-aware seal key.
+  recordedXid          Unsupported("xid8") @default(dbgenerated("pg_current_xact_id()")) @map("recorded_xid")
+  /// The account version this transaction bumped to (guard). Unique per account: one bump, one transaction.
+  accountVersion       Int                 @map("account_version")
+  /// Maker-checker second person (D-P3C-18, C5). Always null in C1 (CHECK by the guard).
+  checkedByUserId      String?             @map("checked_by_user_id") @db.Uuid
+  /// Computed by the guard as the OR of the statement's value, the leave type's flag and the related
+  /// transaction's flag (§C.6a); a deferred check keeps it ≥ every entry it contains. Immutable.
+  sensitive            Boolean             @default(false)
+
+  business           Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_transactions_business_fkey")
+  account            PeopleLeaveAccount       @relation(fields: [businessId, accountId, employeeId, leaveTypeId], references: [businessId, id, employeeId, leaveTypeId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_transactions_account_fkey")
+  relatedTransaction PeopleLeaveTransaction?  @relation("related", fields: [businessId, relatedTransactionId, accountId], references: [businessId, id, accountId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_transactions_related_fkey")
+  relatedFrom        PeopleLeaveTransaction[] @relation("related")
+  entries            PeopleLeaveEntry[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, idempotencyKey])
+  @@unique([businessId, id, accountId])
+  @@unique([businessId, accountId, accountVersion])
+  @@index([businessId, accountId, recordedAt])
+  @@index([businessId, sourceKind, sourceId])
+  @@map("people_leave_transactions")
+}
+
+/// One signed hour amount in one book of one bucket (§C.6, §D.1). Immutable. The balance level of the
+/// ledger: kinds, hours, dates and policy version, no actor, reason or reference (§I.3).
+model PeopleLeaveEntry {
+  id                 String    @id @db.Uuid
+  businessId         String    @map("business_id") @db.Uuid
+  transactionId      String    @map("transaction_id") @db.Uuid
+  accountId          String    @map("account_id") @db.Uuid
+  bucketId           String    @map("bucket_id") @db.Uuid
+  employeeId         String    @map("employee_id") @db.Uuid
+  leaveTypeId        String    @map("leave_type_id") @db.Uuid
+  /// BALANCE | RESERVED (CHECK).
+  book               String
+  /// §D.1 catalogue; CHECK pairs kind with book and sign.
+  kind               String
+  /// Signed hours; never 0 (CHECK).
+  hours              Decimal   @db.Decimal(12, 4)
+  /// The business date from which the amount counts in its book (as-of axis, §F.1).
+  appliesOn          DateTime  @map("applies_on") @db.Date
+  /// RESERVATION, RESERVATION_RELEASE, CONSUMPTION (and its reversal): the one leave date concerned.
+  leaveDate          DateTime? @map("leave_date") @db.Date
+  /// ACCRUAL only: [period_start, period_end), inside the bucket's year.
+  periodStart        DateTime? @map("period_start") @db.Date
+  periodEnd          DateTime? @map("period_end") @db.Date
+  /// The policy and version whose rules produced the amount (D-P3-25 rule 3).
+  policyId           String    @map("policy_id") @db.Uuid
+  policyVersion      Int       @map("policy_version")
+  /// DAYS→hours basis, if any. Always null in C1: postings that need a days basis are refused until the
+  /// revised D-P3C-23 conversion basis is designed and accepted.
+  hoursPerDay        Decimal?  @map("hours_per_day") @db.Decimal(6, 4)
+  reversesEntryId    String?   @map("reverses_entry_id") @db.Uuid
+  reservationEntryId String?   @map("reservation_entry_id") @db.Uuid
+  pairEntryId        String?   @map("pair_entry_id") @db.Uuid
+  /// RESERVATION_RELEASE only: CONSUMED | CANCELLED | FROZEN (CHECK).
+  releaseReason      String?   @map("release_reason")
+  /// EXPIRY only: CARRY_CAP | MAX_BALANCE | MANUAL | POLICY_EXPIRY (CHECK).
+  expiryReason       String?   @map("expiry_reason")
+  /// Computed by the guard (§C.6a): statement value (raise only) OR transaction OR type flag OR every
+  /// cited entry. Immutable; read policies use (snapshot OR current type flag).
+  sensitive          Boolean   @default(false)
+  recordedAt         DateTime  @default(now()) @map("recorded_at") @db.Timestamptz
+
+  business      Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_entries_business_fkey")
+  transaction   PeopleLeaveTransaction    @relation(fields: [businessId, transactionId, accountId], references: [businessId, id, accountId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_entries_transaction_fkey")
+  bucket        PeopleLeaveBucket         @relation(fields: [businessId, bucketId, accountId], references: [businessId, id, accountId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_entries_bucket_fkey")
+  account       PeopleLeaveAccount        @relation(fields: [businessId, accountId, employeeId, leaveTypeId], references: [businessId, id, employeeId, leaveTypeId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_entries_account_fkey")
+  policy        PeopleLeavePolicy         @relation(fields: [businessId, policyId, leaveTypeId], references: [businessId, id, leaveTypeId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_entries_policy_fkey")
+  revision      PeopleLeavePolicyRevision @relation(fields: [businessId, policyId, policyVersion], references: [businessId, policyId, version], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_entries_revision_fkey")
+  reversesEntry PeopleLeaveEntry?         @relation("reversal", fields: [businessId, reversesEntryId, accountId], references: [businessId, id, accountId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_entries_reverses_fkey")
+  reversedBy    PeopleLeaveEntry[]        @relation("reversal")
+  reservation   PeopleLeaveEntry?         @relation("settlement", fields: [businessId, reservationEntryId, accountId], references: [businessId, id, accountId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_entries_reservation_fkey")
+  settledBy     PeopleLeaveEntry[]        @relation("settlement")
+  pairEntry     PeopleLeaveEntry?         @relation("carryPair", fields: [businessId, pairEntryId, accountId], references: [businessId, id, accountId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_entries_pair_fkey")
+  pairedFrom    PeopleLeaveEntry[]        @relation("carryPair")
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, accountId])
+  @@index([businessId, bucketId, book, appliesOn])
+  @@index([businessId, accountId, recordedAt])
+  @@index([businessId, transactionId])
+  @@map("people_leave_entries")
+}
+
+/// An explicit authorisation of one member to correct balances (D-P3C-04). Created empty in C1: every
+/// INSERT is refused until P3-C5 ships the grants, their guard and the read-policy branch.
+model PeopleLeaveAuthorisation {
+  id           String    @id @db.Uuid
+  businessId   String    @map("business_id") @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  /// LEAVE_CORRECT | LEAVE_VIEW (CHECK).
+  capability   String
+  /// Optional department scope; null = every employee the holder may see.
+  departmentId String?   @map("department_id") @db.Uuid
+  grantedById  String    @map("granted_by_id") @db.Uuid
+  grantedAt    DateTime  @default(now()) @map("granted_at") @db.Timestamptz
+  revokedById  String?   @map("revoked_by_id") @db.Uuid
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz
+
+  business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_authorisations_business_fkey")
+  member     Membership        @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_authorisations_member_fkey")
+  department PeopleDepartment? @relation(fields: [businessId, departmentId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_authorisations_department_fkey")
+
+  @@unique([businessId, id])
+  @@index([businessId, userId])
+  @@map("people_leave_authorisations")
+}

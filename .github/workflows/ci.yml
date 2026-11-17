@@ -204,6 +204,13 @@ jobs:
         env:
           DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
           LEAVE_TEST_IP_BLOCK: '151'
+      # People P3-C1 (docs/people-leave-p3c1.md): the ledger's lock proof (the account row's xmin is this
+      # transaction), the deferred commit checks and the commit-aware seals all live inside one transaction,
+      # so the suite runs again behind the transaction-mode pooler.
+      - name: People leave ledger suite behind the pooler
+        run: pnpm --filter @business-os/api exec vitest run --config vitest.integration.config.ts tests/integration/people-leave-ledger.test.ts
+        env:
+          DATABASE_URL: postgresql://bos_app:bos_local_app_password@127.0.0.1:6433/business_os?schema=public
       # Finance F6-1 (docs/finance-billing-f6.md §5): the billing worker's claims, leases and concurrent passes
       # again through the transaction-mode pooler.
       - name: Finance billing suite behind the pooler

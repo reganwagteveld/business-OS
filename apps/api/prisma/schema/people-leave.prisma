@@ -33,6 +33,7 @@ model PeopleLeaveType {
   business    Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_types_business_fkey")
   policies    PeopleLeavePolicy[]
   assignments PeopleLeavePolicyAssignment[]
+  accounts    PeopleLeaveAccount[]
 
   @@unique([businessId, id])
   @@index([businessId, name, id])
@@ -87,6 +88,7 @@ model PeopleLeavePolicy {
   leaveType   PeopleLeaveType               @relation(fields: [businessId, leaveTypeId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_policies_leave_type_fkey")
   revisions   PeopleLeavePolicyRevision[]
   assignments PeopleLeavePolicyAssignment[]
+  entries     PeopleLeaveEntry[]
 
   @@unique([businessId, id])
   @@unique([businessId, id, leaveTypeId])
@@ -98,18 +100,26 @@ model PeopleLeavePolicy {
 /// Append-only: the policy's rules as they were at each version, written by the database on every
 /// insert and update. Later balance and accrual work (P3-C) can tell which rules applied when.
 model PeopleLeavePolicyRevision {
-  businessId   String   @map("business_id") @db.Uuid
-  policyId     String   @map("policy_id") @db.Uuid
-  version      Int
-  rules        Json
-  recordedById String?  @map("recorded_by_id") @db.Uuid
-  recordedAt   DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+  businessId         String   @map("business_id") @db.Uuid
+  policyId           String   @map("policy_id") @db.Uuid
+  version            Int
+  rules              Json
+  recordedById       String?  @map("recorded_by_id") @db.Uuid
+  recordedAt         DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+  /// P3-C1 (D-P3-25 rule 1): the business date from which this version governs, set by the guard to the
+  /// business's today. Rows that existed before P3-C1 were back-filled from recorded_at in the business's
+  /// time zone at migration time and are marked INFERRED; they never govern a ledger posting by their date.
+  effectiveFrom      DateTime @map("effective_from") @db.Date
+  /// RECORDED (set by the guard at insert) | INFERRED (back-filled by migration 20261211000000) (CHECK).
+  effectiveFromBasis String   @default("RECORDED") @map("effective_from_basis")
 
-  business Business          @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_policy_revisions_business_fkey")
-  policy   PeopleLeavePolicy @relation(fields: [businessId, policyId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_policy_revisions_policy_fkey")
+  business Business           @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_leave_policy_revisions_business_fkey")
+  policy   PeopleLeavePolicy  @relation(fields: [businessId, policyId], references: [businessId, id], onDelete: NoAction, onUpdate: NoAction, map: "people_leave_policy_revisions_policy_fkey")
+  entries  PeopleLeaveEntry[]
 
   @@id([policyId, version])
   @@unique([businessId, policyId, version])
+  @@index([businessId, policyId, effectiveFrom, version], map: "people_leave_policy_revisions_effective_idx")
   @@map("people_leave_policy_revisions")
 }
 

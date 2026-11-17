@@ -31,8 +31,9 @@ model PeopleDepartment {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz
 
-  business    Business                     @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_departments_business_fkey")
-  assignments PeopleDepartmentAssignment[]
+  business            Business                     @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "people_departments_business_fkey")
+  assignments         PeopleDepartmentAssignment[]
+  leaveAuthorisations PeopleLeaveAuthorisation[]
 
   @@unique([businessId, id])
   @@index([businessId, name, id])
@@ -96,6 +97,7 @@ model PeopleEmployee {
   reportAssignments      PeopleManagerAssignment[]       @relation("manager")
   statusHistory          PeopleEmploymentStatusHistory[]
   leavePolicyAssignments PeopleLeavePolicyAssignment[]
+  leaveAccounts          PeopleLeaveAccount[]
 
   @@unique([businessId, id])
   @@index([businessId, familyName, givenName, id])
