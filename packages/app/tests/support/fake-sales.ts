@@ -62,7 +62,7 @@ export function pipelineWithStages(name = 'Sales pipeline', isDefault = true): {
   const stages = [['New', 10], ['Qualified', 25], ['Proposal', 50], ['Negotiation', 75]].map(([n, p], i) => ({
     id: randomUUID(), pipelineId: id, name: n as string, position: (i + 1) * 1000, defaultProbability: p as number, archivedAt: null,
   }));
-  return { pipeline: { id, name, isDefault, position: 0, createdAt: NOW, updatedAt: NOW, archivedAt: null }, stages };
+  return { pipeline: { id, name, isDefault, position: 0, createdAt: NOW, updatedAt: NOW, archivedAt: null, configVersion: 1 }, stages };
 }
 
 export function opportunity(entry: { pipeline: Pipeline; stages: Stage[] }, over: Partial<Opportunity> = {}): Opportunity {
