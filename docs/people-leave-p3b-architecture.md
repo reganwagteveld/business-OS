@@ -26,6 +26,10 @@
 > D-P3-48 revised, T-28, T-29); (5) auto-approval runs the identical checks, with tests (§10.3, T-49a/b); escalation
 > wording in §18.2 aligned with the protocol.
 >
+> **Version 1.2 (2026-11-17)** after the focused re-audit of `f11cdcf` (design audit pass with implementation gates):
+> §10 wording aligned to `pending_actor_basis`; §5.6 states the `projectedOpening` no-double-count invariant and leaves
+> multi-year reversal propagation and leap-day anniversaries for P3-C's spec. No design change.
+>
 > **Consolidation note.** An earlier draft of this spec was opened as #115 from a separate local session. This
 > version supersedes it and folds in its distinct findings: leave-year attribution (D-P3-45, a conflict with the
 > D-P3-25 proposal), per-employee work patterns (D-P3-46), the "verified link" decision (D-P3-47), restrictive
@@ -300,7 +304,10 @@ requirement on P3-C's design, to be confirmed in P3-C's own spec and audit; P3-B
    0 available in a future year except the negative limit. When the year actually opens, the real grant and carry-over
    are posted; if the real grant differs from the projection, P3-C posts the difference as an `ADJUSTMENT` entry; it
    never recalculates or removes existing deductions. A bucket may thereby end below the negative limit after a rule
-   change; that is reported to leave managers, not auto-corrected.
+   change; that is reported to leave managers, not auto-corrected. **Invariant:** `projectedOpening` is a computed
+   planning value, never a ledger entry; once the year opens, `available` is the sum of real entries only, so the
+   projection can never be counted twice. P3-C must prove this across re-opening, rule revisions, year close and
+   reversed deductions with deterministic multi-year tests.
 4. **Lock scope.** A deduction or reversal locks only the buckets it needs, in ascending year order (C-20, C-24): for
    a current-year deduction, the current bucket; for a future-year deduction, the current bucket (to open the next
    one and fix its carry-over base) and then the target bucket. Two approvals charged to the same year serialise on
@@ -310,7 +317,9 @@ requirement on P3-C's design, to be confirmed in P3-C's own spec and audit; P3-B
 6. **Reversal attribution.** A reversal is always posted into the bucket of the deduction it reverses. If that year is
    already closed, the extra closing balance is carried forward under the policy's carry-over rule as an
    additional `CARRY_OUT`/`CARRY_IN` pair into the following bucket (capped as the original carry-over was, using
-   the cap in force when that year closed), in the same transaction and lock order.
+   the cap in force when that year closed), in the same transaction and lock order. Propagation through more than
+   one closed year, and leap-day anniversary starts (§9.2a), need definitive invariants in P3-C's spec before it is
+   implemented.
 7. **Compatibility.** D-P3-20 becomes "the target bucket row is locked `FOR UPDATE`"; D-P3-21 unchanged; D-P3-25
    rule 6 becomes "deduct with the rules in force on the approval date, **into the bucket of the leave dates**".
    Concurrency tests must span years (T-41a).
@@ -737,7 +746,7 @@ assignments cover parts of it (a policy change inside the range) the request is 
 4. **Assignment rows** read (P3-A order: policy → employee → assignment).
 5. **Day rows** inserted (submit) or released (by the trigger, after the status update in step 7).
 6. **Balance bucket rows `FOR UPDATE`** via `lockBucket` (P3-C, §5.6): current year, then the target year if later, ascending; accrues up to date inside the lock.
-7. **Writes:** ledger entry → request `UPDATE` (status, amounts, `pending_actor_*`, ledger id, version) → trigger
+7. **Writes:** ledger entry → request `UPDATE` (status, amounts, `pending_actor_basis`, ledger id, version) → trigger
    writes the transition and releases day rows → note insert → audit.
 
 Why no cycle: policy archive holds the policy `FOR UPDATE` and touches no request; termination holds the employee
@@ -761,7 +770,7 @@ POST /leave-requests/:id/approve { version, expectedAmount, note?, selfApproval?
  9  if entitlement ≠ NONE:
        bucket := lockBucket(employee, type, leaveYearStart)     -- FOR UPDATE ascending years, accrues current year
        entry := postDeduction(bucket, amount, today, policy, version, source=request)   -- 409 insufficient_balance
-10  UPDATE request SET status=APPROVED, approved_amount, deduction_entry_id, pending_actor_*=…, decided_at, version+1
+10  UPDATE request SET status=APPROVED, approved_amount, deduction_entry_id, pending_actor_basis=:basis, decided_at, version+1
        WHERE id AND version = :version                          -- guard triggers check matrix, ledger presence
     → trigger: transition row (seq+1, basis, amount, policy_version, ledger_entry_id)
 11  INSERT note (DECISION) if given
