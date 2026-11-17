@@ -72,7 +72,7 @@ import {
 import {
   ConvertQuoteRequest, CreateCreditNoteRequest, CreateInvoiceRequest, CreateQuoteRequest, CreateTaxRateRequest, DiscardDraftRequest, FinanceDocumentResponse,
   FinanceSettingsResponse, IssueDocumentRequest, ListCreditNotesQuery, ListFinanceDocumentsResponse, ListInvoicesQuery, ListNumberSeriesResponse,
-  ListQuotesQuery, ListTaxRatesQuery, ListTaxRatesResponse, NumberSeriesResponse, QuoteTransitionRequest, TaxRateResponse, UpdateCreditNoteRequest,
+  ListQuotesQuery, ListTaxRatesQuery, ProjectFinanceSummaryResponse, ListTaxRatesResponse, NumberSeriesResponse, QuoteTransitionRequest, TaxRateResponse, UpdateCreditNoteRequest,
   UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
   AllocatePaymentRequest, ApplyCreditRequest, CreditNoteCreditResponse, FinancePaymentResponse, InvoiceSettlementResponse, ListCustomerBalancesQuery,
   ListCustomerBalancesResponse, ListPaymentsQuery, ListPaymentsResponse, ReconciliationResponse, RecordPaymentRequest, ReverseAllocationRequest,
@@ -289,6 +289,8 @@ export const endpoints = {
   moveTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/move', request: MoveTaskRequest, response: TaskResponse },
   // Finance Zone F1 (docs/finance-data-model.md). No DELETE endpoints: drafts are discarded, issued documents voided.
   listQuotes: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes', query: ListQuotesQuery, response: ListFinanceDocumentsResponse },
+  /** WF-1 §6.6.1: a project's figures per currency, derived from the ledger. finance:read + projects:read. */
+  getProjectFinanceSummary: { method: 'GET', path: '/api/v1/b/:slug/finance/projects/:projectId/summary', response: ProjectFinanceSummaryResponse },
   /** Optional Idempotency-Key header: a retried create returns the first draft. */
   createQuote: { method: 'POST', path: '/api/v1/b/:slug/finance/quotes', request: CreateQuoteRequest, response: FinanceDocumentResponse },
   getQuote: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes/:documentId', response: FinanceDocumentResponse },

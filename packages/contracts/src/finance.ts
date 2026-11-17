@@ -268,6 +268,8 @@ const listFilters = {
   status: z.enum(['draft', 'issued', 'accepted', 'declined', 'expired', 'void', 'all']).default('all'),
   customerId: Uuid.optional(),
   projectId: Uuid.optional(),
+  /** WF-1 (docs/cross-zone-workflows-wf1.md §6.6): documents linked to this opportunity. Also needs sales:read. */
+  opportunityId: Uuid.optional(),
   /** Issue date range, half-open [from, to). */
   from: CalendarDate.optional(),
   to: CalendarDate.optional(),
@@ -293,6 +295,52 @@ export const ListInvoicesQuery = z
 export const ListCreditNotesQuery = z.object({ ...listFilters, invoiceId: Uuid.optional() }).strict();
 
 export const FinanceDocumentResponse = z.object({ document: FinanceDocument }).strict();
+
+// ---- project financial summary (WF-1 §6.6.1) ------------------------------------------------------
+
+/** A derived amount that may be negative (net figures after credits). Exact decimal string. */
+const SignedAmount = z.string().regex(/^-?\d{1,15}(\.\d{1,4})?$/);
+const StatusCounts = z.record(FinanceDocumentStatus, z.number().int().min(0));
+
+/**
+ * One currency's figures for a project, derived on read from Finance's own ledger and never stored or
+ * converted across currencies. Definitions (exact, disjoint) are in docs/cross-zone-workflows-wf1.md
+ * §6.6.1: quotes are the deduplicated union of quotes linked while draft and the project's source quote;
+ * `paymentsAllocated` is payment allocations only ("Received"); applied and unapplied credit are separate.
+ * For each currency `paymentsAllocated + creditApplied + outstanding = invoicedGross`.
+ */
+export const ProjectFinanceCurrency = z
+  .object({
+    currencyCode: CurrencyCode,
+    currencyScale: z.number().int().min(0).max(4),
+    quotedNet: SignedAmount,
+    acceptedNet: SignedAmount,
+    invoicedNet: SignedAmount,
+    invoicedGross: SignedAmount,
+    creditedNet: SignedAmount,
+    creditedGross: SignedAmount,
+    billedNet: SignedAmount,
+    paymentsAllocated: SignedAmount,
+    creditApplied: SignedAmount,
+    outstanding: SignedAmount,
+    unappliedCredit: SignedAmount,
+    expensesNet: SignedAmount,
+  })
+  .strict();
+export type ProjectFinanceCurrency = z.infer<typeof ProjectFinanceCurrency>;
+
+/** GET finance/projects/:projectId/summary. Requires finance:read and projects:read. */
+export const ProjectFinanceSummary = z
+  .object({
+    projectId: Uuid,
+    /** One row per currency that occurs in the project's quotes, invoices, credit notes or expenses, by code. */
+    currencies: z.array(ProjectFinanceCurrency),
+    /** Documents per kind and status, drafts included (counts only: draft amounts are not totals). */
+    counts: z.object({ quotes: StatusCounts, invoices: StatusCounts, creditNotes: StatusCounts }).strict(),
+  })
+  .strict();
+export type ProjectFinanceSummary = z.infer<typeof ProjectFinanceSummary>;
+export const ProjectFinanceSummaryResponse = z.object({ summary: ProjectFinanceSummary }).strict();
 export const ListFinanceDocumentsResponse = z.object({ documents: z.array(FinanceDocumentListItem), nextCursor: z.string().nullable() }).strict();
 
 // ---- settings ------------------------------------------------------------------------------------
