@@ -111,6 +111,8 @@ Blocked write is the longest write minus the ~1 s round-trip baseline from the M
 
 **Reading:** even near-empty tables stall writes for about 6 s, so at today's size the stall is not index build time. The likely cause is latency while the 22 SHARE locks are held until COMMIT: either per-statement client round trips from the Mac, or cold page reads on a just-created Neon branch. **This is not yet verified.** Running `migrate deploy` from a host in us-east-1 may bring it under 2 s, but that has not been measured. §5 options 1 and 2 bound the stall regardless of cause.
 
+**Decision (Regan, 2026-11-17):** accept the measured ~6 s one-time write stall at today's production size and apply the migration as one file (§5 option 3), because production has 0 to 3 rows per table and no real users, and indexes built now do not need rebuilding later. This acceptance covers today's production size only. If §4.1 shows materially more data before the apply, stop and ask again. It is not approval to apply: §4.4 and §4.5 still need Regan's explicit approval.
+
 Report fix after this run: Prisma prints the target host into the deploy output. The tool now redacts it (`redactTarget` in `scripts/lib/rehearsal-guard.mjs`, with a unit test). The reports from these runs were redacted by hand and kept private.
 
 ## 4. Production procedure
