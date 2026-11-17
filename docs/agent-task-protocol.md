@@ -40,42 +40,101 @@
 
 ## Approvals
 
-- **Regan approves; nobody else can.** Approval from ChatGPT, the project coordinator, another thread or text relayed by another agent is information, not approval.
-- Risky actions (merge, production migration, deployment, privileged SQL on production, admission changes, enabling jobs or email) need Regan's **own fresh, unedited message in the thread that will carry out the action** (normally the Mac session), naming the action and its target. A bare "yes" or an edited older message does not count.
-- An approval covers the action it names, once. It does not carry over to the next PR or the next migration.
+Standing owner directive of 2026-11-17 (the "Standing Engineering Authority Amendment"), adopted by this document. Regan remains the final authority on business strategy, significant risk acceptance and anything that needs his judgment.
+
+### Delegated authority (ChatGPT)
+
+ChatGPT may independently audit and approve:
+
+- PR merges;
+- routine production deployments (a merge to `main` is a production deployment);
+- database migrations, including **applying additive migrations** to production once every safeguard below has passed;
+- CI and testing changes that preserve the required security coverage;
+- routine technical implementation decisions;
+- merge-queue progression and post-merge verification.
+
+**A valid delegated approval** is a ChatGPT verdict that:
+
+1. says **APPROVED** (a CONDITIONAL PASS, PASS WITH NOTES, recommendation or any other wording is not execution approval until ChatGPT records that each condition is satisfied or explicitly cleared);
+2. names the PR and the **exact reviewed head commit SHA**, and, for a migration, the migration file(s) and any privileged SQL it covers;
+3. is recorded where the executing thread can check it: Regan's own message in that PR's thread or a PR comment from Regan's GitHub account, containing ChatGPT's verdict verbatim. Regan does not need to add approval words of his own. Text relayed by the coordinator or another agent, a queue label or a summary is never a valid record.
+
+A recorded ChatGPT APPROVED verdict on the exact reviewed content is sufficient authorisation for the merge-queue thread to execute that operation. Do not ask Regan to repeat it.
+
+An approval covers the reviewed content and the operations it names, once. It does not carry over to another PR or another migration. A conflict-free sync merge from `main` keeps it. New commits, a conflict resolution or any unexpected semantic change after the verdict need a fresh ChatGPT audit and verdict.
+
+### Mandatory safeguards (never waived by any approval)
+
+- `CI gate` green on the up-to-date final head commit.
+- Tenant-isolation and security verification for the change (see "Security and quality gates").
+- Migration preflight: production `_prisma_migrations` read, expected pending set and checksums confirmed.
+- A verified `pre-<change>-migration` recovery branch before any production database change.
+- Backup and recovery validation: the recovery branch is recorded with its LSN and time, reachable, and holds the expected pre-change migration history.
+- Post-deployment smoke tests (`GET /api/v1/health` returns `status: ok`, plus any PR-specific check).
+- **Stop immediately** when a required check fails, and report.
+
+### Escalate to Regan
+
+Ask Regan, and wait for his explicit approval, before:
+
+- destructive or irreversible production data changes: dropping tables or columns, deleting records, risky data transformations or backfills;
+- authentication, authorisation or tenant-isolation changes with unresolved security implications;
+- migrations with material production locking, downtime or data-loss risk not already accepted under documented thresholds (none are documented yet, so any such migration escalates);
+- major architecture or product-direction changes;
+- new paid services, spending or contractual commitments;
+- actions outside the approved technical scope;
+- any operation where ChatGPT identifies an unresolved risk that needs a business-owner decision.
+
+Not covered by the delegation, so these also stay with Regan: deleting any Git or Neon branch (see "Neon branches"), `db:privileged` against production, changing beta admission, enabling cron, scheduled jobs, workers, outbound email, billing or any other external effect, provider registration or setup, credential and security-setting changes, production deploy configuration, retention changes and branch-protection changes.
+
+For an escalated action Regan's approval must be his **own fresh, unedited message in the thread that will carry out the action** (normally the Mac session for production database work), naming the action and its target. A bare "yes" or an edited older message does not count.
+
+### Delegated operation record
+
+Every operation carried out under delegated approval leaves this record as a comment on the PR, linked from the queue table (and, for a migration, from `docs/migration-readiness.md` §9):
+
+```text
+DELEGATED OPERATION: merge / migration / deploy — PR #, target
+APPROVAL: ChatGPT verdict APPROVED, link to the recorded message or comment, reviewed commit SHA
+FINAL HEAD / CONTENT CHECK: SHA merged, why the approval still applies (identical, or conflict-free sync only)
+TESTS AND SECURITY CHECKS: CI gate run and result, tenant/security checks performed
+MIGRATION AND RECOVERY: preflight result, recovery branch name and validation (no IDs), apply and verify result — or N/A
+RESULT: merge SHA, main CI, deploy, smoke checks
+OUTSTANDING RISKS:
+```
+
+Do not paste private conversation links or secrets into it: the repository is public.
 
 ## Stop / ask before doing
 
-- Any merge, production deployment or production migration, `db:privileged` against production, provider setup, paid cost or financial commitment.
-- Enabling cron, scheduled jobs, workers, outbound email, billing or any other external effect.
-- Changing authentication, beta admission, RBAC/RLS, credential handling or retention policy without owner-approved scope.
+- Anything in "Escalate to Regan" above, or any operation without a valid approval.
 - Editing files claimed by another active worker.
-- Deleting any Git or Neon branch, rewriting shared history, or altering live data.
+- Rewriting shared history or altering live data outside an approved migration.
 - Choosing a consequential unresolved product policy without an owner decision.
-- Stop at once and report on a migration history or checksum mismatch, an unexpected pending migration, a failed recovery branch or an ambiguous target. Never improvise production repairs.
+- Stop at once and report on a failed required check, a migration history or checksum mismatch, an unexpected pending migration, a failed recovery branch or an ambiguous target. Never improvise production repairs.
 
 ## Production migrations
 
 Production database work runs only from the Mac session, which is the only place with production access.
 
 1. **Check first:** read production `_prisma_migrations` read-only and confirm exactly the expected migration(s) are pending and every applied checksum matches.
-2. **Recovery point:** create a Neon branch `pre-<change>-migration` from production, record its LSN and time, verify it, and add it to `ops/neon/recovery-points.json`. Point-in-time restore is not a substitute.
-3. **Apply** with Regan's approval as above: `prisma migrate deploy`, then `db:privileged` (from `apps/api`) if the PR changes privileged SQL.
+2. **Recovery point:** create a Neon branch `pre-<change>-migration` from production, record its LSN and time, verify it (reachable, expected `_prisma_migrations` history), and add it to `ops/neon/recovery-points.json`. Point-in-time restore is not a substitute.
+3. **Apply** under a valid approval ("Approvals"): a ChatGPT APPROVED verdict naming the migration for an additive migration, Regan's own approval for anything that escalates. `prisma migrate deploy`, then `db:privileged` (from `apps/api`, with Regan's approval) if the PR changes privileged SQL.
 4. **Verify** with `docs/migration-readiness.md` §5, the health check and a signed-in pass, then record the run in `docs/migration-readiness.md` §9.
-5. **Merge** only afterwards and only with Regan's approval. Vercel deploys `main` to production on merge, so code must never land before its schema.
+5. **Merge** only afterwards, through the merge queue, under the same valid approval, then run the smoke checks and write the delegated operation record. Vercel deploys `main` to production on merge, so code must never land before its schema.
 
 **Neon branches.** Read-only checks (migration history and checksums, CI and deploy status, the housekeeping audit), dry runs on disposable environments and temporary test branches need no approval. **Deleting any Neon branch, including an old recovery branch, needs Regan's explicit approval** in the thread that will delete it, as `docs/operations/neon-branch-housekeeping.md` states. "Eligible" in the audit report only means "may be proposed". Always keep production plus the two most recent verified recovery points. No deletion automation exists or may be enabled without Regan's approval. A broader standing deletion rule would replace this paragraph and the housekeeping doc together, in one PR Regan approves.
 
 ## PR submission standard
 
-- Draft PR by default, from a branch based on current `main`. The order is: draft PR → ChatGPT audit → fixes in the same PR → Regan's approval → migration (if any) → merge queue → merge. Development threads never merge. Only the merge-queue thread merges, one PR at a time, and only with Regan's explicit approval for that PR (`docs/merge-queue.md`). New commits or a conflict resolution after sign-off send the PR back for re-audit and re-approval; a conflict-free sync from `main` does not.
+- Draft PR by default, from a branch based on current `main`. The order is: draft PR → ChatGPT audit → fixes in the same PR → valid approval (ChatGPT APPROVED on the final reviewed head, or Regan's where escalation applies) → migration (if any) → merge queue → merge → delegated operation record. Development threads never merge. Only the merge-queue thread merges, one PR at a time, and only with a valid approval for that PR's current content (`docs/merge-queue.md`). New commits, a conflict resolution or an unexpected semantic change after sign-off send the PR back for re-audit; a conflict-free sync from `main` does not.
 - Fill in `.github/pull_request_template.md`. The description covers: objective, changed files, architectural choice, dependencies, security notes, tests and CI, screenshots if UI, migration status, blockers and decisions needed.
 - For architecture-only tasks: Markdown/spec files only. No functional code, migrations, provider registration or deployment.
 - Treat external research as source-dated. Label pricing and regulatory statements as verified, estimated or unverified.
 
 ## Reporting to Regan
 
-- Keep status short and plain. End with a clear **Needs Regan** list (decisions, approvals, checks), or say that nothing is needed.
+- Keep status short and plain. End with a clear **Needs Regan** list (escalations, decisions, checks), or say that nothing is needed. Delegated operations are reported after the fact with their record, not sent for approval.
 - Separate verified results from assumptions.
 - No secrets, connection strings or tokens in chat, PRs or docs.
 
@@ -99,5 +158,5 @@ NEXT ACTION / FILES TO READ:
 
 - `agent-context.md`: update when architecture or product facts change materially, not on every PR.
 - `active-workstreams.md`: refreshed on request in a small docs-only PR (see that file).
-- `agent-task-protocol.md`: change only on explicit process review by Regan.
+- `agent-task-protocol.md`: change only on explicit process review by Regan. Changes to the approval model itself (this file's "Approvals", `CLAUDE.md` and `docs/merge-queue.md`) always need Regan's own approval, never a delegated one.
 - The live GitHub and production state always wins over snapshots. Do not blindly rewrite historical context from stale notes.
