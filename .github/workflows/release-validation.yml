@@ -269,20 +269,25 @@ jobs:
         run: .github/scripts/verify-release-bundle.sh windows apps/desktop/src-tauri/target/release/bundle "$RUNNER_TEMP/evidence"
       # Silently installs the NSIS package into a throwaway directory, then starts the installed app.
       - name: Install and launch smoke test
+        timeout-minutes: 8
         run: |
           installer="$(ls apps/desktop/src-tauri/target/release/bundle/nsis/*.exe | head -n1)"
           dest="$(cygpath -w "$RUNNER_TEMP/bos-install")"
           # NSIS: /S silent, /D= install directory (must be last, no quotes).
-          "$installer" /S "/D=$dest"
+          # Output goes to a file: the installer may start the app, whose inherited pipes would otherwise keep this step open.
+          mkdir -p "$RUNNER_TEMP/evidence"
+          timeout 180 "$installer" /S "/D=$dest" > "$RUNNER_TEMP/evidence/install.log" 2>&1 < /dev/null || echo "installer exit code $? (see install.log)"
           for i in $(seq 1 30); do ls "$RUNNER_TEMP/bos-install"/*.exe > /dev/null 2>&1 && break; sleep 2; done
+          taskkill //F //IM business-os-desktop.exe > /dev/null 2>&1 || true
+          sleep 2
           app="$(ls "$RUNNER_TEMP/bos-install"/business-os-desktop.exe 2>/dev/null || ls "$RUNNER_TEMP/bos-install"/*.exe | grep -vi uninstall | head -n1)"
           test -f "$app"
-          "$app" > "$RUNNER_TEMP/evidence/smoke.log" 2>&1 &
+          "$app" > "$RUNNER_TEMP/evidence/smoke.log" 2>&1 < /dev/null &
           pid=$!
           sleep 12
-          if kill -0 "$pid" 2>/dev/null; then
+          if tasklist //FI "IMAGENAME eq $(basename "$app")" | grep -qi "$(basename "$app")"; then
             echo "launch smoke test: installed app $(basename "$app") alive after 12 s" | tee -a "$RUNNER_TEMP/evidence/smoke.log"
-            kill "$pid" || true
+            taskkill //F //IM "$(basename "$app")" > /dev/null 2>&1 || true
           else
             echo "launch smoke test FAILED: process exited early" >&2
             tail -n 40 "$RUNNER_TEMP/evidence/smoke.log" >&2
