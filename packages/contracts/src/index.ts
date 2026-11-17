@@ -26,6 +26,7 @@ import {
 export { HealthResponse } from './health.ts';
 export * from './auth.ts';
 export * from './tenancy.ts';
+export * from './audit.ts';
 export * from './customers.ts';
 export * from './sales.ts';
 export * from './projects.ts';
@@ -122,6 +123,7 @@ import {
   CreateSavedViewRequest, DeleteSavedViewResponse, ListSavedViewsQuery, ListSavedViewsResponse, ReportingCatalogResponse, ReportingDetailsRequest,
   ReportingDetailsResponse, ReportingQueryRequest, ReportingQueryResponse, RunSavedViewResponse, SavedViewResponse, UpdateSavedViewRequest,
 } from './reporting.ts';
+import { ListAuditEventsQuery, ListAuditEventsResponse } from './audit.ts';
 import { SearchRequest, SearchResolveRequest, SearchResolveResponse, SearchResponse } from './search.ts';
 
 export const API_VERSION = 'v1' as const;
@@ -138,6 +140,8 @@ export const endpoints = {
   getBusinessProfile: { method: 'GET', path: '/api/v1/b/:slug/business', response: BusinessProfileResponse },
   updateBusinessProfile: { method: 'PATCH', path: '/api/v1/b/:slug/business', request: UpdateBusinessProfileRequest, response: BusinessProfileResponse },
   listMembers: { method: 'GET', path: '/api/v1/b/:slug/members', response: MembersResponse },
+  /** Recorded changes, newest first (audit:read: OWNER and ADMIN). Follow nextCursor; each request covers at most 92 days. */
+  listAuditEvents: { method: 'GET', path: '/api/v1/b/:slug/audit-events', query: ListAuditEventsQuery, response: ListAuditEventsResponse },
   /** Role change ({ role }) or, A2-B, suspend/reactivate ({ status }). */
   changeMemberRole: { method: 'PATCH', path: '/api/v1/b/:slug/members/:membershipId', request: UpdateMemberRequest, response: MemberResponse },
   removeMember: { method: 'DELETE', path: '/api/v1/b/:slug/members/:membershipId', response: OkResponse },
