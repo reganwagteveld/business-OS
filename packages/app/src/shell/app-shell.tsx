@@ -127,7 +127,7 @@ export function AppShell(props: AppShellProps) {
     <ShellContext.Provider value={context}>
       <div data-shell="" className="bos-atmosphere flex h-dvh overflow-hidden text-foreground" data-atmosphere="calm">
         <a href="#bos-content" className={cn('sr-only z-50 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground focus:not-sr-only focus:absolute focus:top-3 focus:left-3', focusRing)}>Skip to content</a>
-        {narrow ? null : <Sidebar {...shared} onToggle={layout === 'wide' ? () => setPreference(mode === 'expanded' ? 'compact' : 'expanded') : undefined} />}
+        {narrow ? null : <Rail {...shared} onToggle={layout === 'wide' ? () => setPreference(mode === 'expanded' ? 'compact' : 'expanded') : undefined} />}
         <div className="flex min-w-0 flex-1 flex-col" inert={drawerShown || undefined}>
           <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-background/70 px-3 sm:px-6">
             {narrow ? (
@@ -180,8 +180,58 @@ interface NavProps extends AppShellProps {
  * §4 rule 4: rectangular controls, 8 px controls, 6 px small squares, 4 px labels, square markers,
  * no pills.
  */
-function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; onClose?: () => void; closeRef?: Ref<HTMLButtonElement> }) {
-  const { mode, onToggle, inDrawer, onClose, closeRef } = props;
+/** Delay before a hovered compact rail opens, and before it closes after the pointer leaves (ms). */
+const PEEK_OPEN_MS = 120;
+const PEEK_CLOSE_MS = 200;
+
+/**
+ * The rail beside the content. Expanded, it is the sidebar itself. Compact, it keeps its 64 px slot
+ * in the layout and, while a mouse rests on it, "peeks": the sidebar draws expanded on top of the
+ * content (no layout shift) and collapses again when the pointer leaves. Peeking is mouse-only (touch
+ * and pen tap the icons as before) and changes nothing for keyboard or screen-reader users: names,
+ * roles and focus order are the same in both states. Right after the person collapses the rail, a
+ * peek waits until the pointer has left it once, so "Collapse" visibly collapses.
+ */
+function Rail(props: NavProps & { onToggle?: () => void }) {
+  const { mode, onToggle } = props;
+  const compact = mode === 'compact';
+  const [peek, setPeek] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const suppressed = useRef(false);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const schedule = (next: boolean, ms: number) => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setPeek(next), ms);
+  };
+  const toggle = onToggle ? () => {
+    clearTimeout(timer.current);
+    if (!compact) suppressed.current = true;
+    setPeek(false);
+    onToggle();
+  } : undefined;
+  if (!compact) return <Sidebar {...props} onToggle={toggle} />;
+  return (
+    <div
+      data-rail-slot=""
+      className="relative z-20 h-full w-(--sidebar-w-compact) shrink-0"
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse' && !suppressed.current) schedule(true, PEEK_OPEN_MS);
+      }}
+      onPointerLeave={(e) => {
+        suppressed.current = false;
+        if (e.pointerType === 'mouse') schedule(false, PEEK_CLOSE_MS);
+        else clearTimeout(timer.current);
+      }}
+    >
+      <div data-peek={peek ? '' : undefined} className={cn('absolute inset-y-0 left-0 h-full', peek && 'shadow-overlay')}>
+        <Sidebar {...props} mode={peek ? 'expanded' : 'compact'} peeking={peek} onToggle={toggle} />
+      </div>
+    </div>
+  );
+}
+
+function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; peeking?: boolean; onClose?: () => void; closeRef?: Ref<HTMLButtonElement> }) {
+  const { mode, onToggle, inDrawer, peeking, onClose, closeRef } = props;
   const compact = mode === 'compact';
   return (
     <div
@@ -211,9 +261,9 @@ function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; 
       <ZoneNav {...props} />
       {onToggle ? (
         <div className={cn('shrink-0 border-t border-line p-2', compact ? 'flex justify-center' : 'px-3')}>
-          <button type="button" onClick={onToggle} aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'} title={compact ? 'Expand sidebar' : 'Collapse sidebar'} className={cn('focus-ring state-interactive flex h-10 items-center gap-3 rounded-control px-3 text-small text-fg-muted hover:text-fg', compact ? 'w-10 justify-center px-0' : 'w-full')}>
-            <Icon name={compact ? 'expand' : 'collapse'} className="size-5 shrink-0" />
-            {compact ? null : <span>Collapse</span>}
+          <button type="button" onClick={onToggle} aria-label={compact || peeking ? 'Expand sidebar' : 'Collapse sidebar'} title={compact ? 'Expand sidebar' : peeking ? 'Keep the sidebar expanded' : 'Collapse sidebar'} className={cn('focus-ring state-interactive flex h-10 items-center gap-3 rounded-control px-3 text-small text-fg-muted hover:text-fg', compact ? 'w-10 justify-center px-0' : 'w-full')}>
+            <Icon name={compact || peeking ? 'expand' : 'collapse'} className="size-5 shrink-0" />
+            {compact ? null : <span>{peeking ? 'Keep expanded' : 'Collapse'}</span>}
           </button>
         </div>
       ) : null}
