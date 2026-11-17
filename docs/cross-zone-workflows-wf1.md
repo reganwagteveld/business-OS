@@ -10,6 +10,7 @@
 > (§6.10, §10.2); M2 duplicate guard reworded, deliberate repeat creation allowed (§6.2, D-WF1-15); M3 exact,
 > disjoint project summary definitions (§6.6); opportunity status scope made explicit, new D-WF1-16 (§6.2);
 > D-WF1-12 wording; PR #93 merged and #97 migration stamp noted (§10.1, §15).
+> **Version 1.3 (2026-11-17):** Regan accepted D-WF1-07..16 as recommended (§13.2). Architecture only.
 > **Version 1.2 (2026-11-17)** after the focused re-audit (pass with build conditions at `b09b152`): fail-closed
 > preflight with exact, tenant-visible counts (§10.2); correction path for the convert gap tested (T-48);
 > decision ranges updated to D-WF1-07..16; real-PostgreSQL T-49/T-51/T-52 made entry conditions (§14).
@@ -894,6 +895,11 @@ quote), W1-D13 (`workflow_requests`), FD-P3 (over-quote confirmation, applies wh
 gates G-1..G-4.
 
 ### 13.2 New decisions (recommendation in bold)
+
+**Decided (Regan, 2026-11-17 06:24 UTC):** every recommendation below, D-WF1-07 to D-WF1-16, is accepted as
+written (after the ChatGPT re-audit at `b09b152`: architecture pass with build conditions). This records the
+architecture decisions only. It does not authorise WF-1B, any migration, privileged SQL, merge or production action;
+the build conditions in §12 and §14 (T-49, T-51, T-52 on real PostgreSQL) still apply.
 
 | Id | Question | Options | Recommendation and why | Amends W1? |
 |---|---|---|---|---|
