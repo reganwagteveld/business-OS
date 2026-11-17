@@ -81,6 +81,10 @@ Compare against section 3.
   - No `Vercel – business-os` status may appear on either commit.
 - After merge (queue step 5): both projects must show a READY production deployment for the merge commit, and `GET https://app.pixakova.com/api/v1/health` must return `status: ok`. If the API project shows no production deployment for the merge commit, revert at once (section 6). The previous production deployment stays live meanwhile.
 
+Live evidence on PR #142:
+- Commit `9d970f0` changed `apps/web/vercel.json`. The web preview built (READY, 2026-11-17 16:15 UTC), and no `Vercel – business-os` status was created, so the API preview is off.
+- The docs-only commit that added this note is the skip check. Its web status is recorded in the PR.
+
 ## 6. Rollback
 
 Everything is in the repository. Revert the PR, or delete `git` from `apps/api/vercel.json` and `ignoreCommand` from `apps/web/vercel.json`. The next push restores the old behaviour. No dashboard setting was changed. Do not "fix" a skipped preview by editing dashboard settings; redeploy it from the Vercel dashboard or push a commit.
