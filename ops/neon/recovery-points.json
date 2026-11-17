@@ -334,7 +334,7 @@
       },
       "deployment": {
         "status": "pending",
-        "evidence": "PR #135 not merged; signed-in Sales smoke owed"
+        "evidence": "PR #135 not merged. Signed-in board check by Regan 19:22 UTC after board fix #155 (f66fa17): \"Yes the sales board is working now.\""
       },
       "recoveryPoint": {
         "status": "verified",

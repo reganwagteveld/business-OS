@@ -325,6 +325,6 @@ Delegated operation under ChatGPT's `APPROVED — EXECUTE: MIGRATION` ([verdict]
 | Schema | `VERIFY PASS`: `config_version` column and CHECK, 2 valid partial unique indexes, 2 SECURITY INVOKER functions with a pinned `search_path`, 3 enabled triggers |
 | RLS and grants | Forced RLS on the four Sales tables; no `bos_app` DELETE grant. §5 checks: 26/26 finished, only `_prisma_migrations` without RLS, 0 privileged `bos_` roles, 0 unvalidated constraints |
 | Data | `config_version = 1` on 1/1 pipelines; row totals unchanged |
-| Health | `GET /api/v1/health` 200 `ok` on app.pixakova.com and the Vercel production URL. Signed-in Sales smoke owed to Regan |
+| Health | `GET /api/v1/health` 200 `ok` on app.pixakova.com and the Vercel production URL. Signed-in check: the board first showed "That request was not accepted", caused by a pre-existing board bug (it requested 200 rows against the API limit of 100), not by this migration; fixed by PR #155 (`f66fa17`, merged 18:51). Regan at 19:22 UTC: "Yes the sales board is working now." (no card move reported) |
 
 Not done, by instruction: PR #135 not merged (a separate merge verdict is needed), nothing activated. Keep `pre-sales-configuration-migration` until the next migration is verified.
