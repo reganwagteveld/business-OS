@@ -49,7 +49,10 @@ export type StateConflictCode =
   // Finance F7-B (docs/finance-catalog-f7b.md): an inactive catalog item cannot be added to a draft line.
   | 'catalog_item_inactive'
   // Administration A2-B (docs/administration-a2.md §6, §7): memberships and invitations.
-  | 'invitation_exists' | 'already_member' | 'invitation_closed' | 'last_owner' | 'already_owner' | 'member_not_active';
+  | 'invitation_exists' | 'already_member' | 'invitation_closed' | 'last_owner' | 'already_owner' | 'member_not_active'
+  // WF-1 (docs/cross-zone-workflows-wf1.md §6.9): cross-Zone links.
+  | 'project_customer_locked' | 'quote_not_accepted' | 'quote_has_project' | 'project_has_quote' | 'opportunity_set_by_quote'
+  | 'opportunity_mismatch' | 'opportunity_lost' | 'opportunity_projects_changed';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {

@@ -17,22 +17,37 @@ type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 type Row = {
   id: string; name: string; description: string | null; status: Status; priority: Priority; customerId: string | null; ownerUserId: string | null;
   startDate: Date | null; dueDate: Date | null; completedAt: Date | null; version: number; createdById: string | null; updatedById: string | null;
-  createdAt: Date; updatedAt: Date; archivedAt: Date | null;
+  createdAt: Date; updatedAt: Date; archivedAt: Date | null; sourceOpportunityId: string | null; sourceQuoteId: string | null;
   customer?: { id: string; displayName: string; archivedAt: Date | null } | null;
+  sourceOpportunity?: { id: string; title: string; status: 'OPEN' | 'WON' | 'LOST' } | null;
+  sourceQuote?: { id: string; number: string | null; status: 'DRAFT' | 'ISSUED' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'VOID' } | null;
 };
 
 /** What the caller may see besides projects themselves. Decided by the route from the verified role. */
 export interface Viewer {
   /** Customer names come from the Customer Zone, so they are shown only to people who may read customers. */
   canReadCustomers: boolean;
+  /** WF-1 §6.7: the source opportunity (Sales) is shown only to people who may read Sales. */
+  canReadSales: boolean;
+  /** WF-1 §6.7, D-WF1-05: the source quote (Finance) is shown only to people who may read Finance. */
+  canReadFinance: boolean;
 }
 
 const base = {
   id: true, name: true, description: true, status: true, priority: true, customerId: true, ownerUserId: true, startDate: true, dueDate: true,
   completedAt: true, version: true, createdById: true, updatedById: true, createdAt: true, updatedAt: true, archivedAt: true,
+  sourceOpportunityId: true, sourceQuoteId: true,
 } as const;
-/** The linked customer is read in the same query (a join, no per-row lookups), and only when allowed. */
-const selectFor = (viewer: Viewer) => (viewer.canReadCustomers ? { ...base, customer: { select: { id: true, displayName: true, archivedAt: true } } } : base);
+/**
+ * Linked records are read in the same query (a join, no per-row lookups), and only when allowed: the
+ * customer for customers:read, the source opportunity for sales:read, the source quote for finance:read.
+ */
+const selectFor = (viewer: Viewer) => ({
+  ...base,
+  ...(viewer.canReadCustomers ? { customer: { select: { id: true, displayName: true, archivedAt: true } } } : {}),
+  ...(viewer.canReadSales ? { sourceOpportunity: { select: { id: true, title: true, status: true } } } : {}),
+  ...(viewer.canReadFinance ? { sourceQuote: { select: { id: true, number: true, status: true } } } : {}),
+});
 
 type Counts = Map<string, { total: number; done: number }>;
 
@@ -52,7 +67,17 @@ async function countsFor(db: AppTenantDb, ids: string[]): Promise<Counts> {
   return counts;
 }
 
-const toDto = (r: Row, counts: Counts): ProjectDto => ({
+/**
+ * Field-level redaction (WF-1 §6.7, D-WF1-05, G-FIN): the source keys are ABSENT (not null) for a viewer
+ * who may not read that Zone, so a response never reveals that a link exists.
+ */
+const toDto = (r: Row, counts: Counts, viewer: Viewer): ProjectDto => ({
+  ...dtoBase(r, counts),
+  ...(viewer.canReadSales ? { sourceOpportunityId: r.sourceOpportunityId, sourceOpportunity: r.sourceOpportunity ?? null } : {}),
+  ...(viewer.canReadFinance ? { sourceQuoteId: r.sourceQuoteId, sourceQuote: r.sourceQuote ?? null } : {}),
+});
+
+const dtoBase = (r: Row, counts: Counts): ProjectDto => ({
   id: r.id, name: r.name, description: r.description, status: r.status, priority: r.priority, customerId: r.customerId,
   customer: r.customer ? { id: r.customer.id, displayName: r.customer.displayName, archived: r.customer.archivedAt !== null } : null,
   ownerUserId: r.ownerUserId, startDate: dayOf(r.startDate), dueDate: dayOf(r.dueDate), completedAt: r.completedAt?.toISOString() ?? null,
@@ -67,7 +92,7 @@ async function load(db: AppTenantDb, viewer: Viewer, id: string): Promise<Row> {
 }
 async function present(db: AppTenantDb, viewer: Viewer, id: string) {
   const row = await load(db, viewer, id);
-  return toDto(row, await countsFor(db, [row.id]));
+  return toDto(row, await countsFor(db, [row.id]), viewer);
 }
 
 /**
@@ -79,6 +104,24 @@ async function checkCustomer(db: AppTenantDb, viewer: Viewer, customerId: string
   const customer = await db.customer.findFirst({ where: { id: customerId }, select: { archivedAt: true } });
   if (!customer) throw new RecordNotFoundError();
   if (customer.archivedAt) throw new StateConflictError('archived_reference');
+}
+
+/**
+ * W1-D6, WF-1 §5.3 and §8: a project cannot change or lose its customer while a customer-specific Finance
+ * record (a document or recurring schedule in any status, or an expense with a customer) or a source
+ * quote links it. The composite FKs refuse the same change in the database (ON UPDATE NO ACTION); this
+ * gives the clear error first. The error names no record, kind or count (G-FIN): the person learns only
+ * that the customer is fixed. An expense without a customer never locks it (MATCH SIMPLE).
+ */
+async function checkCustomerUnlocked(db: AppTenantDb, project: Row) {
+  if (project.sourceQuoteId !== null) throw new StateConflictError('project_customer_locked');
+  if (project.customerId === null) return; // only customerless expenses can link a customerless project
+  const [document, expense, template] = await Promise.all([
+    db.financeDocument.findFirst({ where: { projectId: project.id }, select: { id: true } }),
+    db.financeExpense.findFirst({ where: { projectId: project.id, customerId: { not: null } }, select: { id: true } }),
+    db.financeRecurringTemplate.findFirst({ where: { projectId: project.id }, select: { id: true } }),
+  ]);
+  if (document || expense || template) throw new StateConflictError('project_customer_locked');
 }
 
 function checkDates(start: Date | null, due: Date | null) {
@@ -140,13 +183,14 @@ export async function updateProject(db: AppTenantDb, viewer: Viewer, actorUserId
   if (patch.customerId !== undefined && patch.customerId !== before.customerId) {
     if (patch.customerId) await checkCustomer(db, viewer, patch.customerId);
     else if (!viewer.canReadCustomers) throw new ForbiddenError(); // unlinking is a customer decision too
+    await checkCustomerUnlocked(db, before);
     data.customerId = patch.customerId;
   }
 
-  const { customer: _customer, ...comparable } = before;
-  void _customer;
+  const { customer: _customer, sourceOpportunity: _opportunity, sourceQuote: _quote, ...comparable } = before;
+  void _customer; void _opportunity; void _quote;
   const fields = changedFields(comparable as unknown as Record<string, unknown>, data).filter((f) => f !== 'completedAt');
-  if (fields.length === 0) return toDto(before, await countsFor(db, [id]));
+  if (fields.length === 0) return toDto(before, await countsFor(db, [id]), viewer);
   const result = await db.project.updateMany({
     where: { id, archivedAt: null, version: patch.version },
     data: { ...data, ...BUMP, updatedById: actorUserId } as never,
@@ -242,7 +286,7 @@ export async function listProjects(db: AppTenantDb, viewer: Viewer, query: Proje
   const counts = await countsFor(db, page.map((r) => r.id));
   const last = page[page.length - 1];
   return {
-    projects: page.map((r) => toDto(r, counts)),
+    projects: page.map((r) => toDto(r, counts, viewer)),
     nextCursor: rows.length > query.limit && last ? encodeCursor(list, cursorOf(last)) : null,
   };
 }
@@ -266,4 +310,8 @@ export async function projectSummary(db: AppTenantDb): Promise<{ summary: Projec
 }
 
 /** The viewer as the verified role allows: decided once per request from permission keys, never from assignments. */
-export const viewerOf = (principal: Principal): Viewer => ({ canReadCustomers: can(principal, 'customers:read') });
+export const viewerOf = (principal: Principal): Viewer => ({
+  canReadCustomers: can(principal, 'customers:read'),
+  canReadSales: can(principal, 'sales:read'),
+  canReadFinance: can(principal, 'finance:read'),
+});

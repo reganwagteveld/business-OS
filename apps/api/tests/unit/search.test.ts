@@ -326,19 +326,19 @@ describe('providers (§4.1, §6.4)', () => {
     expect(SEARCH_PROVIDERS.map((p) => p.type)).toEqual(SearchType.options);
   });
 
-  it('declares well-formed, uniquely named indexes, and no migration in this code PR creates them', () => {
+  it('declares every index the migration creates, verbatim, and nothing else', () => {
+    const migration = readFileSync(join(MIGRATIONS, '20261206000000_search_indexes', 'migration.sql'), 'utf8');
+    const created = migration.split('\n').filter((l) => l.startsWith('CREATE INDEX'));
+    expect(created).toEqual(SEARCH_INDEXES.map((i) => i.statement));
     expect(SEARCH_INDEXES).toHaveLength(22);
     expect(new Set(SEARCH_INDEXES.map((i) => i.name)).size).toBe(SEARCH_INDEXES.length);
-    for (const index of SEARCH_INDEXES) {
-      expect(index.statement.startsWith(`CREATE INDEX "${index.name}" ON "${index.table}" `)).toBe(true);
-      expect(index.name).toMatch(/_search_/);
-    }
-    // The index migration ships in its own PR with its own approval (Regan, 2026-11-17). Until it lands, no
-    // migration may create a search index; that PR replaces this assertion with the verbatim comparison.
+    // Additive only: no table, column, policy, grant, extension or function change.
+    expect(migration.replace(/^--.*$/gm, '')).not.toMatch(/\b(ALTER|DROP|GRANT|REVOKE|EXTENSION|FUNCTION|POLICY|CONCURRENTLY)\b/);
+    // No other migration creates a search index.
     const creating = readdirSync(MIGRATIONS)
       .filter((d) => statSync(join(MIGRATIONS, d)).isDirectory())
       .filter((d) => /_search_\w*idx/.test(readFileSync(join(MIGRATIONS, d, 'migration.sql'), 'utf8')));
-    expect(creating).toEqual([]);
+    expect(creating).toEqual(['20261206000000_search_indexes']);
   });
 });
 
