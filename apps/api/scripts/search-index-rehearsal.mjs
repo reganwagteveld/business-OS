@@ -11,10 +11,12 @@
 //   REHEARSAL_DATABASE_URL=postgresql://<owner role>@host/db        # runs the migration, as in production
 //   REHEARSAL_APP_DATABASE_URL=postgresql://<app role>@host/db      # the writers, as the application (forced RLS)
 //   REHEARSAL_ADMIN_DATABASE_URL=postgresql://<admin role>@host/db  # seeding and pg_stat_activity sampling
-//   REHEARSAL_CONFIRM_HOST=<the databases' host, typed again>
+//   # a Neon branch also needs, so the guard can verify it through the Neon API (scripts/lib/rehearsal-guard.mjs):
+//   NEON_API_KEY=… NEON_PROJECT_ID=… REHEARSAL_NEON_BRANCH_ID=<branch named rehearsal-search-indexes-…>
 //   node scripts/search-index-rehearsal.mjs [--seed] [--scale 1] [--writers 8] [--drill] [--out report.json]
 //
-// All three URLs must point at the same disposable database. The writers set app.business_id per
+// All three URLs must point at the same disposable database: a local one, or a temporary Neon branch the
+// guard positively verifies (never the default branch, never protected, never an endpoint of production). The writers set app.business_id per
 // transaction, exactly as withTenant does, so forced RLS applies to them.
 // Exit code 0 only when the rehearsal ran to the end; the report says whether the result is acceptable.
 import { spawnSync, spawn } from 'node:child_process';
@@ -22,6 +24,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pg from 'pg';
+import { RehearsalTargetError, verifyRehearsalTarget } from './lib/rehearsal-guard.mjs';
 
 const MIGRATION = '20261206000000_search_indexes';
 const TABLES = ['customers', 'contacts', 'opportunities', 'projects', 'project_tasks', 'finance_documents', 'finance_catalog_items', 'people_employees'];
@@ -38,40 +41,17 @@ const option = (name, fallback) => {
 const url = process.env.REHEARSAL_DATABASE_URL;
 const appUrl = process.env.REHEARSAL_APP_DATABASE_URL;
 const adminUrl = process.env.REHEARSAL_ADMIN_DATABASE_URL;
-const confirmHost = process.env.REHEARSAL_CONFIRM_HOST;
-if (!url || !appUrl || !adminUrl || !confirmHost) {
-  console.error('Set REHEARSAL_DATABASE_URL, REHEARSAL_APP_DATABASE_URL, REHEARSAL_ADMIN_DATABASE_URL (all on one DISPOSABLE database) and REHEARSAL_CONFIRM_HOST (its host).');
+// Fail closed BEFORE any connection, seed, write or migration: the target must be proven disposable
+// (scripts/lib/rehearsal-guard.mjs). Nothing below this line runs if it is not.
+let target;
+try {
+  target = await verifyRehearsalTarget({ urls: { owner: url, app: appUrl, admin: adminUrl }, env: process.env });
+} catch (error) {
+  console.error(`Refusing to rehearse: ${error instanceof RehearsalTargetError ? error.message : 'the target could not be verified.'}`);
   process.exit(2);
 }
+console.log(`target verified: ${target.mode}${target.mode === 'neon-branch' ? ` (${target.branchName})` : ''}`);
 const host = new URL(url).hostname;
-const dbName = new URL(url).pathname;
-for (const candidate of [url, appUrl, adminUrl]) {
-  const u = new URL(candidate);
-  // A local Unix-socket URL has no hostname; it is accepted only for a local rehearsal.
-  const sameHost = u.hostname === confirmHost || (u.hostname === '' && confirmHost === 'localhost');
-  const sameDb = u.pathname === dbName;
-  if (!sameHost || !sameDb) {
-    console.error('Every rehearsal URL must use REHEARSAL_CONFIRM_HOST and the same database. Refusing.');
-    process.exit(2);
-  }
-}
-// The production URLs, when present in this shell, must not be the target.
-for (const key of ['DATABASE_URL', 'MIGRATION_DATABASE_URL', 'AUTH_DATABASE_URL', 'ADMIN_DATABASE_URL']) {
-  const other = process.env[key];
-  if (other && !/localhost|127\.0\.0\.1/.test(other) && sameDatabase(other, url)) {
-    console.error(`REHEARSAL_DATABASE_URL points at the same database as ${key}. Refusing.`);
-    process.exit(2);
-  }
-}
-function sameDatabase(a, b) {
-  try {
-    const x = new URL(a);
-    const y = new URL(b);
-    return x.hostname === y.hostname && x.pathname === y.pathname;
-  } catch {
-    return false;
-  }
-}
 // `migrate deploy` never uses a shadow database, but Prisma refuses one equal to the target; this one need not exist.
 const shadowUrl = (() => { const u = new URL(url); u.pathname = `${u.pathname}_rehearsal_shadow_unused`; return u.toString(); })();
 const scale = Number(option('scale', '1'));
@@ -81,7 +61,7 @@ const out = option('out', `search-index-rehearsal-${new Date().toISOString().rep
 const pool = new pg.Pool({ connectionString: url, max: 2 }); // owner: _prisma_migrations
 const admin = new pg.Pool({ connectionString: adminUrl, max: 3 }); // seed, sizes, catalog, lock sampling
 const app = new pg.Pool({ connectionString: appUrl, max: writerCount + 1 }); // writers
-const report = { startedAt: new Date().toISOString(), target: { host: host.replace(/^[^.]+/, '<redacted>') }, scale, writers: writerCount };
+const report = { startedAt: new Date().toISOString(), target: { mode: target.mode, branchName: target.branchName ?? null, host: host.replace(/^[^.]+/, '<redacted>') }, scale, writers: writerCount };
 
 // ---- helpers ---------------------------------------------------------------------------------------------
 async function inBusiness(client, businessId, fn) {

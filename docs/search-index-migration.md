@@ -20,7 +20,7 @@ Search stays disabled (`SEARCH_API_ENABLED = false`) whether or not these indexe
 
 | Step | What it does |
 |---|---|
-| Guard | Refuses unless every URL is on the same database and `REHEARSAL_CONFIRM_HOST` repeats the host. It also refuses a target that matches a production URL set in the shell, and a database where the migration or any search index already exists. |
+| Guard (runs first) | `scripts/lib/rehearsal-guard.mjs` must **prove** the target is disposable before any connection, seed, write or migration. It fails closed on any doubt, missing input or API error (see "Target guard" below). It also refuses a database where the migration or any search index already exists. |
 | `--seed` | Seeds the design-point tenant (§11.1 of `global-search-gs1.md`) plus a noisy tenant five times larger. That is about 1.2 M rows in total, all synthetic. It then runs `ANALYZE`. |
 | Writers | At least one writer per indexed table, connecting as the **app role** with `app.business_id` set per transaction, as `withTenant` does, so forced RLS applies. They update rows (with the version bump the guard triggers require) and insert customers. |
 | Baseline | 10 s of writes before any index exists. |
@@ -29,6 +29,19 @@ Search stays disabled (`SEARCH_API_ENABLED = false`) whether or not these indexe
 | After | Checks that all 22 indexes exist and are valid, that `_prisma_migrations` shows the migration finished, and runs 10 s of writes with the indexes in place (write overhead). |
 
 The output is a JSON report. It contains no connection strings, and the host is redacted.
+
+**Target guard.** The guard accepts only two kinds of target. It never trusts an operator-typed "disposable" flag or a host typed in again:
+
+- **Local:** every URL is a loopback host or a local socket.
+- **Neon branch:** the Neon control plane confirms all of the following, using `NEON_API_KEY` held by the operator on the Mac, with `NEON_PROJECT_ID` and `REHEARSAL_NEON_BRANCH_ID`:
+  - the branch is **not** the project's default branch;
+  - it is **not** protected;
+  - it is named `rehearsal-search-indexes-…`;
+  - it is less than 72 hours old;
+  - every URL's host (direct or `-pooler`) is one of **that branch's** endpoints;
+  - independently, no URL's host is an endpoint of the **default (production) branch**.
+
+The guard also refuses a host that matches any production URL present in the shell. It refuses URLs that disagree on host or database, an app URL that uses the owner or admin role, and a mix of local and remote URLs. Unit tests (`tests/unit/search-index-rehearsal-guard.test.ts`) cover each refusal, including a production-like URL with no production environment set, a wrong branch, the default branch, a protected or old branch, and Neon API failures.
 
 The tool needs three URLs for the same disposable database:
 
@@ -78,7 +91,10 @@ The pattern confirms the audit concern: a table indexed early waits for every bu
 - `prisma migrate resolve --rolled-back 20261206000000_search_indexes` marked that row rolled back.
 - The next `migrate deploy` then applied the migration cleanly. The report shows both rows: the rolled-back attempt, then the finished one.
 
-**What this means for production:** the write stall grows with data. Production currently has few or no tenant rows (see §4.1, which must confirm this), so the stall there should be milliseconds. Each month of real data makes it longer. If the production size is small, applying soon is cheaper than applying later. If it is not small, use the split options in §5.
+**What this means for production:** at the design point this result is a **NO-GO**. A 5.4 s longest write is far over the proposed 2 s threshold (§4.3). The stall grows with data. Production may be much smaller, but that has to be **measured, not assumed**. Production approval needs either of these:
+
+- a rehearsal at production size (§4.2) showing a longest write of at most 2 s;
+- a separately approved alternative from §5.
 
 ## 4. Production procedure
 
@@ -88,21 +104,24 @@ Every step below runs from the Mac Remote Control session, because the cloud con
 
 ```sh
 cd apps/api
+node scripts/migration-fingerprint.mjs          # expected fingerprint (files only, no database)
 psql "$MIGRATION_DATABASE_URL_WITHOUT_SCHEMA_PARAM" -f scripts/search-index-preflight.sql
+pnpm exec prisma migrate status                 # must list exactly one pending migration: this one
 ```
 
-The script runs inside `BEGIN READ ONLY … ROLLBACK`. Record these results in the PR, with no ids or connection strings:
+The SQL runs inside `BEGIN READ ONLY … ROLLBACK`. It selects no SQL text, ids, names, client addresses or raw checksums. **Keep the raw output in the private Mac session.** Post only this pass/fail summary in the PR:
 
-1. Every applied migration and its checksum matches `main`, and nothing is unfinished or rolled back. **Stop** on any mismatch.
-2. `search_migration_rows = 0`, and no `_search_` index exists. **Stop** otherwise.
-3. Rows and size of the 8 tables.
-4. No long-running transaction. Retry later if there is one.
-5. `maintenance_work_mem`, the parallel maintenance worker count and the server version.
+1. `applied_fingerprint` equals the repository fingerprint, with 0 unfinished and 0 rolled back. **Stop** on any mismatch and compare privately.
+2. `prisma migrate status` shows `20261206000000_search_indexes` as the **only** pending migration, so `migrate deploy` would apply nothing else. **Stop** otherwise.
+3. `search_migration_rows = 0` and `existing_search_indexes = 0`. **Stop** otherwise.
+4. Rows and size of the 8 tables. These are counts only.
+5. No long-running transaction. Retry later if there is one.
+6. `maintenance_work_mem`, the parallel maintenance worker count and the server version.
 
 ### 4.2 Neon branch rehearsal
 
 1. Create a temporary Neon branch from production in the production region. Follow the standing Neon policy and the recovery-branch registry. If the branch would exceed the limit, add cost or need a deletion the policy does not cover, stop and ask.
-2. Run the rehearsal with `--seed --drill`, using the branch's owner, app (`bos_app`) and admin roles. The seed must be **at least** the production size from §4.1. The design point is the default.
+2. Name the branch `rehearsal-search-indexes-<yyyymmdd>`. Run the rehearsal with `--seed --drill`, using the branch's owner, app (`bos_app`) and admin roles, plus `NEON_API_KEY`, `NEON_PROJECT_ID` and `REHEARSAL_NEON_BRANCH_ID` so the guard can verify the branch. The seed must be **at least** the production size from §4.1. The design point is the default; use `--scale` below 1 only to match a smaller measured production size, and say so in the PR.
 3. If production is larger than the design point, run again with `--scale` above 1.
 4. Attach the JSON report to the PR. Delete the temporary branch per policy and log it.
 
@@ -110,7 +129,14 @@ The script runs inside `BEGIN READ ONLY … ROLLBACK`. Record these results in t
 
 These thresholds are proposed; Regan decides.
 
-- **Go** if the rehearsal at production size shows: the migration succeeded, all 22 indexes are valid, the drill left nothing behind, and the **longest write during the migration is at most 2 s**. This matches the D-GS1-16 planning threshold, applied to end-to-end write stall rather than build time.
+- **Go** if the rehearsal at production size shows all of the following:
+  - the migration succeeded;
+  - all 22 indexes are valid;
+  - the drill left nothing behind;
+  - the **maximum** (not p99) write during the migration is at most 2 s.
+
+  This matches the D-GS1-16 planning threshold, applied to the end-to-end write stall rather than to build time.
+- The local design-point run (5.4 s) is **NO-GO at that size**.
 - **No-go** otherwise. Use one of the §5 options, which is Regan's choice.
 
 ### 4.4 Recovery branch (approval required)
