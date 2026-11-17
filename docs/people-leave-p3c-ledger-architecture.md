@@ -8,6 +8,12 @@
 > Statements marked **verified** cite a file on `06405a5` (or on `ed88385` for P3-B). Statements marked
 > **(proposal)**, **(recommendation)** or **(assumption)** are not facts about the code.
 >
+> **Version 1.5 (2026-11-17)** records Regan's owner decision record on #134 (comment 6950789737): D-P3C-07,
+> -17, -18, -19, -32 (option A, initial disabled C1–C2 only) and -36 **accepted**; D-P3C-23 **revised**, so the
+> days-to-hours design is split into the hours a leave date costs (that date's scheduled ordinary hours) and a
+> separate, policy-defined conversion for amounts a policy states in days (§G.3, new D-P3C-23a/b for review).
+> P3-C1 implementation is authorised in a separate draft PR only. Index in handoff H-8. No other design change.
+>
 > **Version 1.4 (2026-11-17)** after ChatGPT's CHANGES REQUIRED re-audit of `fc9785b` (comment 6950206439 on
 > #134): sensitivity is now monotonic along every causal reference (reversal, correction, settlement, carry and
 > propagation), enforced on the write path, and a write that cites a row its writer cannot read is refused rather
@@ -33,7 +39,7 @@
 
 ## Contents
 
-- [Audit handoff (v1.1, corrections v1.2 to v1.4)](#audit-handoff-v11)
+- [Audit handoff (v1.1, corrections v1.2 to v1.4, decisions v1.5)](#audit-handoff-v11)
 - [A. Repository evidence and implementation inventory](#a-repository-evidence-and-implementation-inventory)
 - [B. Decision register](#b-decision-register)
 - [C. Domain model and proposed Prisma schema](#c-domain-model-and-proposed-prisma-schema)
@@ -96,10 +102,11 @@ back-fills, schedulers, permissions or production actions.
 |---|---|---|---|
 | **Accepted owner decisions (settled, not reopened)** | D-P3C-01..06; D-P3-1..11; D-P3-45; D-P3-50 (revised); D-P3-52; D-P3-53; D-P3-54 | ACCEPTED | check that the design implements them |
 | **C1 schema choices (technical)** | D-P3C-09 account lock anchor; D-P3C-10 no stored totals; D-P3C-27 `effective_from` back-fill; D-P3C-29 `numeric(12,4)` and cumulative rounding; D-P3C-33 snapshot seals; D-P3C-34 RLS staged in C1; D-P3C-37 refuse writes citing unreadable rows (v1.4) | PROPOSED, technical | accept or change under the delegation policy (the back-fill itself still needs its own migration evidence and verdict) |
-| **C1 choices (owner/security)** | D-P3C-32 trust boundary for derived postings (stated as options A/B in §I.2a); D-P3C-35 inferred revision dates (only if a time-zone change is found) | OPEN | recommend; Regan decides |
+| **C1 choices (owner/security)** | D-P3C-32 trust boundary: **ACCEPTED option A for disabled C1–C2 (H-8)**; D-P3C-35 inferred revision dates (only if a time-zone change is found) | OPEN | recommend; Regan decides |
 | **C1 schema choice (owner)** | D-P3-25 rule 1 (revisions get `effective_from`) and rules 2–5, 7 | PROPOSED since P3-A; owner | recommend; Regan (or a ChatGPT owner decision record) decides |
 | **Other technical choices** | D-P3C-08, -26, -30 | PROPOSED, technical | accept or change |
-| **Owner choices, consequential** | D-P3C-07 (meaning of D-P3C-03's override), D-P3C-23 (days-to-hours), D-P3C-17 (termination), D-P3C-36 (termination recorded late, v1.3), D-P3C-18 and -19 (second approver, self-correction) | OPEN, options in H-3 and §M.2 | recommend; Regan decides |
+| **Owner choices, accepted (v1.5)** | D-P3C-07, -17, -18, -19, -36 (H-8) | ACCEPTED | check the design implements them |
+| **Owner choices, consequential** | D-P3C-23a (which days↔hours methods a policy may choose, and the default), D-P3C-23b (where the basis is configured) | OPEN after Regan's revision of D-P3C-23 (H-8), options in §G.3 | recommend; Regan decides |
 | **Owner choices, other** | D-P3C-11, -12, -13, -14, -15, -16, -20, -21, -22, -24, -25, -28, -31 | OPEN (§M.2) | recommend; Regan decides |
 
 ### H-2. Dependencies on the accepted P3-B contract (#116 at `ed88385`)
@@ -150,13 +157,9 @@ open.
 | B | A, plus a per-employee, time-limited negative allowance granted by OWNER/ADMIN with a reason | New table `people_leave_negative_allowances` (C3 or later) | Own audit action; reason restricted | Yes (it is a grant, not an approver override) |
 | C | Per-request override at approval by an authorised person with a reason | Flag + reason on the reservation transaction | Per-decision audit | **No**: D-P3-54 says no approver override of a shortfall |
 
-**D-P3C-23: days-to-hours conversion for DAYS policies.**
-
-| Option | Rule | 20 days for 38 h / 5 days | 20 days for 22.8 h / 3 days | Consequence |
-|---|---|---|---|---|
-| **A (recommended)** | days × (ordinary weekly hours ÷ 5) | 152 h (4 weeks) | 91.2 h (4 of their weeks) | Pro rata by FTE; same weeks off for everyone |
-| B | days × average hours of the days actually worked | 152 h | 152 h (≈ 6.7 of their weeks) | A "day" means one of the employee's own working days; more hours for people who work fewer, longer days |
-| C | Configurable per policy (adapter parameter) | either | either | Needs a P3-A vocabulary field; defer |
+**D-P3C-23: days-to-hours conversion for DAYS policies.** **Revised by Regan (H-8):** a leave date always costs
+its scheduled ordinary hours; only amounts a policy states in days are converted, by a separate policy-defined
+basis. The v1.1 options table is superseded by §G.3 (methods, worked examples) and D-P3C-23a/b.
 
 Either A or B is a product rule in the core adapter, not law. Needs ordinary weekly hours (X-02).
 
@@ -219,13 +222,35 @@ none of them.
 
 D-P3C-01..06 unchanged. D-P3C-07, -32, -36 and every O item remain owner decisions.
 
+### H-8. v1.5: owner decision record (comment 6950789737 on #134, 2026-11-17 14:23 UTC)
+
+| Id | Owner decision | Where recorded |
+|---|---|---|
+| D-P3C-07 | **ACCEPTED (a).** D-P3C-03's "explicit audited override" is the policy's configured, revised and audited negative balance limit (`people:configure`). No case-by-case approver override; a per-employee time-limited allowance is deferred | §B.1, §M.2 |
+| D-P3C-17 | **ACCEPTED.** On termination: final accrual through the factual end date, freeze and keep the remaining hours, release later reservations per the ledger rules. No automatic forfeiture, money calculation or payout. Hours paid externally only as an audited `PAYOUT` with the payroll reference | §B.1, §G.8 |
+| D-P3C-18 | **ACCEPTED.** Maker-checker for opening-balance imports and payout postings when a second authorised person exists; routine corrections by one authorised person with mandatory reason and audit; sole-authoriser cases flagged and audited | §B.1, §C.11 |
+| D-P3C-19 | **ACCEPTED.** No self-correction, except a documented, audited exception when the actor is the business's sole authorised leave corrector | §B.1, §I.2 |
+| D-P3C-32 | **ACCEPTED, option A for the initial disabled C1–C2 only.** Trusted TypeScript derived calculations; SQL-enforced kind/basis/pair/close/lapse/lock invariants; **V-08 replay as a blocking release gate**; the residual risk (a `bos_app` holder can insert inflated `ACCRUAL`/`GRANT` the database does not prevent; replay detects it later) is retained knowingly. **Before any payroll export**, option B or an equally fail-closed export-time verification must be chosen separately | §B.1, §I.2a |
+| D-P3C-36 | **ACCEPTED (a), interim.** A backdated termination that meets ledger postings after its factual end date fails closed (`leave_ledger_after_end_date`) and rolls back the whole termination; postings are not rewritten and the end date is not changed. A separately designed unwind path may come later | §B.1, §G.9 |
+| D-P3C-23 | **REVISED (not accepted as "weekly hours ÷ 5 for all purposes").** The hours a specific leave date costs are that date's **actual scheduled ordinary hours** (effective work pattern and holiday rules). Amounts a policy states in **days** use a **separate, policy-defined, audited days↔hours basis** that covers part-time and compressed weeks, with deterministic examples and tests. The two are never conflated. The exact conversion rule returns for owner and independent review before it is locked | §G.3 (rewritten), §F.6, D-P3C-23a, D-P3C-23b, T-C24a..c |
+| Implementation | **P3-C1 authorised in a new, isolated draft PR only**, subject to its open technical/security prerequisites and independent audit; disabled by default; live schema and migration order rechecked before writing a migration; back-fill designed and rehearsed before any apply. Not authorised: production migration, privileged SQL, merge, deploy, payroll connection, activation, C2–C6 | §M.3 |
+
+No other §M.2 proposal is marked accepted by this record. Owner wording, as recorded: "For Pixa OS P3-C PR #134,
+my owner decision is: ACCEPT D-P3C-07, D-P3C-17, D-P3C-18, D-P3C-19, D-P3C-32 Option A for the initial disabled
+foundation, and D-P3C-36 as recommended. REVISE D-P3C-23 to distinguish actual scheduled ordinary hours for
+date-specific leave deductions from policy day-to-hour conversion; update the design for review. AUTHORIZE P3-C1
+implementation as a separate draft PR only, subject to unresolved C1 security/technical design prerequisites and
+independent audit. Record this on GitHub. No migration execution, merge, deploy, payroll connection or activation
+is authorized."
+
 ### H-4. Requested audit scope
 
 Independent security, tenant-isolation and concurrency review before any P3-C1 work: §C (schema, constraints,
 grants, RLS), §D.3 (idempotency), §F.4 (invariants), §I (authority, visibility, lock order, threat matrix), §J.2
 (back-fill under the revision guard) and the P3-B dependency table H-2. For the re-audit of v1.2: the five
 corrections indexed in H-5, chiefly §C.6, §F.1a, §G.9, §I.2a, §I.3 and §J.2. For v1.3: the three corrections and
-the D-P3C-32 statement indexed in H-6. For v1.4: §C.6a and H-7.
+the D-P3C-32 statement indexed in H-6. For v1.4: §C.6a and H-7. For v1.5: the
+D-P3C-23 redesign (§G.3, §F.6, T-C24a..c) and the decision record H-8.
 
 ---
 
@@ -293,12 +318,24 @@ All paths are relative to the repository root on `main` at `06405a5` unless stat
 
 | Id | Decision | Status | How this design implements it |
 |---|---|---|---|
-| D-P3C-01 | Hours are the canonical balance quantity; days are displayed using applicable employment rules | **ACCEPTED** | Every ledger amount is hours (`numeric(12,4)`). DAYS policies are converted at posting time with the hours-per-day in force on the date (§G.3); display days are derived, never stored as balances (§F.6) |
+| D-P3C-01 | Hours are the canonical balance quantity; days are displayed using applicable employment rules | **ACCEPTED** | Every ledger amount is hours (`numeric(12,4)`). DAYS policies are converted at posting time with the policy's days↔hours basis in force on the date; leave dates cost their scheduled hours (§G.3, D-P3C-23 revised); display days are derived, never stored as balances (§F.6) |
 | D-P3C-02 | Submitted requests remain pending; approved future leave reserves available hours without immediately consuming them | **ACCEPTED** | Submission posts nothing. Approval posts `RESERVATION` entries (per date) to the `RESERVED` book. Consumption happens per leave date (§D, §F.3) |
-| D-P3C-03 | Negative balances denied by default, with explicit audited policy override | **ACCEPTED** (interpretation needs confirming, D-P3C-07) | Default limit 0 (P3-A already defaults `negative_balance_limit` to 0). The override is the policy's own limit, configured explicitly and audited; optional per-employee grant in §M.2 |
+| D-P3C-03 | Negative balances denied by default, with explicit audited policy override | **ACCEPTED** (interpretation confirmed by D-P3C-07 (a), v1.5) | Default limit 0 (P3-A already defaults `negative_balance_limit` to 0). The override is the policy's own limit, configured explicitly and audited; optional per-employee grant in §M.2 |
 | D-P3C-04 | Corrections restricted to Owner/Admin or an explicitly authorised People manager, with mandatory reason, audit and reversal linkage | **ACCEPTED** | Correction transactions require `people:leave_manage` (OWNER, ADMIN) or an active `LEAVE_CORRECT` grant (§I.2); reason code and text mandatory (CHECK); every correction references the entry it reverses (FK + guard) |
 | D-P3C-05 | Accrual is policy-defined, deterministic, idempotent and supports backdated reconciliation | **ACCEPTED** | §G: pure engine over (policy revision, hours basis, dates); one entry per period, unique per period; backdated changes produce linked correction entries, never edits |
 | D-P3C-06 | Employees see their own balances, authorised managers see relevant employees, administrators see permitted business-wide records | **ACCEPTED** | §I.3 visibility matrix enforced in the service and backed by a data-derived restrictive RLS policy on balance reads |
+
+Accepted later by owner decision record (comment 6950789737 on #134, 2026-11-17; details in H-8):
+
+| Id | Decision | Status | How this design implements it |
+|---|---|---|---|
+| D-P3C-07 | The D-P3C-03 override is the policy's audited negative limit; no per-request override | **ACCEPTED (a)** | P3-A `negative_balance_limit` via `people:configure`, revisioned and audited; no approver override path (D-P3-54); per-employee allowance deferred |
+| D-P3C-17 | Freeze at termination; no forfeiture, money or automatic payout | **ACCEPTED** | §G.8, §G.9 row 1; `PAYOUT` only with an external payroll reference |
+| D-P3C-18 | Maker-checker for imports and payouts when a second authorised person exists | **ACCEPTED** | §C.11 proposals for import batches and payouts; single-actor corrections with reason; sole-authoriser flag |
+| D-P3C-19 | No self-correction except the sole authorised corrector, audited | **ACCEPTED** | §I.2 guard refuses own account; `SOLE_AUTHORISER` basis flagged |
+| D-P3C-32 | Option A for the initial disabled C1–C2; V-08 blocking; B or fail-closed export check before payroll | **ACCEPTED (scoped)** | §I.2a |
+| D-P3C-36 | Refuse a late-recorded termination with post-end postings; roll back the whole termination | **ACCEPTED (a), interim** | §G.9 |
+| D-P3C-23 | Date cost = scheduled ordinary hours of the date; days-stated amounts via a separate policy basis | **REVISED** (method choice open: D-P3C-23a/b) | §G.3, §F.6 |
 
 ### B.2 Earlier decisions this design keeps
 
@@ -964,9 +1001,12 @@ Unchanged in shape from P3-B §5.6 rule 8, with these substitutions (R-04):
 - A **booking's** days are the engine's day count from P3-B (whole and half dates on the employee's pattern),
   stored on the request for display; its hours are the sum of each date's hours. Days are never recomputed from
   hours.
-- A **balance** in days is `hours ÷ hpd_today`, where `hpd_today` is the employee's ordinary hours per work day in
-  force today (average of the pattern's working days when they differ), shown with one decimal and the basis
-  ("≈ 8.3 days at 7.6 h/day"). If no pattern exists, days are not shown.
+- A **balance** in days (DAYS policies only) is `hours ÷ conversionHours(today)`, using the **same policy basis**
+  that converts the policy's day amounts (§G.3, v1.5), shown with one decimal and the basis ("≈ 8.3 days at
+  7.6 h/day, policy basis"). It is a display of the entitlement unit, not a promise of a number of working days:
+  where the employee's scheduled days differ in length, the screen also shows hours and may show an estimate in
+  their own scheduled days, labelled as an estimate. If the basis cannot be computed (no pattern), days are not
+  shown. HOURS policies show hours only.
 
 ### F.7 Worked example
 
@@ -1053,7 +1093,8 @@ interface LeavePolicyAdapter {            // proposal; names may change, semanti
 | Input | Source | Status |
 |---|---|---|
 | Policy and rules on day `d` | assignment covering `d` (E-06) → highest revision with `effective_from ≤ d` (C.8) | P3-A implemented; `effective_from` missing (C1) |
-| Hours basis on day `d` | work pattern covering `d`: working weekdays and ordinary hours (per day or per week) | **Dependency: P3-B B1 `people_employee_work_patterns`** (documented only, E-10); must add ordinary weekly hours (D-P3C-12, D-P3C-23) |
+| Hours basis on day `d` | work pattern covering `d`: scheduled ordinary hours **per date** (rule 1 of §G.3), and per pattern cycle the ordinary hours and number of scheduled working days (methods W and S) | **Dependency: P3-B B1 `people_employee_work_patterns`** (documented only, E-10); must provide per-date scheduled hours and cycle totals (D-P3C-12, D-P3C-23 revised) |
+| Policy days↔hours basis | the policy revision's method (W/S/F) and its parameter | **Dependency: P3-A vocabulary addition** (D-P3C-23b) |
 | Employed on `d` | employee `start_date`, `end_date`, status history (E-08) | Implemented |
 | Service period | count of activations in the status history (E-08); a rehire after `TERMINATED` starts the next | Implemented data; rule D-P3C-28 |
 | Public holidays | B1 `people_holidays` | Dependency; affects consumption hours only, never accrual |
@@ -1062,18 +1103,54 @@ interface LeavePolicyAdapter {            // proposal; names may change, semanti
 ### G.3 Hours as the canonical quantity (D-P3C-01)
 
 - **HOURS policies:** amounts are already hours.
-- **DAYS policies:** every amount the rules express in days (entitlement, carry cap, maximum, negative limit) is
-  converted with `daysToHours` using the basis in force on the date the amount is applied: the period's last day
-  for accrual, the year's first day for grants, the closing year's last day for carry caps, today for limits. The
-  basis is stored on the entry (`hours_per_day`) so the conversion is auditable.
-- **Basis (owner decision D-P3C-23, recommendation):** `hours_per_day = ordinary weekly hours ÷ 5`. A part-timer on
-  22.8 h a week earns 20 "days" as `20 × 4.56 = 91.2 h`, which is four of their ordinary weeks, the same proportion
-  as a full-timer. The alternative (average hours of the days they actually work) treats a "day" as one of the
-  employee's own working days, which gives people who work fewer, longer days more hours. The two are different
-  meanings of a policy day; which one Regan intends decides it. Either is a product rule, not law, and lives in the
-  adapter.
-- **Leave cost:** hours per date from the B1 duration engine (pattern hours that date; 0 on holidays and non-work
-  days; half a date = half its hours; HOURS requests use the hours entered). Stored per date on the reservation.
+Two different questions, answered separately (owner revision of D-P3C-23, v1.5). They are never conflated: no
+leave date is ever costed with a converted "hours per day", and no entitlement is ever converted with one date's
+scheduled hours.
+
+**1. What a leave date costs (every policy, DAYS or HOURS).** The **actual scheduled ordinary hours of that
+employee on that date**, from the effective work pattern and the holiday rules (B1 duration engine, X-01): 0 on a
+non-working day or a public holiday the pattern excludes; a half date costs half that date's hours; an HOURS entry
+costs the hours entered (bounded by that date's scheduled hours, P3-B). Stored per date on the `RESERVATION` entry
+and copied to its `CONSUMPTION`. A compressed-week employee's 9.5-hour day costs 9.5 h; a part-timer's 7.6-hour
+day costs 7.6 h; a day off costs nothing.
+
+**2. How a policy's day amounts become hours (DAYS policies only).** Every amount the rules state in days
+(entitlement, accrual rate, carry cap, maximum balance, negative limit) is converted with
+`daysToHours(days, basis)`, where the **basis is chosen by the policy** (D-P3C-23a/b) and evaluated on the date the
+amount is applied: the period's last day for accrual (weighted by day when the pattern changes inside the period),
+the year's first day for grants, the closing year's last day for carry caps, today for limits. Each converted entry
+records the method, the resulting `hours_per_day` and the pattern version used, so every conversion is auditable
+and replayable.
+
+Candidate methods (a policy names one; owner decides which are offered and the default, D-P3C-23a):
+
+| Method | Hours per policy day | Meaning of "a day" |
+|---|---|---|
+| **W. Weekly ordinary hours ÷ standard days** (standard days per week set on the policy, default 5) | ordinary weekly hours (averaged over the pattern cycle) ÷ standard days | A fixed fraction of the employee's ordinary week. N days always fund N ÷ 5 of their ordinary weeks, whatever their pattern |
+| **S. Average scheduled working day** | ordinary hours in the pattern cycle ÷ scheduled working days in the cycle | One of the employee's own working days, at its average length |
+| **F. Fixed hours per day** (stated on the policy) | the stated number, the same for everyone | A business-wide standard day; does **not** pro-rate part-timers unless the policy's entitlement already does |
+
+Worked examples, entitlement **20 days**, one year (amounts in hours, 4 dp; "weeks" = ordinary weeks of leave the
+entitlement pays for, each week costed with its scheduled hours under rule 1):
+
+| Employee pattern | Ordinary week | W (÷5) | S (avg day) | F (7.6) |
+|---|---|---|---|---|
+| Full time, 5 × 7.6 h | 38 h | 152.0000 (4 weeks) | 152.0000 (4 weeks) | 152.0000 (4 weeks) |
+| Part time, 3 × 7.6 h | 22.8 h | 91.2000 (4 weeks) | 152.0000 (6.6667 weeks) | 152.0000 (6.6667 weeks) |
+| Part time, 2 × 10 h | 20 h | 80.0000 (4 weeks) | 200.0000 (10 weeks) | 152.0000 (7.6 weeks) |
+| Compressed, 4 × 9.5 h | 38 h | 152.0000 (4 weeks) | 190.0000 (5 weeks) | 152.0000 (4 weeks) |
+| 9-day fortnight, 76 h over 9 days | 38 h (average) | 152.0000 (4 weeks) | 168.8889 (4.4444 weeks) | 152.0000 (4 weeks) |
+
+Consequences, stated without preference: W gives everyone the same number of ordinary weeks off and pro-rates
+part-time work by hours; S gives the same number of the employee's own working days, so fewer, longer days earn
+more hours; F is simplest but treats every employee's day as the same length. All three are product rules, not
+law, and live in the policy adapter (§G.1); a jurisdiction pack may later constrain which one applies.
+
+**Recommendation for owner review (D-P3C-23a):** offer W and S per policy; default **W with 5 standard days** for
+new DAYS policies; F only if a business asks for it. **D-P3C-23b:** the method (and standard days for W, hours for
+F) is a field on the policy revision, so it is revisioned and audited with the rest of the policy. That is a P3-A
+vocabulary addition (dependency), not invented here. Until both are decided, P3-C2 cannot convert DAYS policies;
+HOURS policies are unaffected, and **P3-C1 is unaffected** (it posts explicit hours with no engine).
 
 ### G.4 Periods
 
@@ -1629,7 +1706,9 @@ I and R test also runs behind PgBouncer in transaction mode (E-30).
 | T-C21 | Determinism | Catch-up on time vs 14 months late → identical entries (except `recorded_at`); realised read = later posting | U/I | C2 |
 | T-C22 | Accrual | Mid-period start, assignment change, FTE change, termination: pro rata by day | U | C2 |
 | T-C23 | Accrual | Rule change mid-period: last-day rule governs whole period; mid-year grant not regranted | U | C2 |
-| T-C24 | Hours | DAYS policy conversion with basis recorded; part-timer basis per D-P3C-23 | U | C2 |
+| T-C24a | Hours (v1.5) | Date cost: full-time, part-time, compressed (9.5 h) and 9-day-fortnight patterns; public holiday and non-working day cost 0; half day costs half; an HOURS entry costs the hours entered. A DAYS policy booking deducts the same scheduled hours as an HOURS policy booking (no conversion applied to dates) | U | C2 |
+| T-C24b | Hours (v1.5) | Conversion table of §G.3 reproduced exactly for each method and pattern (4 dp); method, `hours_per_day` and pattern version recorded on every converted entry; pattern change mid-period weighted by day | U | C2 |
+| T-C24c | Hours (v1.5) | No conflation: changing a policy's conversion method changes future entitlements only, never the cost of an approved date; changing a pattern changes future date costs only (approved reservations keep their hours) | U/I | C2/C3 |
 | T-C25 | Max balance | Excess posted as `EXPIRY MAX_BALANCE`; reversal above max not refused | U/I | C2 |
 | T-C26 | Year boundary | CALENDAR, CUSTOM, ANNIVERSARY (incl. 29 February start); carry NONE/UNLIMITED/CAPPED; negative closing carried in full; lapse posted; closed bucket B = 0 | U/I | C2 |
 | T-C27 | Year boundary | Several missed years opened in order in one catch-up | I | C2 |
@@ -1716,7 +1795,9 @@ longer with C2 (R-11). P3-B's amendment can be written in parallel with C1–C2 
 
 ### M.1 Accepted (for completeness)
 
-D-P3C-01..06 (§B.1); D-P3-1..11; D-P3-45, D-P3-50 (revised), D-P3-52, D-P3-53, D-P3-54.
+D-P3C-01..06 (§B.1); D-P3C-07, -17, -18, -19, -32 (option A, disabled C1–C2), -36 (owner record, H-8);
+D-P3C-37 (a) (technical, ChatGPT design audit); D-P3-1..11; D-P3-45, D-P3-50 (revised), D-P3-52, D-P3-53, D-P3-54.
+D-P3C-23 was revised by the owner and is replaced by D-P3C-23a/b.
 
 ### M.2 Open decisions (recommendation in bold)
 
@@ -1726,7 +1807,7 @@ that shape P3-C1.
 | Id | Question | Options | Recommendation | Type |
 |---|---|---|---|---|
 | D-P3-25 r.1–5, 7 | Revisions get `effective_from`; rules by date; entries record the policy version | accept / amend | **Accept** (rule 6 is superseded by D-P3-45 and D-P3C-02) | O (it was put to Regan) · C1 |
-| D-P3C-07 | What is D-P3C-03's "explicit audited policy override"? | (a) the policy's negative limit, set by `people:configure` (revision + audit) / (b) (a) plus a per-employee, time-limited negative allowance granted by OWNER/ADMIN with reason / (c) per-request override at approval | **(a) now, (b) later if needed.** (c) contradicts D-P3-54 | O |
+| D-P3C-07 | What is D-P3C-03's "explicit audited policy override"? | (a) / (b) / (c) | **ACCEPTED (a)** by owner record (H-8); (b) deferred | O · decided |
 | D-P3C-08 | Reads post catch-up? | post on read (D-P3-21 text) / **compute on read, post on writes** | **Compute on read**: no writes in GETs, same figures | T |
 | D-P3C-09 | Serialisation anchor | current-year bucket (P3-B rule 4) / **account row, then buckets ascending** | **Account row**: one stable lock per employee and type | T · C1 |
 | D-P3C-10 | Stored balance totals | trigger-maintained totals / **none; sums of entries** | **None** in C1–C5 (P3-B rule 1) | T · C1 |
@@ -1736,13 +1817,15 @@ that shape P3-C1.
 | D-P3C-14 | Partial cancellation (early return) | none (whole only) / **release of remaining future dates as a P3-B transition** | **Support it** in P3-B's amendment | O |
 | D-P3C-15 | Date-based expiry of carried hours | none / **vocabulary extension in a later P3-A change** | **Later**; only carry-cap lapse now | O |
 | D-P3C-16 | ANNIVERSARY on 29 February | 28 February / **1 March in non-leap years** | **1 March** | O |
-| D-P3C-17 | Balance at termination (D-P3-8) | forfeit / **freeze, keep, no automatic payout; `PAYOUT` recorded from payroll with a reference** / automatic payout calculation | **Freeze** | O |
-| D-P3C-18 | Maker-checker for manual postings | none / **for imports and payouts only, when a second authorised person exists** / for every manual posting | **Imports and payouts**; corrections single-actor with mandatory reason (D-P3C-04 as accepted) | O |
-| D-P3C-19 | Self-correction | allowed / **never, except a sole authorised person (audited, flagged)** | **Never, with the sole-authoriser exception** (P3-B D-P3-28 pattern) | O |
+| D-P3C-17 | Balance at termination (D-P3-8) | forfeit / freeze / automatic payout | **ACCEPTED: freeze** (H-8) | O · decided |
+| D-P3C-18 | Maker-checker for manual postings | none / imports and payouts / every posting | **ACCEPTED: imports and payouts when a second authorised person exists** (H-8) | O · decided |
+| D-P3C-19 | Self-correction | allowed / never except sole authoriser | **ACCEPTED: never, sole-authoriser exception audited** (H-8) | O · decided |
 | D-P3C-20 | GRANT when the assignment or service starts mid-year | full grant / **pro rata by days** | **Pro rata** | O |
 | D-P3C-21 | Leave-year definition change | immediate / **after the current year, through a transition year** | **Transition year** (changes grant and carry timing, so an owner choice, v1.2) | O |
 | D-P3C-22 | Does unpaid leave or `ON_LEAVE` pause accrual? | **no in core; a policy rule later** / pause by category | **No in core** (jurisdiction-specific) | O |
-| D-P3C-23 | Days-to-hours basis | **weekly ordinary hours ÷ 5** / average hours per worked day | **Weekly ÷ 5** (pro rata by FTE) | O |
+| D-P3C-23 | Days-to-hours basis | — | **REVISED by owner (H-8)**: dates cost scheduled hours; day amounts use a policy basis. Replaced by -23a/b | O · revised |
+| D-P3C-23a | Which conversion methods a DAYS policy may use, and the default (§G.3) | W weekly ÷ standard days / S average scheduled day / F fixed hours | **Offer W and S; default W (5 days); F on request** | O |
+| D-P3C-23b | Where the method is configured | **policy revision field (P3-A vocabulary addition, revisioned and audited)** / business-wide setting | **Policy revision** | O + T |
 | D-P3C-24 | Import scope | **opening balances only** / also history | **Opening only** in C5 | O |
 | D-P3C-25 | Manager visibility | A: **current direct reports' balance-level rows (dated movements, no reasons, actors or references), sensitive types only with `read_sensitive`**, enforceable by RLS (§I.3) / B: same including sensitive types / C: totals only, which needs a privileged aggregate function (Regan, privileged SQL) | **A** | O |
 | D-P3C-26 | Restrictive RLS on ledger reads | service check only / **service + restrictive RLS** | **Both** (P3-B D-P3-48 pattern), measured in T-C70 | T |
@@ -1751,32 +1834,33 @@ that shape P3-C1.
 | D-P3C-29 | Precision | `numeric(9,4)` like P3-A / **`numeric(12,4)` hours, exact engine, cumulative rounding half-even** | **numeric(12,4)** | T · C1 |
 | D-P3C-30 | Max-balance excess | credit only up to the cap / **post full accrual and an `EXPIRY MAX_BALANCE`** | **Post and expire** (visible, replay-exact) | T |
 | D-P3C-31 | Multi-year propagation | recompute all later years / **delta propagation year by year with each year's own cap** | **Delta propagation** (decides how a correction carries forward, so an owner choice, v1.2) | O |
-| D-P3C-32 | Authority for derived postings (§I.2a table) | A: **trusted application: API prevention, kind/basis matrix and SQL-verified pair, closing and lapse invariants; a `bos_app` holder can still insert inflated `ACCRUAL`/`GRANT` amounts, detected by V-08, not stopped** / B: `SECURITY DEFINER` SQL engine for derived kinds (prevents wrong amounts; trust moves to audited inputs; second engine and a new privileged boundary, Regan) | **A for C1–C2 with V-08 in the release gate; decide B or a blocking payroll-time check before any payroll export** | O + security |
+| D-P3C-32 | Authority for derived postings (§I.2a table) | A: **trusted application: API prevention, kind/basis matrix and SQL-verified pair, closing and lapse invariants; a `bos_app` holder can still insert inflated `ACCRUAL`/`GRANT` amounts, detected by V-08, not stopped** / B: `SECURITY DEFINER` SQL engine for derived kinds (prevents wrong amounts; trust moves to audited inputs; second engine and a new privileged boundary, Regan) | **ACCEPTED: A for the initial disabled C1–C2 only** (H-8); V-08 blocking; B or a fail-closed export check to be chosen before any payroll export | O + security · decided (scoped) |
 | D-P3C-33 | Recorded-time semantics (§F.1a) | timestamp cutoffs / **`recorded_at` informational; seals by stored `pg_snapshot` and `recorded_xid`** | **Snapshot seals** | T |
 | D-P3C-34 | Restrictive RLS staging | all branches in C4 / **fail-closed policies in C1, manager branch in C4, grant branch in C5** | **Staged in C1** (no row exists without its read control) | T |
-| D-P3C-36 | Termination recorded after the ledger already posted events past its `end_date` (v1.3) | (a) **refuse the termination's ledger step (`leave_ledger_after_end_date`) until an unwind is designed; an authorised correction or a later `end_date` is needed** / (b) the termination unwinds post-end postings (reverse grants, accruals and consumptions; reopen a closed year), which needs a new reopen transaction / (c) freeze from the recording date | **(a) for C2**, revisit with C5 corrections. It can block recording a backdated termination, so it changes P1 behaviour. The refusal rolls back the whole termination and never alters the factual `end_date` (v1.4); as an interim gate it is technical, its business consequence is the owner's | O |
-| D-P3C-37 | Inheriting sensitivity from a cited row the writer cannot read (§C.6a, v1.4) | (a) **refuse the write (`leave_reference_not_visible`); only people who can read the history may write against it** / (b) privileged `SECURITY DEFINER` boolean lookup for cited ids (new privileged boundary, Regan) | **(a)** fail closed, no privilege | T + security (b would be Regan's) · C1 |
+| D-P3C-36 | Termination recorded after the ledger already posted events past its `end_date` (v1.3) | (a) **refuse the termination's ledger step (`leave_ledger_after_end_date`) until an unwind is designed; an authorised correction or a later `end_date` is needed** / (b) the termination unwinds post-end postings (reverse grants, accruals and consumptions; reopen a closed year), which needs a new reopen transaction / (c) freeze from the recording date | **ACCEPTED (a), interim** (H-8): whole termination rolls back; `end_date` never altered; an unwind path may follow | O · decided |
+| D-P3C-37 | Inheriting sensitivity from a cited row the writer cannot read (§C.6a, v1.4) | (a) **refuse the write (`leave_reference_not_visible`); only people who can read the history may write against it** / (b) privileged `SECURITY DEFINER` boolean lookup for cited ids (new privileged boundary, Regan) | **ACCEPTED (a)** by ChatGPT design audit (comment 6950350870); (b) not approved | T + security · C1 · decided |
 | D-P3C-35 | Effective dates of pre-C1 revisions | treat inferred as exact / **mark `INFERRED`, never let an inferred date govern a posting (cutover ≥ apply date + 1)** / recover per-row zones from audit | **Mark and isolate** | O (only if the preflight finds a time-zone change after a revision) |
 
 ### M.3 Readiness assessment
 
 | Package | Verdict | Why |
 |---|---|---|
-| **P3-C1** | **CONDITIONALLY READY (after re-audit)** | v1.0 audit (9fc9751) was a CONDITIONAL PASS with five corrections; v1.2 makes them (§ handoff H-5). The re-audit of v1.2 (06fde5f) was CHANGES REQUIRED with three findings; v1.3 makes them (H-6). The re-audit of v1.3 (fc9785b) closed those and raised one privacy rule; v1.4 makes it (H-7). Conditions: (1) ChatGPT re-audit of v1.4 passes; (2) Regan authorises implementation (and allows a PR); (3) D-P3-25 r.1 and D-P3C-09, -10, -27, -29, -32, -33, -34, -37 accepted (-35 only if needed); (4) at build time, migration order rechecked (stamp after `20261207000000` and any newer); (5) before apply, the J.2 preflight and rehearsal evidence |
-| P3-C2 | **BLOCKED** | Needs B1 work patterns with ordinary hours (documented only, E-10), and owner decisions D-P3C-11, -15, -16, -17, -20, -22, -23, -28 |
-| P3-C3 | **BLOCKED** | Needs C2, the P3-B amendment for D-P3C-01/02 (R-02, R-03, X-03, X-04) audited, and D-P3C-07, -14 |
+| **P3-C1** | **AUTHORISED for implementation in a separate draft PR (owner record, H-8); still CONDITIONAL** | Remaining conditions: D-P3-25 r.1 and D-P3C-09, -10, -27, -29, -33, -34 accepted (technical, ChatGPT; -35 only if the preflight needs it); independent audit of the implementation; migration order rechecked against live schema; back-fill rehearsed before any apply. Not authorised: production migration, privileged SQL, merge, deploy, payroll, activation. History: v1.0 audit (9fc9751) was a CONDITIONAL PASS with five corrections; v1.2 makes them (§ handoff H-5). The re-audit of v1.2 (06fde5f) was CHANGES REQUIRED with three findings; v1.3 makes them (H-6). The re-audit of v1.3 (fc9785b) closed those and raised one privacy rule; v1.4 makes it (H-7). Conditions: (1) ChatGPT re-audit of v1.4 passes; (2) Regan authorises implementation (and allows a PR); (3) D-P3-25 r.1 and D-P3C-09, -10, -27, -29, -32, -33, -34, -37 accepted (-35 only if needed); (4) at build time, migration order rechecked (stamp after `20261207000000` and any newer); (5) before apply, the J.2 preflight and rehearsal evidence |
+| P3-C2 | **BLOCKED** | Needs B1 work patterns with per-date scheduled hours (documented only, E-10), the P3-A conversion-basis field (D-P3C-23b), and owner decisions D-P3C-11, -15, -16, -20, -21, -22, -23a, -23b, -28, -31 |
+| P3-C3 | **BLOCKED** | Needs C2, the P3-B amendment for D-P3C-01/02 (R-02, R-03, X-03, X-04) audited, and D-P3C-14 |
 | P3-C4 | **BLOCKED** | Needs C3 and D-P3C-13, -25, -26; enhanced security audit |
-| P3-C5 | **BLOCKED** | Needs C4 and D-P3C-18, -19, -24; recommended owner merge approval |
+| P3-C5 | **BLOCKED** | Needs C4 and D-P3C-24; recommended owner merge approval |
 | P3-C6 | **BLOCKED** | Needs C5 |
 | P3-B B2/B3 | **BLOCKED** (unchanged) | Need C3 merged and applied, plus P3-B's own gates |
 
 ### M.4 Blockers and what unblocks them
 
-1. **Architecture audit** of this spec (ChatGPT) — not yet requested; no PR exists by Regan's instruction, so the
-   audit reads this file from the project folder or from branch `claude/project-thread-3feuws` (docs only, no PR).
-2. **Regan's implementation authorisation** for P3-C1, and permission to open its PR.
-3. **Owner decisions** in §M.2 marked O, especially D-P3C-07 (meaning of D-P3C-03), D-P3C-12 (B1 before C2) and
-   D-P3C-23 (days-to-hours basis), which change downstream work most.
+1. **Architecture audit**: v1.4 passed (PR #134, comment 6950350870); v1.5 (this revision) needs review of the
+   D-P3C-23 redesign.
+2. **P3-C1 implementation** is authorised in a separate draft PR (H-8); its own audit and the technical C1
+   decisions remain.
+3. **Owner decisions** in §M.2 still marked O, especially D-P3C-12 (B1 before C2) and D-P3C-23a/b (conversion
+   method and where it is set), which change downstream work most.
 4. **P3-B amendment** (v1.6 of PR #116) for reserve-then-consume and hours. Until then P3-B v1.5 and this spec
    disagree on approval semantics; this spec follows the accepted D-P3C-02.
 5. **Hours source**: B1 work patterns with ordinary weekly hours (E-10).
@@ -1784,10 +1868,9 @@ that shape P3-C1.
 
 ### M.5 Needs Regan
 
-- Confirm the reading of D-P3C-03 (D-P3C-07).
-- Choose the derived-posting trust boundary (D-P3C-32, options A/B in §I.2a) and the late-termination rule
-  (D-P3C-36).
-- Decide the owner items in §M.2 (recommendations given; ChatGPT may record them as owner decision records).
-- Authorise P3-C1 implementation and its PR when the audit passes.
+- Review the D-P3C-23 redesign and decide D-P3C-23a (methods and default) and D-P3C-23b (where it is set).
+- Decide the remaining owner items in §M.2 (recommendations given; ChatGPT may record them as owner decision
+  records).
+- Before any payroll export: choose D-P3C-32 option B or a fail-closed export-time verification.
 - Note: P3-C5 (corrections, grants) is recommended for **your own merge approval** because it introduces the first
   per-member authorisation grants and balance-changing powers in People.
