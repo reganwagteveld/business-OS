@@ -220,6 +220,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const current = route.slug === phase.context.business.slug && canOpen(route.route, navigation) ? route.route : HOME;
   const canReadProjects = navigation.available.some((z) => z.id === 'projects');
   const canReadCustomers = navigation.available.some((z) => z.id === 'customers');
+  const canReadSales = navigation.available.some((z) => z.id === 'sales');
   const canReadFinance = navigation.available.some((z) => z.id === 'finance');
   const userLabel = phase.user.name || phase.user.email;
   const target = current.zone === 'home' ? undefined : current.target;
@@ -233,6 +234,8 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
         client={customers} context={active} userLabel={userLabel} initialCustomerId={customerTarget(target).customerId} initialContactId={customerTarget(target).contactId} initialAction={intent}
         projects={canReadProjects ? { client: projects, onOpen: (id) => open({ zone: 'projects', target: id }) } : undefined}
+        sales={canReadSales ? { client: sales, onOpen: (id) => open({ zone: 'sales', target: id }), onViewAll: () => open({ zone: 'sales' }) } : undefined}
+        userId={phase.user.id}
         finance={canReadFinance ? { client: finance, onOpen: (target) => open({ zone: 'finance', child: target.startsWith('quote:') ? 'quotes' : target.startsWith('payment:') ? 'payments' : target.startsWith('statement:') ? 'receivables' : 'invoices', target }) } : undefined}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
