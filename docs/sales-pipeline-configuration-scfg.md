@@ -1,9 +1,16 @@
 # S-CFG: Sales pipeline and stage configuration (architecture and migration design)
 
-**Status:** v1.1, design only (v1.1 answers the ChatGPT architecture audit of `5d30982`, CONDITIONAL PASS; see "Revision 1.1" below). Nothing in this document is implemented, no migration file exists and no production change is proposed for execution here.
+**Status:** v1.2, design only (v1.1 answered the ChatGPT audit of `5d30982`; v1.2 answers the focused re-audit of `8da7170`; see the revision notes below). Nothing in this document is implemented, no migration file exists and no production change is proposed for execution here.
 **Base:** `main` at `06405a5` (2026-11-17). Latest migration on `main`: `20261206000000_search_indexes`. Open PR #110 (WF-1B-1) reserves `20261207000000_workflow_links`.
 **Owner of the work package:** Sales. Settings only links to it (Settings A3 §5 "Settings is a hub, not a second copy").
 **Related:** `docs/sales-data-model.md` (§2, §5, §8 rows 17 and 18), `docs/settings-a3-architecture.md` (§7.4, §8 row "Zone settings: Sales pipelines", gap G-A3-17), `docs/cross-zone-workflows-wf1.md` (D-WF1-04, D-WF1-16, §6.10 lock order), ZCR-1 draft PR #117 (S-CFG, D-ZCR-8), A3/A2-D draft PR #122 (Zone configuration hub).
+
+## Revision 1.2 (re-audit of `8da7170`)
+
+| Audit item | Change |
+|---|---|
+| Last-active-stage check not serialized for direct SQL | G1 now locks the **pipeline row** `FOR NO KEY UPDATE` before counting active stages (and open opportunities), so every stage archive in a pipeline is serialized in the database, service or not (§7.1). Liveness: §5.2 L4 note, §5.3 step 7, interleavings I15–I16. Deterministic two-connection direct-SQL regression T-SC-24b |
+| Stage cap does not bound the bulk move | §11 and §5.2 corrected: the number of moved opportunities is unbounded by the stage cap; it is bounded only by the open opportunities of one stage, and limited in time by the configuration `statement_timeout` (failure rolls back everything). The rehearsal includes a populated-stage timing (§8.2) |
 
 ## Revision 1.1 (audit of `5d30982`)
 
@@ -171,7 +178,7 @@ Every product path acquires locks in this order and never goes back up a level:
 | L1 | `pg_advisory_xact_lock(hashtext('sales.pipeline_config:' ‖ pipeline_id))`, several in ascending `pipeline_id` order | Every configuration write on a pipeline |
 | L2 | Stage rows, **all in one statement ordered by `id`** (`SELECT … FROM sales_stages WHERE … ORDER BY id FOR UPDATE` or `FOR SHARE`) | Configuration (the stages it changes, plus the move target) and opportunity writes (their one target stage, `FOR SHARE`) |
 | L3 | Opportunity rows | Configuration bulk move (locked in `id` order by `SELECT … ORDER BY id FOR NO KEY UPDATE` before the `UPDATE`); single opportunity writes |
-| L4 | Pipeline rows (`config_version` bump, default swap) | Last step of every configuration write; FK `KEY SHARE` from opportunity inserts and moves |
+| L4 | Pipeline rows (`config_version` bump, default swap, and G1's `FOR NO KEY UPDATE` on the stage's pipeline when a stage is archived) | Last step of every configuration write; G1 during a stage archive (after L2 and L3, so the order is kept); FK `KEY SHARE` from opportunity inserts and moves (compatible with `FOR NO KEY UPDATE`, P1) |
 
 **Opportunity writes change order to match.** Today `createOpportunity`, the PATCH stage move, `reopen` and `restore` read the stage with a plain query and lock the opportunity row with the `UPDATE`. S-CFG-1A changes `checkStage` into a locking read, `SELECT archived_at FROM sales_stages WHERE id = $target AND pipeline_id = $p FOR SHARE`, issued **before** the opportunity write, so the product path is L2 → L3 → L4 like configuration. Trigger G2 repeats the `FOR SHARE` (already held, no new wait) as the backstop for direct SQL, whose ordering is not controlled: for such a path the worst case is a `40P01` rollback, never a broken invariant.
 
@@ -189,8 +196,8 @@ One tenant transaction:
 4. L2: `SELECT id, archived_at FROM sales_stages WHERE pipeline_id = $p AND id IN ($archived, $target) ORDER BY id FOR UPDATE`. Validate: the archived stage exists and is active; the target (if given) exists, is active, differs from it and is in the same pipeline (`400 invalid_stage`); at least one other active stage remains (`409 last_stage`).
 5. Count OPEN, non-archived opportunities in the archived stage. If > 0 and no target: `409 has_open_opportunities`, roll back.
 6. L3, only if a target was given: `SELECT id FROM opportunities WHERE stage_id = $archived AND status = 'OPEN' AND archived_at IS NULL ORDER BY id FOR NO KEY UPDATE`, then `UPDATE opportunities SET stage_id = $target, version = version + 1, updated_by_id = $actor, updated_at = now() WHERE id = ANY($locked) AND stage_id = $archived AND status = 'OPEN' AND archived_at IS NULL`. G2 fires per row and re-takes the target lock (held). One `stage_changed` audit row per moved opportunity.
-7. `UPDATE sales_stages SET archived_at = now() WHERE id = $archived`. G1 fires (P4: after the row lock, which this transaction already holds) and counts again with a fresh snapshot (P5); the count must be 0, else `SA002` and the **whole transaction rolls back**, including the moves in step 6. This is the backstop, not the primary check.
-8. L4: `UPDATE sales_pipelines SET config_version = config_version + 1, updated_at = now(), updated_by_id = $actor WHERE id = $p`.
+7. `UPDATE sales_stages SET archived_at = now() WHERE id = $archived`. G1 fires (P4: after the stage row lock, which this transaction already holds), **locks the pipeline row `FOR NO KEY UPDATE`** (L4, after L2/L3, so the hierarchy holds), then counts with a fresh snapshot (P5): another active stage must remain (`SA003`) and no OPEN, non-archived opportunity may reference the stage (`SA002`). On either error the **whole transaction rolls back**, including the moves in step 6. In product use this is the backstop; for direct SQL it is the only check.
+8. L4: `UPDATE sales_pipelines SET config_version = config_version + 1, updated_at = now(), updated_by_id = $actor WHERE id = $p` (the pipeline row is already locked since G1 in step 7; no new wait).
 9. `sales.stage.archived` audit, commit.
 
 Why no OPEN opportunity can be left behind in step 7: from step 4 on, this transaction holds the archived stage `FOR UPDATE`. Every product path that could put an OPEN, non-archived opportunity into that stage (create, move, reopen, restore) must first take that stage `FOR SHARE` (§5.2, and G2 for direct SQL), which conflicts (P1). So after step 4 nothing new can enter; anything that entered before step 4 had already committed (step 4 waited for its `FOR SHARE` to be released) and is visible to steps 5–7 (P5, P6). An opportunity that leaves the stage concurrently (PATCH move out, win, lose, archive) does not need the archived stage's lock: if it commits first, step 6's re-check skips it (P6); if step 6 locked it first, that write waits and then gets `409 stale` (version bumped) or performs its transition on the moved row.
@@ -215,6 +222,8 @@ Each row is a pair of concurrent transactions on the same business; "X" is the s
 | I12 | C4 make default P→Q | O1 create in P (FK `KEY SHARE` on P) | A takes L0, then L1 for P and Q (`id` order), then L4 `FOR UPDATE` on both pipeline rows (`default_slot` is a key column). B holds no lock A has; A waits for B's `KEY SHARE` or B waits for A | No |
 | I13 | C1 in step 8 (L4 `NO KEY UPDATE` on P) | O1 FK `KEY SHARE` on P | Compatible (P1) | No |
 | I14 | `ensureDefaultPipeline` (insert `ON CONFLICT DO NOTHING`) | C4 default swap | Insert waits on the uncommitted unique entry, then conflicts and reads the winner | No |
+| I15 | Direct SQL: archive S1 | Direct SQL: archive S2, same pipeline, the only two active stages | Each holds its own stage (L2); G1 in each wants the pipeline row `FOR NO KEY UPDATE` (L4). One gets it and commits; the other then counts and raises `SA003` | No: neither holds the pipeline row when it waits for it, and neither waits for the other's stage |
+| I16 | C1 archive (service, holds pipeline row from G1 at step 7) | O1 create/move with FK `KEY SHARE` on the pipeline | Compatible (P1); C4's `FOR UPDATE` on the pipeline (make default) waits for C1, which holds only L1/L2/L3 locks C4 never takes | No |
 
 **Direct SQL.** A direct `UPDATE sales_stages SET archived_at = now()` (no service) still takes the stage row lock before G1 runs (P4), so G1's count is exact and a concurrent locked insert into that stage is either committed (counted, `SA002`) or blocked. A direct opportunity insert or move fires G2, which takes the stage `FOR SHARE`. Neither path can create an OPEN, non-archived opportunity in an archived stage. Bypassing triggers needs `session_replication_role = replica`, which `bos_app` cannot set.
 
@@ -294,8 +303,15 @@ CREATE UNIQUE INDEX "sales_pipelines_active_name_key"
 -- G1. Stage guard (BEFORE UPDATE ON sales_stages).
 --   * business_id and pipeline_id never change                         -> SA004
 --   * archived_at NULL -> NOT NULL:
---       - at least one other active stage remains in the pipeline     -> SA003
---       - no OPEN, non-archived opportunity references the stage      -> SA002
+--       - first: SELECT 1 FROM sales_pipelines WHERE business_id = NEW.business_id AND id = NEW.pipeline_id
+--                FOR NO KEY UPDATE;   -- serializes every stage archive of this pipeline in the database
+--       - then (fresh snapshot, after the lock): at least one other active stage remains -> SA003
+--       - no OPEN, non-archived opportunity references the stage                        -> SA002
+--     Why the pipeline lock: the stage row lock alone does not serialize archives of DIFFERENT stages. With two
+--     active stages S1, S2, two direct-SQL transactions could each lock their own stage, each see the other as
+--     active and both pass. With the pipeline lock, the second waits for the first to commit, then its count
+--     (taken after the lock, P5) sees S1 archived and raises SA003. Restoring a stage, adding one, renaming and
+--     reordering never reduce the active count, so they do not take this lock.
 --     (VOLATILE function: runs after the stage row lock is held (§5.1 P4) and each query takes a fresh READ
 --      COMMITTED snapshot (P5). The service has already moved the open opportunities (§5.3 step 6), so in
 --      product use this check is the backstop; for direct SQL it is the only check.)
@@ -406,7 +422,7 @@ Any non-zero "must be 0" count is a data issue, and fixing it is a data change t
 - **Bulk move scope:** `UPDATE opportunities … WHERE stage_id = $archived` runs in the tenant client (business filter injected) and under RLS; the archived stage id has been re-read in this business first.
 - **No new external effect, job or provider.** No privileged SQL. No auth, admission or RLS policy change.
 - **Information exposure:** `openCount` per stage is visible to `sales:read`, which already lists every opportunity. Audit metadata carries ids and counts only, never names (names are tenant data, consistent with §6 of the Sales data model).
-- **Denial of service:** bounded by 20 stages per pipeline and 10 pipelines; the bulk move is bounded by the open opportunities of one stage and runs in one statement.
+- **Denial of service:** configuration sizes are bounded (20 active stages per pipeline, 10 active pipelines). The **bulk move is not bounded by those caps**: one stage can hold any number of open opportunities. It runs as one locking `SELECT` plus one `UPDATE` (plus one audit row per moved opportunity) under the configuration `statement_timeout` (30 s) and `lock_timeout` (5 s); if it exceeds them, the whole archive rolls back and returns `409 busy`, leaving nothing half-moved. The rehearsal (§8.2) times an archive that moves a populated stage, and if a realistic stage cannot be moved within the timeout the design falls back to batched moves before the archive (a later revision, not assumed here).
 
 ## 12. Audit
 
@@ -451,7 +467,8 @@ S-CFG-1A must pass all of these; T-SC-20..27 on real PostgreSQL (`pnpm test:inte
 | T-SC-21 | Race: stage archive vs opportunity create into that stage |
 | T-SC-22 | Race: stage archive (+move) vs PATCH of an opportunity in that stage → one `stale`, no lost update |
 | T-SC-23 | Race: two reorders from the same `configVersion` → exactly one succeeds |
-| T-SC-24 | Race: two archives of the last two active stages → exactly one succeeds |
+| T-SC-24 | Race: two archives of the last two active stages through the API → exactly one succeeds |
+| T-SC-24b | Deterministic direct-SQL regression, two connections as `bos_app` with `app.business_id` set, pipeline with exactly two active stages and no open opportunities: connection A `BEGIN; UPDATE sales_stages SET archived_at = now() WHERE id = S1;` (holds the pipeline lock via G1, not committed); connection B `BEGIN; UPDATE … WHERE id = S2;` must block (asserted via `pg_locks` / `pg_stat_activity.wait_event_type = 'Lock'`); A commits; B must fail with `SA003`. Repeat with B first. Without the G1 pipeline lock (test against a variant function) the same script lets both commit, proving the test detects the gap |
 | T-SC-25 | Race: stage archive (+move) vs reopen into the archived stage |
 | T-SC-26 | No deadlock across 50 randomized concurrent C1/C2/O1 operations (`40P01` count = 0) |
 | T-SC-27 | WF-1 interplay: stage archive (+move) concurrent with `from-opportunity` and finance link writes on the same opportunity: both succeed |
