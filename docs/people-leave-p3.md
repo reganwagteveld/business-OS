@@ -5,6 +5,9 @@
 > Regan approved D-P3-1 and D-P3-2 to D-P3-11 on 2026-11-16 (review on PR #68). That approval does not
 > cover D-P3-12 onward, the migration or merging. Decisions for later stages (§3.2) are proposals only;
 > nothing for P3-B to P3-E is built.
+>
+> **P3-B architecture (proposed, docs only):** [people-leave-p3b-architecture.md](./people-leave-p3b-architecture.md)
+> reconciles D-P3-12..19 and 22..25 and proposes D-P3-26..49. Nothing there is approved yet.
 
 ## 1. Architecture audit (main at 15f7746, 2026-11-16)
 
