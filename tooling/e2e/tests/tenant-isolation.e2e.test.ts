@@ -7,8 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { newTeam, newUser, type Team } from '../src/actors';
 import { admin, closeAdmin, connectAdmin, one } from '../src/db';
+import { pgConfig } from '../scripts/guard.mjs';
 import { env } from '../src/env';
-import { ids, line, PAST } from '../src/util';
+import { ids, line, PAST, DUE } from '../src/util';
 
 let A: Team;
 let B: Team;
@@ -26,7 +27,7 @@ async function seed(t: Team, p: (x?: string) => string, into: Record<string, str
   const q = await o.post(p('/finance/quotes'), { customerId: into.customer, opportunityId: into.opportunity, projectId: into.project, lines: [line()] });
   into.quote = q.body.document.id;
   const inv = await o.post(p('/finance/invoices'), { customerId: into.customer, opportunityId: into.opportunity, projectId: into.project, lines: [line({ quantity: '1', unitPrice: '500.00' })] });
-  const issued = await o.post(p(`/finance/invoices/${inv.body.document.id}/issue`), { version: inv.body.document.version, issueDate: PAST, dueDate: '2026-12-31' });
+  const issued = await o.post(p(`/finance/invoices/${inv.body.document.id}/issue`), { version: inv.body.document.version, issueDate: PAST, dueDate: DUE });
   expect(issued.status).toBe(200);
   into.invoice = inv.body.document.id;
   if (withPayment) {
@@ -142,7 +143,7 @@ describe("business B cannot reach business A's records over HTTP", () => {
 
 describe('the runtime database role is confined by row-level security', () => {
   const asApp = async <T>(businessId: string | null, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> => {
-    const pool = new pg.Pool({ connectionString: env.appDbUrl, max: 1 });
+    const pool = new pg.Pool({ ...pgConfig(env.appDbUrl, 'E2E_APP_DB_URL'), max: 1 });
     const c = await pool.connect();
     try {
       await c.query('BEGIN');

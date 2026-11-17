@@ -1,10 +1,11 @@
 // Direct PostgreSQL access for fixtures and assertions. The API under test never uses these connections.
 import { createHash, randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { pgConfig } from '../scripts/guard.mjs';
 import { env } from './env';
 
 /** Superuser on the disposable database: seeds test fixtures and reads back what the API persisted. */
-export const admin = new pg.Client({ connectionString: env.adminDbUrl });
+export const admin = new pg.Client(pgConfig(env.adminDbUrl, 'E2E_ADMIN_DB_URL'));
 let adminConnected: Promise<unknown> | undefined;
 export const connectAdmin = async (): Promise<void> => {
   await (adminConnected ??= admin.connect());

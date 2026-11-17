@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newTeam, type Team } from '../src/actors';
 import { Client } from '../src/http';
 import { admin, closeAdmin, connectAdmin, one } from '../src/db';
-import { line, money, PAST } from '../src/util';
+import { line, money, PAST, DUE } from '../src/util';
 
 let t: Team;
 let customer: string;
@@ -17,7 +17,7 @@ const own = () => t.people.OWNER;
 async function issuedInvoice(forCustomer = customer, unitPrice = '1000.00'): Promise<{ id: string; version: number }> {
   const d = await own().post(path('/finance/invoices'), { customerId: forCustomer, lines: [line({ quantity: '1', unitPrice })] });
   expect(d.status).toBe(201);
-  const issued = await own().post(path(`/finance/invoices/${d.body.document.id}/issue`), { version: d.body.document.version, issueDate: PAST, dueDate: '2026-12-31' });
+  const issued = await own().post(path(`/finance/invoices/${d.body.document.id}/issue`), { version: d.body.document.version, issueDate: PAST, dueDate: DUE });
   expect(issued.status).toBe(200);
   return { id: d.body.document.id, version: issued.body.document.version };
 }

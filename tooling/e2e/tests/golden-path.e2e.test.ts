@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newTeam, type Team } from '../src/actors';
 import { admin, closeAdmin, connectAdmin, one } from '../src/db';
-import { ids, line, money, PAST } from '../src/util';
+import { ids, line, money, PAST, DUE } from '../src/util';
 
 let t: Team;
 const own = () => t.people.OWNER;
@@ -94,7 +94,7 @@ describe('golden path: enquiry to cash', () => {
     const inv = conv.body.document;
     expect(inv).toMatchObject({ kind: 'INVOICE', status: 'DRAFT', customerId: S.customer, opportunityId: S.opportunity, projectId: S.project, total: '1100.00' });
     S.invoice = inv.id;
-    const issued = await own().post(path(`/finance/invoices/${S.invoice}/issue`), { version: inv.version, issueDate: PAST, dueDate: '2026-12-31' });
+    const issued = await own().post(path(`/finance/invoices/${S.invoice}/issue`), { version: inv.version, issueDate: PAST, dueDate: DUE });
     expect(issued.status).toBe(200);
     expect(issued.body.document).toMatchObject({ status: 'ISSUED', total: '1100.00' });
 

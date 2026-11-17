@@ -1,8 +1,11 @@
 /** Ids of a list response, for set-membership assertions (never substring checks against random UUIDs). */
 export const ids = (items: { id: string }[]): string[] => items.map((i) => i.id);
 
-/** A date in the past in every time zone, so "not in the future" rules always pass. */
-export const PAST = '2026-11-01';
+const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+/** Two days ago in UTC: in the past in every time zone, so "not in the future" rules always pass, whenever this runs. */
+export const PAST = day(-2);
+/** Thirty days ahead: an invoice due then is not overdue today in any time zone. */
+export const DUE = day(30);
 
 export const line = (overrides: Record<string, unknown> = {}) => ({ description: 'Consulting', quantity: '2', unitPrice: '150.00', ...overrides });
 

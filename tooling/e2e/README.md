@@ -43,13 +43,12 @@ pnpm --filter @business-os/e2e e2e
 | `E2E_ADMIN_URL` | `postgresql://postgres:postgres@127.0.0.1:55432/postgres` | Superuser on a **loopback** cluster. Any other host is refused |
 | `E2E_SKIP_BUILD=1` | off | Reuse the last `apps/api/.next` build (repeat runs) |
 | `E2E_KEEP_DB=1` | off | Keep the `e2e_<hex>` database for inspection |
-| `E2E_ALLOW_SHARED_CLUSTER=1` | off | Allow a cluster whose `bos_*` roles were not made by this harness (it resets their passwords) |
 
 Extra arguments go to vitest: `pnpm --filter @business-os/e2e e2e tests/golden-path.e2e.test.ts`.
 
 ## What it does, in order
 
-1. Connects to the loopback cluster; refuses if `bos_*` roles exist that this harness did not create.
+1. Refuses to start if `apps/api` or this package holds `.env*` files with any variable the harness does not itself set (Next.js and Prisma would load them into the build, server and migration, whatever the clean environment says). Values are never printed. Then connects to the loopback cluster, using an explicit driver configuration built from a URL that must have no query options or fragment (`?host=` and similar override the checked host); refuses if `bos_*` roles exist that this harness did not create. There is no override for that: use a dedicated cluster.
 2. Creates the roles with random passwords, then database `e2e_<16 hex>` owned by `bos_owner`.
 3. `prisma migrate deploy` as the owner role, then `db:privileged` as the administrative role (production order).
 4. `next build`, then `next start` on a free loopback port. The server environment is built from scratch: `bos_app` and `bos_auth` URLs, a random `AUTH_SECRET`, `EMAIL_TRANSPORT=log`. No owner, admin, email-provider, payment, Vercel or Neon variable can be present (`scripts/guard.mjs`, self-tested).

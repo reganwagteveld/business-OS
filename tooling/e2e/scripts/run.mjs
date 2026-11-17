@@ -12,7 +12,8 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import pg from 'pg';
-import { assertCleanEnv, assertDisposableName, assertLocalPostgres, serverEnv } from './guard.mjs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { assertCleanEnv, assertDisposableName, assertLocalPostgres, assertNoDotenvInjection, pgConfig, serverEnv } from './guard.mjs';
 
 const root = resolve(import.meta.dirname, '../../..');
 const e2eDir = resolve(import.meta.dirname, '..');
@@ -35,6 +36,7 @@ const url = (user, password, db = dbName) => {
 const adminUrl = (db) => {
   const u = new URL(adminBase.href);
   u.pathname = `/${db}`;
+  u.search = '';
   return u.href;
 };
 const urls = {
@@ -52,7 +54,7 @@ async function teardown() {
     if (created) log(`kept database ${dbName} (E2E_KEEP_DB=1)`);
     return;
   }
-  const c = new pg.Client({ connectionString: adminUrl('postgres') });
+  const c = new pg.Client(pgConfig(adminUrl('postgres'), 'admin URL'));
   try {
     await c.connect();
     await c.query(`DROP DATABASE IF EXISTS ${assertDisposableName(dbName)} WITH (FORCE)`);
@@ -80,7 +82,7 @@ const freePort = () =>
   });
 
 async function provision() {
-  const c = new pg.Client({ connectionString: adminUrl('postgres') });
+  const c = new pg.Client(pgConfig(adminUrl('postgres'), 'admin URL'));
   await c.connect();
   try {
     const existing = await c.query(
@@ -88,8 +90,8 @@ async function provision() {
     );
     // Role passwords are cluster-wide. Roles this harness made carry a marker comment and are reused (fresh
     // passwords every run); roles from anything else, such as a developer's own stack, are never touched.
-    if (existing.rows.some((r) => r.note !== ROLE_MARK) && process.env.E2E_ALLOW_SHARED_CLUSTER !== '1') {
-      throw new Error('This PostgreSQL already has application roles (bos_*). Use the disposable cluster from tooling/e2e/README.md, or set E2E_ALLOW_SHARED_CLUSTER=1 to reset their passwords.');
+    if (existing.rows.some((r) => r.note !== ROLE_MARK)) {
+      throw new Error('This PostgreSQL already has application roles (bos_*). Use a disposable cluster as described in tooling/e2e/README.md; there is no override.');
     }
     const have = new Set(existing.rows.map((r) => r.rolname));
     const attrs = 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
@@ -113,7 +115,7 @@ async function provision() {
   } finally {
     await c.end();
   }
-  const d = new pg.Client({ connectionString: urls.admin });
+  const d = new pg.Client(pgConfig(urls.admin, 'admin URL'));
   await d.connect();
   try {
     await d.query('GRANT USAGE, CREATE ON SCHEMA public TO bos_owner');
@@ -141,6 +143,9 @@ async function waitHealthy(base, child) {
 
 let exitCode = 1;
 try {
+  // Before any connection or DDL: nothing on disk may inject variables into the build, server or Prisma.
+  const controlled = new Set(['PATH', 'HOME', 'MIGRATION_DATABASE_URL', 'ADMIN_DATABASE_URL', 'DEPLOYMENT_REGION', ...Object.keys(serverEnv({ appUrl: '', authUrl: '', secret: '', baseUrl: '', path: '' }))]);
+  for (const dir of [resolve(root, 'apps/api'), e2eDir]) assertNoDotenvInjection(dir, controlled, readdirSync, (f) => readFileSync(f, 'utf8'));
   log(`provisioning disposable database ${dbName} on ${adminBase.hostname}:${adminBase.port}`);
   await provision();
 
