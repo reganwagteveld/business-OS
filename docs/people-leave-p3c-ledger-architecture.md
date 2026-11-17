@@ -8,6 +8,12 @@
 > Statements marked **verified** cite a file on `06405a5` (or on `ed88385` for P3-B). Statements marked
 > **(proposal)**, **(recommendation)** or **(assumption)** are not facts about the code.
 >
+> **Version 1.4 (2026-11-17)** after ChatGPT's CHANGES REQUIRED re-audit of `fc9785b` (comment 6950206439 on
+> #134): sensitivity is now monotonic along every causal reference (reversal, correction, settlement, carry and
+> propagation), enforced on the write path, and a write that cites a row its writer cannot read is refused rather
+> than treated as non-sensitive (§C.6a). D-P3C-36 refusal rolls back the whole termination. New technical choice
+> D-P3C-37. Index in handoff H-7. No other design change.
+>
 > **Version 1.3 (2026-11-17)** after ChatGPT's CHANGES REQUIRED re-audit of `06fde5f` (comment 6949892364 on
 > #134): three corrections (transaction sensitivity held on the transaction row, lapse corrections by reversal
 > with `EXPIRY` always negative, termination processed before any post-end event) and D-P3C-32 restated as a
@@ -27,7 +33,7 @@
 
 ## Contents
 
-- [Audit handoff (v1.1, corrections v1.2 and v1.3)](#audit-handoff-v11)
+- [Audit handoff (v1.1, corrections v1.2 to v1.4)](#audit-handoff-v11)
 - [A. Repository evidence and implementation inventory](#a-repository-evidence-and-implementation-inventory)
 - [B. Decision register](#b-decision-register)
 - [C. Domain model and proposed Prisma schema](#c-domain-model-and-proposed-prisma-schema)
@@ -89,7 +95,7 @@ back-fills, schedulers, permissions or production actions.
 | Group | Items | Status | Audit may |
 |---|---|---|---|
 | **Accepted owner decisions (settled, not reopened)** | D-P3C-01..06; D-P3-1..11; D-P3-45; D-P3-50 (revised); D-P3-52; D-P3-53; D-P3-54 | ACCEPTED | check that the design implements them |
-| **C1 schema choices (technical)** | D-P3C-09 account lock anchor; D-P3C-10 no stored totals; D-P3C-27 `effective_from` back-fill; D-P3C-29 `numeric(12,4)` and cumulative rounding; D-P3C-33 snapshot seals; D-P3C-34 RLS staged in C1 | PROPOSED, technical | accept or change under the delegation policy (the back-fill itself still needs its own migration evidence and verdict) |
+| **C1 schema choices (technical)** | D-P3C-09 account lock anchor; D-P3C-10 no stored totals; D-P3C-27 `effective_from` back-fill; D-P3C-29 `numeric(12,4)` and cumulative rounding; D-P3C-33 snapshot seals; D-P3C-34 RLS staged in C1; D-P3C-37 refuse writes citing unreadable rows (v1.4) | PROPOSED, technical | accept or change under the delegation policy (the back-fill itself still needs its own migration evidence and verdict) |
 | **C1 choices (owner/security)** | D-P3C-32 trust boundary for derived postings (stated as options A/B in §I.2a); D-P3C-35 inferred revision dates (only if a time-zone change is found) | OPEN | recommend; Regan decides |
 | **C1 schema choice (owner)** | D-P3-25 rule 1 (revisions get `effective_from`) and rules 2–5, 7 | PROPOSED since P3-A; owner | recommend; Regan (or a ChatGPT owner decision record) decides |
 | **Other technical choices** | D-P3C-08, -26, -30 | PROPOSED, technical | accept or change |
@@ -204,13 +210,22 @@ options are described as different meanings of a policy day, without a value jud
 D-P3C-01..06 unchanged. D-P3C-07, D-P3C-32, D-P3C-36 and every O item stay owner decisions; this revision accepts
 none of them.
 
+### H-7. v1.4 correction for the re-audit of `fc9785b` (comment 6950206439 on #134, CHANGES REQUIRED)
+
+| # | Audit finding | Correction | Where |
+|---|---|---|---|
+| 1 (P1) | Sticky sensitivity not inherited by corrections, reversals and other derivatives: after a type is made non-sensitive, a correction of a sensitive entry could be posted non-sensitive and expose the old movement and the correction's reason to a reader without `read_sensitive` | **Monotonic sensitivity along causal references**, computed by the insert triggers from every row a new row cites (reversed entry, settled reservation, carry pair, related transaction, cited request, cited proposal) OR'd with the type flag; the statement may raise sensitivity, never lower it. A cited row the writer cannot read **refuses the write** (`leave_reference_not_visible`), never counts as non-sensitive. Deferred checks: entry ≥ every entry it cites; transaction ≥ every entry it contains and every row it cites. Read policies unchanged (own column OR current flag, no subqueries) | §C.5, §C.6, §C.6a, §I.3, T-C42d, T-C42e, D-P3C-37 |
+| 2 | D-P3C-36 refusal semantics | The refusal aborts the whole termination unit of work (employment status, history, manager and department closes and ledger), nothing partial commits; the factual `end_date` is never altered to get past it. D-P3C-36 stays OPEN; the refusal is an interim technical gate, not an accepted business consequence | §G.9, §M.2 |
+
+D-P3C-01..06 unchanged. D-P3C-07, -32, -36 and every O item remain owner decisions.
+
 ### H-4. Requested audit scope
 
 Independent security, tenant-isolation and concurrency review before any P3-C1 work: §C (schema, constraints,
 grants, RLS), §D.3 (idempotency), §F.4 (invariants), §I (authority, visibility, lock order, threat matrix), §J.2
 (back-fill under the revision guard) and the P3-B dependency table H-2. For the re-audit of v1.2: the five
 corrections indexed in H-5, chiefly §C.6, §F.1a, §G.9, §I.2a, §I.3 and §J.2. For v1.3: the three corrections and
-the D-P3C-32 statement indexed in H-6.
+the D-P3C-32 statement indexed in H-6. For v1.4: §C.6a and H-7.
 
 ---
 
@@ -456,10 +471,11 @@ model PeopleLeaveTransaction {
   recordedXid      Unsupported("xid8") @map("recorded_xid")
   /// Maker-checker (D-P3C-18): the second person, when required. Set in the same INSERT by an approval call.
   checkedByUserId  String?  @map("checked_by_user_id") @db.Uuid
-  /// v1.3. Set by the insert trigger, whatever the statement supplies: the leave type's `sensitive` flag at
-  /// insert OR the sticky sensitivity of the P3-B request it cites (source_kind LEAVE_REQUEST; that input is
-  /// added by the B2/C3 migration, C1 uses the type flag only). Immutable (no UPDATE grant). The read policy
-  /// uses this column, never the entries (§I.3).
+  /// v1.3/v1.4. Set by the insert trigger as the OR of: the statement's value (it may raise, never lower), the
+  /// leave type's flag at insert, the sticky sensitivity of a cited P3-B request (B2/C3 migration adds that
+  /// input), and the `sensitive` of the related transaction and of any cited proposal (§C.6a). A cited row the
+  /// writer cannot read refuses the insert. Immutable (no UPDATE grant). A deferred check makes it ≥ every entry
+  /// it contains. The read policy uses this column, never child rows (§I.3).
   sensitive        Boolean
 
   @@unique([businessId, id])
@@ -522,8 +538,9 @@ model PeopleLeaveEntry {
   /// (reserved for D-P3C-15). CHECK: non-null exactly for EXPIRY. The guard ties each value to its transaction
   /// kinds (§I.2a).
   expiryReason     String?  @map("expiry_reason")
-  /// Set by the trigger at insert, whatever the statement supplies: the parent transaction's `sensitive` OR the
-  /// leave type's current flag (v1.3; before, the type flag OR'd with the request's). Immutable; read policies use
+  /// Set by the trigger at insert as the OR of the statement's value (raise only), the parent transaction's
+  /// `sensitive`, the leave type's current flag, and the `sensitive` of every entry this one cites
+  /// (`reverses_entry_id`, `reservation_entry_id`, `pair_entry_id`) (§C.6a, v1.4). Immutable; read policies use
   /// (snapshot OR current flag), so a type made non-sensitive later never re-exposes history (P3-B D-P3-43 pattern).
   sensitive        Boolean
   recordedAt       DateTime @default(now()) @map("recorded_at") @db.Timestamptz
@@ -589,8 +606,9 @@ Constraints (migration SQL, not expressible in Prisma):
     lapse (Σ `EXPIRY(CARRY_CAP)` hours + Σ their reversals) is ≤ 0; and when the net lapse is < 0 the net carry
     (−Σ `CARRY_OUT`) equals the carry limit of the revision recorded on the unreversed lapse entry (`capHours`
     for CAPPED, 0 for NONE; no lapse for UNLIMITED). So the lapse is exactly `closing − carry` and nothing else.
-  - **Sensitivity (v1.3):** every entry's `sensitive` is true when its transaction's is (an entry can be more
-    sensitive than its transaction, never less).
+  - **Sensitivity (v1.3, v1.4):** every entry's `sensitive` is true when its transaction's is, or when any entry
+    it cites is; and a transaction's `sensitive` is true when any entry it contains is, so a transaction can never
+    expose detail for a more sensitive movement (§C.6a).
   - **Reversal:** exact negated hours, same account, bucket, book and leave date as the reversed entry; carry
     entries are never reversed (they are corrected by propagation). A reversal of an `EXPIRY(CARRY_CAP)` is
     allowed only inside a `CARRY_PROPAGATION` transaction, together with the carry deltas and the replacement
@@ -605,6 +623,53 @@ Constraints (migration SQL, not expressible in Prisma):
     holds the row lock until commit), and the guard requires the account row's `xmin` to equal the current
     transaction id (`xmin::text = (pg_current_xact_id()::text::bigint % 4294967296)::text`). Exact form fixed and
     tested in C1 (T-C05).
+
+### C.6a Monotonic sensitivity along causal references (v1.4)
+
+**Rule.** Sensitivity never decreases along a causal link. A row that corrects, reverses, settles, pairs with,
+propagates from or otherwise cites an earlier row is at least as sensitive as that row, whatever the leave type's
+flag says today. The type flag can only add sensitivity (read policies use `sensitive OR current flag`); it never
+removes it from history or from anything derived from history.
+
+**Causal references and what each inherits.**
+
+| New row | Cites | Inherits from |
+|---|---|---|
+| `REVERSAL` entry (any) | `reverses_entry_id` | the reversed entry |
+| `CONSUMPTION`, `RESERVATION_RELEASE` (any reason) | `reservation_entry_id` | the reservation entry (which inherited the request's sticky sensitivity) |
+| `CARRY_IN` / `CARRY_OUT` | `pair_entry_id` | the paired entry (both are inserted in one transaction; the deferred check makes them equal) |
+| Lapse `REVERSAL` and replacement `EXPIRY` in `CARRY_PROPAGATION` | reversed lapse; `related_transaction_id` = causing transaction | the lapse entry and the causing transaction |
+| `CARRY_PROPAGATION` transaction | `related_transaction_id` = causing transaction | the causing transaction (so a sensitive correction makes every later year's deltas sensitive) |
+| `CORRECTION` transaction and its replacement `ADJUSTMENT`s | `related_transaction_id`, the reversed entries | the corrected transaction and every entry it reverses (via the transaction-contains-entry check) |
+| `RESERVE` / `RELEASE` / `REVERSE_CONSUMPTION` | `source_id` = P3-B request | the request's sticky sensitivity (from B2/C3) |
+| Posted correction from a proposal (maker-checker) | the proposal and the transactions it cites | the proposal (itself ≥ what it cites) |
+
+**Enforcement on the write path (database, every insert, fail closed).**
+
+1. **Compute, don't trust.** The insert trigger sets `sensitive := statement value OR type flag OR (each cited
+   row's sensitive)`. The statement can raise it (the service passes `true` when it knows the posting will
+   contain sensitive entries) and can never lower it.
+2. **Unreadable means refuse, never "not sensitive".** The trigger runs as the invoker (`bos_app` with the
+   writer's `app.user_id`), so its lookups of cited rows are filtered by the same restrictive read policies as
+   any query. If a cited row exists (the composite FK proves it, and FK checks are not filtered by RLS) but the
+   lookup returns nothing, the writer cannot read it: the trigger raises `leave_reference_not_visible` (PE class)
+   and the whole unit of work rolls back. No row is ever classified from an absent result.
+3. **Deferred containment checks** (constraint triggers at commit, over the transaction's rows): every entry ≥
+   its transaction and ≥ every entry it cites; the transaction ≥ every entry it contains. If the service did not
+   raise the transaction's flag for a sensitive entry, the commit fails rather than leaving a non-sensitive
+   transaction (with its reason, actor and reference) around a sensitive movement. These checks read rows of
+   the same transaction written by the same session, so they do not depend on another viewer's visibility; a
+   row the writer could not read would already have been refused at step 2.
+4. **No UPDATE grant** on `sensitive` anywhere; immutability as for all ledger rows.
+
+**Consequence (stated, not hidden).** A person without `people:read_sensitive` cannot write to an account whose
+history they cannot read where the write cites that history: correcting a sensitive entry, consuming or releasing
+a sensitive reservation, or running a catch-up that settles one. For an account of a type that was sensitive
+and later made non-sensitive, such writers are refused (`leave_reference_not_visible`) until someone who can read
+the history acts. This is the fail-closed choice D-P3C-37 (a), consistent with D-P3C-04 (corrections need scope)
+and P3-B's rule that sensitive requests are handled by people allowed to see them. The alternative (b) is a
+privileged `SECURITY DEFINER` lookup that returns only a boolean for cited ids, so a writer can inherit without
+reading; it is a new privileged boundary (Regan, enhanced review) and is not recommended now.
 
 ### C.7 `people_leave_authorisations` (D-P3C-04)
 
@@ -1124,7 +1189,10 @@ reservation is never consumed. Reservation dates `≤ end_date` were consumed on
 days), so nothing between consumption and freeze can collide. A termination dated in the past whose service
 period already has postings after `end_date` (it was recorded late) cannot be expressed by this order without
 undoing those postings; the termination's ledger step refuses it with `leave_ledger_after_end_date` until
-D-P3C-36 is decided (fail closed, never a silent partial freeze).
+D-P3C-36 is decided (fail closed, never a silent partial freeze). The refusal aborts the **whole** termination
+unit of work (employment status, status history, department and manager closes, ledger), so no partial
+termination commits; the factual `end_date` is never moved to get past it (v1.4). This is an interim technical
+gate; D-P3C-36 itself stays an owner decision.
 
 **Rules:**
 
@@ -1360,7 +1428,8 @@ option C), because RLS cannot hide a row's columns from one viewer and not anoth
   rows**, because a subquery in a policy is filtered by the reader's own visibility (v1.3; v1.2's `EXISTS` over
   entries failed open). Import batches and rows and correction proposals get the same treatment: an immutable
   trigger-set `sensitive` (type flag at insert; for a proposal, OR'd with the transactions it cites), used OR the
-  current type flag.
+  current type flag. What a new row inherits from the rows it cites, and the refusal when a cited row is
+  unreadable, are write-path rules (§C.6a, v1.4); the read policies never look at other rows.
 - `people_leave_can_read(employee, type, sensitive, level)` is `STABLE SECURITY INVOKER`, reads only tenant tables
   visible to `bos_app` (memberships, employees, manager assignments, leave types, authorisations) through indexed
   lookups, and takes the actor from `app.user_id`; a missing setting returns false. Role lists (which roles hold
@@ -1608,12 +1677,13 @@ I and R test also runs behind PgBouncer in transaction mode (E-30).
 | T-C42a | RLS (v1.2) | Direct SQL as `bos_app` with `app.user_id` = current line manager without `read_sensitive`: sees non-sensitive entries of a report, none of a sensitive type, no transactions; after the reporting line changes, sees none | S | C4 |
 | T-C42b | RLS (v1.2) | Direct SQL: grant holder sees in-scope detail; after revocation, after membership suspension, after department change out of scope, sees none; type made non-sensitive later does not re-expose sensitive-snapshot rows | S | C5 |
 | T-C42d | RLS (v1.3) | Direct SQL as the real `bos_app` role: a transaction's `sensitive` is set by the trigger whatever the INSERT supplies and cannot be updated; entries are never less sensitive than their transaction. Then a sensitive type with posted transactions is switched to non-sensitive; a `LEAVE_CORRECT` grantee scoped to the employee, whose role lacks `people:read_sensitive`, sees **none** of those transactions or entries (and the same holds for a line manager without the key) | S | C1 (column, trigger) / C5 (grantee) |
+| T-C42e | RLS (v1.4) | Direct SQL as the real `bos_app` role. (1) An OWNER posts a sensitive `ADJUSTMENT`; the type is switched to non-sensitive; an OWNER posts a `CORRECTION` reversing it (with propagation into a later year) and passes `sensitive = false`: the transaction, the `REVERSAL`, the replacement and every propagation row are stored `sensitive = true`. A scoped `LEAVE_CORRECT` grantee and a line manager, both without `read_sensitive`, see neither the original nor any new row. (2) The same for consumption and release of a sensitive reservation and for a lapse reversal. (3) The grantee attempts the correction itself: refused `leave_reference_not_visible`, nothing commits. (4) A transaction inserted non-sensitive with a sensitive entry fails at commit. (5) An INSERT supplying `sensitive = false` never lowers a computed `true`; UPDATE refused | S | C1 (triggers, deferred checks) / C5 (grantee, correction flow) |
 | T-C42c | RLS (v1.2) | C1 fail-closed: MANAGER and MEMBER (not self) see no ledger rows at all; missing `app.user_id` sees none | S | C1 |
 | T-C63 | Sealing (v1.2) | Delayed commit: transaction A starts before seal S1 and commits after it; A is absent from S1, present in S2, never twice; re-reading S1 later gives the same set | S | C1 (primitive) / C6 |
 | T-C64 | Back-fill (v1.2) | Rehearsal: every tenant's revision rows updated (count assertion), `INFERRED` basis, RLS FORCE and trigger restored, lock and statement timeouts honoured | S | C1 |
 | T-C90 | Payroll contract | Movement feed: period, cutoff, prior-period flag, reversal links, hash stable | I | C6 |
 
-**Release blockers** (no switch-on while any fails): T-C01..T-C09e, T-C21a..d, T-C42a..d, T-C63, T-C64, T-C40..T-C47, T-C50..T-C55, T-C11..T-C14,
+**Release blockers** (no switch-on while any fails): T-C01..T-C09e, T-C21a..d, T-C42a..e, T-C63, T-C64, T-C40..T-C47, T-C50..T-C55, T-C11..T-C14,
 T-C20..T-C26, T-C30, and the P3-B gates G-S1..G-S6 for anything a request touches.
 
 **Performance notes:** per-date reservations cap at 1,098 entries per request; indexes lead with `business_id`
@@ -1629,7 +1699,7 @@ the merge queue, migrations applied first by the Mac session under the protocol.
 
 | Package | Scope | Depends on | Migration | Acceptance criteria | Escalation |
 |---|---|---|---|---|---|
-| **P3-C1 Ledger core** | Accounts, buckets, transactions, entries, empty authorisations table; guards with the stage gate (only C1's derived transaction kinds accepted), deferred pair and closing invariants, uniques, forced RLS **plus the fail-closed restrictive read policies**, grants; `recorded_xid` and the seal primitive; revision `effective_from` (J.2); posting primitives for derived kinds with explicit hours (no engine, no routes); verifier V-01..V-07 | P3-A (implemented); decisions D-P3-25 r.1, D-P3C-09, -10, -27, -29, -32, -33 (and -35 only if the preflight finds a time-zone change) | Yes (rehearsal, preflight evidence, lock limits: existing-data transformation) | T-C01..T-C09e, T-C10 (system keys), T-C40, T-C41, T-C42c, T-C42d (column part), T-C47, T-C62, T-C63, T-C64 green on PostgreSQL and PgBouncer | Enhanced audit (RLS read policies, data transformation); Regan if the audit leaves risk or D-P3C-35 is needed |
+| **P3-C1 Ledger core** | Accounts, buckets, transactions, entries, empty authorisations table; guards with the stage gate (only C1's derived transaction kinds accepted), deferred pair and closing invariants, uniques, forced RLS **plus the fail-closed restrictive read policies**, grants; `recorded_xid` and the seal primitive; revision `effective_from` (J.2); posting primitives for derived kinds with explicit hours (no engine, no routes); verifier V-01..V-07 | P3-A (implemented); decisions D-P3-25 r.1, D-P3C-09, -10, -27, -29, -32, -33, -37 (and -35 only if the preflight finds a time-zone change) | Yes (rehearsal, preflight evidence, lock limits: existing-data transformation) | T-C01..T-C09e, T-C10 (system keys), T-C40, T-C41, T-C42c, T-C42d and T-C42e (trigger and deferred-check parts), T-C47, T-C62, T-C63, T-C64 green on PostgreSQL and PgBouncer | Enhanced audit (RLS read policies, data transformation); Regan if the audit leaves risk or D-P3C-35 is needed |
 | **P3-C2 Accrual engine and hours basis** | Core adapter, periods, rounding, year opening, carry and lapse, max-balance expiry, freeze, rehire, catch-up and realised reads; verifier V-08 | C1; **B1 work patterns with ordinary hours merged and applied** (X-01, X-02); D-P3C-11, -15, -16, -17, -20..-23, -28, -30, -31, -36 | No (or a small one if B1's pattern table needs a column) | T-C20..T-C30, T-C21d, T-C33, T-C52, T-C70 (catch-up) | Routine |
 | **P3-C3 P3-B integration interface** | `withAccount`, `reserve`, `release`, `reverseConsumption`, `project` (D-P3-50 restated), negative-limit rule | C2; **P3-B amended (R-02, R-03, X-03, X-04) and re-audited**; D-P3C-07, -14 | No | T-C11..T-C14, T-C34..T-C36, T-C50..T-C55, T-C61; P3-B §5 checklist C-01..C-34 re-stated for reservations and met | Routine; it is the gate for P3-B B2/B3 |
 | **P3-C4 Read APIs and visibility** | Leave permission keys (shared with P3-B, D-P3-12), any-of route option (D-P3-26), restrictive RLS, balance/ledger/as-of endpoints (off) | C3; D-P3C-13, -25, -26 | Yes (visibility) | T-C40..T-C44, T-C70 (reads); enhanced security audit | First record-scoped read rules: enhanced audit; Regan if risk unresolved |
@@ -1684,14 +1754,15 @@ that shape P3-C1.
 | D-P3C-32 | Authority for derived postings (§I.2a table) | A: **trusted application: API prevention, kind/basis matrix and SQL-verified pair, closing and lapse invariants; a `bos_app` holder can still insert inflated `ACCRUAL`/`GRANT` amounts, detected by V-08, not stopped** / B: `SECURITY DEFINER` SQL engine for derived kinds (prevents wrong amounts; trust moves to audited inputs; second engine and a new privileged boundary, Regan) | **A for C1–C2 with V-08 in the release gate; decide B or a blocking payroll-time check before any payroll export** | O + security |
 | D-P3C-33 | Recorded-time semantics (§F.1a) | timestamp cutoffs / **`recorded_at` informational; seals by stored `pg_snapshot` and `recorded_xid`** | **Snapshot seals** | T |
 | D-P3C-34 | Restrictive RLS staging | all branches in C4 / **fail-closed policies in C1, manager branch in C4, grant branch in C5** | **Staged in C1** (no row exists without its read control) | T |
-| D-P3C-36 | Termination recorded after the ledger already posted events past its `end_date` (v1.3) | (a) **refuse the termination's ledger step (`leave_ledger_after_end_date`) until an unwind is designed; an authorised correction or a later `end_date` is needed** / (b) the termination unwinds post-end postings (reverse grants, accruals and consumptions; reopen a closed year), which needs a new reopen transaction / (c) freeze from the recording date | **(a) for C2**, revisit with C5 corrections. It can block recording a backdated termination, so it changes P1 behaviour | O |
+| D-P3C-36 | Termination recorded after the ledger already posted events past its `end_date` (v1.3) | (a) **refuse the termination's ledger step (`leave_ledger_after_end_date`) until an unwind is designed; an authorised correction or a later `end_date` is needed** / (b) the termination unwinds post-end postings (reverse grants, accruals and consumptions; reopen a closed year), which needs a new reopen transaction / (c) freeze from the recording date | **(a) for C2**, revisit with C5 corrections. It can block recording a backdated termination, so it changes P1 behaviour. The refusal rolls back the whole termination and never alters the factual `end_date` (v1.4); as an interim gate it is technical, its business consequence is the owner's | O |
+| D-P3C-37 | Inheriting sensitivity from a cited row the writer cannot read (§C.6a, v1.4) | (a) **refuse the write (`leave_reference_not_visible`); only people who can read the history may write against it** / (b) privileged `SECURITY DEFINER` boolean lookup for cited ids (new privileged boundary, Regan) | **(a)** fail closed, no privilege | T + security (b would be Regan's) · C1 |
 | D-P3C-35 | Effective dates of pre-C1 revisions | treat inferred as exact / **mark `INFERRED`, never let an inferred date govern a posting (cutover ≥ apply date + 1)** / recover per-row zones from audit | **Mark and isolate** | O (only if the preflight finds a time-zone change after a revision) |
 
 ### M.3 Readiness assessment
 
 | Package | Verdict | Why |
 |---|---|---|
-| **P3-C1** | **CONDITIONALLY READY (after re-audit)** | v1.0 audit (9fc9751) was a CONDITIONAL PASS with five corrections; v1.2 makes them (§ handoff H-5). The re-audit of v1.2 (06fde5f) was CHANGES REQUIRED with three findings; v1.3 makes them (H-6). Conditions: (1) ChatGPT re-audit of v1.3 passes; (2) Regan authorises implementation (and allows a PR); (3) D-P3-25 r.1 and D-P3C-09, -10, -27, -29, -32, -33, -34 accepted (-35 only if needed); (4) at build time, migration order rechecked (stamp after `20261207000000` and any newer); (5) before apply, the J.2 preflight and rehearsal evidence |
+| **P3-C1** | **CONDITIONALLY READY (after re-audit)** | v1.0 audit (9fc9751) was a CONDITIONAL PASS with five corrections; v1.2 makes them (§ handoff H-5). The re-audit of v1.2 (06fde5f) was CHANGES REQUIRED with three findings; v1.3 makes them (H-6). The re-audit of v1.3 (fc9785b) closed those and raised one privacy rule; v1.4 makes it (H-7). Conditions: (1) ChatGPT re-audit of v1.4 passes; (2) Regan authorises implementation (and allows a PR); (3) D-P3-25 r.1 and D-P3C-09, -10, -27, -29, -32, -33, -34, -37 accepted (-35 only if needed); (4) at build time, migration order rechecked (stamp after `20261207000000` and any newer); (5) before apply, the J.2 preflight and rehearsal evidence |
 | P3-C2 | **BLOCKED** | Needs B1 work patterns with ordinary hours (documented only, E-10), and owner decisions D-P3C-11, -15, -16, -17, -20, -22, -23, -28 |
 | P3-C3 | **BLOCKED** | Needs C2, the P3-B amendment for D-P3C-01/02 (R-02, R-03, X-03, X-04) audited, and D-P3C-07, -14 |
 | P3-C4 | **BLOCKED** | Needs C3 and D-P3C-13, -25, -26; enhanced security audit |
