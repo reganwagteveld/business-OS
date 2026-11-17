@@ -39,7 +39,7 @@ function mount(opts: { failSalesOnce?: boolean; business?: Partial<FakeBusiness>
   render(
     <CustomerZone
       client={customersClient} userLabel="Ada" userId={ME} {...handlers}
-      sales={opts.withSalesLink === false ? undefined : { client: salesClient, onOpen: onOpenOpportunity }}
+      sales={opts.withSalesLink === false ? undefined : { client: salesClient, onOpen: onOpenOpportunity, onViewAll: vi.fn() }}
       context={{
         business: { slug: 'alpha', name: 'Alpha', countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' },
         membership: { id: uuid(), role: 'MANAGER', permissions: opts.permissions ?? ALL },
@@ -102,6 +102,37 @@ describe('customer opportunities panel', () => {
     await open(user);
     expect(screen.queryByRole('region', { name: 'Opportunities' })).toBeNull();
     expect(api.callsTo(/opportunities/).length).toBe(0);
+  });
+});
+
+describe('customer opportunities beyond one page', () => {
+  it('counts every page, so the totals are the customer\'s, and offers an Open Sales hand-off', async () => {
+    const p = pipelineWithStages();
+    const acme = customer({ displayName: 'Acme' });
+    const opportunities = Array.from({ length: 120 }, (_, i) => opportunity(p, { title: `Deal ${i}`, customerId: acme.id, amount: '10.00', status: 'OPEN', updatedAt: new Date(Date.UTC(2026, 10, 14, 3, 0, i)).toISOString() }));
+    const { api, user } = mount({ sales: { ...emptySales(), pipelines: [p], opportunities }, business: { customers: [acme] } });
+    await open(user);
+    const region = await screen.findByRole('region', { name: 'Opportunities' });
+    await within(region).findByText(/120 open/);
+    expect(region.textContent).toMatch(/1,200\.00/);
+    expect(region.textContent).not.toMatch(/Of the first/);
+    expect(api.callsTo(/GET .*opportunities$/).length).toBe(3);
+    expect(within(region).getByRole('button', { name: 'Open Sales' })).toBeTruthy();
+    expect(region.textContent).toMatch(/Showing 10 of 120/);
+  });
+});
+
+describe('customer opportunities over the page cap', () => {
+  it('labels the headline as partial instead of claiming complete totals', async () => {
+    const p = pipelineWithStages();
+    const acme = customer({ displayName: 'Acme' });
+    const opportunities = Array.from({ length: 520 }, (_, i) => opportunity(p, { title: `Deal ${i}`, customerId: acme.id, amount: '1.00', status: 'OPEN' }));
+    const { api, user } = mount({ sales: { ...emptySales(), pipelines: [p], opportunities }, business: { customers: [acme] } });
+    await open(user);
+    const region = await screen.findByRole('region', { name: 'Opportunities' });
+    await within(region).findByText(/Of the first 500 deals: 500 open/);
+    expect(api.callsTo(/GET .*opportunities$/).length).toBe(10);
+    expect(region.textContent).toMatch(/Showing 10 of 500\+/);
   });
 });
 

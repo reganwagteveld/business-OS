@@ -98,7 +98,7 @@ export function CustomerDetail({ client, slug, id, contact, locale, timeZone, ca
 
 export interface ProjectsLink { client: ProjectsClient; onOpen: (projectId: string) => void }
 /** The customer's opportunities panel, passed only to people who hold sales:read. */
-export interface SalesLink { client: SalesClient; onOpen: (opportunityId: string) => void }
+export interface SalesLink { client: SalesClient; onOpen: (opportunityId: string) => void; onViewAll?: () => void }
 /** The customer's finance panel, passed only to people who hold finance:read. `onOpen` takes `invoice:<id>`, `quote:<id>` or `payment:<id>`. */
 export interface FinanceLink { client: FinanceClient; onOpen: (target: string) => void }
 
@@ -204,7 +204,7 @@ function Loaded({ customer, contact, client, slug, locale, timeZone, canWrite, c
         </div>
         <div className="space-y-5 self-start lg:col-start-3 lg:row-start-3">
           {sales ? (
-            <CustomerOpportunities client={sales.client} slug={slug} customerId={customer.id} locale={locale} onOpen={(oid) => confirmDiscard(() => sales.onOpen(oid))} onSessionEnded={onSessionEnded} />
+            <CustomerOpportunities client={sales.client} slug={slug} customerId={customer.id} locale={locale} onOpen={(oid) => confirmDiscard(() => sales.onOpen(oid))} onViewAll={sales.onViewAll ? () => confirmDiscard(() => sales.onViewAll!()) : undefined} onSessionEnded={onSessionEnded} />
           ) : null}
           {projects ? (
             <CustomerProjects client={projects.client} slug={slug} customerId={customer.id} onOpen={(id) => confirmDiscard(() => projects.onOpen(id))} onSessionEnded={onSessionEnded} />
