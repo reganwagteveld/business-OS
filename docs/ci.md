@@ -30,6 +30,20 @@ Always `full`: pushes to `release/**`, `v*` tags, manual runs and the weekly sch
 
 Change the rules only together with `classify-changes.test.sh` (and `changed-files.test.sh` for diff handling). The self-tests run in "Detect changes" before the classifier is used.
 
+## Nightly validation (CI-2B)
+
+`.github/workflows/nightly.yml` runs daily at 02:00 AWST (18:00 UTC) and on demand (Actions → Nightly → Run workflow). It is not a required check and does not block pull requests. An unresolved failure blocks release approval (CI-2C, separate PR).
+
+| Job | What it does |
+|---|---|
+| Full CI suite | Calls `ci.yml` (`workflow_call`) so the complete suite runs: static, unit, database with RLS isolation and pooler suites, build verification and the Linux, macOS and Windows desktop matrix. A scheduled or manual event is always the full tier. Skipped on pull requests (normal CI covers them). |
+| macOS native validation | Desktop typecheck and lint, release-profile `tauri build --bundles app,dmg`, `cargo test`, `verify-macos-bundle.sh` (bundle id and version, Mach-O executable, no server configuration, disk image verify, SHA-256 checksums), a 10-second launch smoke test, evidence upload (14 days). |
+| Nightly report | Runner-minutes and longest queue wait per OS in the run summary; on a failed scheduled run it opens or comments on one issue titled "Nightly validation failed". |
+
+Concurrency: one nightly run at a time (`nightly` group, never cancelled by a newer scheduled run). Database tests and tenant-isolation suites run on Linux in the full suite; macOS runners cannot host the PostgreSQL service containers.
+
+Not validated, and never reported as passed: code signing, notarisation, auto-update, and anything needing production credentials or an interactive signed-in session. Set the repository variable `DESKTOP_API_BASE_URL` to make the macOS build production-configured; without it the summary says the placeholder origin was used.
+
 ## The gate
 
 `.github/scripts/ci-gate.sh` (self-tested by `ci-gate.test.sh`) fails when any of these is not `success`: Detect changes, Static checks, Unit tests, Database tests, Build verification. The desktop matrix must also be `success` unless the classifier job succeeded and explicitly reported `desktop=false` with tier `docs` or `server`; a skip with any other tier, a missing tier or a failed classifier fails the gate. The gate uses `if: always()`, so it reports a failure (not a skip) when jobs before it fail or are cancelled. A run that never completes leaves `CI gate` pending, which blocks merge.
