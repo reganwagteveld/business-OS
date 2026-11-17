@@ -316,6 +316,35 @@
       "appliedAt": "2026-11-17T12:15:08Z"
     },
     {
+      "branchId": "br-restless-star-bb0cesng",
+      "name": "pre-sales-configuration-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261210000000_sales_configuration"
+      ],
+      "prs": [
+        135
+      ],
+      "createdAt": "2026-11-17T17:16:10Z",
+      "parentLsn": "0/35B12F0",
+      "appliedAt": "2026-11-17T17:16:58Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "applied 17:16:48–17:16:59 UTC from PR #135 head 8a64b13 under APPROVED — EXECUTE: MIGRATION (issuecomment-6955291630) and Regan 17:15 UTC; 26/26 finished, checksum matches, VERIFY PASS, config_version=1 on all pipelines, row totals unchanged, health 200 (issuecomment-6955425207)"
+      },
+      "deployment": {
+        "status": "pending",
+        "evidence": "PR #135 not merged; signed-in Sales smoke owed"
+      },
+      "recoveryPoint": {
+        "status": "verified",
+        "evidence": "ready; read-only connection on its own endpoint; Neon API: belongs to this branch, not default; 25 finished, fingerprint 5a0872d1… and per-migration checksums identical to production; target absent"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
+    },
+    {
       "branchId": "br-lingering-salad-bbaxtnck",
       "name": "rehearsal-sales-configuration-20261118b",
       "kind": "testing",
@@ -323,7 +352,7 @@
         135
       ],
       "createdAt": "2026-11-17T16:50:39Z",
-      "note": "Temporary S-CFG-1A rehearsal branch with the migration applied; kept for ChatGPT review. Deleting it needs Regan's approval."
+      "note": "Temporary S-CFG-1A rehearsal branch. Reset to production with Neon's native reset at 17:07:59 UTC (authorised by Regan 17:07) and migrated at head 8a64b13 for the final rehearsal. Kept for review; deleting it needs Regan's approval."
     }
   ],
   "deleted": [
