@@ -27,9 +27,9 @@ export {
 } from './server/expense-payments';
 export type { ExpenseSettlementItem, ListExpensePaymentsQuery, RecordExpensePaymentInput } from './server/expense-payments';
 // Reporting R1 (docs/reporting-r1.md §4): Finance's own reporting read model, used by the reporting module.
-export { issuedDocumentDetails, issuedDocumentTotals, receivedPaymentDetails, receivedPaymentTotals } from './server/reporting';
+export { issuedDocumentDetails, issuedDocumentTotals, receivedPaymentDetails, receivedPaymentTotals, recordedExpenseDetails, recordedExpenseTotals } from './server/reporting';
 export type {
-  FinanceDetailQuery, FinancePeriodQuery, FinancePeriodRow, IssuedDocumentDetail, ReceivedPaymentDetail, ReportingUnit as FinanceReportingUnit,
+  FinanceDetailQuery, FinancePeriodQuery, FinancePeriodRow, IssuedDocumentDetail, ReceivedPaymentDetail, RecordedExpenseDetail, ReportingUnit as FinanceReportingUnit,
 } from './server/reporting';
 // F5: generated documents (docs/finance-documents-f5.md): document branding, draft previews and immutable PDF versions.
 // F6-2: customer statements and receivables ageing as of a date (docs/finance-billing-f6.md §4). Read-only; statement PDFs are never stored.
