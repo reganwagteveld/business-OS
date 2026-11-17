@@ -16,153 +16,6 @@
       "kind": "production"
     },
     {
-      "branchId": "br-rapid-union-bbeik94q",
-      "name": "pre-sales-migration",
-      "kind": "recovery",
-      "migrations": [
-        "20261114090000_sales"
-      ],
-      "prs": [
-        15
-      ],
-      "appliedAt": "2026-11-14T09:46:00Z",
-      "migration": {
-        "status": "verified",
-        "evidence": "applied as bos_owner, checksums matched"
-      },
-      "deployment": {
-        "status": "verified",
-        "evidence": "PR #15 merged; later production deploys healthy (health 200)"
-      },
-      "restoreDrill": {
-        "status": "not-run"
-      }
-    },
-    {
-      "branchId": "br-winter-snow-bbxj1wea",
-      "name": "pre-projects-migration",
-      "kind": "recovery",
-      "migrations": [
-        "20261114120000_projects"
-      ],
-      "prs": [
-        18
-      ],
-      "appliedAt": "2026-11-14T11:53:00Z",
-      "migration": {
-        "status": "verified",
-        "evidence": "RLS+FORCE, policies and grants verified"
-      },
-      "deployment": {
-        "status": "verified",
-        "evidence": "PR #18 merged; later production deploys healthy (health 200)"
-      },
-      "restoreDrill": {
-        "status": "not-run"
-      }
-    },
-    {
-      "branchId": "br-autumn-pond-bbn8uvdm",
-      "name": "pre-finance-migrations",
-      "kind": "recovery",
-      "migrations": [
-        "20261115000000_finance",
-        "20261116000000_finance_payments",
-        "20261117000000_finance_expenses"
-      ],
-      "prs": [
-        31,
-        34,
-        35
-      ],
-      "appliedAt": "2026-11-14T19:26:00Z",
-      "migration": {
-        "status": "verified",
-        "evidence": "checksums matched; 11 finance tables RLS+FORCE verified"
-      },
-      "deployment": {
-        "status": "verified",
-        "evidence": "PR #35 merged; later production deploys healthy (health 200)"
-      },
-      "restoreDrill": {
-        "status": "not-run"
-      }
-    },
-    {
-      "branchId": "br-odd-king-bbwpz5w9",
-      "name": "pre-c1-migrations",
-      "kind": "recovery",
-      "migrations": [
-        "20261118000000_people",
-        "20261118050000_scheduling",
-        "20261119300000_communications"
-      ],
-      "prs": [
-        36,
-        39
-      ],
-      "appliedAt": "2026-11-15T06:20:00Z",
-      "migration": {
-        "status": "verified",
-        "evidence": "checksums matched; RLS, grants and triggers verified; health 200"
-      },
-      "deployment": {
-        "status": "verified",
-        "evidence": "PR #39 merged; later production deploys healthy (health 200)"
-      },
-      "restoreDrill": {
-        "status": "not-run"
-      }
-    },
-    {
-      "branchId": "br-snowy-art-bbv0qdfr",
-      "name": "pre-c2a-f5-migrations",
-      "kind": "recovery",
-      "migrations": [
-        "20261121000000_communications_providers",
-        "20261122000000_finance_documents"
-      ],
-      "prs": [
-        42
-      ],
-      "appliedAt": "2026-11-15T09:20:00Z",
-      "migration": {
-        "status": "verified",
-        "evidence": "RLS forced, triggers and bos_app grants verified"
-      },
-      "deployment": {
-        "status": "verified",
-        "evidence": "PR #42 merged; later production deploys healthy (health 200)"
-      },
-      "note": "C2-A PR number not recorded",
-      "restoreDrill": {
-        "status": "not-run"
-      }
-    },
-    {
-      "branchId": "br-broad-dawn-bb0uidp7",
-      "name": "pre-reporting-migration",
-      "kind": "recovery",
-      "migrations": [
-        "20261124000000_reporting"
-      ],
-      "prs": [
-        43
-      ],
-      "appliedAt": "2026-11-15T09:42:00Z",
-      "migration": {
-        "status": "verified",
-        "evidence": "reporting_saved_views RLS and policies verified"
-      },
-      "deployment": {
-        "status": "verified",
-        "evidence": "PR #43 merged; later production deploys healthy (health 200)"
-      },
-      "restoreDrill": {
-        "status": "not-run"
-      }
-    },
-    {
       "branchId": "br-mute-term-bbizcakj",
       "name": "pre-c2b1-migration",
       "kind": "recovery",
@@ -380,5 +233,203 @@
         "status": "not-run"
       }
     }
-  ]
+  ],
+  "deleted": [
+    {
+      "branchId": "br-rapid-union-bbeik94q",
+      "name": "pre-sales-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261114090000_sales"
+      ],
+      "prs": [
+        15
+      ],
+      "appliedAt": "2026-11-14T09:46:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "applied as bos_owner, checksums matched"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #15 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      },
+      "createdAt": "2026-11-14T09:45:30Z",
+      "deletion": {
+        "at": "2026-11-17T09:58:46Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-17 09:57 UTC: \"You can delete any recovery branches that are no longer required\"",
+        "reason": "older than 48 h; production migration and deployment verified; PR(s) #15 merged; newer verified recovery points remain",
+        "verification": "Read-only Neon API: exact id/name/created_at, not default, not protected, state ready, no compute endpoint, no child branches. cli.mjs audit = eligible and cli.mjs check = allowed (registry 5f302f315e06). Guarded migrations finished, not rolled back, in live production _prisma_migrations (read-only); guarded PRs merged."
+      }
+    },
+    {
+      "branchId": "br-winter-snow-bbxj1wea",
+      "name": "pre-projects-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261114120000_projects"
+      ],
+      "prs": [
+        18
+      ],
+      "appliedAt": "2026-11-14T11:53:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "RLS+FORCE, policies and grants verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #18 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      },
+      "createdAt": "2026-11-14T11:48:34Z",
+      "deletion": {
+        "at": "2026-11-17T09:58:48Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-17 09:57 UTC: \"You can delete any recovery branches that are no longer required\"",
+        "reason": "older than 48 h; production migration and deployment verified; PR(s) #18 merged; newer verified recovery points remain",
+        "verification": "Read-only Neon API: exact id/name/created_at, not default, not protected, state ready, no compute endpoint, no child branches. cli.mjs audit = eligible and cli.mjs check = allowed (registry 5f302f315e06). Guarded migrations finished, not rolled back, in live production _prisma_migrations (read-only); guarded PRs merged."
+      }
+    },
+    {
+      "branchId": "br-autumn-pond-bbn8uvdm",
+      "name": "pre-finance-migrations",
+      "kind": "recovery",
+      "migrations": [
+        "20261115000000_finance",
+        "20261116000000_finance_payments",
+        "20261117000000_finance_expenses"
+      ],
+      "prs": [
+        31,
+        34,
+        35
+      ],
+      "appliedAt": "2026-11-14T19:26:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "checksums matched; 11 finance tables RLS+FORCE verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #35 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      },
+      "createdAt": "2026-11-14T19:25:19Z",
+      "deletion": {
+        "at": "2026-11-17T09:58:50Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-17 09:57 UTC: \"You can delete any recovery branches that are no longer required\"",
+        "reason": "older than 48 h; production migration and deployment verified; PR(s) #31, #34, #35 merged; newer verified recovery points remain",
+        "verification": "Read-only Neon API: exact id/name/created_at, not default, not protected, state ready, no compute endpoint, no child branches. cli.mjs audit = eligible and cli.mjs check = allowed (registry 5f302f315e06). Guarded migrations finished, not rolled back, in live production _prisma_migrations (read-only); guarded PRs merged."
+      }
+    },
+    {
+      "branchId": "br-odd-king-bbwpz5w9",
+      "name": "pre-c1-migrations",
+      "kind": "recovery",
+      "migrations": [
+        "20261118000000_people",
+        "20261118050000_scheduling",
+        "20261119300000_communications"
+      ],
+      "prs": [
+        36,
+        39
+      ],
+      "appliedAt": "2026-11-15T06:20:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "checksums matched; RLS, grants and triggers verified; health 200"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #39 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      },
+      "createdAt": "2026-11-15T06:15:59Z",
+      "deletion": {
+        "at": "2026-11-17T09:58:52Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-17 09:57 UTC: \"You can delete any recovery branches that are no longer required\"",
+        "reason": "older than 48 h; production migration and deployment verified; PR(s) #36, #39 merged; newer verified recovery points remain",
+        "verification": "Read-only Neon API: exact id/name/created_at, not default, not protected, state ready, no compute endpoint, no child branches. cli.mjs audit = eligible and cli.mjs check = allowed (registry 5f302f315e06). Guarded migrations finished, not rolled back, in live production _prisma_migrations (read-only); guarded PRs merged."
+      }
+    },
+    {
+      "branchId": "br-snowy-art-bbv0qdfr",
+      "name": "pre-c2a-f5-migrations",
+      "kind": "recovery",
+      "migrations": [
+        "20261121000000_communications_providers",
+        "20261122000000_finance_documents"
+      ],
+      "prs": [
+        42
+      ],
+      "appliedAt": "2026-11-15T09:20:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "RLS forced, triggers and bos_app grants verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #42 merged; later production deploys healthy (health 200)"
+      },
+      "note": "C2-A PR number not recorded",
+      "restoreDrill": {
+        "status": "not-run"
+      },
+      "createdAt": "2026-11-15T09:13:02Z",
+      "deletion": {
+        "at": "2026-11-17T09:58:54Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-17 09:57 UTC: \"You can delete any recovery branches that are no longer required\"",
+        "reason": "older than 48 h; production migration and deployment verified; PR(s) #42 merged; newer verified recovery points remain",
+        "verification": "Read-only Neon API: exact id/name/created_at, not default, not protected, state ready, no compute endpoint, no child branches. cli.mjs audit = eligible and cli.mjs check = allowed (registry 5f302f315e06). Guarded migrations finished, not rolled back, in live production _prisma_migrations (read-only); guarded PRs merged."
+      }
+    },
+    {
+      "branchId": "br-broad-dawn-bb0uidp7",
+      "name": "pre-reporting-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261124000000_reporting"
+      ],
+      "prs": [
+        43
+      ],
+      "appliedAt": "2026-11-15T09:42:00Z",
+      "migration": {
+        "status": "verified",
+        "evidence": "reporting_saved_views RLS and policies verified"
+      },
+      "deployment": {
+        "status": "verified",
+        "evidence": "PR #43 merged; later production deploys healthy (health 200)"
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      },
+      "createdAt": "2026-11-15T09:41:06Z",
+      "deletion": {
+        "at": "2026-11-17T09:58:56Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-17 09:57 UTC: \"You can delete any recovery branches that are no longer required\"",
+        "reason": "older than 48 h; production migration and deployment verified; PR(s) #43 merged; newer verified recovery points remain",
+        "verification": "Read-only Neon API: exact id/name/created_at, not default, not protected, state ready, no compute endpoint, no child branches. cli.mjs audit = eligible and cli.mjs check = allowed (registry 5f302f315e06). Guarded migrations finished, not rolled back, in live production _prisma_migrations (read-only); guarded PRs merged."
+      }
+    }
+  ],
+  "//deleted": "Recovery branches deleted from Neon, with the approval, verification and outcome of each deletion. Kept for history; not used for decisions."
 }
