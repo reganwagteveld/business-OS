@@ -7,7 +7,7 @@
 > nothing for P3-B to P3-E is built.
 >
 > **P3-B architecture (proposed, docs only):** [people-leave-p3b-architecture.md](./people-leave-p3b-architecture.md)
-> reconciles D-P3-12..19 and 22..25 and proposes D-P3-26..49. Nothing there is approved yet.
+> reconciles D-P3-12..25 and proposes D-P3-26..51. Nothing there is approved yet.
 
 ## 1. Architecture audit (main at 15f7746, 2026-11-16)
 

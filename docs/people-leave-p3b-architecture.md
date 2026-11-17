@@ -17,6 +17,15 @@
 > [V2-B2](./ui/pixa-visual-identity-v2-b2.md) and the structure of [WF-1](./cross-zone-workflows-wf1.md).
 > Nothing accepted is overridden silently: every change to an earlier proposal is listed in §15.2 with evidence.
 >
+> **Version 1.1 (2026-11-17)** after the ChatGPT architecture audit of `a4d68a0` (conditional design pass, not
+> implementation-ready): (1) year-aware balance contract for P3-C with per-leave-year buckets, lock scope, carry-over,
+> future-year availability and reversal attribution (§5.6, C-10, C-20, D-P3-50); (2) work-pattern changes inside a
+> request counted per date, leave-year edge tests (§9.2a, T-39); (3) transition and occupancy provenance verified by
+> the database from the session user, not from service-written claims (§6.8, D-P3-51); (4) notes protected by a
+> data-derived restrictive RLS policy instead of a transaction flag, explicit race acceptance and tests (§12.2,
+> D-P3-48 revised, T-28, T-29); (5) auto-approval runs the identical checks, with tests (§10.3, T-49a/b); escalation
+> wording in §18.2 aligned with the protocol.
+>
 > **Consolidation note.** An earlier draft of this spec was opened as #115 from a separate local session. This
 > version supersedes it and folds in its distinct findings: leave-year attribution (D-P3-45, a conflict with the
 > D-P3-25 proposal), per-employee work patterns (D-P3-46), the "verified link" decision (D-P3-47), restrictive
@@ -62,7 +71,7 @@ The design in one paragraph:
 - **Correctness lives in PostgreSQL.** Overlaps are refused by a partial unique index on per-day occupancy
   rows (no extension, no exclusion constraint, consistent with ADR 0008); transitions are written by a
   trigger so history cannot be forged; versions advance by exactly one; approval locks the request row, then
-  the People rows in P3-A's order, then the P3-C balance row, and deducts under that lock.
+  the People rows in P3-A's order, then the P3-C balance bucket of the leave year, and deducts under that lock.
 - **Authority is server-side and record-scoped**, the first record-scoped rule in People: the approver is
   resolved at decision time from the reporting line, membership status and permission keys; nobody decides
   their own request except under a narrow, explicit, audited sole-owner rule (§8.4).
@@ -234,7 +243,7 @@ State on 2026-11-17: **every row is unmet** (P3-C does not exist).
 
 | # | Requirement | Verify by | State |
 |---|---|---|---|
-| C-01 | D-P3-20 (balance row locked `FOR UPDATE`, negative limit under the lock, deduct on approval) accepted | Decision record in `people-leave-p3.md` §3 | Unmet (proposed) |
+| C-01 | D-P3-20, amended to per-leave-year buckets (§5.6), accepted: target bucket locked `FOR UPDATE`, negative limit under the lock, deduct on approval | Decision record in `people-leave-p3.md` §3 | Unmet (proposed) |
 | C-02 | D-P3-21 (on-demand idempotent accrual, no cron) accepted | same | Unmet |
 | C-04 | D-P3-45 (leave-year attribution) decided, and P3-C's balance model can answer "available for leave year Y" | Decision record; ledger schema has a leave-year (or dated-entry) dimension | Unmet (conflicts with the D-P3-25 proposal as written) |
 | C-03 | D-P3-25 (revision `effective_from`, entries record `policy_version`, never recalculated) accepted and built | `effective_from` column on `people_leave_policy_revisions` on `main` and in production | Unmet (column absent) |
@@ -243,7 +252,7 @@ State on 2026-11-17: **every row is unmet** (P3-C does not exist).
 
 | # | Requirement on P3-C | Verify by | State |
 |---|---|---|---|
-| C-10 | One balance row per `(business_id, employee_id, leave_type_id)`, unique, composite tenant FKs, forced RLS | schema test, `tests/isolation` | Unmet |
+| C-10 | One balance **bucket** row per `(business_id, employee_id, leave_type_id, leave_year_start)` (§5.6), unique, composite tenant FKs, forced RLS | schema test, `tests/isolation` | Unmet |
 | C-11 | Ledger entries append-only: no UPDATE or DELETE grant to `bos_app`, guard trigger refuses changes | grants inventory test | Unmet |
 | C-12 | Entry kinds include `DEDUCTION` and `REVERSAL`; a reversal references the entry it reverses, at most one reversal per entry (unique) | schema + direct SQL test | Unmet |
 | C-13 | Source reference on entries: `(source_kind, source_id)` with a unique index on `(business_id, source_kind, source_id, kind)` so a request can be deducted at most once and reversed at most once (ledger-level idempotency) | schema + race test | Unmet |
@@ -254,12 +263,12 @@ State on 2026-11-17: **every row is unmet** (P3-C does not exist).
 
 | # | Function (proposal; P3-C may rename, the semantics are the requirement) | Requirement | State |
 |---|---|---|---|
-| C-20 | `lockBalance(db, employeeId, leaveTypeId)` | Takes the balance row `FOR UPDATE` (creating it if absent, race-safe via `INSERT … ON CONFLICT DO NOTHING` then `SELECT … FOR UPDATE`); returns the locked balance **after** running "accrue up to date" for today inside the same transaction | Unmet |
-| C-21 | `postDeduction(db, lock, { amount, effectiveDate, leaveYearStart, policyId, policyVersion, source: { kind: 'LEAVE_REQUEST', id } })` | Checks `availableFor(leaveYearStart) − amount ≥ −negativeBalanceLimit` using the rules in force on `effectiveDate` (D-P3-45); throws a typed `insufficient_balance` error with no partial write; returns the entry id | Unmet |
-| C-22 | `postReversal(db, lock, { entryId, effectiveDate, source })` | Posts the exact opposite amount, references `entryId`, never touches the original; idempotent by C-12/C-13; respects `maxBalance` as P3-C defines (decision for P3-C: a reversal is never refused for exceeding `maxBalance`, recommended) | Unmet |
-| C-23 | `balanceSummary(db, employeeId, leaveTypeId, asOf)` | Read-only: available, posted, plus a `pending` figure P3-B supplies (sum of pending requested amounts) | Unmet |
-| C-24 | Lock discipline | P3-C takes **no People row lock after** the balance row (it may read policies and revisions without locks). Documented and tested, so P3-B's order (§10.2) cannot cycle | Unmet |
-| C-25 | Entitlement `NONE` | Policies with no balance post nothing; `lockBalance` is not called (P3-B skips the ledger) | Unmet (P3-B side defined) |
+| C-20 | `lockBucket(db, employeeId, leaveTypeId, leaveYearStart)` | Opens any missing buckets from the current leave year up to the target year and locks them `FOR UPDATE` **in ascending year order** (race-safe `INSERT … ON CONFLICT DO NOTHING` then `SELECT … FOR UPDATE`), runs "accrue up to date" for the current year inside the lock, and returns for the **target year only**: `{ leaveYearStart, isFutureYear, posted, available, accruedThrough, projectedOpening }` (§5.6). It never returns a single cross-year figure | Unmet |
+| C-21 | `postDeduction(db, bucket, { amount, effectiveDate, policyId, policyVersion, source: { kind: 'LEAVE_REQUEST', id } })` | Posts into the locked target-year bucket; checks `bucket.available − amount ≥ −negativeBalanceLimit` using the rules in force on `effectiveDate` (D-P3-45, D-P3-50); throws a typed `insufficient_balance` error with no partial write; returns the entry id | Unmet |
+| C-22 | `postReversal(db, { entryId, effectiveDate, source })` | Locks the bucket the deduction was charged to (and, if that year is closed, the following open buckets in ascending order), posts the exact opposite amount **into the original bucket**, references `entryId`, never touches the original; a closed year's carry-over correction follows §5.6 rule 6; idempotent by C-12/C-13; respects `maxBalance` as P3-C defines (decision for P3-C: a reversal is never refused for exceeding `maxBalance`, recommended) | Unmet |
+| C-23 | `bucketSummary(db, employeeId, leaveTypeId, leaveYearStart)` | Read-only, same figures as C-20 without locks, plus a `pending` figure P3-B supplies (sum of pending requested amounts charged to that year) | Unmet |
+| C-24 | Lock discipline | Buckets of one employee and type are always locked in ascending `leave_year_start`; P3-C takes **no People row lock after** a bucket (it may read policies and revisions without locks). Documented and tested, so P3-B's order (§10.2) cannot cycle | Unmet |
+| C-25 | Entitlement `NONE` | Policies with no balance post nothing; `lockBucket` is not called (P3-B skips the ledger) | Unmet (P3-B side defined) |
 
 ### 5.4 Tests P3-C must have passed (from `people-leave-p3.md` §4.7)
 
@@ -270,6 +279,41 @@ State on 2026-11-17: **every row is unmet** (P3-C does not exist).
 | C-32 | Leave-year boundaries (calendar, anniversary, custom), carry-over and caps | Unmet |
 | C-33 | Mid-period and mid-year rule changes; assignment changes mid-period | Unmet |
 | C-34 | Isolation suite and PgBouncer re-run cover every ledger table | Unmet |
+
+### 5.6 Year-aware balance contract (requirement on P3-C; D-P3-45, D-P3-50)
+
+The audit found that "one balance row per employee and type" (the D-P3-20 proposal) cannot answer "how much is
+available for leave in next leave year". P3-B therefore requires P3-C to keep balances **per leave year**. This is a
+requirement on P3-C's design, to be confirmed in P3-C's own spec and audit; P3-B does not build it.
+
+1. **Bucket.** One row per `(employee, leave type, leave_year_start)`, where `leave_year_start` is the start of the
+   policy leave year (CALENDAR, ANNIVERSARY from the employee's `start_date`, CUSTOM month/day). Every ledger entry
+   belongs to exactly one bucket. A bucket's balance is the sum of its entries; nothing is stored that could drift.
+2. **Opening.** A bucket is opened lazily (by `lockBucket`, or accrual reaching the year) with entries computed by the
+   rules in force on the year's first day (D-P3-25 rule 5): the grant (GRANT policies) and the carry-over from the
+   previous bucket (`NONE` 0, `UNLIMITED` all, `CAPPED` min(cap, available)), posted as `CARRY_OUT` in the old bucket
+   and `CARRY_IN` in the new one in one transaction, old bucket locked first. Expiry of unused balance is not in P3-A's
+   vocabulary, so none.
+3. **Future-year availability is conservative and deterministic (D-P3-50).** Before a year starts, its bucket's
+   `available` = the grant for that year computed with **today's** rules (`projectedOpening`), **no projected
+   carry-over and no projected accrual**, minus deductions already charged to it. ACCRUAL policies therefore have
+   0 available in a future year except the negative limit. When the year actually opens, the real grant and carry-over
+   are posted; if the real grant differs from the projection, P3-C posts the difference as an `ADJUSTMENT` entry; it
+   never recalculates or removes existing deductions. A bucket may thereby end below the negative limit after a rule
+   change; that is reported to leave managers, not auto-corrected.
+4. **Lock scope.** A deduction or reversal locks only the buckets it needs, in ascending year order (C-20, C-24): for
+   a current-year deduction, the current bucket; for a future-year deduction, the current bucket (to open the next
+   one and fix its carry-over base) and then the target bucket. Two approvals charged to the same year serialise on
+   that bucket; approvals charged to different years of the same employee and type serialise on the current bucket.
+5. **Accrual** (D-P3-21) posts only into the current bucket and closes periods per D-P3-25 rule 4; reaching a new
+   leave year opens the next bucket under rule 2.
+6. **Reversal attribution.** A reversal is always posted into the bucket of the deduction it reverses. If that year is
+   already closed, the extra closing balance is carried forward under the policy's carry-over rule as an
+   additional `CARRY_OUT`/`CARRY_IN` pair into the following bucket (capped as the original carry-over was, using
+   the cap in force when that year closed), in the same transaction and lock order.
+7. **Compatibility.** D-P3-20 becomes "the target bucket row is locked `FOR UPDATE`"; D-P3-21 unchanged; D-P3-25
+   rule 6 becomes "deduct with the rules in force on the approval date, **into the bucket of the leave dates**".
+   Concurrency tests must span years (T-41a).
 
 ### 5.5 Release state
 
@@ -353,7 +397,7 @@ location change re-quotes pending requests; approved ones are unaffected.
 | `submitted_by_user_id` | uuid | composite FK → memberships? **No**: plain uuid, like audit actors, so member removal does not block (A2-B pattern clears FKs); kept as history |
 | `submission_basis` | `SELF`\|`ON_BEHALF` | |
 | `client_request_id` | uuid | idempotency key from the client; unique `(business_id, submitted_by_user_id, client_request_id)` |
-| `pending_actor_user_id`, `pending_actor_basis` | | **written by the service in the same UPDATE as the status change**, read by the transition trigger (§6.5); cleared by the trigger after use is not possible (AFTER trigger), so the next status change must set them again (guard: a status change without a new `pending_actor_basis` is refused, PE-class) |
+| `pending_actor_basis` | text | the basis the service **claims** for this change, set in the same `UPDATE` as the status; the guard requires it non-null on every status change and the trigger re-derives and verifies it from the session user (§6.8) before recording the transition. It is a claim, never proof |
 | `deduction_entry_id`, `reversal_entry_id` | uuid null | composite FK → P3-C ledger entries; each set once |
 | `version` | int | +1 on every update (guard) |
 | `created_at`, `updated_at`, `decided_at` | timestamptz | DB time |
@@ -361,8 +405,7 @@ location change re-quotes pending requests; approved ones are unaffected.
 Indexes: `(business_id, employee_id, start_date)`, `(business_id, status, start_date)`,
 `(business_id, leave_type_id)`, `(business_id, created_at desc, id)`.
 
-UPDATE grant (column-level): `status`, `approved_amount`, `sensitive`, `pending_actor_user_id`,
-`pending_actor_basis`, `deduction_entry_id`, `reversal_entry_id`, `version`, `updated_at`, `decided_at`.
+UPDATE grant (column-level): `status`, `approved_amount`, `sensitive`, `pending_actor_basis`, `deduction_entry_id`, `reversal_entry_id`, `version`, `updated_at`, `decided_at`.
 Identity, employee, type, policy, dates, parts, hours, requested amount and submitter are immutable (PE004).
 
 ### 6.4 `people_leave_request_days` (B2) — occupancy
@@ -398,7 +441,7 @@ exactly, whichever it is).
 | `id`, `business_id`, `request_id` | composite FK |
 | `seq` | 1, 2, 3 … per request, unique `(business_id, request_id, seq)` |
 | `from_status` (null for submission), `to_status` | |
-| `actor_user_id`, `actor_basis` | from `pending_actor_*`: `SELF`, `ON_BEHALF`, `AUTO_NO_APPROVAL`, `LINE_MANAGER`, `LEAVE_MANAGER`, `LEAVE_MANAGER_OVERRIDE`, `SOLE_OWNER_SELF` |
+| `actor_user_id`, `actor_basis` | actor from `current_setting('app.user_id')`, basis verified by the trigger (§6.8): `SELF`, `ON_BEHALF`, `AUTO_NO_APPROVAL`, `LINE_MANAGER`, `LEAVE_MANAGER`, `LEAVE_MANAGER_OVERRIDE`, `SOLE_OWNER_SELF` |
 | `request_version` | the version the change produced |
 | `amount` | requested amount at submit; approved amount at approval; null otherwise |
 | `policy_version` | policy version used for that computation |
@@ -428,12 +471,47 @@ like personal details in P1. No attachments (D-P3-22).
 | Status transition | anything outside §7.2 | `409 invalid_transition` |
 | Version | not exactly +1 | `409 stale` |
 | Immutable columns | identity, employee, type, policy, dates, parts, hours, requested amount, submitter, `approved_amount`/ledger ids once set | `409 immutable` |
-| Actor basis present | a status change without `pending_actor_basis` set in the same statement | 500 (bug) |
+| Actor and basis (§6.8) | missing `app.user_id`; a basis the session user does not satisfy; own request without `SELF`/`SOLE_OWNER_SELF` | `403 forbidden` / `self_approval` (service checks first; trigger is the backstop) |
 | Approved needs ledger | `APPROVED` without `deduction_entry_id` unless the policy entitlement is `NONE` (checked via the policy row) | 500 (bug) |
 | Cancel needs reversal | `APPROVED→CANCELLED` without `reversal_entry_id` when a deduction exists | 500 (bug) |
 | Terminated employee | insert or `→APPROVED` while the employee is `TERMINATED` (reads employee under the caller's lock, §10.2) | `409 terminated` |
 | Day rows | insert for a request not in `PENDING`/`APPROVED`; `released_at` changed twice | `409 immutable` |
 | CHECKs | units, parts only with DAYS, hours only with HOURS, span, amounts ≥ 0 | `400 invalid_input` |
+
+### 6.8 Provenance: what the database proves on its own (D-P3-51)
+
+The audit noted that `pending_actor_*` columns written by the service prove nothing against a forged direct `UPDATE`
+by `bos_app`. Design, in increasing strength:
+
+1. **Actor from the session, not the statement.** The transition trigger records `actor_user_id :=
+   current_setting('app.user_id')`, which `withTenant` sets from the verified session (`core/db/with-tenant.ts:122`),
+   exactly as Communications' restricted notes and Finance recurring runs already rely on. A supplied
+   `pending_actor_user_id` is not stored; the column is dropped from the design. A missing setting fails closed
+   (status change refused).
+2. **Basis re-derived in SQL.** The trigger (`SECURITY INVOKER`) recomputes whether the session user may make this
+   transition and refuses otherwise; `pending_actor_basis` is only the claim it checks:
+   - `SELF`: session user is the request's submitter or the user linked to its employee, and the transition is one
+     §7.2 allows the employee (withdraw; cancel only while `current_date` in the business time zone `< start_date`);
+   - `LINE_MANAGER`: an open manager assignment (on the business-local date) makes the session user's linked employee
+     the manager of the request's employee, that manager is not terminated, and the session user's membership is
+     `ACTIVE` with role in the roles that hold `people:leave_approve`;
+   - `LEAVE_MANAGER` / `LEAVE_MANAGER_OVERRIDE`: membership `ACTIVE` with a role holding `people:leave_manage`;
+   - `SOLE_OWNER_SELF`: role `OWNER`, own request, and no other `ACTIVE` membership with a `leave_manage` role and no
+     other eligible line manager;
+   - `AUTO_NO_APPROVAL`: only on insert, and only when the policy row's `requires_approval` is false;
+   - always: not own request unless `SELF` or `SOLE_OWNER_SELF`.
+   The database cannot read `ROLE_PERMISSIONS`, so the role lists are written in the migration (the `erasure_actor`
+   pattern in ADR 0006 §7) and a unit test fails if they drift from `permissions.ts`. When custom roles arrive these
+   checks must read the role tables instead (recorded as a known follow-up).
+3. **Occupancy.** Day rows may be inserted only in the transaction that inserted their request (`request.created_at
+   = now()`, the transaction timestamp), only for dates and halves inside the request's range and parts, and only
+   while it is `PENDING`/`APPROVED`. `released_at` may be set only when the request is terminal, only once, never
+   cleared; no DELETE grant. A forged release therefore requires a forged terminal status, which (2) refuses.
+4. **Trust boundary (stated).** This defends against bugs and against every request that passes through the API.
+   It does **not** defend against arbitrary SQL that sets `app.user_id` to someone else: that is the same boundary as
+   tenant isolation itself (ADR 0006 §6). The stronger option, a privileged `SECURITY DEFINER` transition function that
+   verifies the raw session token (the E1 erasure pattern), needs privileged SQL on production (not delegated) and is
+   **not recommended for P3-B** (D-P3-51).
 
 ---
 
@@ -479,6 +557,9 @@ are never deleted or edited (D-P3-30: withdraw and resubmit instead).
   differs → `409 amount_changed` with the new amount, and the approver confirms again (D-P3-33).
 - **Type archived or made inactive while pending:** approval still allowed (the request was valid when made);
   archiving a type is already refused while it has a current policy (P3-A PE008).
+- **Manager reassignment race (accepted, explicit):** a reporting-line change that commits after the decision
+  transaction's authority check is not retroactive: the decision stands with basis `LINE_MANAGER` for the manager
+  who was eligible when it ran. The check runs after the request lock, so a change committed earlier is always seen.
 - **Membership changes:** the employee's link being removed does not touch requests; the self view simply stops
   being reachable for that user (§8.1).
 
@@ -583,6 +664,18 @@ For each date `d` in `[start_date, end_date]`:
 The per-day breakdown is shown to the person and stored in the submit and approve transitions' computation
 (`amount`, `policy_version`); the days rows hold occupancy only.
 
+### 9.2a Work-pattern and leave-year edges
+
+- **Work-pattern change inside a request:** each date is counted with the pattern in force **on that date** (per
+  segment). Patterns cannot be future-dated (D-P3-9), so for future dates the current pattern applies; a pattern change
+  made while a request is pending re-quotes it at approval (`amount_changed`). Approved requests never change.
+- **Policy assignment change inside a request:** refused (D-P3-35). **Leave-year boundary inside a request:** refused
+  (`crosses_leave_year`, D-P3-45), for CALENDAR, ANNIVERSARY and CUSTOM years.
+- **Holidays for part-timers:** a holiday on a date outside the employee's pattern counts 0 once (never negative).
+- **Leap years:** 29 February counts as an ordinary date; ANNIVERSARY years starting on 29 February are impossible
+  (P3-A forbids 29 February as a custom start; an anniversary on 29 February starts the year on 1 March in non-leap
+  years — **P3-C to confirm**).
+
 ### 9.3 Notice, backdating, waiting period (D-P3-32)
 
 | Rule | Definition (recommendation) | Error |
@@ -643,7 +736,7 @@ assignments cover parts of it (a policy change inside the range) the request is 
 3. **Employee row `FOR SHARE`** (status, dates); with on-behalf batch operations (none in P3-B) ascending id.
 4. **Assignment rows** read (P3-A order: policy → employee → assignment).
 5. **Day rows** inserted (submit) or released (by the trigger, after the status update in step 7).
-6. **Balance row `FOR UPDATE`** via `lockBalance` (P3-C), which accrues up to date inside the lock.
+6. **Balance bucket rows `FOR UPDATE`** via `lockBucket` (P3-C, §5.6): current year, then the target year if later, ascending; accrues up to date inside the lock.
 7. **Writes:** ledger entry → request `UPDATE` (status, amounts, `pending_actor_*`, ledger id, version) → trigger
    writes the transition and releases day rows → note insert → audit.
 
@@ -666,8 +759,8 @@ POST /leave-requests/:id/approve { version, expectedAmount, note?, selfApproval?
  7  rules := policy at highest version with effective_from ≤ today (D-P3-25); recheck backdating, waiting period
  8  amount := calculate(...) ; amount ≠ expectedAmount → 409 amount_changed {amount}
  9  if entitlement ≠ NONE:
-       lock := lockBalance(employee, type)                      -- FOR UPDATE, accrues up to today
-       entry := postDeduction(lock, amount, today, leaveYearStart, policy, version, source=request)   -- 409 insufficient_balance
+       bucket := lockBucket(employee, type, leaveYearStart)     -- FOR UPDATE ascending years, accrues current year
+       entry := postDeduction(bucket, amount, today, policy, version, source=request)   -- 409 insufficient_balance
 10  UPDATE request SET status=APPROVED, approved_amount, deduction_entry_id, pending_actor_*=…, decided_at, version+1
        WHERE id AND version = :version                          -- guard triggers check matrix, ledger presence
     → trigger: transition row (seq+1, basis, amount, policy_version, ledger_entry_id)
@@ -679,9 +772,14 @@ Any error at any step → ROLLBACK: no ledger entry, no transition, no note, no 
 
 Reject: steps 1–4, then status update and note (no ledger, days released by trigger). Withdraw: steps 1–3, self
 or leave manager check, status update. Cancel: steps 1–4 (employee: own request and `today < start_date`),
-`lockBalance`, `postReversal(deduction_entry_id, today)`, status update with `reversal_entry_id`. Submit: employee
+`postReversal(deduction_entry_id, today)` (locks the deduction's bucket, §5.6 rule 6), status update with `reversal_entry_id`. Submit: employee
 resolution, steps 5–8 without step 1, insert request (+ day rows; `23505` → `409 leave_overlap`), and for
-auto-approval step 9 and the `APPROVED` insert in the same transaction.
+auto-approval step 9 and the `APPROVED` insert in the same transaction. **Auto-approval runs exactly the same checks
+as manual approval** (employment, policy coverage, leave year, target-year bucket under lock, negative limit), with
+no `expectedAmount` round trip because the amount is computed in the same transaction; the only difference is that
+there is no approver (basis `AUTO_NO_APPROVAL`, verified by the trigger against `requires_approval`). Cancellation of
+auto-approved leave follows §7.2: the employee before start, otherwise leave managers (there is no line-manager
+approval to point to, so `LINE_MANAGER` may also cancel per §8.3).
 
 ### 10.4 Failure, replay and recovery
 
@@ -797,9 +895,13 @@ past requests made while it was on; turning it **on** protects all its requests 
   never serialise rows directly. Contract schemas for the redacted view do not have the hidden keys at all
   (absent, not null), like WF-1's finance redaction.
 - Notes are selected only after the note check passes; the list endpoints never join notes. Defence in depth
-  (D-P3-48): a restrictive RLS policy on `people_leave_request_notes` that requires a per-transaction setting
-  (`app.leave_notes = 'on'`) which only the note-reading service sets, after its check, so a stray query in any
-  other code path returns no rows.
+  (D-P3-48, revised after audit): a **restrictive** RLS policy on `people_leave_request_notes` derived from data, not
+  from a writable flag: a row is visible only when `current_setting('app.user_id')` is the note's author, the
+  request's submitter, the user linked to the request's employee, an `ACTIVE` member whose role holds
+  `people:leave_manage`, or the linked user of the employee's current line manager whose role holds
+  `people:leave_approve` (same SQL predicates and role lists as §6.8). Communications' restricted notes already use
+  the session user in RLS. The service check remains the primary authorisation; the policy only makes a stray query
+  return nothing. Same trust boundary as §6.8 item 4.
 - Error bodies never reveal a request's existence, type or dates to someone who cannot see it.
 - No leave data in global search, reporting metrics, notification text (N1 `PEOPLE` class: ids and enums only),
   Scheduling or logs. A boundaries test asserts that only People imports the leave tables and that no non-People
@@ -906,8 +1008,8 @@ delegated approval policy.
 | D-P3-17 | Business work week (default Mon–Fri), holiday list (optionally per location) in P3-B; per-employee override later; HOURS take hours per day | No work week or holiday storage exists anywhere (`grep` on schema and docs). Storing the work week on `businesses` would touch Administration's table. "Per-employee later" over-charges part-timers | **Keep** with D-P3-31 (People-owned tables) and **amend** by D-P3-46 (per-employee pattern in B1) |
 | D-P3-18 | Calendar dates in business time zone | Matches P1/P3-A | **Keep** |
 | D-P3-19 | No overlap, any type, except AM/PM halves | HOURS requests carry no time of day, so hour-level overlap is undefined; enforcement mechanism unspecified (ADR 0008 avoids extensions) | **Keep with clarification** D-P3-34 (HOURS occupy the whole date; unique index on day rows) |
-| D-P3-20/21 | Ledger rules | P3-C scope; unbuilt and unaccepted | Prerequisites C-01, C-02 |
-| D-P3-25 | Rules by date; rule 6 deducts "on the approval date" | Wrong for leave in a later leave year (balance resets / grants) | **Conflict** → D-P3-45 (attribute to the leave year of the dates); prerequisite C-03, C-04 |
+| D-P3-20/21 | Ledger rules | P3-C scope; unbuilt and unaccepted. D-P3-20's single balance row per employee and type is incompatible with D-P3-45 | **Amend D-P3-20** to per-leave-year buckets (§5.6); prerequisites C-01, C-02 |
+| D-P3-25 | Rules by date; rule 6 deducts "on the approval date" | Wrong for leave in a later leave year (balance resets / grants); also needs a year-aware balance model, not a field on the entry | **Conflict** → D-P3-45 and D-P3-50, contract §5.6; prerequisites C-03, C-04, C-10 |
 | D-P3-22 | Sensitive: notes and type visible only to employee, approver, `read_sensitive`; others see "Away" | Type flag is editable later (`UpdateLeaveTypeRequest`), which would re-expose history | **Keep** + D-P3-43 (sticky sensitivity) and D-P3-38 (notes restricted for every type) |
 | D-P3-23 | P3-E: busy-only blocks via outbox, sync disabled | An outbox copy duplicates the source of truth and needs a worker (escalation item) | **Amend for P3-E** → D-P3-37 (read-through projection, non-blocking) |
 | D-P3-24 | Leave as People tabs; MEMBER sees My Leave | Needs any-of Zone gating (§3.3) | **Keep**, implemented via D-P3-26 |
@@ -937,7 +1039,9 @@ delegated approval policy.
 | D-P3-45 | **Leave-year attribution (P3-C input; decide before P3-C is built)** | deduct from the balance on the approval date (D-P3-25 rule 6 as proposed) / **charge each deduction to the leave year of the leave dates; refuse requests crossing a leave-year boundary** | **Leave year of the dates.** Under the proposal, leave booked now for next leave year is charged against this year's balance, which is wrong for GRANT policies without carry-over and for any reset. **Conflicts with the D-P3-25 proposal as written** (still only a proposal) |
 | D-P3-46 | Per-employee work pattern | later (D-P3-17) / **effective-dated per-employee pattern in B1** | **In B1**: otherwise part-timers are over-charged and every fix is a ledger adjustment. Amends D-P3-17's "later" |
 | D-P3-47 | What "verified" user link means | require user confirmation (new People change) / **accept the admin-asserted, audited link; show the linked employee to the user** | **Accept for P3-B**; confirmation can follow if pilots need it |
-| D-P3-48 | Restrictive RLS on notes | service check only / **service check plus restrictive RLS keyed on a transaction setting** | **Both**: same reasoning as ADR 0006 private details; cheap |
+| D-P3-48 | Restrictive RLS on notes | service check only / transaction-flag RLS / **service check plus restrictive RLS derived from the session user and the data** | **Data-derived RLS** (revised after audit): a writable flag proves nothing; the session user is the existing trust anchor |
+| D-P3-50 | Future-year availability (with D-P3-45) | project carry-over and accrual / **conservative: next year's grant under today's rules only, no carry-over or accrual projection; real opening posts an adjustment** | **Conservative**: deterministic, can only under-promise; P3-C input |
+| D-P3-51 | How the database proves who made a transition | service-written actor (v1.0) / **session user + basis re-derived in SQL by the trigger** / privileged session-token function | **Session user + SQL re-derivation**: no privileged SQL; same trust boundary as tenant isolation; the privileged option stays available if Regan wants it |
 | D-P3-49 | Team leave audience | approvers only / **`people:read` holders (sensitive as "Away") plus approvers for their reports; MEMBER own only** | **As stated** (§12.3): the brief asks for filtered team visibility without fixing the audience |
 | D-P3-44 | Release switch | ship enabled / **routes off (`available`) until B4 and Regan's explicit switch-on** | **Off**: enabling a feature in production escalates to Regan anyway (protocol "Merges are deployments") |
 
@@ -998,7 +1102,7 @@ plus a unit-level custom principal where noted.
 | T-35 | Waiting period from employee `start_date`; no `start_date` → `outside_employment` | U, I | B2 |
 | T-36 | Policy applicability: no assignment, assignment change inside range, policy changed while pending → recompute and `amount_changed` | I | B2–B3 |
 | T-37 | Client and server engines agree on a generated corpus (property test, same module) | U | B1 |
-| T-39 | Leave-year boundary: request crossing calendar, anniversary and custom year starts refused; next-year request checked against next year's opening balance; per-employee pattern change mid-request | U, I | B1–B3 |
+| T-39 | Leave-year boundary: request crossing CALENDAR, ANNIVERSARY and CUSTOM year starts refused; next-year request checked against the conservative projected opening (§5.6 rule 3); per-employee pattern change mid-request counted per date; part-timer with a holiday on a non-work day; leap day inside a request and an ANNIVERSARY start on 29 February | U, I | B1–B3 |
 | T-38 | Calendar changes after approval do not alter approved amounts | I | B3 |
 | T-40 | Approve deducts once; entry has policy id/version, amount, effective date; balance after correct | I | B3 |
 | T-41 | Two approvals of different requests against one balance (C, both orders): second `insufficient_balance`, one entry | C, P | B3 |
@@ -1010,6 +1114,13 @@ plus a unit-level custom principal where noted.
 | T-47 | Fault injection after the ledger insert and before the request update → full rollback, no entry, no transition, no audit | I | B3 |
 | T-48 | Entitlement NONE: approval posts no ledger entry; guard accepts it | I, S | B3 |
 | T-49 | Auto-approval (no approval required) deducts on submit in one transaction | I | B3 |
+| T-49a | Auto-approval with insufficient target-year funds (current year and next year) → `insufficient_balance`, nothing written | I | B3 |
+| T-49b | Two concurrent auto-approved submissions (different dates) on one bucket: second sees the first's deduction; both orders | C, P | B3 |
+| T-41a | Cross-year concurrency: approvals charged to the current and next year of one employee and type, both orders; year opening (carry-over) racing a next-year deduction; reversal into a closed year with carry-over correction | C | B3 (needs P3-C) |
+| T-28 | Notes RLS by direct SQL as `bos_app` with `app.user_id` set to each viewer class (author, submitter, linked user, line manager, leave manager, unrelated MEMBER, MANAGER without reports): only allowed classes see rows | S | B2 |
+| T-29 | Linked-self visibility and approver changes under concurrency: link moved to another user while a request is open; manager reassigned during a decision (both commit orders); approver suspended mid-inbox | C, I | B2–B3 |
+| T-57 | Forged direct SQL as `bos_app`: status change with a false basis, with no `app.user_id`, by the requester; extra day rows in a later transaction; release on a live request; each refused | S | B2 |
+| T-58 | Role lists in the migration match `ROLE_PERMISSIONS` for `leave_approve` and `leave_manage` | U | B2 |
 | T-50 | Transition rows written only by the trigger; seq contiguous; cannot insert/update/delete as `bos_app` | S | B2 |
 | T-51 | Every transition outside §7.2 refused by the guard (generated matrix) | S | B2 |
 | T-52 | Immutable columns refused; version must be +1 | S | B2 |
@@ -1064,11 +1175,12 @@ validated → evidence posted → `APPROVED — EXECUTE: MIGRATION` verdict nami
 merge through the queue under a separate merge verdict → smoke (`/api/v1/health`; leave routes answer 404 while
 switched off).
 
-**Escalation.** B1 is routine (additive configuration tables, no authorisation change): its migration and merge
-can go through delegated `APPROVED — EXECUTE` verdicts. **B2 and B3 add the first record-scoped authorisation
-rule in People and new permission keys**, so under the protocol ("authentication, authorisation or
-tenant-isolation changes") their migration and merge **escalate to Regan's own approval** in the executing thread,
-in addition to ChatGPT's audit. B4 merges are routine while the routes stay off; the switch-on is Regan's (D-P3-44).
+**Escalation.** B1 is routine (additive configuration tables, no authorisation change). **B2 and B3 add new
+permission keys and the first record-scoped authorisation rule in People**, so they get an enhanced security audit
+(the G-S gates in §16.1 and T-57/T-58). Under the protocol they escalate to Regan only if that audit leaves an
+**unresolved** authorisation or tenant-isolation risk; otherwise their migration and merge follow the normal
+delegated verdicts. Activation (switch-on, D-P3-44) is always Regan's, as is any material risk ChatGPT marks as a
+business-owner decision.
 
 ### 18.3 Rollout
 
