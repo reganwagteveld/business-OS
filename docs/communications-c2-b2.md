@@ -1,6 +1,8 @@
 # Communications C2-B2: provider-mail storage, isolation, retention and sync design
 
-**Status:** docs-only design for audit. No code, schema, migration, privileged SQL, worker, cron, provider
+**Status:** docs-only design for audit. Revised after the ChatGPT conditional design pass on `1ab55f6`
+(customer-link visibility narrowed, Keep as record deferred, personal sharing semantics, follow-up exception,
+definer hygiene, attachment proxy, erasure privacy). No code, schema, migration, privileged SQL, worker, cron, provider
 call or deployment change. Nothing here is authorised for implementation until its own package is approved.
 **Base:** `main` at `616a254`. **Brief:** Regan's owner decision record on PR #114 (2026-11-17): D-UI-1 to
 D-UI-10 accepted, including the limited amendment of D-C2-6 (D-UI-4), and "C2-B2 as docs-only backend design;
@@ -29,8 +31,9 @@ every provider behaviour named below is to be verified live under Gate C before 
    ordinary period, or as unshared personal mail). Matching is a classification at ingest and a suggestion in
    the UI. It never links anything.
 4. **Customer linking is explicit, per thread, BUSINESS-only and audited** (D-UI-7). A link is a row in
-   `mail_thread_links`; linked threads appear on the customer through a **new** read path with the same mailbox
-   rules, never as C1 rows or `message.recorded` activities.
+   `mail_thread_links`; linked threads appear on the customer through a **new** read path that applies the
+   **same mailbox rules**, never as C1 rows or `message.recorded` activities. A link never widens who can read
+   the mail (D-B2-3, revised after audit).
 5. **E1 is extended to the new tables** (categories per copy, tombstones, holds narrowed to the mailbox,
    re-import markers, ledger and replay). That needs a new privileged SQL file, so the storage package carries
    one owner-gated `db:privileged` step (§8, §10).
@@ -100,7 +103,7 @@ tenant foreign keys `(business_id, …)` on every link. Column names are proposa
 | `subject`, `snippet`, `body_text`, `body_html` | `body_html` is **already sanitised** (§4.8); raw MIME and raw HTML are never stored. Size caps per part with a `truncated` flag. |
 | `sanitizer_version` | Lets a later sanitizer re-process stored HTML. |
 | `content_hash` | sha256 of normalised content; `sha256('erased:'‖id)` after erasure (as E1). |
-| `ingest_basis` | `MATCHED` / `UNMATCHED` / `OWN_SENT` (sent from this mailbox) / `THREAD_FOLLOWUP` (new message in an already kept, linked or shared thread). Classification only. |
+| `ingest_basis` | `MATCHED` / `UNMATCHED` / `OWN_SENT` (sent from this mailbox) / `THREAD_FOLLOWUP` (an otherwise unmatched message in a thread that is already stored; §5). Classification only, shown to readers as "stored because…". |
 | `retention_category` | NOT NULL: `PERSONAL_UNSHARED`, `STAGED_INTAKE`, `ORDINARY`, `RETAINED_RECORD`. Written only by the writer role and the E1/B2 functions (§7). |
 | `category_changed_at`, `category_changed_by_id` | Last re-classification. |
 | `provider_removed_at` | Provider-side deletion or move to Trash seen by sync. Not mirrored (register); shown as a badge. |
@@ -123,7 +126,10 @@ sync of the message. Spam, Trash and Drafts are **not synced** (D-B2-5); a messa
 ### 4.5 `mail_attachments` (metadata only, D-UI-8)
 `message_id`, `provider_attachment_id` (erased), `filename` (content, erased), `content_type`, `size_bytes`,
 `is_inline`, `content_id`. No bytes. The download proxy (UI-A backend) checks visibility of the message, then
-streams from the provider with the holder's credential; nothing is cached.
+streams from the provider with the holder's credential; nothing is cached or written to disk. It sends
+`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`, and never
+logs file names, URLs or provider ids (only the attachment row id and a result code). The holder-authority
+check of §9 step 3 applies to each download.
 
 ### 4.6 `mail_message_user_state` (D-UI-5)
 `(business_id, message_id, user_id)` primary key; `read_at`, `version`. Restrictive policy `user_id =
@@ -142,7 +148,8 @@ The writer stores only sanitised HTML: an allow-list sanitiser (no scripts, styl
 handlers, no `javascript:`/`data:` URLs except inline `cid:` images, remote images rewritten to a blocked
 placeholder unless the viewer opts in, links forced to `target=_blank rel="noopener noreferrer"`). The reader
 (UI-A) additionally renders in a sandboxed iframe without `allow-scripts` or `allow-same-origin` and a strict
-CSP (PR #114 §6). Sanitising on write means a sanitiser bug is fixed by bumping `sanitizer_version` and
+CSP (PR #114 §6). Inline `cid:` images are served only through the same permission-checked proxy, and
+`cid:` rendering and remote-image blocking are part of the hostile-content QA corpus (§11). Sanitising on write means a sanitiser bug is fixed by bumping `sanitizer_version` and
 re-sanitising from the provider on next sync, never by rendering stored raw HTML.
 
 ### 4.9 Changes to existing tables
@@ -178,11 +185,20 @@ is `OWN_SENT`, classified like matched mail (the user chose to write it).
 | PERSONAL, OWNER_ONLY | unmatched | only if policy `RETAIN` | `PERSONAL_UNSHARED` |
 | PERSONAL, sharing BUSINESS | as above | as above | `ORDINARY` (D-B2-4) |
 | BUSINESS | matched, own sent | yes | `ORDINARY` |
-| BUSINESS | follow-up in a kept, linked or recorded thread | yes | the thread's category (`ORDINARY` or `RETAINED_RECORD`) |
+| BUSINESS | unmatched follow-up in a thread already stored (`THREAD_FOLLOWUP`) | yes, under every policy (exception below) | `ORDINARY` (or `STAGED_INTAKE` if the whole thread is still staged) |
 | BUSINESS | unmatched | `DISCARD`: no. `STAGE_30D`: yes. `RETAIN`: yes | `STAGE_30D` → `STAGED_INTAKE`; `RETAIN` → `ORDINARY` |
 
 Rules:
 - PERSONAL mail is never staged (register).
+- **The follow-up exception (audit point D-B2-1/2).** Under `DISCARD`, an unmatched message is still stored
+  if its provider thread already has stored messages in this mailbox (for example a customer's colleague
+  replying to a matched thread, or a reply from an unknown address to mail the mailbox sent). Without it a
+  stored thread would show gaps and replies would vanish. The exception is narrow: it is decided per mailbox
+  from that mailbox's own stored threads (never another mailbox's), it never creates a thread, and it never
+  links anything. Readers see the reason ("stored because this conversation is already kept"). It is part of
+  D-B2-1 for the owner to accept or refuse; refusing it means threads may show gaps.
+- Matched and sent BUSINESS mail is `ORDINARY`, which needs the business's ordinary period: BUSINESS sync is
+  already refused until it is set (CM009, §16.6), so there is never an ORDINARY copy without a configured period.
 - A message whose computed `mail_retention_due_at` is already past at ingest (old backfill under a short
   period, or staged mail older than 30 days) is **not stored**, rather than stored and purged.
 - `DISCARD` stores nothing about the message: no row, no counter, no marker. Only the job's page counts
@@ -191,10 +207,34 @@ Rules:
   applies to future ingest only. Switching to `DISCARD` does not delete what is stored; staged copies still
   expire on their 30 days, retained ones follow their category.
 
-**Leaving intake (`STAGED_INTAKE` → `ORDINARY`/`RETAINED_RECORD`).** Only by an explicit, audited action of a
-mailbox READ member: *Keep* (→ ORDINARY), *Link to customer/contact* (→ ORDINARY, D-UI-7), or *Keep as record*
-(→ RETAINED_RECORD, D-B2-6). Re-classification is per thread and applies to every copy in it. Nothing leaves
-intake automatically, including a later contact match (it becomes a suggestion only).
+**Leaving intake (`STAGED_INTAKE` → `ORDINARY`).** Only by an explicit, audited action of a mailbox READ
+member: *Keep* or *Link to customer/contact* (D-UI-7). Re-classification is per thread and applies to every
+copy in it. Nothing leaves intake automatically, including a later contact match (it becomes a suggestion
+only). The ORDINARY due date is computed from each message's own date, so keeping a 25-day-old enquiry does
+not restart any clock.
+
+**Keep as record (`RETAINED_RECORD`) is reserved, not enabled (D-B2-6, revised after audit).** The category
+exists (E1), and B2-2 documents the action, but the action stays **disabled** (refused by the database
+function, not only hidden) until the E1 §13.1 retention durations, lawful basis and expiry semantics are
+approved. When enabled, a record copy gets the approved duration through `mail_retention_due_at`; nothing in
+this design creates indefinitely retained live data.
+
+### 5.1 Personal sharing and categories (D-B2-4, specified after audit)
+
+| Event | Visibility | Category | Retention clock |
+|---|---|---|---|
+| Owner shares the mailbox business-wide, or shares one thread | widened to `communications:read` (mailbox or thread) | every existing and future copy covered becomes `ORDINARY` | due = message date + ordinary period in force. Not reset by sharing. |
+| Sharing would cover copies already past the ordinary period | – | – | Those threads are **refused** for sharing (the owner is told they are older than the business keeps mail), so sharing never triggers an unexpected purge. Mailbox-wide sharing shares only the copies within the period; older ones stay personal. |
+| Owner unshares (mailbox or thread) | back to owner only | **stays `ORDINARY`** (sticky) | unchanged: the copy still expires on its ordinary date |
+| Copy reaches its due date while shared or after unsharing | – | – | purged by E1 as any ORDINARY copy, unless a hold covers it |
+| Legal hold placed | – | unchanged | purge and erasure deferred as in E1 |
+
+Why sticky: reverting to `PERSONAL_UNSHARED` on unshare would make a copy the business already had access to
+non-expiring again (indefinite retention by category change) and would let share/unshare cycles evade the
+ordinary schedule. Keeping it `ORDINARY` means unsharing restores privacy but never extends retention. The
+owner can still erase their own *unshared, never-shared* copies (D-B2-5); a once-shared copy is erased
+through an E1 request or its retention date. There is no export feature to account for; any future export
+must respect visibility at the time of export.
 
 ---
 
@@ -208,7 +248,11 @@ intake automatically, including a later contact match (it becomes a suggestion o
 | PERSONAL, sharing BUSINESS | Every member with `communications:read`. |
 | PERSONAL, one thread shared (B2-2) | Owner, plus every member with `communications:read` for that thread only. |
 | BUSINESS | Members of `mail_connection_members` with READ or SEND. `manage_connections` without membership sees metadata only (C2-B1 §16.4); an admin who wants content adds themselves, which is audited. |
-| BUSINESS thread linked to a customer/contact | Mailbox members as above, **plus** (D-B2-3) members with `communications:read` and `customers:read` when viewed through that customer's correspondence view. |
+| BUSINESS thread linked to a customer/contact | **The same mailbox members only** (D-B2-3, revised). The customer's correspondence view lists a linked thread only to viewers who could already read it in the mailbox, and they also need `customers:read` to open the customer. A link adds no readers and no future-message exposure beyond the mailbox's own rule. |
+
+A wider audience for customer-linked mail (an explicit per-thread "share to customer" with a named
+audience, a per-message decision about later messages, revocation and audit) is **not** in this design. It
+would need its own owner decision and audit.
 
 A departed, suspended or demoted member loses access at once, because every check reads the live
 membership. Visibility never depends on the UI; invisible rows answer 404.
@@ -237,7 +281,7 @@ membership. Visibility never depends on the UI; invisible rows answer 404.
 | Change unmatched policy | BUSINESS: `manage_connections`; PERSONAL: the owner (D-B2-1) |
 | Keep a staged thread | BUSINESS mailbox READ/SEND member |
 | Link / unlink a thread to a customer or contact | BUSINESS mailbox READ/SEND member + `customers:write` (D-B2-3) |
-| Keep as record (RETAINED_RECORD) | BUSINESS mailbox member + `manage_connections` (D-B2-6) |
+| Keep as record (RETAINED_RECORD) | **Disabled** until E1 §13.1 is approved; then BUSINESS mailbox member + `manage_connections` (D-B2-6) |
 | Share / unshare one personal thread | PERSONAL owner, retention set (criterion 1) |
 | Erase own unshared personal copies | PERSONAL owner with a single-use code (D-B2-5) |
 | Send (C2-C) | `communications:send` + SEND membership (D-UI-9) |
@@ -264,6 +308,21 @@ Re-classification, keep, link, share and record go through narrower definer func
 session token checked as in E1 (`communications_erasure_actor` pattern), so the database, not only the
 service, refuses an unauthorised promotion.
 
+**Definer and RLS hygiene (audit condition), required of B2-1:**
+- Each function has a named owner role (`bos_definer` for read-only cross-checks such as
+  `mail_viewer_may_read`; `bos_maint` for writers and erasure), `SECURITY DEFINER`, and a fixed
+  `SET search_path = pg_catalog, public` with every object schema-qualified.
+- `REVOKE ALL ON FUNCTION … FROM PUBLIC`; `GRANT EXECUTE` only to `bos_app`, and only for the entry points
+  (`mail_ingest_page`, the action functions, `mail_viewer_may_read`). Internal helpers have no runtime grant.
+- Every entry point re-checks, per call: the tenant (`app.business_id` matches the row), the actor (session
+  token for user actions, job lease on database time for ingest) and the connection state. Nothing is trusted
+  from arguments alone.
+- The owner roles' own policies are scoped to the current business (`maint_tenant` pattern from E1).
+- Tests run as the real runtime role against `FORCE ROW LEVEL SECURITY` tables in a database built like CI
+  and production (roles script, migrations, `db:privileged`), and check that the table-owning role is never
+  used at runtime.
+- Writing `006` to production with `db:privileged` needs Regan's own separate approval.
+
 ---
 
 ## 8. Retention and erasure over `mail_*` (E1 extension)
@@ -281,12 +340,19 @@ service, refuses an unauthorised promotion.
   messages are erased.
 - Targets: `MESSAGE` and `CONVERSATION` (as E1) gain their mail equivalents `MAIL_MESSAGE` and `MAIL_THREAD`;
   `CONTACT` erasure also scans `mail_message_participants.address_norm` across **every** mailbox (personal
-  included), applying E1's full/partial rule per copy. Erasure is a duty, so it sees mail no admin can read;
-  the request result reports totals only, with no per-mailbox or per-category split (avoids revealing
-  personal volume).
+  included), applying E1's full/partial rule per copy. Erasure is a duty, so it sees mail no admin can read.
+  **Privacy of the result (audit condition):** the request, its ledger rows visible to `bos_app` and its audit
+  event report one total of affected records and the review count only. Ledger items for copies in a mailbox
+  the requester cannot read are stored by id under the privileged role and are not returned by the request
+  read API, so an admin learns neither which personal mailboxes held the contact's mail nor how much. A test
+  compares the response for a business with and without personal copies of the contact (same shape, totals
+  only). Whether a statutory obligation requires keeping some of those copies is an E1 §13 legal item; holds
+  and deferrals apply exactly as for C1 copies.
 - Re-import markers: kind `MESSAGE` (and `THREAD`) with source `mail:<provider>:<connection_id>`, so the
   HMAC input is `MESSAGE:mail:<provider>:<connection_id>:<provider_message_id>` and the
-  same provider id in two mailboxes is two markers. Ingest checks them before writing (§7).
+  same provider id in two mailboxes is two markers. Ingest checks them before writing (§7), and only for its
+  own connection's source string, so the check cannot be used to learn whether another mailbox held a message.
+  Markers stay unreadable to every runtime role (E1).
 - Holds: `CONNECTION` now covers exactly that mailbox's `mail_*` copies (E1 §6.2 obligation). `BUSINESS`
   and `CONTACT` holds cover mail copies too.
 - Ledger, replay and replay-remaining cover the four new entity types. Restore procedure (E1 §10) unchanged.
@@ -374,7 +440,12 @@ C2-B1 did. Once real mail exists rollback is not offered; fixes go forward.
 | Erasure | Mail message, thread, contact across mailboxes (full and partial), attachments' filenames, markers per connection, CONNECTION hold scoped to one mailbox, BUSINESS hold, deferral, replay of all four entity types, personal self-erasure code (own thread only, single use, expiry). |
 | Races | Ingest vs thread erasure; ingest vs hold placement; ingest vs sharing change; ingest vs connection revocation; link vs erasure; purge vs reclassify; two workers on one job. |
 | Departure | `personal_purge_after` set on removal, cleared on rejoin, copies due after 30 days, shared copies untouched. |
-| HTML (unit) | Hostile corpus: scripts, event handlers, `javascript:`/`data:` links, CSS expressions, forms, tracking pixels, malformed MIME, huge parts (truncation), charset edge cases. |
+| HTML (unit) | Hostile corpus: scripts, event handlers, `javascript:`/`data:` links, CSS expressions, forms, tracking pixels, remote images blocked by default, `cid:` references to other messages or missing parts, malformed MIME, huge parts (truncation), charset edge cases. |
+| Linked views (D-B2-3) | Customer correspondence view hides linked threads from viewers without mailbox READ, in the service and by RLS; later messages in a linked thread follow mailbox rules only. |
+| Personal categories (D-B2-4) | Share → ORDINARY with unchanged due date; share refused for past-due threads; unshare keeps ORDINARY; share/unshare cycles never move a due date; hold defers purge. |
+| Follow-up exception | Under `DISCARD`, an unmatched reply is stored only when the same mailbox already stores that thread; never creates a thread; another mailbox's threads have no effect. |
+| Keep as record | Refused by the database while disabled. |
+| Definer hygiene | Fixed `search_path`, no PUBLIC execute, helpers not callable by `bos_app`, all as the runtime role under forced RLS. |
 | Privacy | No address, subject, body or filename in any audit row, job row, error code, log line or ledger row. |
 | Migration | Fresh database build, `db:check-migrations`, rollback script schema comparison. |
 
@@ -385,7 +456,7 @@ C2-B1 did. Once real mail exists rollback is not offered; fixes go forward.
 | Package | Contents | Migration | Activation | Depends on |
 |---|---|---|---|---|
 | **B2-1 Mail store** | §4 schema, RLS, writer and E1 extension (§7, §8), read API (mailboxes, threads, messages, read state) with the visibility predicate, unmatched-policy setting, contracts, tests. No caller of the writer except tests. | Yes + privileged 006 | None | This design accepted |
-| **B2-2 Mail actions** | Keep, link/unlink, keep as record, personal thread share, personal self-erasure, customer correspondence read path. | Possibly none (columns in B2-1) | None | B2-1 |
+| **B2-2 Mail actions** | Keep, link/unlink, keep as record (built but disabled until E1 §13.1), personal thread share, personal self-erasure, customer correspondence read path. | Possibly none (columns in B2-1) | None | B2-1 |
 | **B3 Sync** | Adapters `listChanges`/`fetchMessage`, MIME parsing, sanitiser, worker, dispatcher (privileged 007), flag off, no cron. | Privileged 007 | Off; Regan to enable | B2-1, E1 §13 items for real mail |
 | **B4 Sync operations** | Backfill choice, reauth/error surfaces, rate-limit handling, contact-match suggestions on read, intake triage view support, ops metrics. | Maybe | None | B3 |
 | **C2-C Send** | `communications:send`, outbound table and states, send scopes by re-consent, correlation tests per provider. | Yes | Regan (scopes, external effect) | B3 |
@@ -400,12 +471,17 @@ Owner decisions (Regan):
 
 | # | Decision | Recommendation |
 |---|---|---|
-| D-B2-1 | Unmatched-mail policy per mailbox: `DISCARD` / `STAGE_30D` (BUSINESS only) / `RETAIN`; who sets it. | Default `DISCARD` for both kinds, so nothing beyond D-C2-6 is stored unless someone opts in. BUSINESS set by `manage_connections`; PERSONAL by its owner. Retention must be set first. |
-| D-B2-2 | Matched and sent BUSINESS mail is ORDINARY from ingest (not staged); only unmatched mail can be staged. | Yes. It is the reading of "opt-in enquiry staging" that keeps known-customer mail out of a 30-day purge. |
-| D-B2-3 | What a customer link does: shows the thread (including later messages) on that customer to members with `communications:read` + `customers:read`; who may link. | Yes; linking needs mailbox membership + `customers:write`; unlink withdraws it; both audited. |
-| D-B2-4 | PERSONAL sharing and categories: a personal mailbox shared business-wide, or a personal thread shared, is ORDINARY while shared and returns to PERSONAL_UNSHARED when unshared. | Yes. Personal threads are never linked to customers (D-UI-7). |
-| D-B2-5 | Spam, Trash and Drafts are not synced; personal mailbox owners may erase their own unshared threads. | Yes to both. Without self-erasure, personal mail deleted at the provider would stay in Pixa indefinitely. |
-| D-B2-6 | "Keep as record" (RETAINED_RECORD) from a BUSINESS thread, by `manage_connections` members of the mailbox. | Yes, but these never expire until E1 §13.1 durations are set. |
+Revised on 2026-11-17 after the ChatGPT audit of `1ab55f6` (conditional design pass). None of these is
+accepted yet.
+
+| # | Decision | Recommendation |
+|---|---|---|
+| D-B2-1 | Unmatched-mail policy per mailbox: `DISCARD` / `STAGE_30D` (BUSINESS only, the opt-in 30-day enquiry staging) / `RETAIN`; who sets it; and the follow-up exception (§5): unmatched replies in a thread the mailbox already stores are kept. | Default `DISCARD` for both kinds. BUSINESS set by `manage_connections`; PERSONAL by its owner. Retention must be set first. Accept the follow-up exception. |
+| D-B2-2 | Matched and sent BUSINESS mail is ORDINARY from ingest (not staged), under the business's configured period; only unmatched mail can be staged. | Yes. BUSINESS sync is already refused until the period is set. |
+| D-B2-3 | **Revised:** a customer link is a navigation aid only. The linked thread shows on the customer only to people who can already read that mailbox; it never adds readers. Linking needs mailbox membership + `customers:write`; link and unlink audited. | Yes. A wider "share to customer" audience would be a separate decision later. |
+| D-B2-4 | **Specified:** sharing personal mail makes those copies ORDINARY, with the clock from each message's date (no reset); copies already past the period cannot be shared; unsharing restores privacy but the copies stay ORDINARY and still expire on schedule (§5.1). | Yes. This prevents both indefinite retention and evasion by unsharing. |
+| D-B2-5 | Spam, Trash and Drafts are not synced; personal mailbox owners may erase their own never-shared personal threads with a single-use code. | Yes to both. |
+| D-B2-6 | **Revised:** "Keep as record" stays disabled until E1 §13.1 retention durations are approved; then it uses the approved durations. | Yes, defer. |
 
 Technical choices for the audit (ChatGPT may decide): independent namespace (§3); RLS restrictive policy as
 well as the service predicate (§6.2); definer writer function W1 (§7); sanitise on write, never store raw
