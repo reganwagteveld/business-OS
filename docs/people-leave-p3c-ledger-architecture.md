@@ -8,6 +8,11 @@
 > Statements marked **verified** cite a file on `06405a5` (or on `ed88385` for P3-B). Statements marked
 > **(proposal)**, **(recommendation)** or **(assumption)** are not facts about the code.
 >
+> **Version 1.3 (2026-11-17)** after ChatGPT's CHANGES REQUIRED re-audit of `06fde5f` (comment 6949892364 on
+> #134): three corrections (transaction sensitivity held on the transaction row, lapse corrections by reversal
+> with `EXPIRY` always negative, termination processed before any post-end event) and D-P3C-32 restated as a
+> concrete security choice. Index in handoff H-6. New owner decision D-P3C-36. No other design change.
+>
 > **Version 1.2 (2026-11-17)** after ChatGPT's CONDITIONAL PASS of `9fc9751` (comment 6948953102 on #116): five
 > corrections (type-aware RLS staged in C1, authority vs integrity for derived postings, constraint reconciliation,
 > complete compute-on-read contract, commit-aware sealing and the back-fill as a data transformation). Index in
@@ -22,7 +27,7 @@
 
 ## Contents
 
-- [Audit handoff (v1.1, corrections v1.2)](#audit-handoff-v11)
+- [Audit handoff (v1.1, corrections v1.2 and v1.3)](#audit-handoff-v11)
 - [A. Repository evidence and implementation inventory](#a-repository-evidence-and-implementation-inventory)
 - [B. Decision register](#b-decision-register)
 - [C. Domain model and proposed Prisma schema](#c-domain-model-and-proposed-prisma-schema)
@@ -85,10 +90,10 @@ back-fills, schedulers, permissions or production actions.
 |---|---|---|---|
 | **Accepted owner decisions (settled, not reopened)** | D-P3C-01..06; D-P3-1..11; D-P3-45; D-P3-50 (revised); D-P3-52; D-P3-53; D-P3-54 | ACCEPTED | check that the design implements them |
 | **C1 schema choices (technical)** | D-P3C-09 account lock anchor; D-P3C-10 no stored totals; D-P3C-27 `effective_from` back-fill; D-P3C-29 `numeric(12,4)` and cumulative rounding; D-P3C-33 snapshot seals; D-P3C-34 RLS staged in C1 | PROPOSED, technical | accept or change under the delegation policy (the back-fill itself still needs its own migration evidence and verdict) |
-| **C1 choices (owner/security)** | D-P3C-32 trust boundary for derived postings; D-P3C-35 inferred revision dates (only if a time-zone change is found) | OPEN | recommend; Regan decides |
+| **C1 choices (owner/security)** | D-P3C-32 trust boundary for derived postings (stated as options A/B in §I.2a); D-P3C-35 inferred revision dates (only if a time-zone change is found) | OPEN | recommend; Regan decides |
 | **C1 schema choice (owner)** | D-P3-25 rule 1 (revisions get `effective_from`) and rules 2–5, 7 | PROPOSED since P3-A; owner | recommend; Regan (or a ChatGPT owner decision record) decides |
 | **Other technical choices** | D-P3C-08, -26, -30 | PROPOSED, technical | accept or change |
-| **Owner choices, consequential** | D-P3C-07 (meaning of D-P3C-03's override), D-P3C-23 (days-to-hours), D-P3C-17 (termination), D-P3C-18 and -19 (second approver, self-correction) | OPEN, options in H-3 | recommend; Regan decides |
+| **Owner choices, consequential** | D-P3C-07 (meaning of D-P3C-03's override), D-P3C-23 (days-to-hours), D-P3C-17 (termination), D-P3C-36 (termination recorded late, v1.3), D-P3C-18 and -19 (second approver, self-correction) | OPEN, options in H-3 and §M.2 | recommend; Regan decides |
 | **Owner choices, other** | D-P3C-11, -12, -13, -14, -15, -16, -20, -21, -22, -24, -25, -28, -31 | OPEN (§M.2) | recommend; Regan decides |
 
 ### H-2. Dependencies on the accepted P3-B contract (#116 at `ed88385`)
@@ -187,12 +192,25 @@ cumulative half-even rounding vs P3-A's `numeric(9,4)`). Recommendations and rea
 Also: D-P3C-21 and D-P3C-31 reclassified as owner choices (they change carry and grant outcomes); the days-to-hours
 options are described as different meanings of a policy day, without a value judgement.
 
+### H-6. v1.3 corrections for the re-audit of `06fde5f` (comment 6949892364 on #134, CHANGES REQUIRED)
+
+| # | Audit finding | Correction | Where |
+|---|---|---|---|
+| 1 (P1) | Transaction sensitivity derived from `EXISTS` over entries depends on what the viewer can see, so it fails open | `people_leave_transactions.sensitive`: immutable, set by the insert trigger (statement value ignored) from the type flag OR the cited request's sticky sensitivity; entries inherit it (entry ≥ transaction, deferred check); the transaction policy reads its own column OR the current type flag, never child rows; same rule for the other detail tables | §C.5, §C.6, §I.3, T-C42d |
+| 2 (P2) | Positive `EXPIRY` in propagation lets a lapse be undone by an arbitrary positive expiry | `EXPIRY` is negative in every transaction (CHECK). A changed lapse is corrected by a `REVERSAL` of the prior lapse entry plus a new `EXPIRY`; new `expiry_reason` column; at most one unreversed lapse per bucket; SQL-checked lapse/cap rule; only `CARRY_PROPAGATION` may reverse a lapse | §C.6, §D.1, §D.2, §D.3, §G.6, §G.7, §I.2a, T-C09d, T-C09e |
+| 3 (P1) | Catch-up order closed and opened a year (with grant) and consumed leave before processing a termination on the previous day | Termination runs first on its date: final accrual through `end_date`, then release `FROZEN` for every reservation date after `end_date`, then buckets `FROZEN`. Nothing of that service period is posted after `end_date`; a year boundary on `end_date + 1` freezes instead of closing, opening or granting. A termination recorded after post-end postings exist is refused for now (D-P3C-36) | §G.8, §G.9, §D.2, T-C21d |
+| — | D-P3C-32 stated as a concrete security choice | Options A and B with what each prevents, what remains possible and what it costs | §I.2a, §M.2 |
+
+D-P3C-01..06 unchanged. D-P3C-07, D-P3C-32, D-P3C-36 and every O item stay owner decisions; this revision accepts
+none of them.
+
 ### H-4. Requested audit scope
 
 Independent security, tenant-isolation and concurrency review before any P3-C1 work: §C (schema, constraints,
 grants, RLS), §D.3 (idempotency), §F.4 (invariants), §I (authority, visibility, lock order, threat matrix), §J.2
 (back-fill under the revision guard) and the P3-B dependency table H-2. For the re-audit of v1.2: the five
-corrections indexed in H-5, chiefly §C.6, §F.1a, §G.9, §I.2a, §I.3 and §J.2.
+corrections indexed in H-5, chiefly §C.6, §F.1a, §G.9, §I.2a, §I.3 and §J.2. For v1.3: the three corrections and
+the D-P3C-32 statement indexed in H-6.
 
 ---
 
@@ -438,6 +456,11 @@ model PeopleLeaveTransaction {
   recordedXid      Unsupported("xid8") @map("recorded_xid")
   /// Maker-checker (D-P3C-18): the second person, when required. Set in the same INSERT by an approval call.
   checkedByUserId  String?  @map("checked_by_user_id") @db.Uuid
+  /// v1.3. Set by the insert trigger, whatever the statement supplies: the leave type's `sensitive` flag at
+  /// insert OR the sticky sensitivity of the P3-B request it cites (source_kind LEAVE_REQUEST; that input is
+  /// added by the B2/C3 migration, C1 uses the type flag only). Immutable (no UPDATE grant). The read policy
+  /// uses this column, never the entries (§I.3).
+  sensitive        Boolean
 
   @@unique([businessId, id])
   @@unique([businessId, idempotencyKey])
@@ -449,6 +472,11 @@ model PeopleLeaveTransaction {
 ```
 
 INSERT only; no UPDATE grant at all. Transactions are immutable from the moment they exist.
+
+**Why sensitivity lives on the transaction (v1.3).** v1.2 derived a transaction's sensitivity from its entries
+(`EXISTS` a sensitive entry). A policy subquery runs as the reader and is itself filtered by the entries' RLS, so
+a reader who cannot see the sensitive entries saw `EXISTS = false` and the transaction as non-sensitive: the check
+failed open exactly for the readers it was meant to stop. A transaction's own column has no such dependency.
 
 ### C.6 `people_leave_entries`
 
@@ -490,10 +518,14 @@ model PeopleLeaveEntry {
   pairEntryId      String?  @map("pair_entry_id") @db.Uuid
   /// RESERVATION_RELEASE only: CONSUMED | CANCELLED | FROZEN (CHECK: non-null exactly for that kind).
   releaseReason    String?  @map("release_reason")
-  /// Snapshot, set by the trigger at insert: the leave type's `sensitive` flag, OR'd with any P3-B request
-  /// sensitivity it cites (from B2). Immutable; read policies use (snapshot OR current flag), so a type made
-  /// non-sensitive later never re-exposes history (P3-B D-P3-43 pattern).
-  sensitive        Boolean  @default(false)
+  /// EXPIRY only (v1.3): CARRY_CAP (year-end lapse, derived) | MAX_BALANCE (derived) | MANUAL | POLICY_EXPIRY
+  /// (reserved for D-P3C-15). CHECK: non-null exactly for EXPIRY. The guard ties each value to its transaction
+  /// kinds (§I.2a).
+  expiryReason     String?  @map("expiry_reason")
+  /// Set by the trigger at insert, whatever the statement supplies: the parent transaction's `sensitive` OR the
+  /// leave type's current flag (v1.3; before, the type flag OR'd with the request's). Immutable; read policies use
+  /// (snapshot OR current flag), so a type made non-sensitive later never re-exposes history (P3-B D-P3-43 pattern).
+  sensitive        Boolean
   recordedAt       DateTime @default(now()) @map("recorded_at") @db.Timestamptz
 
   @@unique([businessId, id])
@@ -513,12 +545,15 @@ Constraints (migration SQL, not expressible in Prisma):
   entries `(business_id, id, account_id)` (same account only); `reservation_entry_id` likewise.
 - CHECKs (single row):
   - `book IN ('BALANCE','RESERVED')`; `hours <> 0`; kind/book pairs as §D.1; fixed signs for the kinds §D.1 marks
-    fixed (`GRANT`, `ACCRUAL` +; `CONSUMPTION`, `PAYOUT` −; `RESERVATION` +; `RESERVATION_RELEASE` −; `EXPIRY` −).
+    fixed (`GRANT`, `ACCRUAL` +; `CONSUMPTION`, `PAYOUT` −; `RESERVATION` +; `RESERVATION_RELEASE` −; `EXPIRY` −
+    in every transaction kind, with no exception (v1.3); `WRITE_OFF` +).
     `CARRY_OUT`, `CARRY_IN`, `OPENING_BALANCE`, `IMPORT`, `ADJUSTMENT` and `REVERSAL` may have either sign; their
     sign is constrained by the pair and transaction invariants below, not by a CHECK.
   - `ACCRUAL` ⇔ both period dates set, `period_start < period_end`.
   - `REVERSAL` ⇔ `reverses_entry_id IS NOT NULL`.
   - `RESERVATION_RELEASE` ⇔ `release_reason IS NOT NULL`, with `release_reason IN ('CONSUMED','CANCELLED','FROZEN')`.
+  - `EXPIRY` ⇔ `expiry_reason IS NOT NULL`, with `expiry_reason IN ('CARRY_CAP','MAX_BALANCE','MANUAL','POLICY_EXPIRY')`
+    (`POLICY_EXPIRY` refused by the guard until D-P3C-15).
   - `reservation_entry_id IS NOT NULL` ⇔ `kind IN ('RESERVATION_RELEASE','CONSUMPTION')`.
   - **Leave date:** `kind IN ('RESERVATION','RESERVATION_RELEASE','CONSUMPTION')` ⇒ `leave_date IS NOT NULL`;
     `kind NOT IN ('RESERVATION','RESERVATION_RELEASE','CONSUMPTION','REVERSAL')` ⇒ `leave_date IS NULL`;
@@ -526,7 +561,8 @@ Constraints (migration SQL, not expressible in Prisma):
     entry's `leave_date` (so a reversal of a `CONSUMPTION` keeps its date, a reversal of an `ADJUSTMENT` has none).
   - `CONSUMPTION` ⇒ `applies_on = leave_date`.
 - Unique indexes for idempotency (§D.3), `UNIQUE (business_id, reverses_entry_id) WHERE reverses_entry_id IS NOT
-  NULL`, and one settlement per reservation date: `UNIQUE (business_id, reservation_entry_id) WHERE kind =
+  NULL`, one lapse per bucket per transaction `UNIQUE (business_id, bucket_id, transaction_id) WHERE kind =
+  'EXPIRY' AND expiry_reason = 'CARRY_CAP'`, and one settlement per reservation date: `UNIQUE (business_id, reservation_entry_id) WHERE kind =
   'RESERVATION_RELEASE'` and the same `WHERE kind = 'CONSUMPTION'`.
 - `leave_date` falls inside the bucket's `[year_start, year_end)` (D-P3-45). At most 366 dates per request
   (P3-B D-P3-36), so at most 1,098 entries per request.
@@ -549,8 +585,16 @@ Constraints (migration SQL, not expressible in Prisma):
     of these a given closing produces is the owner policy D-P3C-11 (still open): "carry negative in full" uses only
     `CARRY_OUT`; "apply the carry rule to negatives" uses `WRITE_OFF`. The schema accepts both; the guard refuses
     `WRITE_OFF` until D-P3C-11 is decided (fail closed).
+  - **Lapse (v1.3):** per `CLOSED` bucket, at most one `EXPIRY(CARRY_CAP)` entry that is not reversed; the net
+    lapse (Σ `EXPIRY(CARRY_CAP)` hours + Σ their reversals) is ≤ 0; and when the net lapse is < 0 the net carry
+    (−Σ `CARRY_OUT`) equals the carry limit of the revision recorded on the unreversed lapse entry (`capHours`
+    for CAPPED, 0 for NONE; no lapse for UNLIMITED). So the lapse is exactly `closing − carry` and nothing else.
+  - **Sensitivity (v1.3):** every entry's `sensitive` is true when its transaction's is (an entry can be more
+    sensitive than its transaction, never less).
   - **Reversal:** exact negated hours, same account, bucket, book and leave date as the reversed entry; carry
-    entries are never reversed (they are corrected by propagation).
+    entries are never reversed (they are corrected by propagation). A reversal of an `EXPIRY(CARRY_CAP)` is
+    allowed only inside a `CARRY_PROPAGATION` transaction, together with the carry deltas and the replacement
+    lapse that keep the bucket at 0 (§G.7); a manual `CORRECTION` cannot reverse a lapse.
 - Guard trigger on entries (INSERT only, no UPDATE grant):
   - the ledger transaction belongs to the same account; the bucket state allows the kind (no entitlement into
     `FUTURE`; nothing into `FROZEN` except the freeze transaction; nothing into `CLOSED` except reversals and
@@ -633,19 +677,19 @@ does not choose maker-checker, this table is not built and `checked_by_user_id` 
 | `ACCRUAL` | BALANCE | + | bucket containing the period | One ACCRUAL period's hours (§G) |
 | `CARRY_OUT` | BALANCE | − | closing bucket | Amount carried to the next year |
 | `CARRY_IN` | BALANCE | + | next bucket | Same amount, paired (`pair_entry_id`) |
-| `EXPIRY` | BALANCE | − | closing bucket (carry lapse) or any open bucket (manual) | Hours that lapse: above the carry cap at year end, or a decided manual expiry |
+| `EXPIRY` | BALANCE | − (always) | closing bucket (`CARRY_CAP`), bucket of the period (`MAX_BALANCE`) or any open bucket (`MANUAL`) | Hours that lapse: above the carry cap at year end, above the max balance, or a decided manual expiry. Never positive: a lapse that was too large is reversed (§G.7) |
 | `CONSUMPTION` | BALANCE | − | bucket of the leave date | Approved leave taken on its date |
 | `RESERVATION` | RESERVED | + | bucket of the leave date | Approved leave for one date, not yet taken |
 | `RESERVATION_RELEASE` | RESERVED | − | same as its reservation | Settles one reservation date: reason `CONSUMED` (paired with a `CONSUMPTION`), `CANCELLED`, `FROZEN` |
 | `ADJUSTMENT` | BALANCE | ± | bucket of `applies_on` | Authorised manual change (D-P3C-04) |
-| `REVERSAL` | BALANCE | opposite of the original | same bucket as the original | Exact negation of one BALANCE entry (except carry entries, which are corrected by propagation) |
+| `REVERSAL` | BALANCE | opposite of the original | same bucket as the original | Exact negation of one BALANCE entry (except carry entries, which are corrected by propagation; a lapse `EXPIRY` is reversed only by propagation) |
 | `PAYOUT` | BALANCE | − | current or frozen bucket | Hours paid out by an external payroll, with its reference |
 | `WRITE_OFF` | BALANCE | + | closing bucket | A negative closing balance that is not carried forward. **Reserved: refused until D-P3C-11 is decided** |
 
 Sign rules are in §C.6: fixed by CHECK for most kinds; `CARRY_OUT`/`CARRY_IN` take either sign in both `YEAR_OPEN`
 (negative closing carried) and `CARRY_PROPAGATION` (deltas), constrained by the carry-pair and year-closing
-invariants. In a `CARRY_PROPAGATION`, `EXPIRY` deltas may also be positive (a correction that reduces an earlier
-lapse); that is the only positive `EXPIRY`, and the guard allows it only in that transaction kind.
+invariants. `EXPIRY` is negative everywhere (v1.3): a correction that reduces or increases an earlier lapse
+reverses the lapse entry and posts the new one (§G.7), so no positive expiry can exist, manual or derived.
 
 ### D.2 Transaction catalogue
 
@@ -661,10 +705,10 @@ lapse); that is the only positive `EXPIRY`, and the guard allows it only in that
 | `REVERSE_CONSUMPTION` | P3-B whole cancellation after dates were taken ("the leave did not happen") | approver or leave manager (P3-B §7.2) | per consumed date: `REVERSAL` of the `CONSUMPTION` | `rc:{requestId}:{transitionSeq}` | mandatory | P3-B `people.leave_request.cancelled` + `consumptionReversed: true` |
 | `ADJUSTMENT` | manual | `leave_manage` or `LEAVE_CORRECT` grant | 1 × `ADJUSTMENT` (+ propagation if into a closed year) | client key | **mandatory** | `people.leave_balance.adjusted` |
 | `CORRECTION` | manual fix of a wrong entry | same | `REVERSAL` of each wrong entry + replacement `ADJUSTMENT`(s), linked by `related_transaction_id` (+ propagation) | client key | **mandatory** | `people.leave_balance.corrected` |
-| `CARRY_PROPAGATION` | any change to a closed bucket (§G.7) | `DERIVED`, within the causing transaction's unit of work | `CARRY_OUT`/`CARRY_IN` (or `EXPIRY`) deltas year by year | `cp:{causingTransactionId}:{bucketId}` | — | included in the causing audit |
+| `CARRY_PROPAGATION` | any change to a closed bucket (§G.7) | `DERIVED`, within the causing transaction's unit of work | per affected year: `CARRY_OUT`/`CARRY_IN` delta pair; if the lapse changes, `REVERSAL` of the prior `EXPIRY(CARRY_CAP)` and a new `EXPIRY(CARRY_CAP)` | `cp:{causingTransactionId}:{bucketId}` | — | included in the causing audit |
 | `EXPIRY` | manual (or a future policy rule, D-P3C-15) | `leave_manage` or grant | 1 × `EXPIRY` | client key | **mandatory** | `people.leave_balance.expired` |
 | `PAYOUT` | recording a payout done in payroll | `leave_manage` or grant (maker-checker if chosen) | 1 × `PAYOUT` | `po:{externalRef}` or client key | **mandatory** + `external_ref` | `people.leave_balance.paid_out` |
-| `FREEZE` | termination (D-P3C-17) | `DERIVED` in the termination unit of work, or at next ledger touch | `RESERVATION_RELEASE(FROZEN)` for dates after the end date; bucket → `FROZEN` | `fz:{accountId}:{servicePeriod}` | — | P1 termination audit + `people.leave_balance.frozen` |
+| `FREEZE` | termination (D-P3C-17), processed first on `end_date + 1` (§G.9) | `DERIVED` in the termination unit of work, or at next ledger touch | final `ACCRUAL` through `end_date` (its own key) if not yet posted; `RESERVATION_RELEASE(FROZEN)` for dates after the end date; open and future buckets → `FROZEN` | `fz:{accountId}:{servicePeriod}` | — | P1 termination audit + `people.leave_balance.frozen` |
 
 Every transaction first bumps the account `version` (lock proof, §C.6) and is all-or-nothing.
 
@@ -675,7 +719,8 @@ Every transaction first bumps the account `version` (lock proof, §C.6) and is a
    Manual keys come from the client with a `request_hash`: the same key with the same body returns the existing
    transaction (`200`), with a different body `409 idempotency_conflict` (Finance pattern, E-28).
 2. **Entry-level uniques**, independent of service code: one `ACCRUAL` per `(account, service_period,
-   period_start)`; one `GRANT`, one opening `CARRY_IN` and one lapse `EXPIRY` per bucket; one `RESERVATION` per
+   period_start)`; one `GRANT` and one opening `CARRY_IN` per bucket; one lapse `EXPIRY` per bucket and transaction, and at most one
+unreversed lapse per bucket (deferred check, §C.6); one `RESERVATION` per
    `(transaction, leave_date)` (`UNIQUE (business_id, transaction_id, leave_date) WHERE kind = 'RESERVATION'`),
    which with the transaction key `rs:{requestId}` gives one reservation per request and date (P3-B C-13 restated
    per date); one release and one consumption
@@ -736,6 +781,8 @@ Every arrow is one immutable entry or pair. A date can never be both released an
 
 A bucket is created `FUTURE` when the first reservation for that year arrives (P3-B D-P3-53 allows the next leave
 year), or `OPEN` directly by catch-up. Only one bucket per account and service period is `OPEN` at a time.
+`FREEZE` runs before any year boundary on the same date (§G.9, v1.3), so an `OPEN` bucket whose year ends on
+`end_date` goes to `FROZEN`, never to `CLOSED`, and a `FUTURE` bucket goes straight to `FROZEN`.
 
 ### E.4 Correction proposal (only if maker-checker is chosen)
 
@@ -998,7 +1045,8 @@ When catch-up reaches the end of the `OPEN` bucket (rules as P3-B §5.6 rule 2, 
    `closing` (UNLIMITED), `min(capHours, closing)` (CAPPED). For `closing < 0`: **owner decision D-P3C-11**,
    recommended `carry = closing` whatever the rule (`CARRY_OUT = −closing > 0`, `CARRY_IN = closing < 0`); the
    alternative applies the rule and posts `WRITE_OFF = −closing` for the part not carried.
-3. `lapse = closing − carry` when positive, posted as `EXPIRY` reason `CARRY_CAP` in the old bucket.
+3. `lapse = closing − carry` when positive, posted as `EXPIRY` (negative, `expiry_reason = CARRY_CAP`) in the old
+   bucket. A later change to it is a reversal and a replacement, never a positive expiry (§G.7).
 4. `CARRY_OUT −carry` in the old bucket, `CARRY_IN +carry` in the new one (paired); old bucket → `CLOSED` (I-4).
 5. New bucket → `OPEN` (it may already exist as `FUTURE` with reservations). `GRANT` for GRANT policies with the
    rules in force on the new year's first day, pro rata by days if the assignment or service starts later
@@ -1022,9 +1070,19 @@ When catch-up reaches the end of the `OPEN` bucket (rules as P3-B §5.6 rule 2, 
 | Catch-up runs late (nobody touched the account for months) | Posts the same entries as on time: keys and amounts depend only on inputs; `recorded_at` shows when it was known |
 | Retroactive approval (leave dates ≤ today, P3-B `allowBackdated`) | Reserve and consume in one transaction; refused for a closed year (P3-B `leave_year_closed`) |
 | An input was wrong in the past (hours basis, assignment, start date entered wrongly) | Inputs are not edited retroactively (D-P3-9). The verifier (J.4) replays with corrected inputs on request and produces a **proposed correction set** (reversal of affected system entries + replacement `ADJUSTMENT`s). An authorised person posts it as one `CORRECTION` (D-P3C-04). Nothing is auto-posted |
-| A change lands in a `CLOSED` bucket (correction, consumption reversal of last year) | Posted into that bucket (attribution, D-P3-45), then **carry propagation** forward, year by year, ascending, in the same transaction: with `δ` entering year `i`, `newCarry = carryRule_i(closing_i + δ)` using the rules recorded on year `i`'s `CARRY_OUT`; post `δcarry = newCarry − oldCarry` as `CARRY_OUT`/`CARRY_IN` and `δlapse` as `EXPIRY` (signs may be negative in a `CARRY_PROPAGATION`); continue into year `i+1` with `δ = δcarry` until it is 0 or the open bucket is reached. Keys `cp:{causingTransactionId}:{bucketId}`. This closes the multi-year point P3-B rule 6 left open (D-P3C-31) |
+| A change lands in a `CLOSED` bucket (correction, consumption reversal of last year) | Posted into that bucket (attribution, D-P3-45), then **carry propagation** forward, year by year, ascending, in the same transaction: with `δ` entering year `i`, `newCarry = carryRule_i(closing_i + δ)` using the rules recorded on year `i`'s `CARRY_OUT`; post `δcarry = newCarry − oldCarry` as a signed `CARRY_OUT`/`CARRY_IN` pair; if `newLapse ≠ oldLapse`, post a `REVERSAL` of the unreversed `EXPIRY(CARRY_CAP)` (if any) and, if `newLapse > 0`, a new `EXPIRY(CARRY_CAP) = −newLapse` (v1.3: no positive expiry); continue into year `i+1` with `δ = δcarry` until it is 0 or the open bucket is reached. Keys `cp:{causingTransactionId}:{bucketId}`. This closes the multi-year point P3-B rule 6 left open (D-P3C-31). Worked cases below |
 | Policy edited | New revision effective today; posted entries untouched; future periods use it |
 | Approved request found wrong | Cancel (release / reverse consumption) and resubmit, or a `CORRECTION` |
+
+**Lapse corrections, worked (v1.3; cap 100 h, CAPPED).** Each line is one causing transaction plus its
+`CARRY_PROPAGATION`; the closed bucket ends at 0 every time.
+
+| Case | Before | Change | Propagation postings in the closed year | Next year |
+|---|---|---|---|---|
+| Lapse decreases | closing 110: `CARRY_OUT −100`, `EXPIRY −10` | `ADJUSTMENT −5` (closing 105) | `REVERSAL +10` of the old lapse, `EXPIRY −5`; carry unchanged | `δ = 0`, stop |
+| Lapse increases | closing 105: `CARRY_OUT −100`, `EXPIRY −5` | `ADJUSTMENT +5` (closing 110) | `REVERSAL +5`, `EXPIRY −10`; carry unchanged | `δ = 0`, stop |
+| Lapse disappears | closing 110: `CARRY_OUT −100`, `EXPIRY −10` | `ADJUSTMENT −20` (closing 90) | `REVERSAL +10`; `CARRY_OUT +10` / `CARRY_IN −10` | `δ = −10` continues |
+| Lapse appears | closing 90: `CARRY_OUT −90` | `ADJUSTMENT +20` (closing 110) | `CARRY_OUT −10` / `CARRY_IN +10`; `EXPIRY −10` | `δ = +10` continues |
 
 ### G.8 Employment events
 
@@ -1034,7 +1092,7 @@ When catch-up reaches the end of the `OPEN` bucket (rules as P3-B §5.6 rule 2, 
 | Activation (start) | Service period begins; accrual from `start_date` (and the assignment start, and any cutover) |
 | `ON_LEAVE` status (manual P1 status) | No effect in core (it is informational, P3-A doc §1); pausing is D-P3C-22 |
 | Hours or work-pattern change | New basis from its effective date; accrual weighted by day; approved reservations keep their hours |
-| Termination | Accrual through `end_date` (last period pro rata); `FREEZE`: reservations after `end_date` released (`FROZEN`), open bucket → `FROZEN`; balance kept, not forfeited, not paid (D-P3C-17). Payout only by a `PAYOUT` transaction with a payroll reference |
+| Termination | Processed first on `end_date + 1`, before anything else on that date (§G.9, v1.3): final accrual through `end_date` (last period pro rata), then reservations after `end_date` released (`FROZEN`), then open and future buckets → `FROZEN`. Nothing of that service period is posted after `end_date`: no consumption, no year close or opening, no grant, even when `end_date + 1` is a year start. Balance kept, not forfeited, not paid (D-P3C-17). Payout only by a `PAYOUT` transaction with a payroll reference. A termination recorded after the ledger already holds postings dated after its `end_date` is refused for now (D-P3C-36) |
 | Rehire | New service period, new buckets; frozen balance not reinstated automatically; an authorised adjustment may bring it across with reason `AGREEMENT` (D-P3C-28) |
 
 ### G.9 Catch-up contract and the virtual view (compute on read, D-P3C-08)
@@ -1047,16 +1105,26 @@ memory to the posted entries. Because both use one function on the same inputs, 
 
 | Order on a date `d` | Event | Postings (virtual or real) | Bucket state |
 |---|---|---|---|
-| 1 | Year boundary at `d` (`d` = old `year_end`): close the old year | accrual of the old year's last (possibly partial) period first; then `CARRY_OUT`/`CARRY_IN`, lapse `EXPIRY`, `WRITE_OFF` if decided | old → `CLOSED` |
-| 2 | Open the new year at `d` | `GRANT` (GRANT policies, pro rata D-P3C-20) | new → `OPEN` (created, or `FUTURE` → `OPEN`) |
-| 3 | Accrual period ending on `d − 1` (not already handled in 1) | `ACCRUAL`, then max-balance `EXPIRY` if any | — |
-| 4 | Reservation dates `leave_date = d`, `d ≤ today` | `CONSUMPTION` + release(`CONSUMED`) per date | — |
-| 5 | Termination with `end_date = d − 1` | final pro rata `ACCRUAL` (if not in 3); release(`FROZEN`) for every reservation date `> end_date` | open (and future) buckets → `FROZEN` |
+| 1 | Termination with `end_date = d − 1` (v1.3: first) | (a) final `ACCRUAL` for the last, possibly partial, period through `end_date`, then max-balance `EXPIRY` if any; (b) release(`FROZEN`) for every unsettled reservation date `> end_date`, in every bucket of the service period | (c) open and future buckets → `FROZEN`. **Then stop:** rows 2–5 are skipped for this service period on `d` and every later date |
+| 2 | Year boundary at `d` (`d` = old `year_end`): close the old year | accrual of the old year's last (possibly partial) period first; then `CARRY_OUT`/`CARRY_IN`, lapse `EXPIRY`, `WRITE_OFF` if decided | old → `CLOSED` |
+| 3 | Open the new year at `d` | `GRANT` (GRANT policies, pro rata D-P3C-20) | new → `OPEN` (created, or `FUTURE` → `OPEN`) |
+| 4 | Accrual period ending on `d − 1` (not already handled in 2) | `ACCRUAL`, then max-balance `EXPIRY` if any | — |
+| 5 | Reservation dates `leave_date = d`, `d ≤ today` | `CONSUMPTION` + release(`CONSUMED`) per date | — |
 | 6 | Later, a rehire | new service period: new buckets from the new start date (no event on the old ones) | — |
 
 Days are processed in ascending order from the earliest unposted event up to `through`; within one date the order
 above applies (credits before debits, as P3-B rule 8d). Several missed years are closed and opened one by one.
-Termination stops all later events of that service period.
+
+**Termination first (v1.3).** A service period ends at the end of `end_date`, so on `end_date + 1` nothing of it
+may be consumed, opened or granted. The final accrual is still posted because it was earned through `end_date`.
+Example: `end_date` 31 December, a reservation for 1 January, calendar years. On 1 January row 1 posts the last
+accrual of the old year, releases the 1 January reservation (`FROZEN`) and freezes the old year's bucket and the
+new year's `FUTURE` bucket. The year is **not** closed (no carry, no lapse) and **not** opened (no grant); the
+reservation is never consumed. Reservation dates `≤ end_date` were consumed on their own dates (row 5 of earlier
+days), so nothing between consumption and freeze can collide. A termination dated in the past whose service
+period already has postings after `end_date` (it was recorded late) cannot be expressed by this order without
+undoing those postings; the termination's ledger step refuses it with `leave_ledger_after_end_date` until
+D-P3C-36 is decided (fail closed, never a silent partial freeze).
 
 **Rules:**
 
@@ -1065,7 +1133,8 @@ Termination stops all later events of that service period.
   are reported as such (`state: 'OPEN', virtual: true`).
 - **Equality guarantee:** for every account, the realised view read immediately before a catch-up equals the
   posted view read immediately after it, entry for entry (same kinds, hours, dates, keys) and state for state.
-  Tests T-C21a (new year with cap, lapse and grant) and T-C21b (termination with future reservations) assert it.
+  Tests T-C21a (new year with cap, lapse and grant), T-C21b (termination with future reservations) and T-C21d
+  (termination on 31 December with a 1 January reservation and year start) assert it.
 - **Projection:** the simulation (§F.5) starts from the realised state at today, so every boundary on or before
   today is already in the start value (posted or virtual) and is **never forecast**; only boundaries after today
   are forecast. This restates P3-B rule 8a for virtual entries.
@@ -1225,9 +1294,9 @@ book and lock checks pass. Labelling the actor `DERIVED` proves nothing about en
 
    | Ledger transaction kind | Entry kinds it may contain | Actor bases it accepts |
    |---|---|---|
-   | `ACCRUAL`, `YEAR_OPEN`, `CONSUME`, `FREEZE`, `CARRY_PROPAGATION` | `ACCRUAL`; `GRANT`, `CARRY_*`, `EXPIRY`(CARRY_CAP), `WRITE_OFF`*; `CONSUMPTION` + release(CONSUMED); release(FROZEN); `CARRY_*`, `EXPIRY` | `DERIVED` only |
+   | `ACCRUAL`, `YEAR_OPEN`, `CONSUME`, `FREEZE`, `CARRY_PROPAGATION` | `ACCRUAL`, `EXPIRY`(MAX_BALANCE); `GRANT`, `CARRY_*`, `EXPIRY`(CARRY_CAP), `WRITE_OFF`*; `CONSUMPTION` + release(CONSUMED); final `ACCRUAL`, `EXPIRY`(MAX_BALANCE), release(FROZEN); `CARRY_*`, `REVERSAL` of `EXPIRY`(CARRY_CAP), `EXPIRY`(CARRY_CAP) | `DERIVED` only |
    | `RESERVE`, `RELEASE`, `REVERSE_CONSUMPTION` | `RESERVATION` (+ consume pairs for past dates); release(CANCELLED); `REVERSAL` of `CONSUMPTION` | P3-B bases only (`SELF`, `LINE_MANAGER`, `LEAVE_MANAGER`, `LEAVE_MANAGER_OVERRIDE`, `AUTO_NO_APPROVAL`, `SOLE_OWNER_SELF`) |
-   | `ADJUSTMENT`, `CORRECTION`, `EXPIRY`, `PAYOUT`, `OPENING_BALANCE`, `IMPORT` | `ADJUSTMENT`, `REVERSAL` (not of carry), `EXPIRY`(MANUAL), `PAYOUT`, `OPENING_BALANCE`, `IMPORT`, + propagation | `LEAVE_MANAGER`, `LEAVE_CORRECT_GRANT`, `SOLE_AUTHORISER` — each re-derived from the session in SQL |
+   | `ADJUSTMENT`, `CORRECTION`, `EXPIRY`, `PAYOUT`, `OPENING_BALANCE`, `IMPORT` | `ADJUSTMENT`, `REVERSAL` (not of carry, not of `EXPIRY`(CARRY_CAP)), `EXPIRY`(MANUAL, negative), `PAYOUT`, `OPENING_BALANCE`, `IMPORT`, + propagation | `LEAVE_MANAGER`, `LEAVE_CORRECT_GRANT`, `SOLE_AUTHORISER` — each re-derived from the session in SQL |
 
    \* `WRITE_OFF` only after D-P3C-11. A manual basis can never create a derived kind and `DERIVED` can never
    create a manual or request kind, so **choosing a kind or basis cannot grant balance-changing authority**: a
@@ -1246,12 +1315,18 @@ and `GRANT` entries, which depend on the engine (periods, hours basis, pro rata,
 verifier (V-08) replays the engine and reports any system entry it would not have produced; it runs in tests, on
 the verification endpoint (C6) and before any payroll export.
 
-**Stronger option (not recommended now, owner and security decision D-P3C-32):** move derived postings behind
-`SECURITY DEFINER` functions that compute the amounts in SQL, owned by a non-login role, with `bos_app` holding
-EXECUTE only and no INSERT on derived kinds. This duplicates the engine in PL/pgSQL and is a new privileged
-boundary (privileged SQL on production is Regan's, per the protocol). It would need its own enhanced security
-review. Recommended instead: accept the stated trust boundary for C1–C2 and revisit before payroll (C6+), where
-money depends on the hours.
+**D-P3C-32 as a concrete security choice (v1.3; owner and security decision, not accepted here).**
+
+| | **A. Trusted application (recommended for C1–C2)** | **B. Privileged SQL engine for derived kinds** |
+|---|---|---|
+| Mechanism | `bos_app` inserts derived entries; the guard enforces kind/basis, signs, pairs, closing, lapse and lock rules; amounts of `ACCRUAL` and `GRANT` come from the TypeScript engine | `SECURITY DEFINER` functions owned by a non-login role compute and insert every derived entry; `bos_app` has EXECUTE only and the guard refuses derived kinds unless `current_user` is that role |
+| Prevented | Every derived kind from API input; a manual or request basis creating a derived kind; unpaired carry, a non-zero closed year, a lapse other than `closing − carry`, a positive expiry, consumption without release, writes without the lock | All of A, plus a wrong `ACCRUAL` or `GRANT` amount inserted through `bos_app` |
+| Still possible | **Whoever can run SQL as `bos_app` (an application bug, or a stolen runtime credential) can create leave entitlement the database accepts**: an inflated `ACCRUAL` with a fresh period key or an inflated `GRANT`. It is **detected, not stopped**: verifier V-08 reports it when it runs (tests, the C6 verification endpoint, before any payroll export). Until then the inflated balance can let leave be approved | A `bos_app` holder can still change the **inputs** the SQL engine reads (policies, assignments, work patterns) through their normal, audited paths. So B moves the trust from the amounts to the audited inputs; it does not remove it |
+| Cost | No new privileged boundary; one engine | A second engine in PL/pgSQL that must match the TypeScript projection (drift tests); a new database role and privileged migrations through `db:privileged` (Regan); `search_path` hardening; its own enhanced security review; slower change |
+| When it matters most | Acceptable while balances only govern leave approvals inside the business | Before payroll (C6+), when hours turn into money |
+
+Recommendation: **A for C1–C2, with V-08 in the release gate; decide again before any payroll export**, choosing B
+or a payroll-time check that blocks the export when V-08 reports a difference.
 
 ### I.3 Who may read (D-P3C-06), enforced in the database
 
@@ -1280,8 +1355,12 @@ option C), because RLS cannot hide a row's columns from one viewer and not anoth
 
 - Balance-level tables: `tenant_isolation` (permissive) **and** `RESTRICTIVE FOR SELECT … USING
   (people_leave_can_read(employee_id, leave_type_id, sensitive_or_type_flag, 'BALANCE'))`.
-- Detail-level tables: same with `'DETAIL'`. Transactions carry `employee_id` and `leave_type_id`; their
-  sensitivity is that of their entries (`EXISTS` a sensitive entry, or the type flag).
+- Detail-level tables: same with `'DETAIL'`. Transactions carry `employee_id`, `leave_type_id` and their own
+  immutable `sensitive` (§C.5); the policy passes `sensitive OR <current type flag>` and **never reads child
+  rows**, because a subquery in a policy is filtered by the reader's own visibility (v1.3; v1.2's `EXISTS` over
+  entries failed open). Import batches and rows and correction proposals get the same treatment: an immutable
+  trigger-set `sensitive` (type flag at insert; for a proposal, OR'd with the transactions it cites), used OR the
+  current type flag.
 - `people_leave_can_read(employee, type, sensitive, level)` is `STABLE SECURITY INVOKER`, reads only tenant tables
   visible to `bos_app` (memberships, employees, manager assignments, leave types, authorisations) through indexed
   lookups, and takes the actor from `app.user_id`; a missing setting returns false. Role lists (which roles hold
@@ -1520,17 +1599,21 @@ I and R test also runs behind PgBouncer in transaction mode (E-30).
 | T-C09a | Constraints (v1.2) | Direct SQL: `YEAR_OPEN` for closing −5 h with `CARRY_OUT +5`/`CARRY_IN −5` commits and leaves the old bucket at 0; an unpaired or unequal carry fails; a closed bucket not summing to 0 fails; `WRITE_OFF` refused while D-P3C-11 is open | S | C1 |
 | T-C09b | Constraints (v1.2) | Leave-date CHECK: reversal of a `CONSUMPTION` keeps its date; reversal of an `ADJUSTMENT` has none; a mismatch fails | S | C1 |
 | T-C09c | Stage gate (v1.2) | Direct SQL in C1: request kinds and manual kinds refused; `DERIVED` basis on a manual kind refused; manual basis on a derived kind refused | S | C1 |
+| T-C09d | Lapse correction (v1.3) | Direct SQL and engine: closed year with closing 110, cap 100 (`CARRY_OUT −100`, `EXPIRY −10`); an `ADJUSTMENT −5` propagates as `REVERSAL +10`, `EXPIRY −5`, carry unchanged; bucket 0; one unreversed lapse | S/I | C1 (constraints) / C5 (flow) |
+| T-C09e | Lapse correction (v1.3) | The reverse (closing 105 → 110: `REVERSAL +5`, `EXPIRY −10`), plus lapse disappearing and appearing (carry pair deltas, next year continues). Refused: any positive `EXPIRY` in any transaction kind; a second unreversed lapse; a lapse not equal to `closing − carry`; reversal of a lapse in a manual `CORRECTION` | S | C1 |
 | T-C21a | Virtual view (v1.2) | Read before and after catch-up across a new year with a cap, lapse and grant: identical | I | C2 |
 | T-C21b | Virtual view (v1.2) | Same across a termination with future reservations (released `FROZEN`, buckets `FROZEN`) | I | C2 |
+| T-C21d | Termination first (v1.3) | `end_date` 31 December, reservation for 1 January, calendar year with a GRANT policy and a carry cap: on 1 January the final accrual is posted, the reservation released `FROZEN`, both buckets `FROZEN`; no `CONSUMPTION`, no carry, lapse or `GRANT`, no `CLOSED` bucket. Realised read before catch-up equals posted after, entry for entry. Late-recorded termination with postings after `end_date` refused (`leave_ledger_after_end_date`) | U/I | C2 |
 | T-C21c | Virtual view (v1.2) | Projection on the day after a virtually realised boundary does not forecast that boundary again | U/I | C3 |
 | T-C42a | RLS (v1.2) | Direct SQL as `bos_app` with `app.user_id` = current line manager without `read_sensitive`: sees non-sensitive entries of a report, none of a sensitive type, no transactions; after the reporting line changes, sees none | S | C4 |
 | T-C42b | RLS (v1.2) | Direct SQL: grant holder sees in-scope detail; after revocation, after membership suspension, after department change out of scope, sees none; type made non-sensitive later does not re-expose sensitive-snapshot rows | S | C5 |
+| T-C42d | RLS (v1.3) | Direct SQL as the real `bos_app` role: a transaction's `sensitive` is set by the trigger whatever the INSERT supplies and cannot be updated; entries are never less sensitive than their transaction. Then a sensitive type with posted transactions is switched to non-sensitive; a `LEAVE_CORRECT` grantee scoped to the employee, whose role lacks `people:read_sensitive`, sees **none** of those transactions or entries (and the same holds for a line manager without the key) | S | C1 (column, trigger) / C5 (grantee) |
 | T-C42c | RLS (v1.2) | C1 fail-closed: MANAGER and MEMBER (not self) see no ledger rows at all; missing `app.user_id` sees none | S | C1 |
 | T-C63 | Sealing (v1.2) | Delayed commit: transaction A starts before seal S1 and commits after it; A is absent from S1, present in S2, never twice; re-reading S1 later gives the same set | S | C1 (primitive) / C6 |
 | T-C64 | Back-fill (v1.2) | Rehearsal: every tenant's revision rows updated (count assertion), `INFERRED` basis, RLS FORCE and trigger restored, lock and statement timeouts honoured | S | C1 |
 | T-C90 | Payroll contract | Movement feed: period, cutoff, prior-period flag, reversal links, hash stable | I | C6 |
 
-**Release blockers** (no switch-on while any fails): T-C01..T-C09c, T-C21a..c, T-C42a..c, T-C63, T-C64, T-C40..T-C47, T-C50..T-C55, T-C11..T-C14,
+**Release blockers** (no switch-on while any fails): T-C01..T-C09e, T-C21a..d, T-C42a..d, T-C63, T-C64, T-C40..T-C47, T-C50..T-C55, T-C11..T-C14,
 T-C20..T-C26, T-C30, and the P3-B gates G-S1..G-S6 for anything a request touches.
 
 **Performance notes:** per-date reservations cap at 1,098 entries per request; indexes lead with `business_id`
@@ -1546,8 +1629,8 @@ the merge queue, migrations applied first by the Mac session under the protocol.
 
 | Package | Scope | Depends on | Migration | Acceptance criteria | Escalation |
 |---|---|---|---|---|---|
-| **P3-C1 Ledger core** | Accounts, buckets, transactions, entries, empty authorisations table; guards with the stage gate (only C1's derived transaction kinds accepted), deferred pair and closing invariants, uniques, forced RLS **plus the fail-closed restrictive read policies**, grants; `recorded_xid` and the seal primitive; revision `effective_from` (J.2); posting primitives for derived kinds with explicit hours (no engine, no routes); verifier V-01..V-07 | P3-A (implemented); decisions D-P3-25 r.1, D-P3C-09, -10, -27, -29, -32, -33 (and -35 only if the preflight finds a time-zone change) | Yes (rehearsal, preflight evidence, lock limits: existing-data transformation) | T-C01..T-C09c, T-C10 (system keys), T-C40, T-C41, T-C42c, T-C47, T-C62, T-C63, T-C64 green on PostgreSQL and PgBouncer | Enhanced audit (RLS read policies, data transformation); Regan if the audit leaves risk or D-P3C-35 is needed |
-| **P3-C2 Accrual engine and hours basis** | Core adapter, periods, rounding, year opening, carry and lapse, max-balance expiry, freeze, rehire, catch-up and realised reads; verifier V-08 | C1; **B1 work patterns with ordinary hours merged and applied** (X-01, X-02); D-P3C-11, -15, -16, -17, -20..-23, -28, -30, -31 | No (or a small one if B1's pattern table needs a column) | T-C20..T-C30, T-C33, T-C52, T-C70 (catch-up) | Routine |
+| **P3-C1 Ledger core** | Accounts, buckets, transactions, entries, empty authorisations table; guards with the stage gate (only C1's derived transaction kinds accepted), deferred pair and closing invariants, uniques, forced RLS **plus the fail-closed restrictive read policies**, grants; `recorded_xid` and the seal primitive; revision `effective_from` (J.2); posting primitives for derived kinds with explicit hours (no engine, no routes); verifier V-01..V-07 | P3-A (implemented); decisions D-P3-25 r.1, D-P3C-09, -10, -27, -29, -32, -33 (and -35 only if the preflight finds a time-zone change) | Yes (rehearsal, preflight evidence, lock limits: existing-data transformation) | T-C01..T-C09e, T-C10 (system keys), T-C40, T-C41, T-C42c, T-C42d (column part), T-C47, T-C62, T-C63, T-C64 green on PostgreSQL and PgBouncer | Enhanced audit (RLS read policies, data transformation); Regan if the audit leaves risk or D-P3C-35 is needed |
+| **P3-C2 Accrual engine and hours basis** | Core adapter, periods, rounding, year opening, carry and lapse, max-balance expiry, freeze, rehire, catch-up and realised reads; verifier V-08 | C1; **B1 work patterns with ordinary hours merged and applied** (X-01, X-02); D-P3C-11, -15, -16, -17, -20..-23, -28, -30, -31, -36 | No (or a small one if B1's pattern table needs a column) | T-C20..T-C30, T-C21d, T-C33, T-C52, T-C70 (catch-up) | Routine |
 | **P3-C3 P3-B integration interface** | `withAccount`, `reserve`, `release`, `reverseConsumption`, `project` (D-P3-50 restated), negative-limit rule | C2; **P3-B amended (R-02, R-03, X-03, X-04) and re-audited**; D-P3C-07, -14 | No | T-C11..T-C14, T-C34..T-C36, T-C50..T-C55, T-C61; P3-B §5 checklist C-01..C-34 re-stated for reservations and met | Routine; it is the gate for P3-B B2/B3 |
 | **P3-C4 Read APIs and visibility** | Leave permission keys (shared with P3-B, D-P3-12), any-of route option (D-P3-26), restrictive RLS, balance/ledger/as-of endpoints (off) | C3; D-P3C-13, -25, -26 | Yes (visibility) | T-C40..T-C44, T-C70 (reads); enhanced security audit | First record-scoped read rules: enhanced audit; Regan if risk unresolved |
 | **P3-C5 Corrections, imports and grants** | Adjustments, corrections, expiries, payouts, opening-balance import, `LEAVE_CORRECT` grants, propagation, (maker-checker if chosen) | C4; D-P3C-04 (accepted), D-P3C-18, -19, -24 | Yes | T-C10, T-C32, T-C45..T-C49, T-C51, T-C60, T-C80 | **Recommended: Regan's own merge approval** (new per-member authorisation and balance-changing powers, D-P3C-18/19) |
@@ -1598,16 +1681,17 @@ that shape P3-C1.
 | D-P3C-29 | Precision | `numeric(9,4)` like P3-A / **`numeric(12,4)` hours, exact engine, cumulative rounding half-even** | **numeric(12,4)** | T · C1 |
 | D-P3C-30 | Max-balance excess | credit only up to the cap / **post full accrual and an `EXPIRY MAX_BALANCE`** | **Post and expire** (visible, replay-exact) | T |
 | D-P3C-31 | Multi-year propagation | recompute all later years / **delta propagation year by year with each year's own cap** | **Delta propagation** (decides how a correction carries forward, so an owner choice, v1.2) | O |
-| D-P3C-32 | Authority for derived postings (§I.2a) | A: **API prevention + kind/basis matrix + SQL-verified pair invariants; `ACCRUAL`/`GRANT` amounts trusted application behaviour, detected by the verifier** / B: `SECURITY DEFINER` SQL engine for derived kinds (new privileged boundary, Regan) | **A for C1–C2; revisit before payroll** | O + security |
+| D-P3C-32 | Authority for derived postings (§I.2a table) | A: **trusted application: API prevention, kind/basis matrix and SQL-verified pair, closing and lapse invariants; a `bos_app` holder can still insert inflated `ACCRUAL`/`GRANT` amounts, detected by V-08, not stopped** / B: `SECURITY DEFINER` SQL engine for derived kinds (prevents wrong amounts; trust moves to audited inputs; second engine and a new privileged boundary, Regan) | **A for C1–C2 with V-08 in the release gate; decide B or a blocking payroll-time check before any payroll export** | O + security |
 | D-P3C-33 | Recorded-time semantics (§F.1a) | timestamp cutoffs / **`recorded_at` informational; seals by stored `pg_snapshot` and `recorded_xid`** | **Snapshot seals** | T |
 | D-P3C-34 | Restrictive RLS staging | all branches in C4 / **fail-closed policies in C1, manager branch in C4, grant branch in C5** | **Staged in C1** (no row exists without its read control) | T |
+| D-P3C-36 | Termination recorded after the ledger already posted events past its `end_date` (v1.3) | (a) **refuse the termination's ledger step (`leave_ledger_after_end_date`) until an unwind is designed; an authorised correction or a later `end_date` is needed** / (b) the termination unwinds post-end postings (reverse grants, accruals and consumptions; reopen a closed year), which needs a new reopen transaction / (c) freeze from the recording date | **(a) for C2**, revisit with C5 corrections. It can block recording a backdated termination, so it changes P1 behaviour | O |
 | D-P3C-35 | Effective dates of pre-C1 revisions | treat inferred as exact / **mark `INFERRED`, never let an inferred date govern a posting (cutover ≥ apply date + 1)** / recover per-row zones from audit | **Mark and isolate** | O (only if the preflight finds a time-zone change after a revision) |
 
 ### M.3 Readiness assessment
 
 | Package | Verdict | Why |
 |---|---|---|
-| **P3-C1** | **CONDITIONALLY READY (after re-audit)** | v1.0 audit (9fc9751) was a CONDITIONAL PASS with five corrections; v1.2 makes them (§ handoff H-5). Conditions: (1) ChatGPT re-audit of v1.2 passes; (2) Regan authorises implementation (and allows a PR); (3) D-P3-25 r.1 and D-P3C-09, -10, -27, -29, -32, -33, -34 accepted (-35 only if needed); (4) at build time, migration order rechecked (stamp after `20261207000000` and any newer); (5) before apply, the J.2 preflight and rehearsal evidence |
+| **P3-C1** | **CONDITIONALLY READY (after re-audit)** | v1.0 audit (9fc9751) was a CONDITIONAL PASS with five corrections; v1.2 makes them (§ handoff H-5). The re-audit of v1.2 (06fde5f) was CHANGES REQUIRED with three findings; v1.3 makes them (H-6). Conditions: (1) ChatGPT re-audit of v1.3 passes; (2) Regan authorises implementation (and allows a PR); (3) D-P3-25 r.1 and D-P3C-09, -10, -27, -29, -32, -33, -34 accepted (-35 only if needed); (4) at build time, migration order rechecked (stamp after `20261207000000` and any newer); (5) before apply, the J.2 preflight and rehearsal evidence |
 | P3-C2 | **BLOCKED** | Needs B1 work patterns with ordinary hours (documented only, E-10), and owner decisions D-P3C-11, -15, -16, -17, -20, -22, -23, -28 |
 | P3-C3 | **BLOCKED** | Needs C2, the P3-B amendment for D-P3C-01/02 (R-02, R-03, X-03, X-04) audited, and D-P3C-07, -14 |
 | P3-C4 | **BLOCKED** | Needs C3 and D-P3C-13, -25, -26; enhanced security audit |
@@ -1630,6 +1714,8 @@ that shape P3-C1.
 ### M.5 Needs Regan
 
 - Confirm the reading of D-P3C-03 (D-P3C-07).
+- Choose the derived-posting trust boundary (D-P3C-32, options A/B in §I.2a) and the late-termination rule
+  (D-P3C-36).
 - Decide the owner items in §M.2 (recommendations given; ChatGPT may record them as owner decision records).
 - Authorise P3-C1 implementation and its PR when the audit passes.
 - Note: P3-C5 (corrections, grants) is recommended for **your own merge approval** because it introduces the first
