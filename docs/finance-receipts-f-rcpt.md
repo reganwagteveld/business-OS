@@ -723,7 +723,7 @@ Starting client outreach is the earliest point to revisit setup, not permission 
 
 ## 17. Owner decisions (Regan)
 
-D-RCPT-1, 5, 13, 14 and 16 were decided by Regan on 2026-11-17 (owner decision records on PR #128). D-RCPT-15 is a proposal: the timing gate does not select a primary provider. They are policy decisions only: they do not authorise implementation, provisioning, spending, credentials or activation.
+D-RCPT-1, 5, 13, 14 and 16 were decided by Regan on 2026-11-17 (owner decision records on PR #128). D-RCPT-15 was decided by Regan later the same day: S3 + GuardDuty is the primary path, so Neon Object Storage (D-RCPT-1) is no longer the first choice. They are policy decisions only: they do not authorise implementation, provisioning, spending, credentials or activation.
 
 | # | Decision | Recommendation | Why it is Regan's |
 |---|---|---|---|
@@ -742,7 +742,7 @@ D-RCPT-1, 5, 13, 14 and 16 were decided by Regan on 2026-11-17 (owner decision r
 | D-RCPT-13 | Removal journal location (shared with E1 open decision 3) | **ACCEPTED IN PRINCIPLE (Regan, 2026-11-17):** a separate Neon project outside the production rollback boundary, separate credentials, append-only app access. Usage estimate in §21 must be presented before provisioning; no budget approved | Decided in principle |
 | D-RCPT-14 | Provider if G-1 fails | **ACCEPTED (Regan, 2026-11-17):** AWS S3 `us-east-1`. US data-location rule kept; no R2 exception | Decided |
 | D-RCPT-16 | Timing of spending and activation | **ACCEPTED (Regan, 2026-11-17):** no receipt-provider, scanner or journal provisioning, billable usage or activation before Regan begins approaching potential clients; implementation does not start merely because a docs PR merges. See §16 | Decided |
-| D-RCPT-15 | Scanning arrangement and therefore the store (new evidence, §11.2) | **S3 `us-east-1` + GuardDuty as one integrated path**, since Neon has no managed scanner. Alternatives keep Neon but add a scanning vendor, a hosted ClamAV, or AWS alongside Neon | Changes D-RCPT-1's outcome; adds AWS (already the accepted fallback) and usage-billed scanning (§21) |
+| D-RCPT-15 | Scanning arrangement and therefore the store (new evidence, §11.2) | **ACCEPTED (Regan, 2026-11-17, in his own words in the F-RCPT thread):** AWS S3 `us-east-1` + GuardDuty Malware Protection as the primary store and scanner, replacing Neon Object Storage under D-RCPT-1. No sign-up or spending until client outreach begins (D-RCPT-16); evidence §20, smoke tests of scanner tags, role separation and a deny-by-default bucket policy, and budget and setup approvals still apply | Decided |
 
 ## 18. Open legal questions (not answered here)
 
