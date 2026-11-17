@@ -15,7 +15,7 @@ feature or start C2–C6.
 | Revision `effective_from` + `effective_from_basis` (D-P3-25 r.1, D-P3C-27, J.2 back-fill) | same migration; `people-leave.prisma` |
 | Guards, stage gate, deferred commit invariants, partial unique indexes, grants, forced RLS + restrictive read policies | hand-written section of the migration |
 | Posting primitive for derived kinds with explicit hours, totals, seals, verifier V-01..V-07 | `apps/api/src/modules/people/server/leave-ledger.ts` (not exported, no route, no job) |
-| Tests T-C01..T-C09e, T-C10 (system keys), T-C40, T-C41, T-C42c/d/e, T-C47, T-C62, T-C63, T-C64 | `apps/api/tests/integration/people-leave-ledger.test.ts` (also run behind PgBouncer in CI) |
+| Tests T-C01..T-C09e, T-C10 (system keys, including a changed-payload replay), T-C40, T-C41, T-C42c/d/e, T-C47, T-C62, T-C63, T-C64 | `apps/api/tests/integration/people-leave-ledger.test.ts` (also run behind PgBouncer in CI) |
 
 Nothing calls the primitive outside tests. There is no engine (C2), no request integration (C3), no read API
 (C4), no corrections or grants (C5) and no payroll surface (C6).
@@ -68,6 +68,13 @@ These go beyond, or narrow, the spec. Each is fail-closed.
    membership delete once rows exist. C5 must decide that (flagged, not solved here).
 9. **Sensitivity** is computed: the statement's value OR the type's flag OR any cited row's flag, so it only ever
    grows (T-C42d/e). A cited row the writer cannot read is refused with PE018 (D-P3C-37 (a)).
+
+10. **Idempotent retries must say the same thing** (audit of e2093ba). A derived key that was already posted
+    returns `duplicate` only if the retry has the same kind, account, related transaction and entries (compared
+    by meaning: year, book, kind, hours at 4 places, dates, policy version, references; caller-chosen entry ids
+    may differ). Any other payload under a posted key throws `LedgerIdempotencyConflict` and writes nothing, so a
+    C2 engine whose inputs changed between attempts fails loudly instead of being silently ignored. V-08 (C2)
+    remains the gate for a wrong amount posted under a new key: C1 trusts caller-supplied accrual amounts.
 
 ## 3. The revision back-fill (J.2): preflight, rehearsal and lock limits
 

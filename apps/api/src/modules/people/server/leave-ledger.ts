@@ -85,6 +85,40 @@ export class LedgerInputError extends Error {
   }
 }
 
+/** A derived key that was already posted with a different kind, account or payload (never a silent duplicate). */
+export class LedgerIdempotencyConflict extends LedgerInputError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LedgerIdempotencyConflict';
+  }
+}
+
+interface StoredEntry {
+  bucket_id: string; book: string; kind: string; hours: string; applies_on: string; leave_date: string | null; period_start: string | null;
+  period_end: string | null; policy_id: string; policy_version: number; reverses_entry_id: string | null; reservation_entry_id: string | null;
+  paired: boolean; release_reason: string | null; expiry_reason: string | null;
+}
+
+/** "12.6667", "-5" → canonical numeric(12,4) text ("-5.0000"), without going through a float. */
+function hours4(h: string): string {
+  const neg = h.startsWith('-');
+  const [int, frac = ''] = (neg ? h.slice(1) : h).split('.');
+  return `${neg ? '-' : ''}${String(int).replace(/^0+(?=\d)/, '')}.${frac.padEnd(4, '0')}`;
+}
+
+/** Same entries as a multiset of their meaning. Caller-chosen entry ids may differ between attempts; carry pair
+ *  references are compared by presence (their targets are entries of the same transaction). */
+function sameEntries(stored: StoredEntry[], input: EntryInput[]): boolean {
+  const norm = (e: StoredEntry) => JSON.stringify([e.bucket_id, e.book, e.kind, e.hours, e.applies_on, e.leave_date, e.period_start,
+    e.period_end, e.policy_id, e.policy_version, e.reverses_entry_id, e.reservation_entry_id, e.paired, e.release_reason, e.expiry_reason]);
+  const a = stored.map(norm).sort();
+  const b = input.map((e) => norm({ bucket_id: e.bucketId.toLowerCase(), book: e.book, kind: e.kind, hours: hours4(e.hours), applies_on: e.appliesOn,
+    leave_date: e.leaveDate ?? null, period_start: e.periodStart ?? null, period_end: e.periodEnd ?? null, policy_id: e.policyId.toLowerCase(),
+    policy_version: e.policyVersion, reverses_entry_id: e.reversesEntryId?.toLowerCase() ?? null, reservation_entry_id: e.reservationEntryId?.toLowerCase() ?? null,
+    paired: e.pairEntryId != null, release_reason: e.releaseReason ?? null, expiry_reason: e.expiryReason ?? null })).sort();
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
 function check(posting: DerivedPosting) {
   const fail = (m: string) => { throw new LedgerInputError(m); };
   if (!DERIVED_KINDS.includes(posting.kind)) fail(`not a derived kind: ${String(posting.kind)}`);
@@ -132,7 +166,19 @@ export async function postDerived(db: AppTenantDb, posting: DerivedPosting): Pro
   const existing = await db.$queryRaw<{ id: string; kind: string; account_id: string }[]>`
     SELECT id::text, kind, account_id::text FROM people_leave_transactions WHERE idempotency_key = ${key}`;
   if (existing[0]) {
-    if (existing[0].kind !== posting.kind || existing[0].account_id !== accountId) throw new LedgerInputError('idempotency key belongs to another posting');
+    if (existing[0].kind !== posting.kind || existing[0].account_id !== accountId) throw new LedgerIdempotencyConflict('idempotency key belongs to another posting');
+    // A retry is a duplicate only if it says the same thing. A different payload under a posted key is a caller
+    // bug (e.g. an engine whose inputs changed between attempts) and must not be silently swallowed.
+    const related = (await db.$queryRaw<{ related: string | null }[]>`
+      SELECT related_transaction_id::text AS related FROM people_leave_transactions WHERE id = ${existing[0].id}::uuid`)[0]?.related ?? null;
+    const stored = await db.$queryRaw<StoredEntry[]>`
+      SELECT bucket_id::text, book, kind, hours::text, applies_on::text, leave_date::text, period_start::text, period_end::text,
+             policy_id::text, policy_version, reverses_entry_id::text, reservation_entry_id::text, (pair_entry_id IS NOT NULL) AS paired,
+             release_reason, expiry_reason
+        FROM people_leave_entries WHERE transaction_id = ${existing[0].id}::uuid`;
+    if ((posting.relatedTransactionId ?? null) !== related || !sameEntries(stored, posting.entries)) {
+      throw new LedgerIdempotencyConflict('idempotency key already posted with a different payload');
+    }
     return { status: 'duplicate', transactionId: existing[0].id, accountId };
   }
   await db.$queryRaw`UPDATE people_leave_accounts SET version = version + 1 WHERE id = ${accountId}::uuid RETURNING version`;

@@ -321,7 +321,8 @@ describe('schema, row-level security and least privilege (T-C01, T-C41)', () => 
 
 describe('constraints (T-C02, T-C03) and immutability (T-C04)', () => {
   /** Inserts one entry as a superuser with user triggers off, so only FKs and CHECKs decide (rolled back). */
-  async function raw(f: Fixture, patch: (base: Record<string, unknown>) => Record<string, unknown>) {
+  async function raw(fixture: Fixture, patch: (base: Record<string, unknown>) => Record<string, unknown>) {
+    const f = await refresh(fixture); // fresh accounts per attempt: each posts the same derived key
     const ctx = own(f);
     const y1 = randomUUID();
     const post = await viaApp(ctx, (db) => postDerived(db, accrual(f, { bucketId: y1, hours: '8', periodStart: '2025-01-01', periodEnd: '2025-02-01', create: { year: Y1 } })));
@@ -876,6 +877,29 @@ describe('idempotency of system keys (T-C10)', () => {
     const v = await admin.query('SELECT version FROM people_leave_accounts WHERE business_id = $1 ORDER BY version', [f.id]);
     expect(v.rows.map((r) => r.version)).toEqual([2, 3]);
     expect(await viaApp(own(f), (db) => verifyLedger(db))).toEqual([]);
+  });
+
+  it('a retry of a posted key with a different payload is refused, never a silent duplicate; the same payload with new entry ids is a duplicate', async () => {
+    const f = await business('llreplay');
+    const y1 = randomUUID();
+    const p = accrual(f, { bucketId: y1, hours: '12.6667', periodStart: '2025-01-01', periodEnd: '2025-02-01', create: { year: Y1 } });
+    const first = await viaApp(own(f), (db) => postDerived(db, p));
+    const retry = (change: (e: EntryInput) => EntryInput, extra: Partial<DerivedPosting> = {}) =>
+      viaApp(own(f), (db) => postDerived(db, { ...p, bucketChanges: [], ...extra, entries: p.entries.map((e) => change({ ...e, id: randomUUID() })) }));
+    // Same meaning, new caller-chosen ids and an equivalent decimal spelling: a duplicate.
+    expect(await retry((e) => ({ ...e, hours: '012.6667' }))).toEqual({ ...first, status: 'duplicate' });
+    // Different hours, period, policy version or an extra entry: refused, nothing written.
+    const refused = async (q: Promise<unknown>) => (await q.then(() => 'ok', (error: Error) => error.name));
+    expect(await refused(retry((e) => ({ ...e, hours: '12.6666' })))).toBe('LedgerIdempotencyConflict');
+    expect(await refused(retry((e) => ({ ...e, hours: '-12.6667' })))).toBe('LedgerIdempotencyConflict');
+    expect(await refused(retry((e) => ({ ...e, appliesOn: '2025-01-30' })))).toBe('LedgerIdempotencyConflict');
+    expect(await refused(retry((e) => ({ ...e, policyVersion: 2 })))).toBe('LedgerIdempotencyConflict');
+    expect(await refused(viaApp(own(f), (db) => postDerived(db, { ...p, bucketChanges: [], entries: [...p.entries, { ...p.entries[0]!, id: randomUUID() }] }))))
+      .toBe('LedgerIdempotencyConflict');
+    expect(await refused(retry((e) => e, { kind: 'FREEZE' }))).toBe('LedgerIdempotencyConflict');
+    const rows = await admin.query('SELECT count(*)::int AS n, sum(hours)::text AS h FROM people_leave_entries WHERE transaction_id = $1', [first.transactionId]);
+    expect(rows.rows[0]).toEqual({ n: 1, h: '12.6667' });
+    expect((await admin.query('SELECT version FROM people_leave_accounts WHERE id = $1', [first.accountId])).rows[0].version).toBe(2);
   });
 
   it('a raw duplicate key is refused by the unique index', async () => {
