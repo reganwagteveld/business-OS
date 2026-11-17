@@ -48,10 +48,8 @@ On a database with every migration except this one, 2 businesses, 6 stages, 18 o
 | `migrate deploy` again, with the probe running | **Applied** in 1.4 s wall time. Probe: longest read 52 ms, longest stage write 47 ms. |
 | Rehearsal script | **PASS**: objects, guard smoke, archive of 5,000 open opportunities in 277 ms (25 s budget). Every write rolled back (counts unchanged). |
 | Rehearsal script with one trigger disabled | **STOP**: 2 of 3 guard triggers enabled. |
-| Fixture on an empty, fully migrated database, then rehearsal script and probe | Fixture created, second run a no-op; rehearsal **PASS**; probe ran without errors. Without `SCFG_FIXTURE_TARGET=rehearsal` it refuses. |
 | Probe while another session holds ACCESS EXCLUSIVE on `sales_pipelines` for 2 s | Longest read 2,034 ms: the probe sees stalls. |
 | Persistent-connection probe (`.mjs`, replaces the first `.sh` probe, which opened a new connection per sample and so timed about 2 s of connection set-up from the Mac to us-east-1) with a 1.5 s ACCESS EXCLUSIVE hold | Read longest minus median 1,455 ms, write 1 ms. Refuses a role that bypasses RLS. |
-| Reset script, then preflight, then deploy with the new probe | Reset removed objects and ledger rows; preflight **PASS** (0 resolved attempts); deploy applied; probe longest minus median 4 ms (read) and 3 ms (write); rehearsal **PASS**. Without `SCFG_RESET_TARGET=rehearsal` it refuses. |
 
 Neon adds network round trips from the Mac, which is why §4 measures the real window rather than inheriting these numbers.
 
@@ -97,11 +95,7 @@ Keep the raw output in the private Mac session. Post only the pass/fail summary 
 2. Create `rehearsal-sales-configuration-<yyyymmdd>` from production, after the §3 preflight passed, in the production region. Temporary test branches need no approval.
 3. Target guard: the rehearsal URLs point at that branch, not the default branch.
 4. Run §3 against the branch with the rehearsal URLs. It must pass exactly as on production.
-5. **Fixture, only if needed.** The smoke, timing and probe need one business with an active member. If the branch has none (production may have no businesses yet), create a marked throwaway one **on the rehearsal branch only**:
-   ```sh
-   SCFG_FIXTURE_TARGET=rehearsal psql "$ADMIN_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/sales-configuration-rehearsal-fixture.sql
-   ```
-   It commits 1 business, 1 owner on an `.invalid` address, 1 pipeline, 3 stages and 200 OPEN opportunities, and is a no-op when run twice. Never run it with a production URL.
+5. **Members check.** The smoke, timing and probe need one business with an active member. A copy of production has one today; if the branch has none, stop and report (no fixture is written to any branch).
 6. **Lock drill.** In one psql session as the admin role, hold a write: `BEGIN; UPDATE sales_stages SET name = name WHERE id = (SELECT id FROM sales_stages ORDER BY id LIMIT 1);` and leave it open. In another, run `pnpm exec prisma migrate deploy` against the branch. It must fail within a few seconds (Prisma shows `current transaction is aborted`; that is expected, see §2). Then `ROLLBACK` the held session, and confirm that `config_version` does not exist on the branch. Run `pnpm exec prisma migrate resolve --rolled-back 20261210000000_sales_configuration`. Re-run §3 on the branch: it must pass and report 1 resolved attempt.
    If the branch has no Sales rows at all, skip the `UPDATE` and hold `LOCK TABLE sales_stages IN ROW EXCLUSIVE MODE` instead (same conflict).
 7. **Timed apply.** Start the probe in a second terminal, wait until it has run about 5 s (its baseline), then deploy. Record the deploy wall time and the probe's two lines:
@@ -112,13 +106,13 @@ Keep the raw output in the private Mac session. Post only the pass/fail summary 
    pnpm exec prisma migrate deploy               # terminal 1, against the rehearsal branch
    ```
    The probe keeps two connections open and samples every 100 ms (10 Hz), so connection set-up is never timed. Its median is the network round trip; **longest minus median** is the stall the migration caused. It also prints when the longest sample started and the **blocked window** (first to last sample over median + 100 ms), in UTC. Record the deploy's start and end in UTC (`date -u` before and after) so the blocked window can be matched to the apply. Post both probe lines per kind, the deploy times, and the round and error counts.
-   **Repeating a measurement.** Preferred (ChatGPT review, 2026-11-17): a fresh rehearsal branch from production, after the branch-budget check in step 1 and any cost approval Regan must give. If Regan prefers no extra branch, the existing rehearsal branch can be reset instead: `SCFG_RESET_TARGET=rehearsal psql "$ADMIN_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/sales-configuration-rehearsal-reset.sql` drops the migration's objects and ledger rows on the **rehearsal branch only**. Re-run §3 on the branch (PASS, 0 resolved attempts), then repeat this step and step 8. No new Neon branch is needed.
+   **Repeating a measurement.** Always on a **fresh** rehearsal branch from production (steps 1 to 8 again, including the branch-budget check and any cost approval Regan must give). There is deliberately no script that undoes the migration on an existing branch: a destructive helper that could reach production is not provided (ChatGPT review, 2026-11-17).
 8. **Rehearsal checks** on the branch:
    ```sh
    export SCFG_REHEARSAL_APP_URL=<bos_app URL, rehearsal branch, direct>
    psql "$ADMIN_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/sales-configuration-rehearsal.sql
    ```
-   A: objects as designed, forced RLS and grants unchanged. B: as `bos_app`, SA001 (insert, restore in an archived pipeline), SA002, SA003, SA004, U1 and U2 `23505`, closed rows unblocked. C: an archive of 5,000 OPEN opportunities timed on the service's own statement sequence, with audit rows (`SCFG_TIMING_ROWS` to change it). B and C always roll back. It uses the first business with an active member (the fixture if step 5 ran).
+   A: objects as designed, forced RLS and grants unchanged. B: as `bos_app`, SA001 (insert, restore in an archived pipeline), SA002, SA003, SA004, U1 and U2 `23505`, closed rows unblocked. C: an archive of 5,000 OPEN opportunities timed on the service's own statement sequence, with audit rows (`SCFG_TIMING_ROWS` to change it). B and C always roll back. It uses the first business with an active member.
 9. **Pooler note.** The app reaches Neon through the pooler in transaction mode. The service code was tested behind PgBouncer in transaction mode (29 of 29 integration tests). No extra rehearsal step is needed for the pooler; the migration itself always uses the direct endpoint.
 10. Leave the rehearsal branch in place. Deleting any Neon branch needs Regan's approval (protocol, "Neon branches"); list it for his housekeeping.
 

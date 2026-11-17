@@ -84,7 +84,7 @@ ROLLBACK;
 \endif
 \if :{?scfg_business_id}
 \else
-  DO $$ BEGIN RAISE EXCEPTION 'STOP: no business with an active member on this branch; see the procedure for the fixture'; END $$;
+  DO $$ BEGIN RAISE EXCEPTION 'STOP: no business with an active member on this branch; stop and report (procedure §4 step 5)'; END $$;
 \endif
 
 -- ======================================== B. bos_app: guard smoke =====================================
