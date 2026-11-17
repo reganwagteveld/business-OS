@@ -30,6 +30,11 @@
 > §10 wording aligned to `pending_actor_basis`; §5.6 states the `projectedOpening` no-double-count invariant and leaves
 > multi-year reversal propagation and leap-day anniversaries for P3-C's spec. No design change.
 >
+> **Version 1.3 (2026-11-17)** after the owner decision record on #116 (posted through the ChatGPT connector,
+> 10:11 UTC): **D-P3-45 accepted**; **D-P3-50 accepted as revised** — projected availability through the leave dates
+> replaces the conservative proposal. Changed: §5.6 rules 3, 4 and new rule 8, C-04, C-14, C-20, C-21, new C-26,
+> §9.6, §10.3, §15 (D-P3-42 superseded; new D-P3-52..54), tests T-59, T-60a. No other decision is accepted.
+>
 > **Consolidation note.** An earlier draft of this spec was opened as #115 from a separate local session. This
 > version supersedes it and folds in its distinct findings: leave-year attribution (D-P3-45, a conflict with the
 > D-P3-25 proposal), per-employee work patterns (D-P3-46), the "verified link" decision (D-P3-47), restrictive
@@ -249,7 +254,7 @@ State on 2026-11-17: **every row is unmet** (P3-C does not exist).
 |---|---|---|---|
 | C-01 | D-P3-20, amended to per-leave-year buckets (§5.6), accepted: target bucket locked `FOR UPDATE`, negative limit under the lock, deduct on approval | Decision record in `people-leave-p3.md` §3 | Unmet (proposed) |
 | C-02 | D-P3-21 (on-demand idempotent accrual, no cron) accepted | same | Unmet |
-| C-04 | D-P3-45 (leave-year attribution) decided, and P3-C's balance model can answer "available for leave year Y" | Decision record; ledger schema has a leave-year (or dated-entry) dimension | Unmet (conflicts with the D-P3-25 proposal as written) |
+| C-04 | D-P3-45 and D-P3-50 (as revised) reflected in P3-C's spec: year buckets, carry-over without trapping, date-ordered projection (§5.6) | P3-C spec and audit | **Decisions accepted 2026-11-17 (owner decision record on #116); P3-C spec unmet** |
 | C-03 | D-P3-25 (revision `effective_from`, entries record `policy_version`, never recalculated) accepted and built | `effective_from` column on `people_leave_policy_revisions` on `main` and in production | Unmet (column absent) |
 
 ### 5.2 Schema and guarantees
@@ -260,18 +265,19 @@ State on 2026-11-17: **every row is unmet** (P3-C does not exist).
 | C-11 | Ledger entries append-only: no UPDATE or DELETE grant to `bos_app`, guard trigger refuses changes | grants inventory test | Unmet |
 | C-12 | Entry kinds include `DEDUCTION` and `REVERSAL`; a reversal references the entry it reverses, at most one reversal per entry (unique) | schema + direct SQL test | Unmet |
 | C-13 | Source reference on entries: `(source_kind, source_id)` with a unique index on `(business_id, source_kind, source_id, kind)` so a request can be deducted at most once and reversed at most once (ledger-level idempotency) | schema + race test | Unmet |
-| C-14 | Entries store `amount numeric(9,4)`, `unit`, `policy_id`, `policy_version`, `effective_date` (business date) and the `leave_year_start` they are charged to (D-P3-45) | contract test | Unmet |
+| C-14 | Entries store `amount numeric(9,4)`, `unit`, `policy_id`, `policy_version`, `effective_date` (business date, posting), `applies_on` (first leave date, for deductions and their reversals) and the `leave_year_start` they are charged to (D-P3-45) | contract test | Unmet |
 | C-15 | Composite FK from entry to `people_leave_policies (business_id, id)` and to employee | schema test | Unmet |
 
 ### 5.3 Server interface P3-B calls (People-internal, not HTTP)
 
 | # | Function (proposal; P3-C may rename, the semantics are the requirement) | Requirement | State |
 |---|---|---|---|
-| C-20 | `lockBucket(db, employeeId, leaveTypeId, leaveYearStart)` | Opens any missing buckets from the current leave year up to the target year and locks them `FOR UPDATE` **in ascending year order** (race-safe `INSERT … ON CONFLICT DO NOTHING` then `SELECT … FOR UPDATE`), runs "accrue up to date" for the current year inside the lock, and returns for the **target year only**: `{ leaveYearStart, isFutureYear, posted, available, accruedThrough, projectedOpening }` (§5.6). It never returns a single cross-year figure | Unmet |
-| C-21 | `postDeduction(db, bucket, { amount, effectiveDate, policyId, policyVersion, source: { kind: 'LEAVE_REQUEST', id } })` | Posts into the locked target-year bucket; checks `bucket.available − amount ≥ −negativeBalanceLimit` using the rules in force on `effectiveDate` (D-P3-45, D-P3-50); throws a typed `insufficient_balance` error with no partial write; returns the entry id | Unmet |
+| C-20 | `lockBucket(db, employeeId, leaveTypeId, leaveYearStart)` | Opens any missing buckets from the current leave year up to the target year and locks them `FOR UPDATE` **in ascending year order** (race-safe `INSERT … ON CONFLICT DO NOTHING` then `SELECT … FOR UPDATE`), runs "accrue up to date" for the current year inside the lock, and returns the locked buckets' real figures `{ leaveYearStart, posted, accruedThrough }` per year (§5.6). It never returns a single cross-year "available" figure; availability comes only from C-26 | Unmet |
+| C-21 | `postDeduction(db, bucket, { amount, effectiveDate, policyId, policyVersion, source: { kind: 'LEAVE_REQUEST', id } })` | Posts into the locked target-year bucket with `applies_on`; refuses unless `project(...)` under the same lock (C-26) shows the request fits (D-P3-45, D-P3-50); throws a typed `insufficient_balance` error with no partial write; returns the entry id | Unmet |
 | C-22 | `postReversal(db, { entryId, effectiveDate, source })` | Locks the bucket the deduction was charged to (and, if that year is closed, the following open buckets in ascending order), posts the exact opposite amount **into the original bucket**, references `entryId`, never touches the original; a closed year's carry-over correction follows §5.6 rule 6; idempotent by C-12/C-13; respects `maxBalance` as P3-C defines (decision for P3-C: a reversal is never refused for exceeding `maxBalance`, recommended) | Unmet |
 | C-23 | `bucketSummary(db, employeeId, leaveTypeId, leaveYearStart)` | Read-only, same figures as C-20 without locks, plus a `pending` figure P3-B supplies (sum of pending requested amounts charged to that year) | Unmet |
 | C-24 | Lock discipline | Buckets of one employee and type are always locked in ascending `leave_year_start`; P3-C takes **no People row lock after** a bucket (it may read policies and revisions without locks). Documented and tested, so P3-B's order (§10.2) cannot cycle | Unmet |
+| C-26 | `project(db, employeeId, leaveTypeId, { horizon, extraBookings })` | §5.6 rule 8: date-ordered simulation with forecast accrual, carry-over, grants, caps and bookings; pure given its inputs; read-only; callable with or without the lock (advisory without, authoritative with) | Unmet |
 | C-25 | Entitlement `NONE` | Policies with no balance post nothing; `lockBucket` is not called (P3-B skips the ledger) | Unmet (P3-B side defined) |
 
 ### 5.4 Tests P3-C must have passed (from `people-leave-p3.md` §4.7)
@@ -284,7 +290,7 @@ State on 2026-11-17: **every row is unmet** (P3-C does not exist).
 | C-33 | Mid-period and mid-year rule changes; assignment changes mid-period | Unmet |
 | C-34 | Isolation suite and PgBouncer re-run cover every ledger table | Unmet |
 
-### 5.6 Year-aware balance contract (requirement on P3-C; D-P3-45, D-P3-50)
+### 5.6 Year-aware balance and projection contract (requirement on P3-C; D-P3-45 and D-P3-50 accepted as revised)
 
 The audit found that "one balance row per employee and type" (the D-P3-20 proposal) cannot answer "how much is
 available for leave in next leave year". P3-B therefore requires P3-C to keep balances **per leave year**. This is a
@@ -298,20 +304,17 @@ requirement on P3-C's design, to be confirmed in P3-C's own spec and audit; P3-B
    previous bucket (`NONE` 0, `UNLIMITED` all, `CAPPED` min(cap, available)), posted as `CARRY_OUT` in the old bucket
    and `CARRY_IN` in the new one in one transaction, old bucket locked first. Expiry of unused balance is not in P3-A's
    vocabulary, so none.
-3. **Future-year availability is conservative and deterministic (D-P3-50).** Before a year starts, its bucket's
-   `available` = the grant for that year computed with **today's** rules (`projectedOpening`), **no projected
-   carry-over and no projected accrual**, minus deductions already charged to it. ACCRUAL policies therefore have
-   0 available in a future year except the negative limit. When the year actually opens, the real grant and carry-over
-   are posted; if the real grant differs from the projection, P3-C posts the difference as an `ADJUSTMENT` entry; it
-   never recalculates or removes existing deductions. A bucket may thereby end below the negative limit after a rule
-   change; that is reported to leave managers, not auto-corrected. **Invariant:** `projectedOpening` is a computed
-   planning value, never a ledger entry; once the year opens, `available` is the sum of real entries only, so the
-   projection can never be counted twice. P3-C must prove this across re-opening, rule revisions, year close and
-   reversed deductions with deterministic multi-year tests.
-4. **Lock scope.** A deduction or reversal locks only the buckets it needs, in ascending year order (C-20, C-24): for
-   a current-year deduction, the current bucket; for a future-year deduction, the current bucket (to open the next
-   one and fix its carry-over base) and then the target bucket. Two approvals charged to the same year serialise on
-   that bucket; approvals charged to different years of the same employee and type serialise on the current bucket.
+3. **Future buckets hold bookings, not entitlement (D-P3-45 as accepted).** A deduction for leave in a future leave
+   year is posted into that year's bucket when approved, so the bucket can sit below zero until the year opens and
+   its real grant and `CARRY_IN` are posted (rule 2). Leave-year attribution is an **accounting dimension only**: it
+   never expires or traps earned entitlement. Earned, unused leave flows forward through `CARRY_OUT`/`CARRY_IN` under
+   the policy's carry-over rule, computed from the previous bucket's real closing balance when the year opens. Nothing
+   in a bucket is a forecast; forecasts live only in the projection (rule 8), so a projected amount can never be
+   counted twice when the real entries arrive.
+4. **Lock scope.** Every deduction, reversal, adjustment, accrual and year opening for an employee and type locks the
+   **current-year bucket first**, then any later buckets it touches in ascending year order (C-20, C-24). All changes
+   to one employee's bookings and entitlement of one type therefore serialise on one row, which is what makes the
+   projection (rule 8) stable inside the lock.
 5. **Accrual** (D-P3-21) posts only into the current bucket and closes periods per D-P3-25 rule 4; reaching a new
    leave year opens the next bucket under rule 2.
 6. **Reversal attribution.** A reversal is always posted into the bucket of the deduction it reverses. If that year is
@@ -321,8 +324,35 @@ requirement on P3-C's design, to be confirmed in P3-C's own spec and audit; P3-B
    one closed year, and leap-day anniversary starts (§9.2a), need definitive invariants in P3-C's spec before it is
    implemented.
 7. **Compatibility.** D-P3-20 becomes "the target bucket row is locked `FOR UPDATE`"; D-P3-21 unchanged; D-P3-25
-   rule 6 becomes "deduct with the rules in force on the approval date, **into the bucket of the leave dates**".
+   rule 6 becomes "deduct with the rules in force on the approval date, **into the bucket of the leave dates**, after the projection (rule 8) shows it fits"; D-P3-42 is superseded.
    Concurrency tests must span years (T-41a).
+8. **Projected availability (D-P3-50 accepted as revised).** For a request of type T with dates `[s, e]` charged to
+   leave year Y, P3-C provides `project(employee, T, horizon, bookings)`, a **date-ordered simulation** from today to
+   the horizon (the later of `e` and the last approved booking of T, bounded by D-P3-53):
+   - **Start:** real posted balance of the current bucket (after accrue-up-to-date), **excluding** deductions whose
+     `applies_on` is after today (they re-enter as events on their own dates).
+   - **Events, in date order** (ties: credits before debits on the same date, then by booking id):
+     forecast accrual credits at each future period end (rules in force today, the work pattern in force today,
+     `maxBalance` cap applied at each credit); at each leave-year boundary, carry-over with the policy cap, then the
+     grant for the new year (rules in force today); each booking as a debit on its first leave date, with its
+     chargeable amount; expiry only if a later accepted policy rule introduces it (P3-A has none).
+   - **Bookings included:** at **submission**, approved bookings (from the ledger) plus every other `PENDING` request
+     of that type as a provisional reservation, plus the new request. At **approval**, approved bookings plus this
+     request; other pending requests are reported in the response (their own approval re-checks them), never
+     blocking this one (D-P3-52).
+   - **Result:** the projected balance after each event and the minimum over the horizon. A request **fits** when the
+     projected balance never falls below `−negativeBalanceLimit` at any event from its first date to the horizon
+     (so it can never starve leave that is already approved later in time).
+   - **Determinism:** inputs are today's rules, today's pattern, the posted ledger and the booking set; revisions are
+     never future-dated (D-P3-9), so the same inputs always give the same projection. Rule changes and actual
+     accruals later replace forecasts with real entries; approved deductions are never revisited.
+   - **Not posted:** the projection writes nothing. Only an approval posts a deduction (`applies_on` = first leave
+     date, into the bucket of Y); only a cancellation posts a reversal.
+   - **Submission vs approval are distinct (D-P3-54):** a projected shortfall at submission is a warning shown to
+     the employee and the approver, and the request can still be submitted for manager review; approval refuses
+     (`409 insufficient_balance`, with the projection) unless it fits. Auto-approved policies (`requiresApproval =
+     false`) refuse at submission when it does not fit, because submitting is approving. No approver can override
+     a shortfall in P3-B; a leave manager corrects entitlement with a P3-C adjustment instead.
 
 ### 5.5 Release state
 
@@ -711,15 +741,19 @@ assignments cover parts of it (a policy change inside the range) the request is 
 ### 9.6 Balance check
 
 - Entitlement `NONE`: no balance, no ledger (the request is a record of absence only).
-- Otherwise at **submission**: advisory check without locks — `available − pendingOfThisType − amount ≥
-  −negativeBalanceLimit` → else `409 insufficient_balance` with the figures. At **approval**: authoritative check
-  inside the ledger lock (§10), against the balance of the **leave year the leave falls in** (D-P3-45): for the
-  current leave year, the balance after accruing up to today; for the next leave year, the opening balance P3-C
-  defines for it (carry-over plus any known grant) minus deductions already charged to it. Future *accruals*
-  inside a year are **not** projected (D-P3-42).
+- Otherwise every check is the **projection** of §5.6 rule 8 (D-P3-50 as revised):
+  - **estimate / submission:** without locks, with approved bookings and all pending requests of the type as
+    provisional reservations. A shortfall is a **warning** (`projectedShortfall` with the date and amount), and the
+    request may still be submitted for manager review, except under auto-approval, where it is refused
+    (`409 insufficient_balance`) (D-P3-54);
+  - **approval:** inside the bucket lock (§10), with approved bookings plus this request; refused unless it fits over
+    the whole horizon. Other pending requests are listed as "would no longer fit" information for the approver.
+- The response always shows the figures by date (balance before, on the leave dates and at the horizon), never a
+  bare "available" number that hides forecast accrual.
 - **Leave-year boundary:** a request whose dates fall in two leave years of its policy is refused
-  (`400 crosses_leave_year`); the person splits it. Leave years follow the policy (`CALENDAR`, `ANNIVERSARY`,
-  `CUSTOM`).
+  (`400 crosses_leave_year`); the person splits it (D-P3-45). Leave years follow the policy (`CALENDAR`,
+  `ANNIVERSARY`, `CUSTOM`). **Horizon:** a request may start no later than the end of the next leave year
+  (D-P3-53), so forecasts never run more than about two years ahead.
 - A calendar change (work week, holidays) after approval never recalculates an approved request; correcting it
   means cancelling and resubmitting.
 
@@ -768,8 +802,10 @@ POST /leave-requests/:id/approve { version, expectedAmount, note?, selfApproval?
  7  rules := policy at highest version with effective_from ≤ today (D-P3-25); recheck backdating, waiting period
  8  amount := calculate(...) ; amount ≠ expectedAmount → 409 amount_changed {amount}
  9  if entitlement ≠ NONE:
-       bucket := lockBucket(employee, type, leaveYearStart)     -- FOR UPDATE ascending years, accrues current year
-       entry := postDeduction(bucket, amount, today, policy, version, source=request)   -- 409 insufficient_balance
+       buckets := lockBucket(employee, type, leaveYearStart)    -- current year first, then later years, ascending; accrues
+       proj := project(employee, type, horizon, approved + this) -- §5.6 rule 8, stable under the lock
+       if not proj.fits → 409 insufficient_balance {projection}
+       entry := postDeduction(buckets, amount, today, appliesOn=start_date, policy, version, source=request)
 10  UPDATE request SET status=APPROVED, approved_amount, deduction_entry_id, pending_actor_basis=:basis, decided_at, version+1
        WHERE id AND version = :version                          -- guard triggers check matrix, ledger presence
     → trigger: transition row (seq+1, basis, amount, policy_version, ledger_entry_id)
@@ -1043,13 +1079,16 @@ delegated approval policy.
 | D-P3-39 | Stage split with P3-D | P3-D builds all leave UI / **B4 builds request and approval UI; P3-D narrows to balances and policy configuration screens** | **Split**: P3-B ships end to end; P3-D stays focused |
 | D-P3-40 | D-P3-1 reading for B1 | nothing before P3-C / **B1 (calendar + duration engine, no ledger) may run in parallel with P3-C; B2–B4 after P3-C is applied** | **Parallel B1**: no ledger dependency, saves a cycle |
 | D-P3-41 | Termination with open requests | auto-cancel / **leave as is; no submit or approval while terminated; admin decides** | **Leave as is**: no automatic financial effect, no job |
-| D-P3-42 | Future accruals at approval | project future balance / **current balance on approval date only** | **Current**: follows D-P3-25 rule 6; projection is a later feature |
+| D-P3-42 | Future accruals at approval | ~~current balance only~~ | **Superseded** by D-P3-50 as accepted (projection through the leave dates) |
 | D-P3-43 | Changing a type's `sensitive` flag | follows the type / **sticky: request snapshot OR current flag** | **Sticky**: never re-exposes history |
-| D-P3-45 | **Leave-year attribution (P3-C input; decide before P3-C is built)** | deduct from the balance on the approval date (D-P3-25 rule 6 as proposed) / **charge each deduction to the leave year of the leave dates; refuse requests crossing a leave-year boundary** | **Leave year of the dates.** Under the proposal, leave booked now for next leave year is charged against this year's balance, which is wrong for GRANT policies without carry-over and for any reset. **Conflicts with the D-P3-25 proposal as written** (still only a proposal) |
+| D-P3-45 | **Leave-year attribution — ACCEPTED (owner decision record on #116, 2026-11-17)**: accounting dimension only; earned unused leave carries over per policy and is never trapped | deduct from the balance on the approval date (D-P3-25 rule 6 as proposed) / **charge each deduction to the leave year of the leave dates; split requests crossing a leave-year boundary** | **Leave year of the dates.** Under the proposal, leave booked now for next leave year is charged against this year's balance, which is wrong for GRANT policies without carry-over and for any reset. **Conflicts with the D-P3-25 proposal as written** (still only a proposal) |
 | D-P3-46 | Per-employee work pattern | later (D-P3-17) / **effective-dated per-employee pattern in B1** | **In B1**: otherwise part-timers are over-charged and every fix is a ledger adjustment. Amends D-P3-17's "later" |
 | D-P3-47 | What "verified" user link means | require user confirmation (new People change) / **accept the admin-asserted, audited link; show the linked employee to the user** | **Accept for P3-B**; confirmation can follow if pilots need it |
 | D-P3-48 | Restrictive RLS on notes | service check only / transaction-flag RLS / **service check plus restrictive RLS derived from the session user and the data** | **Data-derived RLS** (revised after audit): a writable flag proves nothing; the session user is the existing trust anchor |
-| D-P3-50 | Future-year availability (with D-P3-45) | project carry-over and accrual / **conservative: next year's grant under today's rules only, no carry-over or accrual projection; real opening posts an adjustment** | **Conservative**: deterministic, can only under-promise; P3-C input |
+| D-P3-50 | Future availability | **ACCEPTED AS REVISED (owner decision record on #116, 2026-11-17):** projected entitlement on the leave dates: earned balance and carry-over, forecast accrual through the dates, grants, caps and year boundaries, approved and pending bookings in date order, negative-balance allowance; submission distinct from approval; re-evaluated under the lock at decision time. The earlier conservative proposal is **withdrawn** | §5.6 rule 8 |
+| D-P3-52 | Pending requests at approval | block on all pending / **pending reserve at submission; at approval only approved bookings + this request count, other pending ones are re-checked at their own approval and listed as affected** | **As stated**: first decided, first served; no deadlock between two pending requests that each fit alone |
+| D-P3-53 | Projection horizon | unlimited / **start date no later than the end of the next leave year** | **Bounded**: forecasts beyond about two years are unreliable and costly |
+| D-P3-54 | Shortfall at submission | refuse / **warn and allow submission for manager review; refuse only under auto-approval; no approver override of a shortfall in P3-B** | **Warn**: matches the owner record ("submit with a clear warning"); a leave manager fixes entitlement by adjustment, not by override |
 | D-P3-51 | How the database proves who made a transition | service-written actor (v1.0) / **session user + basis re-derived in SQL by the trigger** / privileged session-token function | **Session user + SQL re-derivation**: no privileged SQL; same trust boundary as tenant isolation; the privileged option stays available if Regan wants it |
 | D-P3-49 | Team leave audience | approvers only / **`people:read` holders (sensitive as "Away") plus approvers for their reports; MEMBER own only** | **As stated** (§12.3): the brief asks for filtered team visibility without fixing the audience |
 | D-P3-44 | Release switch | ship enabled / **routes off (`available`) until B4 and Regan's explicit switch-on** | **Off**: enabling a feature in production escalates to Regan anyway (protocol "Merges are deployments") |
@@ -1111,7 +1150,7 @@ plus a unit-level custom principal where noted.
 | T-35 | Waiting period from employee `start_date`; no `start_date` → `outside_employment` | U, I | B2 |
 | T-36 | Policy applicability: no assignment, assignment change inside range, policy changed while pending → recompute and `amount_changed` | I | B2–B3 |
 | T-37 | Client and server engines agree on a generated corpus (property test, same module) | U | B1 |
-| T-39 | Leave-year boundary: request crossing CALENDAR, ANNIVERSARY and CUSTOM year starts refused; next-year request checked against the conservative projected opening (§5.6 rule 3); per-employee pattern change mid-request counted per date; part-timer with a holiday on a non-work day; leap day inside a request and an ANNIVERSARY start on 29 February | U, I | B1–B3 |
+| T-39 | Leave-year boundary: request crossing CALENDAR, ANNIVERSARY and CUSTOM year starts refused; next-year request checked by the projection (§5.6 rule 8); per-employee pattern change mid-request counted per date; part-timer with a holiday on a non-work day; leap day inside a request and an ANNIVERSARY start on 29 February | U, I | B1–B3 |
 | T-38 | Calendar changes after approval do not alter approved amounts | I | B3 |
 | T-40 | Approve deducts once; entry has policy id/version, amount, effective date; balance after correct | I | B3 |
 | T-41 | Two approvals of different requests against one balance (C, both orders): second `insufficient_balance`, one entry | C, P | B3 |
@@ -1126,6 +1165,8 @@ plus a unit-level custom principal where noted.
 | T-49a | Auto-approval with insufficient target-year funds (current year and next year) → `insufficient_balance`, nothing written | I | B3 |
 | T-49b | Two concurrent auto-approved submissions (different dates) on one bucket: second sees the first's deduction; both orders | C, P | B3 |
 | T-41a | Cross-year concurrency: approvals charged to the current and next year of one employee and type, both orders; year opening (carry-over) racing a next-year deduction; reversal into a closed year with carry-over correction | C | B3 (needs P3-C) |
+| T-59 | Projection (§5.6 rule 8), unit on a fixed calendar: monthly/weekly/fortnightly accrual forecast through the dates; `maxBalance` cap mid-horizon; carry-over NONE/UNLIMITED/CAPPED at the boundary; grant at a new year; an approved later booking starved by an earlier request → refused; pending reservations at submission vs approval (D-P3-52); same-date tie order; horizon limit (D-P3-53); same inputs → same output | U | B1 (pure engine) / P3-C |
+| T-60a | Submission with projected shortfall → accepted with warning; approval of it → `insufficient_balance` with projection; auto-approval with shortfall → refused at submit; real accrual and year opening later never double-count forecasts | I | B2–B3 |
 | T-28 | Notes RLS by direct SQL as `bos_app` with `app.user_id` set to each viewer class (author, submitter, linked user, line manager, leave manager, unrelated MEMBER, MANAGER without reports): only allowed classes see rows | S | B2 |
 | T-29 | Linked-self visibility and approver changes under concurrency: link moved to another user while a request is open; manager reassigned during a decision (both commit orders); approver suspended mid-inbox | C, I | B2–B3 |
 | T-57 | Forged direct SQL as `bos_app`: status change with a false basis, with no `app.user_id`, by the requester; extra day rows in a later transaction; release on a live request; each refused | S | B2 |
@@ -1224,7 +1265,7 @@ needs Regan's explicit approval; it is never needed to roll back.
 | Mislinked user sees another employee's leave | Low | linking is `people:manage`, audited; self view shows the linked employee's name prominently |
 | Sole-owner rule abused by a second owner hiding admins | Low | condition 2 counts all active `leave_manage` holders; audit flag; Regan can disable (D-P3-28) |
 | Approver race with a reporting-line change | Low | re-check after the request lock; accepted window documented |
-| Balance can't cover future-dated leave that would accrue | Medium (product) | D-P3-42 explicit; negative limit is the business's lever |
+| Projection differs from what is later earned (rule change, termination, pattern change) | Medium (product) | approvals are never revisited; shortfall shows as a negative bucket to leave managers; adjustments correct it (D-P3-50) |
 | Large month grid performance | Low | ≤ 62 days, paged by employee, indexed by `(business_id, status, start_date)` |
 | Production state unverified in this PR | — | fresh read-only check before any B-package migration (protocol step 1) |
 
