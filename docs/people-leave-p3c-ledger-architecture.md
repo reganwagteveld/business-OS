@@ -8,12 +8,16 @@
 > Statements marked **verified** cite a file on `06405a5` (or on `ed88385` for P3-B). Statements marked
 > **(proposal)**, **(recommendation)** or **(assumption)** are not facts about the code.
 >
+> **Version 1.1 (2026-11-17)** after ChatGPT's dependency triage on #116: adds the audit handoff (decision status
+> split, dependency table on the accepted P3-B contract, options records for the open choices). No design change.
+>
 > **Owner decisions accepted in the brief (binding here): D-P3C-01 to D-P3C-06** (§B). They change two things P3-B
 > v1.5 assumes: the ledger quantity becomes **hours** (D-P3C-01), and approval **reserves** instead of deducting
 > (D-P3C-02). §B.3 lists every resulting amendment to P3-B; P3-B must be amended before its B2/B3 packages start.
 
 ## Contents
 
+- [Audit handoff (v1.1)](#audit-handoff-v11)
 - [A. Repository evidence and implementation inventory](#a-repository-evidence-and-implementation-inventory)
 - [B. Decision register](#b-decision-register)
 - [C. Domain model and proposed Prisma schema](#c-domain-model-and-proposed-prisma-schema)
@@ -59,6 +63,116 @@ no routes) depends on nothing unbuilt. It may start only after the ChatGPT archi
 Regan's implementation authorisation, acceptance of the decisions that shape C1's schema (D-P3-25 rule 1 and
 D-P3C-09, -10, -27, -29 in §M.2), and a fresh migration-order check at build time. P3-C2 onward are **BLOCKED** on the hours source (B1 work patterns), the
 D-P3C-03 interpretation and the P3-B amendment.
+
+---
+
+## Audit handoff (v1.1)
+
+Added after ChatGPT's "P3-C dependency triage" comment on #116 (2026-11-17 12:53 UTC). There is no PR, by Regan's
+instruction in this thread (brief v1.1: "Do not create or merge pull requests"). The reviewable repository document
+is this file on branch `claude/project-thread-3feuws`; its exact commit is given in the thread reply that hands it
+over (v1.0 was `90e1284`). Base `main` `06405a5`. Nothing here authorises implementation, migrations, imports,
+back-fills, schedulers, permissions or production actions.
+
+### H-1. Status of every decision this spec relies on
+
+| Group | Items | Status | Audit may |
+|---|---|---|---|
+| **Accepted owner decisions (settled, not reopened)** | D-P3C-01..06; D-P3-1..11; D-P3-45; D-P3-50 (revised); D-P3-52; D-P3-53; D-P3-54 | ACCEPTED | check that the design implements them |
+| **C1 schema choices (technical)** | D-P3C-09 account lock anchor; D-P3C-10 no stored totals; D-P3C-27 `effective_from` back-fill; D-P3C-29 `numeric(12,4)` and cumulative rounding | PROPOSED, technical | accept or change under the delegation policy |
+| **C1 schema choice (owner)** | D-P3-25 rule 1 (revisions get `effective_from`) and rules 2–5, 7 | PROPOSED since P3-A; owner | recommend; Regan (or a ChatGPT owner decision record) decides |
+| **Other technical choices** | D-P3C-08, -21, -26, -30, -31 | PROPOSED, technical | accept or change |
+| **Owner choices, consequential** | D-P3C-07 (meaning of D-P3C-03's override), D-P3C-23 (days-to-hours), D-P3C-17 (termination), D-P3C-18 and -19 (second approver, self-correction) | OPEN, options in H-3 | recommend; Regan decides |
+| **Owner choices, other** | D-P3C-11, -12, -13, -14, -15, -16, -20, -22, -24, -25, -28 | OPEN (§M.2) | recommend; Regan decides |
+
+### H-2. Dependencies on the accepted P3-B contract (#116 at `ed88385`)
+
+"Unchanged" means P3-C implements the P3-B text as written. "Restated" means same invariant, P3-C names. "Amended"
+means the accepted owner decisions D-P3C-01 or D-P3C-02 force a change to P3-B text; none reopens a P3-B decision.
+
+| # | P3-B reference | What P3-C relies on | P3-C treatment | Cause |
+|---|---|---|---|---|
+| P-01 | §5.6 r.1, §9.6, D-P3-45 | Leave-year buckets; a request never crosses a leave-year boundary; charged to the year of its dates | Unchanged (§C.4, §D.1) | — |
+| P-02 | §5.6 r.2 | Year opening: grant and carry with rules in force at the boundary; old bucket locked first | Unchanged; lapse now posted as `EXPIRY`; negative closing is D-P3C-11 (open) | — |
+| P-03 | §5.6 r.3 | Future buckets hold bookings only; nothing in a bucket is a forecast | Restated: `FUTURE` buckets hold `RESERVED`-book entries only (§E.3, I-5) | D-P3C-02 |
+| P-04 | §5.6 r.4, C-24 | All changes to one employee and type serialise; buckets ascending; no People lock after the ledger | Restated and strengthened: account row first, then buckets ascending (§I.4) | D-P3C-09 (T) |
+| P-05 | §5.6 r.5 | Accrual into the current bucket only | Unchanged (§G.4) | — |
+| P-06 | §5.6 r.6, C-22 | Reversal into the original bucket, carry correction forward | Unchanged; multi-year rule completed (§G.7) | D-P3C-31 (T) |
+| P-07 | §5.6 r.8a, T-59a | **Replay invariant**: each quantity from one source by date; every approved booking counted once | Restated for reservations: start value = realised `BALANCE` (consumed dates ≤ today); events = unsettled reservation dates after today (§F.5, I-2, V-10). Invariant unchanged | D-P3C-02 |
+| P-08 | §5.6 r.8b, D-P3-53 | Booking window (current or next leave year, new requests only); horizon never cut | Unchanged | — |
+| P-09 | §5.6 r.8c | Accrual basis separate from leave duration; forecast with today's rules and basis | Unchanged; both expressed in hours (§G.3) | D-P3C-01 |
+| P-10 | §5.6 r.8d, D-P3-52, D-P3-54 | Decision order; pending reserve provisionally at submission only; warn at submission, refuse at approval and auto-approval | Unchanged; "debit at approval" becomes "reserve at approval" | D-P3C-02 |
+| P-11 | C-20 `lockBucket` | Lock, open missing buckets, accrue up to date | Restated as `withAccount` (§H.1) | D-P3C-09 |
+| P-12 | C-21 `postDeduction` | Post into the target-year bucket after the projection fits | **Amended** to `reserve` (per-date `RESERVATION`, no `BALANCE` debit until the date) | D-P3C-02 |
+| P-13 | C-22 `postReversal` | Undo an approval | **Amended** to `release` (future dates) and `reverseConsumption` (taken dates, when recorded as not taken) | D-P3C-02 |
+| P-14 | C-23 `bucketSummary` | Read-only figures plus P3-B's pending figure | Restated as `balances()` with `Pd` from P3-B (X-05) | — |
+| P-15 | C-25 | Entitlement `NONE`: no ledger, no projection | Unchanged | — |
+| P-16 | C-26 `project` | Date-ordered simulation, pure, advisory outside the lock, authoritative inside | Unchanged contract; inputs restated (P-07) | D-P3C-02 |
+| P-17 | C-12, C-13 | One deduction and one reversal per request (source uniqueness) | Restated per date: one reservation per request and date; one release and one consumption per reservation date (§D.3) | D-P3C-02 |
+| P-18 | C-14 | Entry fields: amount, unit, policy, version, `effective_date`, `applies_on`, leave year | **Amended**: hours only (no unit per entry), `applies_on` + `leave_date` + `recorded_at` (§C.6) | D-P3C-01, -02 |
+| P-19 | §6.3 | `requested_amount`, `approved_amount` in policy units; `deduction_entry_id`, `reversal_entry_id` | **Amended**: hours (+ display days); `reservation_transaction_id`, release/reversal transaction ids (R-02, R-03) | D-P3C-01, -02 |
+| P-20 | §10.2 | Global lock order | **Amended**: insert the account row between occupancy rows and buckets (X-04) | D-P3C-09 |
+| P-21 | §10.3 step 9, cancel path | Approval and cancellation sequences | **Amended**: `reserve` / `release` / `reverseConsumption` | D-P3C-02 |
+| P-22 | §6.8, D-P3-51 | Actor from the session user; basis re-derived in SQL | Reused for ledger actors and correction authority (§I.2) | — |
+| P-23 | §8.2, D-P3-27 | Eligible line manager resolved on business today | Reused for manager balance visibility (§I.3) | D-P3C-06 |
+| P-24 | §6.1a, §9.2, §9.2a | Work patterns, duration engine per date | Required for hours (X-01, X-02); must add ordinary weekly hours | D-P3C-01 |
+| P-25 | §7.2 | Whole-request cancellation only | Unchanged; partial cancellation is D-P3C-14 (open) | — |
+
+P3-B amendment needed before its B2/B3 packages: P-12, P-13, P-18, P-19, P-20, P-21 and the X-02 column on work
+patterns. Until then the two specs disagree on approval semantics and this spec follows the accepted D-P3C-02.
+
+### H-3. Options records for the consequential open choices
+
+**D-P3C-07: meaning of D-P3C-03's "explicit audited policy override".** D-P3C-03 itself (deny by default, allow
+only by explicit audited override) is accepted and not reopened; only which mechanism counts as "the override" is
+open.
+
+| Option | Mechanism | Schema impact | Audit trail | Fits D-P3-54? |
+|---|---|---|---|---|
+| **A (recommended)** | The policy's `negative_balance_limit` (P3-A, default 0). Setting it above 0 is the override; employees on that policy may go to −L | None (exists, E-02) | P3-A revision (full rules, actor, time) + `people.leave_policy.updated` audit | Yes |
+| B | A, plus a per-employee, time-limited negative allowance granted by OWNER/ADMIN with a reason | New table `people_leave_negative_allowances` (C3 or later) | Own audit action; reason restricted | Yes (it is a grant, not an approver override) |
+| C | Per-request override at approval by an authorised person with a reason | Flag + reason on the reservation transaction | Per-decision audit | **No**: D-P3-54 says no approver override of a shortfall |
+
+**D-P3C-23: days-to-hours conversion for DAYS policies.**
+
+| Option | Rule | 20 days for 38 h / 5 days | 20 days for 22.8 h / 3 days | Consequence |
+|---|---|---|---|---|
+| **A (recommended)** | days × (ordinary weekly hours ÷ 5) | 152 h (4 weeks) | 91.2 h (4 of their weeks) | Pro rata by FTE; same weeks off for everyone |
+| B | days × average hours of the days actually worked | 152 h | 152 h (≈ 6.7 of their weeks) | Over-credits people who work fewer, longer days |
+| C | Configurable per policy (adapter parameter) | either | either | Needs a P3-A vocabulary field; defer |
+
+Either A or B is a product rule in the core adapter, not law. Needs ordinary weekly hours (X-02).
+
+**D-P3C-17: balance at termination (answers D-P3-8).**
+
+| Option | Ledger effect | Payroll | Consequence |
+|---|---|---|---|
+| **A (recommended)** | Accrue to the end date, release future reservations, freeze the bucket; balance kept | `PAYOUT` recorded only when payroll confirms, with its reference | No automatic financial effect; nothing lost |
+| B | Forfeit (post `EXPIRY` for the balance) | none | Loses entitlement silently; often unlawful for paid leave |
+| C | Compute a payout automatically | needs pay rules | Pay calculation is out of scope (D-P3-4) and an external effect |
+
+**D-P3C-18 and D-P3C-19: second approver and self-correction.** D-P3C-04 (who may correct; reason, audit and
+reversal linkage mandatory) is accepted and not reopened; the open part is whether a second person is also needed.
+
+| Option | Second approver | Schema impact | Consequence |
+|---|---|---|---|
+| A | Never | none | Simplest; relies on reason + audit |
+| **B (recommended)** | For opening-balance imports and payouts, when a second authorised person exists; corrections single-actor | Import batches already stage (C.10); `checked_by_user_id` on transactions | Guards the two bulk or money-adjacent actions without slowing routine fixes |
+| C | For every manual posting | C.11 proposals table | Strongest; blocks one-admin businesses unless a sole-authoriser exception |
+
+Self-correction (D-P3C-19, recommended): never on one's own account, except a sole authorised person in the
+business, flagged and audited (P3-B D-P3-28 pattern).
+
+**C1 schema choices (technical, for the audit):** D-P3C-09 (account row as the lock anchor vs current-year bucket
+first), D-P3C-10 (no stored totals vs trigger-maintained totals), D-P3C-27 (back-fill `effective_from` in the
+migration, rehearsed, vs null meaning "from creation"), D-P3C-29 (`numeric(12,4)` hours with an exact engine and
+cumulative half-even rounding vs P3-A's `numeric(9,4)`). Recommendations and reasons in §M.2.
+
+### H-4. Requested audit scope
+
+Independent security, tenant-isolation and concurrency review before any P3-C1 work: §C (schema, constraints,
+grants, RLS), §D.3 (idempotency), §F.4 (invariants), §I (authority, visibility, lock order, threat matrix), §J.2
+(back-fill under the revision guard) and the P3-B dependency table H-2.
 
 ---
 
