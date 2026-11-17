@@ -1,0 +1,40 @@
+// UI V2-B2 reference renders. Kept as .txt so no tool picks it up. To run: copy to render.cjs anywhere,
+// then `node render.cjs <repo root> <out dir>` with Playwright available. It injects sections 1 to 4 of
+// packages/ui/src/styles.css (fonts, palette, scale and semantic tokens) into reference.html, so the
+// renders use the real V2-B1 values and the bundled Inter, then captures each screen.
+const fs = require('fs');
+const path = require('path');
+const { chromium } = require('playwright');
+const [ROOT, OUT] = process.argv.slice(2);
+const css = fs.readFileSync(path.join(ROOT, 'packages/ui/src/styles.css'), 'utf8').split('\n');
+const start = css.findIndex((l) => l.startsWith('/* 1. Fonts'));
+const end = css.findIndex((l) => l.startsWith('/* 5. Compatibility aliases'));
+const fonts = 'file://' + path.join(ROOT, 'packages/ui/src/fonts/');
+const tokens = css.slice(start, end).join('\n').replaceAll("url('./fonts/", `url('${fonts}`);
+const html = fs.readFileSync(path.join(ROOT, 'docs/ui/v2-b2/reference/reference.html'), 'utf8').replace('/*TOKENS*/', tokens);
+const page = path.join(OUT, '_reference.built.html');
+fs.mkdirSync(OUT, { recursive: true });
+fs.writeFileSync(page, html);
+
+const SHOTS = [];
+for (const theme of ['light', 'dark']) for (const screen of ['dashboard', 'projects', 'finance']) SHOTS.push({ name: `b2-desktop-${theme}-${screen}`, q: { screen, theme }, w: 1440, h: 900 });
+for (const screen of ['dashboard', 'projects', 'finance']) SHOTS.push({ name: `b2-min-900-light-${screen}`, q: { screen, theme: 'light', w: 'compact' }, w: 900, h: 600 });
+SHOTS.push({ name: 'b2-min-900-dark-finance', q: { screen: 'finance', theme: 'dark', w: 'compact' }, w: 900, h: 600 });
+SHOTS.push({ name: 'b2-desktop-light-finance-focus', q: { screen: 'finance', theme: 'light', focus: '1' }, w: 1440, h: 900 });
+for (const theme of ['light', 'dark']) for (const d of ['dir-b', 'dir-c']) SHOTS.push({ name: `b2-${d}-${theme}-finance`, q: { screen: d, theme }, w: 1440, h: 900 });
+SHOTS.push({ name: 'b2-direction-a-light-finance', q: { screen: 'finance', theme: 'light' }, w: 1440, h: 900 });
+
+(async () => {
+  const b = await chromium.launch();
+  for (const s of SHOTS) {
+    const ctx = await b.newContext({ viewport: { width: s.w, height: s.h }, deviceScaleFactor: 2, colorScheme: s.q.theme, reducedMotion: 'reduce' });
+    const p = await ctx.newPage();
+    await p.goto('file://' + page + '?' + new URLSearchParams(s.q));
+    await p.evaluate(() => document.fonts.ready);
+    await p.screenshot({ path: path.join(OUT, s.name + '.png') });
+    console.log('ok', s.name);
+    await ctx.close();
+  }
+  await b.close();
+  fs.unlinkSync(page);
+})();

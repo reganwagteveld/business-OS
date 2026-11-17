@@ -1,0 +1,463 @@
+<!doctype html>
+<!--
+  UI V2-B2 reference screens. Concept only: static HTML, sample data, nothing here is built or shipped.
+  Tokens are NOT copied into this file. render.cjs injects packages/ui/src/styles.css sections 1 to 4
+  (fonts, palette, scale and semantic tokens, both themes) at the TOKENS marker, so every colour, size and
+  font below is the real V2-B1 value. Open through render.cjs, or paste the token sections in by hand.
+  Query: ?screen=dashboard|projects|finance|dir-b|dir-c &theme=light|dark &w=wide|compact &focus=1
+-->
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixa V2-B2 reference</title>
+<style id="tokens">/*TOKENS*/</style>
+<style>
+/* ---- Proposed V2-B2 component tokens (spec §6). No new colour tokens: the rail is a dark-scope island. */
+:root {
+  --bezel-gutter: 8px;
+  --inspector-w: 360px;
+  --marker-size: 6px;
+  --marker-radius: 1.5px;
+  --command-h: 48px;
+  /* The one new colour token: the frame around the sheet. Same value in both themes (= dark --bg-canvas). */
+  --bg-bezel: #0b0f1e;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: var(--font-family-sans); font-feature-settings: 'cv11'; font-size: var(--font-size-body); line-height: var(--line-height-body);
+  color: var(--fg-default); background: var(--bg-canvas); -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--fg-muted); }
+.subtle { color: var(--fg-subtle); }
+.cap { font-size: var(--font-size-caption); line-height: var(--line-height-caption); }
+.small { font-size: var(--font-size-small); line-height: var(--line-height-small); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* ---- Bezel: the rail and the frame are a dark-scope island in both themes (class="dark" on .bezel). */
+.app { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); height: 100vh; }
+.app.compact { grid-template-columns: var(--sidebar-w-compact) minmax(0, 1fr); }
+.bezel { background: var(--bg-canvas); color: var(--fg-default); }
+.rail { display: flex; flex-direction: column; gap: 4px; padding: 12px 10px; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px 12px; }
+.brand svg { width: 28px; height: 28px; flex: none; }
+.brand b { font-size: var(--font-size-small); letter-spacing: .02em; }
+.switcher { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: var(--radius-control); border: 1px solid var(--border-default); margin-bottom: 10px; }
+.mono { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: var(--accent-solid); color: var(--fg-on-accent); font-size: var(--font-size-caption); font-weight: 600; flex: none; }
+.switcher .t { min-width: 0; flex: 1; }
+.switcher .t div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--font-size-small); font-weight: 600; }
+.rail-label { font-size: var(--font-size-caption); color: var(--fg-subtle); padding: 10px 8px 4px; }
+.ri { position: relative; display: flex; align-items: center; gap: 12px; height: var(--control-h-md); padding: 0 8px; border-radius: var(--radius-control); color: var(--fg-muted); font-weight: 500; white-space: nowrap; }
+.ri svg { width: 20px; height: 20px; flex: none; }
+.ri[aria-current] { background: var(--bg-selected); color: var(--fg-default); }
+.ri[aria-current]::before { content: ''; position: absolute; left: -10px; top: 50%; width: 4px; height: 16px; margin-top: -8px; border-radius: 0 2px 2px 0; background: var(--fg-accent); }
+.kids { margin: 2px 0 6px 18px; padding-left: 12px; border-left: 1px solid var(--border-default); display: grid; gap: 1px; }
+.kid { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; color: var(--fg-muted); font-size: var(--font-size-small); }
+.kid[aria-current] { color: var(--fg-default); font-weight: 600; background: var(--bg-selected); }
+.rail .spacer { flex: 1; }
+.compact .ri { justify-content: center; padding: 0; }
+.compact .ri span, .compact .brand b, .compact .switcher .t, .compact .switcher svg, .compact .rail-label, .compact .kids { display: none; }
+.compact .switcher { justify-content: center; padding: 6px 0; }
+.compact .brand { justify-content: center; padding: 4px 0 12px; }
+
+/* ---- Sheet: the workspace canvas, inset into the bezel. */
+.sheet { margin: var(--bezel-gutter) var(--bezel-gutter) var(--bezel-gutter) 0; background: var(--bg-surface); border-radius: var(--radius-panel); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.topbar { flex: none; height: var(--command-h); display: flex; align-items: center; gap: 12px; padding: 0 16px 0 24px; border-bottom: 1px solid var(--border-default); }
+.crumbs { display: flex; gap: 6px; align-items: center; color: var(--fg-muted); font-size: var(--font-size-small); min-width: 0; }
+.crumbs b { color: var(--fg-default); font-weight: 600; }
+.crumbs i { font-style: normal; color: var(--fg-subtle); }
+.topbar .grow { flex: 1; }
+.jump { display: flex; align-items: center; gap: 8px; height: var(--control-h-md); width: 240px; padding: 0 6px 0 10px; border: 1px solid var(--border-default); border-radius: var(--radius-control); color: var(--fg-subtle); font-size: var(--font-size-small); background: var(--bg-sunken); }
+.jump svg { width: 16px; height: 16px; }
+.jump .grow { flex: 1; }
+kbd { font: 500 var(--font-size-caption)/1 var(--font-family-sans); padding: 3px 5px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--fg-muted); background: var(--bg-surface); }
+.avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 999px; background: var(--bg-sunken); border: 1px solid var(--border-default); font-size: var(--font-size-caption); font-weight: 600; color: var(--fg-muted); }
+.sectionbar { display: none; flex: none; height: 40px; align-items: stretch; gap: 4px; padding: 0 16px; border-bottom: 1px solid var(--border-default); font-size: var(--font-size-small); }
+.compact .sectionbar.has { display: flex; }
+.sectionbar span { display: flex; align-items: center; padding: 0 8px; color: var(--fg-muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+.sectionbar span[aria-current] { color: var(--fg-default); font-weight: 600; border-bottom-color: var(--fg-accent); }
+.body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+.body.with-insp { grid-template-columns: minmax(0, 1fr) var(--inspector-w); }
+.main { min-width: 0; overflow: auto; }
+
+/* ---- Command area: title row plus the screen's own commands. */
+.cmd { display: flex; align-items: center; gap: 12px; padding: 16px 24px 12px; }
+.cmd h1 { margin: 0; font-size: var(--font-size-title); line-height: var(--line-height-title); font-weight: 650; letter-spacing: -.01em; }
+.cmd .meta { color: var(--fg-muted); font-size: var(--font-size-small); }
+.cmd .grow { flex: 1; }
+.lede { padding: 0 24px 12px; margin-top: -8px; color: var(--fg-muted); font-size: var(--font-size-small); }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: var(--control-h-md); padding: 0 12px; border-radius: var(--radius-control); border: 1px solid var(--border-strong); background: var(--bg-surface); font-weight: 500; font-size: var(--font-size-small); white-space: nowrap; }
+.btn svg { width: 16px; height: 16px; }
+.btn.primary { background: var(--accent-solid); border-color: var(--accent-solid); color: var(--fg-on-accent); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--fg-accent); padding: 0 8px; }
+.btn.sm { height: var(--control-h-sm); padding: 0 10px; }
+.filters { display: flex; align-items: center; gap: 8px; padding: 0 24px 12px; flex-wrap: wrap; }
+.field { white-space: nowrap; display: flex; align-items: center; gap: 8px; height: var(--control-h-md); padding: 0 10px; border: 1px solid var(--border-input); border-radius: var(--radius-control); background: var(--bg-surface); color: var(--fg-subtle); font-size: var(--font-size-small); }
+.field svg { width: 16px; height: 16px; }
+.field.sel { color: var(--fg-default); }
+.field.sel::after { content: ''; width: 6px; height: 6px; margin-left: 6px; border-right: 1.5px solid var(--fg-muted); border-bottom: 1.5px solid var(--fg-muted); transform: rotate(45deg) translateY(-2px); }
+.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--radius-control); background: var(--bg-sunken); border: 1px solid var(--border-default); font-size: var(--font-size-small); }
+.seg span { padding: 4px 10px; border-radius: 6px; color: var(--fg-muted); white-space: nowrap; }
+.seg span[aria-checked] { background: var(--bg-surface); color: var(--fg-default); font-weight: 600; box-shadow: 0 0 0 1px var(--border-strong); }
+.seg span .num { color: var(--fg-subtle); margin-left: 4px; font-weight: 500; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: var(--radius-pill); border: 1px solid var(--border-strong); font-size: var(--font-size-small); color: var(--fg-muted); }
+.chip[aria-pressed] { border-color: var(--fg-accent); color: var(--fg-accent); background: var(--accent-subtle); font-weight: 500; }
+
+/* ---- Ruled section header: label, hairline, meta and commands on one line. */
+.rh { display: flex; align-items: center; gap: 12px; padding: 0 24px; height: 40px; }
+.rh h2 { margin: 0; font-size: var(--font-size-small); font-weight: 600; white-space: nowrap; }
+.rh .line { flex: 1; height: 1px; background: var(--border-default); }
+.rh .m { color: var(--fg-subtle); font-size: var(--font-size-caption); white-space: nowrap; }
+
+/* ---- Figure strip: figures on one ruled band, no cards. */
+.figs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 0 24px 8px; border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); }
+.fig { padding: 12px 16px 14px; border-left: 1px solid var(--border-default); min-width: 0; }
+.fig:first-child { border-left: 0; padding-left: 0; }
+.fig .l { font-size: var(--font-size-caption); color: var(--fg-muted); display: flex; gap: 6px; align-items: center; }
+.fig .v { font-size: var(--font-size-title); line-height: var(--line-height-title); font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 4px; letter-spacing: -.01em; white-space: nowrap; }
+.fig .v.lg { font-size: var(--font-size-display); line-height: var(--line-height-display); }
+.fig .v small { font-size: var(--font-size-caption); font-weight: 500; color: var(--fg-subtle); margin-left: 4px; letter-spacing: 0; }
+.fig .v2 { font-size: var(--font-size-small); font-weight: 600; font-variant-numeric: tabular-nums; }
+.fig .n { font-size: var(--font-size-caption); color: var(--fg-subtle); margin-top: 2px; }
+.fig .n.danger { color: var(--status-danger-fg); }
+
+/* ---- Pixel markers: square status marks derived from the four-tile mark. Filled = in a state, hollow = not started. */
+.st { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--font-size-small); }
+.px { width: var(--marker-size); height: var(--marker-size); border-radius: var(--marker-radius); flex: none; background: var(--fg-subtle); }
+.px.hollow { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fg-subtle); }
+.px.success { background: var(--status-success-solid); } .px.warning { background: var(--status-warning-solid); }
+.px.danger { background: var(--status-danger-solid); } .px.info { background: var(--status-info-solid); } .px.accent { background: var(--fg-accent); }
+.st.danger { color: var(--status-danger-fg); font-weight: 500; }
+.pxbar { display: inline-flex; gap: 3px; vertical-align: middle; }
+.pxbar i { width: 8px; height: 8px; border-radius: 2px; background: var(--border-strong); }
+.pxbar i.on { background: var(--accent-solid); }
+
+/* ---- Ledger table: full bleed to the sheet, 40 px rows, sentence-case headers. */
+table.tbl { width: 100%; border-collapse: collapse; font-size: var(--font-size-body); }
+.tbl th { height: 32px; padding: 0 12px; text-align: left; font-size: var(--font-size-caption); font-weight: 500; color: var(--fg-muted); background: var(--bg-sunken); border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); white-space: nowrap; }
+.tbl td { height: var(--row-h-default); padding: 0 12px; border-bottom: 1px solid var(--border-default); white-space: nowrap; }
+.tbl th:first-child, .tbl td:first-child { padding-left: 24px; }
+.tbl th:last-child, .tbl td:last-child { padding-right: 24px; }
+.tbl .r { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl tr[aria-selected] td { background: var(--bg-selected); }
+.tbl tr[aria-selected] td:first-child { box-shadow: inset 3px 0 0 var(--fg-accent); }
+.tbl tr.hover td { background: var(--bg-hover); }
+.tbl td.id { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tbl caption { caption-side: bottom; text-align: left; padding: 10px 24px; color: var(--fg-subtle); font-size: var(--font-size-caption); }
+.tbl .focus td { outline: none; }
+.tbl tr.focus td:first-child a { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 2px; }
+
+/* ---- Inspector: the selected record beside the list, read-first. */
+.insp { border-left: 1px solid var(--border-default); background: var(--bg-surface); display: flex; flex-direction: column; min-height: 0; }
+.insp-h { display: flex; align-items: flex-start; gap: 8px; padding: 14px 16px 12px 20px; border-bottom: 1px solid var(--border-default); }
+.insp-h h2 { margin: 0; font-size: var(--font-size-section); line-height: var(--line-height-section); font-weight: 650; }
+.insp-h .grow { flex: 1; min-width: 0; }
+.icon-btn { display: grid; place-items: center; width: var(--control-h-md); height: var(--control-h-md); border-radius: var(--radius-control); color: var(--fg-muted); }
+.icon-btn svg { width: 18px; height: 18px; }
+.insp-b { flex: 1; overflow: auto; padding: 4px 20px 16px; }
+dl.dl { display: grid; grid-template-columns: 112px minmax(0, 1fr); margin: 0; }
+.dl dt, .dl dd { margin: 0; padding: 9px 0; border-bottom: 1px solid var(--border-default); font-size: var(--font-size-small); }
+.dl dt { color: var(--fg-muted); }
+.dl dd { font-variant-numeric: tabular-nums; }
+.dl dd.amt { text-align: right; font-weight: 500; }
+.dl .total dt, .dl .total dd { font-weight: 600; color: var(--fg-default); border-bottom: 0; }
+.insp-f { display: flex; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border-default); }
+.insp h3 { margin: 16px 0 4px; font-size: var(--font-size-caption); font-weight: 600; color: var(--fg-muted); }
+.insp p { margin: 0; font-size: var(--font-size-small); }
+
+/* ---- Lists inside panels on Home. */
+.cols { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+.cols > section { min-width: 0; padding-bottom: 8px; }
+.cols > section + section { border-left: 1px solid var(--border-default); }
+.cols > section + section .rh { padding-left: 20px; }
+.ledger { list-style: none; margin: 0 24px; padding: 0; }
+.cols > section + section .ledger { margin-left: 20px; }
+.ledger li { display: flex; align-items: center; gap: 12px; min-height: var(--row-h-default); border-bottom: 1px solid var(--border-default); font-size: var(--font-size-small); }
+.ledger li:last-child { border-bottom: 0; }
+.ledger .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger .r { font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
+.ledger .when { color: var(--fg-subtle); font-size: var(--font-size-caption); width: 48px; flex: none; font-variant-numeric: tabular-nums; }
+
+/* Charts: series colours from --chart-* only, legend in words. */
+.chart { margin: 4px 24px 0; }
+.chart svg { width: 100%; height: 188px; display: block; }
+.legend { display: flex; gap: 16px; margin: 6px 24px 0; font-size: var(--font-size-caption); color: var(--fg-muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.stages { margin: 2px 24px 0 20px; display: grid; gap: 6px; }
+.stage { display: grid; grid-template-columns: 92px minmax(0, 1fr) 128px; align-items: center; gap: 10px; font-size: var(--font-size-small); }
+.stage .bar { height: 8px; border-radius: 2px; background: var(--bg-sunken); overflow: hidden; }
+.stage .bar i { display: block; height: 100%; background: var(--chart-1); border-radius: 2px; }
+.stage .r { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- Projects board: lanes separated by rules, items with a border and no shadow. */
+.facts { display: flex; margin: 0 24px 4px; border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); }
+.facts > div { padding: 8px 16px; border-left: 1px solid var(--border-default); min-width: 0; }
+.facts > div:first-child { padding-left: 0; border-left: 0; }
+.facts .l { font-size: var(--font-size-caption); color: var(--fg-muted); }
+.facts .v { font-size: var(--font-size-small); font-weight: 500; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+.board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 24px; border-top: 1px solid var(--border-default); }
+.lane { padding: 0 12px 12px; border-left: 1px solid var(--border-default); min-width: 0; }
+.lane:first-child { border-left: 0; padding-left: 0; }
+.lane:last-child { padding-right: 0; }
+.lane-h { display: flex; align-items: center; gap: 8px; height: 40px; font-size: var(--font-size-small); font-weight: 600; }
+.lane-h .num { color: var(--fg-subtle); font-weight: 500; }
+.task { padding: 9px 12px 10px; border: 1px solid var(--border-default); border-radius: var(--radius-control); margin-bottom: 6px; background: var(--bg-surface); }
+.task .t { font-weight: 500; font-size: var(--font-size-body); }
+.task .m { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; font-size: var(--font-size-caption); color: var(--fg-muted); align-items: center; }
+.task[aria-selected] { border-color: var(--fg-accent); box-shadow: inset 3px 0 0 var(--fg-accent); background: var(--bg-selected); }
+.addtask { display: flex; align-items: center; gap: 6px; height: 28px; color: var(--fg-muted); font-size: var(--font-size-small); padding-left: 2px; }
+.addtask svg { width: 14px; height: 14px; }
+
+/* Dark: sheet and bezel are close in value (1.07:1), so the sheet edge gets a hairline. Decorative only. */
+html.dark .sheet { box-shadow: 0 0 0 1px var(--border-default); }
+
+/* ---- Compact (900 px Tauri minimum, rail collapsed): display figures drop to title size; secondary header actions fold into More. */
+.btn.more { display: none; }
+.compact .cmd .btn.fold { display: none; }
+.compact .cmd .btn.more { display: inline-flex; }
+.compact .fig .v.lg { font-size: var(--font-size-title); line-height: var(--line-height-title); }
+.compact .cmd h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* ---- Concept label (every render). */
+.concept { margin-left: 12px; padding: 4px 10px; border-radius: 999px; font-size: var(--font-size-caption); font-weight: 600; background: var(--status-warning-bg); color: var(--status-warning-fg); border: 1px solid var(--status-warning-border); z-index: 9; }
+
+/* ---- Direction C (tiles, the V2-A reference style) and B (workbench) overrides. */
+.dirc .app { grid-template-columns: 232px minmax(0, 1fr); }
+.dirc .side { background: var(--bg-surface); border-right: 1px solid var(--border-default); padding: 12px 10px; display: flex; flex-direction: column; gap: 4px; }
+.dirc .side .ri { color: var(--fg-muted); }
+.dirc .side .ri[aria-current] { background: var(--bg-selected); color: var(--fg-default); }
+.dirc .side .ri[aria-current]::before { background: var(--accent-solid); left: -10px; }
+.dirc .page { padding: 0; overflow: auto; background: var(--bg-canvas); }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 0 32px 16px; }
+.tile { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-panel); padding: 16px 18px; }
+.panel { margin: 0 32px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-panel); overflow: hidden; }
+.dirc .cmd, .dirc .filters { padding-left: 32px; padding-right: 32px; }
+.dirc .cmd { padding-top: 24px; }
+.wb { display: grid; grid-template-columns: 380px minmax(0, 1fr); min-height: 0; flex: 1; }
+.wb-list { border-right: 1px solid var(--border-default); overflow: auto; }
+.wb-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 10px 16px 10px 20px; border-bottom: 1px solid var(--border-default); font-size: var(--font-size-small); }
+.wb-row[aria-selected] { background: var(--bg-selected); box-shadow: inset 3px 0 0 var(--fg-accent); }
+.wb-row b { font-variant-numeric: tabular-nums; }
+.wb-row .r { text-align: right; font-variant-numeric: tabular-nums; }
+.wb-doc { overflow: auto; padding: 20px 28px; }
+.wb-doc h2 { margin: 0; font-size: var(--font-size-title); line-height: var(--line-height-title); }
+.lines { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: var(--font-size-small); }
+.lines th { text-align: left; font-weight: 500; color: var(--fg-muted); font-size: var(--font-size-caption); border-bottom: 1px solid var(--border-strong); padding: 6px 0; }
+.lines td { padding: 8px 0; border-bottom: 1px solid var(--border-default); }
+.lines .r { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const SCREEN = q.get('screen') || 'dashboard', THEME = q.get('theme') || 'light', COMPACT = q.get('w') === 'compact', FOCUS = q.get('focus') === '1';
+document.documentElement.classList.add(THEME);
+
+const P = { // shell/icons.tsx paths (24 px grid, 1.75 stroke)
+  home: 'M3 10.5 12 3l9 7.5M5.5 8.5V20a1 1 0 0 0 1 1H10v-6h4v6h3.5a1 1 0 0 0 1-1V8.5',
+  customers: 'M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM20 20v-1.5a3.5 3.5 0 0 0-2.5-3.35M15.5 4.65a3.5 3.5 0 0 1 0 6.7',
+  sales: 'M3 17l6-6 4 4 8-8M15 7h6v6', projects: 'M4 4h6v7H4zM14 4h6v4h-6zM14 12h6v8h-6zM4 15h6v5H4z',
+  finance: 'M3 7h18v12H3zM3 11h18M7 15h3', people: 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1',
+  insights: 'M4 20V10M10 20V4M16 20v-7M22 20H2', search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM20 20l-4-4',
+  close: 'M6 6l12 12M18 6 6 18', chevronDown: 'M6 9l6 6 6-6', plus: 'M12 5v14M5 12h14',
+  collapse: 'M4 4h16v16H4zM9 4v16M15.5 9.5 13 12l2.5 2.5', expand: 'M4 4h16v16H4zM9 4v16M13 9.5l2.5 2.5-2.5 2.5', chevronRight: 'M9 6l6 6-6 6',
+};
+const ic = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${P[n]}"/></svg>`;
+const MARK = `<svg viewBox="0 0 64 64" role="img" aria-label="Business OS"><rect width="64" height="64" rx="8.1" fill="#080812"/><rect x="11.35" y="11.35" width="19" height="19" rx="3.7" fill="#8674FB"/><rect x="33.65" y="11.35" width="19" height="19" rx="3.7" fill="#FDD237"/><rect x="11.35" y="33.65" width="19" height="19" rx="3.7" fill="#EEEFF4"/><rect x="33.65" y="33.65" width="19" height="19" rx="3.7" fill="#3F4051"/></svg>`;
+const CONCEPT = `<span class="concept">Concept · sample data · ${SCREEN === 'dir-b' ? 'Direction B' : SCREEN === 'dir-c' ? 'Direction C' : 'Direction A'}</span>`;
+const st = (tone, label, hollow) => `<span class="st${tone === 'danger' ? ' danger' : ''}"><i class="px ${hollow ? 'hollow' : tone}"></i>${label}</span>`;
+
+const ZONES = [['customers', 'Customers', 'customers'], ['sales', 'Sales', 'sales'], ['projects', 'Projects', 'projects'], ['finance', 'Finance', 'finance'], ['people', 'People', 'people'], ['reporting', 'Reporting', 'insights']];
+const FIN_KIDS = ['Overview', 'Quotes', 'Invoices', 'Credit notes', 'Payments', 'Receivables', 'Expenses', 'Products & services', 'Settings'];
+
+function rail(current, kid) {
+  const z = ZONES.map(([id, name, icon]) => {
+    const cur = id === current;
+    const kids = cur && id === 'finance' ? `<div class="kids">${FIN_KIDS.map((k) => `<span class="kid"${k === kid ? ' aria-current="page"' : ''}>${k}</span>`).join('')}</div>` : '';
+    return `<span class="ri"${cur ? ' aria-current="page"' : ''} title="${name}">${ic(icon)}<span>${name}</span></span>${kids}`;
+  }).join('');
+  return `<nav class="rail" aria-label="Zones">
+    <div class="brand">${MARK}<b>Business OS</b></div>
+    <div class="switcher"><span class="mono">HS</span><div class="t"><div>Harbour Design Studio</div><span class="cap muted">Owner</span></div>${ic('chevronDown').replace('<svg', '<svg width="16" height="16"')}</div>
+    <span class="ri"${current === 'home' ? ' aria-current="page"' : ''}${FOCUS && current === 'projects' ? ' style="outline:2px solid var(--focus-ring);outline-offset:2px"' : ''}>${ic('home')}<span>Home</span></span>
+    <div class="rail-label">Zones</div>${z}
+    <div class="spacer"></div>
+    <span class="ri">${ic(COMPACT ? 'expand' : 'collapse')}<span>Collapse</span></span>
+  </nav>`;
+}
+function topbar(crumbs) {
+  const c = crumbs.map((x, i) => i === crumbs.length - 1 ? `<b>${x}</b>` : `<span>${x}</span><i>/</i>`).join('');
+  return `<header class="topbar"><nav class="crumbs" aria-label="Breadcrumb">${c}</nav>${CONCEPT}<div class="grow"></div>
+    <span class="jump">${ic('search')}<span class="grow">Jump to…</span><kbd>⌘K</kbd></span><span class="avatar" aria-label="Account menu">ML</span></header>`;
+}
+function shell({ current, kid, crumbs, body, insp, sectionbar }) {
+  const sb = sectionbar ? `<nav class="sectionbar has" aria-label="Finance sections">${FIN_KIDS.slice(0, 7).map((k) => `<span${k === kid ? ' aria-current="page"' : ''}>${k}</span>`).join('')}<span>More…</span></nav>` : '';
+  return `<div class="app${COMPACT ? ' compact' : ''}"><div class="bezel dark">${rail(current, kid)}</div>
+    <div style="display:flex;min-width:0;min-height:0;background:var(--bg-bezel)"><div class="sheet" style="flex:1">${topbar(crumbs)}${sb}
+      <div class="body${insp && !COMPACT ? ' with-insp' : ''}"><main class="main">${body}</main>${insp && !COMPACT ? insp : ''}</div></div></div></div>`;
+}
+
+/* ---------------- Dashboard (Home) ---------------- */
+function dashboard() {
+  const weeks = [['20 Oct', 0, 1200], ['27 Oct', 0, 2400], ['3 Nov', 8150, 0], ['10 Nov', 0, 0], ['17 Nov', 0, 0]];
+  const max = 9000, H = 160, W = 100 / weeks.length;
+  const bars = weeks.map(([w, a, b], i) => {
+    const x = i * W + W / 2;
+    const h1 = (a / max) * H, h2 = (b / max) * H;
+    return `<rect x="${x - 4.2}%" y="${170 - h1}" width="3.6%" height="${h1}" fill="var(--chart-1)" rx="2"/><rect x="${x + .6}%" y="${170 - h2}" width="3.6%" height="${h2}" fill="var(--chart-3)" rx="2"/><text x="${x}%" y="186" text-anchor="middle" font-size="12" fill="var(--fg-subtle)">${w}</text>`;
+  }).join('');
+  const grid = [0, 3000, 6000, 9000].map((v) => `<line x1="40" x2="100%" y1="${170 - (v / max) * H}" y2="${170 - (v / max) * H}" stroke="var(--chart-grid)"/><text x="0" y="${174 - (v / max) * H}" font-size="12" fill="var(--fg-subtle)">${v ? v / 1000 + 'k' : '0'}</text>`).join('');
+  const body = `
+    <div class="cmd"><h1>Welcome to Harbour Design Studio.</h1><div class="grow"></div>
+      <span class="field sel">Last 30 days</span>
+      <span class="btn fold">${ic('plus')}New project</span><span class="btn fold">${ic('plus')}Add opportunity</span><span class="btn more" aria-label="More actions">More…</span><span class="btn primary">${ic('plus')}Add customer</span></div>
+    <p class="lede">Good morning, Morgan · Owner · Tuesday 17 November 2026, Australia/Perth</p>
+    <div class="rh"><h2>Money</h2><span class="line"></span><span class="m">Invoiced and received: 19 Oct – 17 Nov · balances as of today</span><span class="btn ghost sm">Open Finance ${ic('chevronRight').replace('<svg', '<svg width="14" height="14"')}</span></div>
+    <div class="figs">
+      <div class="fig"><div class="l">Amount invoiced</div><div class="v lg">$8,150.00<small>AUD</small></div><div class="v2">USD 1,850.00</div><div class="n">Previous 30 days: $3,800.00</div></div>
+      <div class="fig"><div class="l">Amount received</div><div class="v lg">$2,400.00<small>AUD</small></div><div class="v2">USD 500.00</div><div class="n">Previous 30 days: $2,000.00</div></div>
+      <div class="fig"><div class="l">Outstanding receivables</div><div class="v lg">$9,950.00<small>AUD</small></div><div class="v2">USD 1,350.00</div><div class="n">As of 17 Nov 2026</div></div>
+      <div class="fig"><div class="l"><i class="px danger"></i>Overdue receivables</div><div class="v lg">$1,800.00<small>AUD</small></div><div class="v2 subtle">USD none</div><div class="n">As of 17 Nov 2026</div></div>
+    </div>
+    <div class="cols">
+      <section aria-label="Financial performance"><div class="rh"><h2>Financial performance</h2><span class="line"></span><span class="m">AUD, by week. USD is reported separately.</span></div>
+        <div class="chart"><svg role="img" aria-label="Amount invoiced and received by week, AUD">${grid}${bars}</svg></div>
+        <div class="legend"><span><i class="px" style="background:var(--chart-1)"></i>Invoiced</span><span><i class="px" style="background:var(--chart-3)"></i>Received</span></div></section>
+      <section aria-label="Overdue invoices"><div class="rh"><h2>Overdue invoices</h2><span class="line"></span><span class="m">Due before 17 Nov</span></div>
+        <ul class="ledger"><li><span class="st danger"><i class="px danger"></i></span><span class="grow"><b class="num">INV-0001</b> · Kelp &amp; Co Seafood<br><span class="cap subtle">Due 15 Oct 2026 · part paid</span></span><span class="r">$1,800.00</span></li></ul>
+        <div class="rh" style="margin-top:8px"><h2>Recent activity</h2><span class="line"></span></div>
+        <ul class="ledger">
+          <li><span class="when">13 Nov</span><span class="grow">Note · Packaging brief · Kelp &amp; Co Seafood</span></li>
+          <li><span class="when">10 Nov</span><span class="grow">Call · Invoice query · Kelp &amp; Co Seafood</span></li>
+          <li><span class="when">5 Nov</span><span class="grow">Customer updated · Tidewater Brewing</span></li></ul></section>
+    </div>
+    <div class="rh" style="margin-top:4px"><h2>Operations</h2><span class="line"></span><span class="m">Right now</span></div>
+    <div class="cols">
+      <section><div class="figs" style="grid-auto-columns:minmax(0,1fr)">
+        <div class="fig"><div class="l">Open opportunities</div><div class="v">5</div><div class="n">$21,950.00 AUD · USD 1,850.00</div></div>
+        <div class="fig"><div class="l">Active projects</div><div class="v">1</div><div class="n">Also 1 planned, 1 on hold</div></div>
+        <div class="fig"><div class="l">Active customers</div><div class="v">9</div><div class="n">Archived not counted</div></div></div></section>
+      <section aria-label="Sales pipeline"><div class="rh"><h2>Sales pipeline</h2><span class="line"></span><span class="m">Open, by stage</span></div>
+        <div class="stages">
+          <div class="stage"><span>New</span><span class="bar"><i style="width:37%"></i></span><span class="r">2 · $3,400.00</span></div>
+          <div class="stage"><span>Qualified</span><span class="bar"><i style="width:13%"></i></span><span class="r">1 · $1,200.00</span></div>
+          <div class="stage"><span>Proposal</span><span class="bar"><i style="width:89%"></i></span><span class="r">1 · $8,150.00</span></div>
+          <div class="stage"><span>Negotiation</span><span class="bar"><i style="width:100%"></i></span><span class="r">1 · $9,200.00</span></div>
+        </div><p class="cap subtle" style="margin:6px 20px 0">AUD totals. 1 opportunity in USD (USD 1,850.00) is in New.</p></section>
+    </div>`;
+  return shell({ current: 'home', crumbs: ['Home'], body });
+}
+
+/* ---------------- Projects (project detail with task inspector) ---------------- */
+function projects() {
+  const T = (title, meta, opts = {}) => `<div class="task"${opts.sel ? ' aria-selected="true"' : ''}><div class="t">${title}</div><div class="m">${meta}</div></div>`;
+  const body = `
+    <div class="cmd"><h1>Tidewater brand refresh</h1>${st('info', 'Active')}<span class="meta">· High priority</span><div class="grow"></div><span class="btn">Edit</span></div>
+    <p class="lede">Label system and brand guidelines for the 2027 range.</p>
+    <div class="facts">
+      <div><div class="l">Customer</div><div class="v">Tidewater Brewing</div></div>
+      <div><div class="l">Owner</div><div class="v subtle">No owner</div></div>
+      <div><div class="l">Start</div><div class="v num">1 Nov 2026</div></div>
+      <div><div class="l">Due</div><div class="v num">12 Dec 2026</div></div>
+      <div><div class="l">Progress</div><div class="v"><span class="pxbar" aria-hidden="true"><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span class="num">2 of 6 tasks done</span></div></div>
+    </div>
+    <div class="filters" style="padding-top:12px"><span class="seg" role="radiogroup" aria-label="View"><span aria-checked="true">Board</span><span>List</span></span>
+      <span class="field" style="width:220px">${ic('search')}Search tasks</span><span class="field sel">Anyone</span><span class="field sel">Any priority</span><span class="field sel">Any due date</span></div>
+    <div class="board">
+      <section class="lane"><div class="lane-h"><i class="px hollow"></i>To do <span class="num">2</span></div>
+        ${T('Brand guidelines', '<span>Medium</span><span>Unassigned</span>')}${T('Handover', '<span>Low</span><span>Unassigned</span>')}
+        <span class="addtask">${ic('plus')}Add task</span></section>
+      <section class="lane"><div class="lane-h"><i class="px info"></i>In progress <span class="num">2</span></div>
+        ${T('Label system', '<span><b>High</b></span><span>Unassigned</span><span class="num">Due 20 Nov</span>')}
+        ${T('Print proofs', `${st('danger', 'Blocked')}<span>Medium</span><span>Unassigned</span><span class="num">Due 18 Nov</span>`, { sel: true })}
+        <span class="addtask">${ic('plus')}Add task</span></section>
+      <section class="lane"><div class="lane-h"><i class="px success"></i>Done <span class="num">2</span></div>
+        ${T('Moodboards', '<span>Medium</span><span>Unassigned</span>')}${T('Logo concepts', '<span>Medium</span><span>Unassigned</span>')}
+        <span class="addtask">${ic('plus')}Add task</span></section>
+    </div>`;
+  const insp = `<aside class="insp" aria-label="Task: Print proofs">
+    <div class="insp-h"><div class="grow"><div class="cap muted">Task</div><h2>Print proofs</h2></div><span class="icon-btn" aria-label="Close inspector">${ic('close')}</span></div>
+    <div class="insp-b"><dl class="dl">
+      <dt>Status</dt><dd>${st('danger', 'Blocked')}</dd><dt>Column</dt><dd>In progress</dd><dt>Priority</dt><dd>Medium</dd>
+      <dt>Assignee</dt><dd class="subtle">Unassigned</dd><dt>Due</dt><dd>18 Nov 2026 · tomorrow</dd><dt>Created</dt><dd>3 Nov 2026</dd><dt>Updated</dt><dd>14 Nov 2026</dd></dl>
+      <h3>Description</h3><p>Waiting on final label dielines from the printer before proofs can be ordered.</p></div>
+    <div class="insp-f"><span class="btn primary">Edit task</span><span class="btn">Move…</span></div></aside>`;
+  return shell({ current: 'projects', crumbs: ['Projects', 'Tidewater brand refresh'], body, insp });
+}
+
+/* ---------------- Finance (invoices with inspector) ---------------- */
+const INV = [
+  ['INV-0001', 'Kelp & Co Seafood', '1 Oct 2026', '15 Oct 2026', st('danger', 'Overdue · part paid'), '$3,800.00', '$1,800.00', true],
+  ['INV-0002', 'Northshore Physio', '12 Oct 2026', '26 Oct 2026', st('success', 'Paid'), '$2,400.00', '$0.00'],
+  ['INV-0003', 'Tidewater Brewing', '5 Nov 2026', '1 Dec 2026', st('neutral', 'Unpaid'), '$8,150.00', '$8,150.00'],
+  ['INV-0004', 'Pacific Rim Tours', '2 Nov 2026', '30 Nov 2026', st('info', 'Part paid'), 'USD 1,850.00', 'USD 1,350.00'],
+  ['Draft', 'Northshore Physio', '—', '—', st('', 'Draft', true), '$1,500.00', '—'],
+];
+function finance() {
+  const rows = INV.map(([n, c, i, d, s, t, o, sel], k) => `<tr${sel ? ' aria-selected="true"' : ''}${FOCUS && k === 2 ? ' class="focus"' : ''}${!FOCUS && k === 2 ? ' class="hover"' : ''}><td class="id"><a>${n}</a></td><td>${c}</td><td class="num">${d}</td><td>${s}</td><td class="r">${t}</td><td class="r">${o}</td></tr>`).join('');
+  const body = `
+    <div class="cmd"><h1>Invoices</h1><span class="meta">5 shown, newest first</span><div class="grow"></div><span class="btn fold">Recurring invoices</span><span class="btn more" aria-label="More actions">More…</span><span class="btn primary">${ic('plus')}New invoice</span></div>
+    <div class="figs">
+      <div class="fig"><div class="l">Outstanding, AUD</div><div class="v">$9,950.00</div><div class="n">2 open invoices</div></div>
+      <div class="fig"><div class="l"><i class="px danger"></i>Overdue, AUD</div><div class="v">$1,800.00</div><div class="n danger">1 of 2 open</div></div>
+      <div class="fig"><div class="l">Outstanding, USD</div><div class="v">USD 1,350.00</div><div class="n">1 open, none overdue</div></div>
+      <div class="fig"><div class="l">Unallocated payments</div><div class="v">$0.00</div><div class="n">As of 17 Nov 2026</div></div>
+    </div>
+    <div class="filters" style="padding-top:12px"><span class="field" style="width:260px">${ic('search')}Customer</span>
+      <span class="seg" role="radiogroup" aria-label="Status"><span aria-checked="true">All</span><span>Draft</span><span>Issued</span><span>Void</span></span>
+      <span class="field sel">Any payment</span><span class="chip">Overdue only</span><span class="chip">${ic('plus').replace('<svg', '<svg width="14" height="14"')}Issue dates</span></div>
+    <table class="tbl"><thead><tr><th scope="col">Number</th><th scope="col">Customer</th><th scope="col">Due</th><th scope="col">Status</th><th scope="col" class="r">Total</th><th scope="col" class="r">Open</th></tr></thead>
+      <tbody>${rows}</tbody><caption>Invoices, most recent first. Amounts are in each invoice's own currency.</caption></table>`;
+  const insp = `<aside class="insp" aria-label="Invoice INV-0001">
+    <div class="insp-h"><div class="grow"><div class="cap muted">Invoice</div><h2 class="num">INV-0001</h2><div style="margin-top:4px">${st('danger', 'Overdue · part paid')}</div></div><span class="icon-btn" aria-label="Close inspector">${ic('close')}</span></div>
+    <div class="insp-b"><dl class="dl">
+      <dt>Bill to</dt><dd>Kelp &amp; Co Seafood</dd><dt>Issued</dt><dd>1 Oct 2026</dd><dt>Due</dt><dd>15 Oct 2026</dd><dt>Currency</dt><dd>AUD</dd></dl>
+      <h3>Settlement</h3><dl class="dl">
+      <dt>Total</dt><dd class="amt">$3,800.00</dd><dt>Payments</dt><dd class="amt">−$2,000.00</dd><dt>Credit applied</dt><dd class="amt">$0.00</dd>
+      <div class="total" style="display:contents"><dt>Open</dt><dd class="amt">$1,800.00</dd></div></dl>
+      <p class="cap subtle" style="margin-top:8px">Amounts come from the invoice record. Nothing here is converted or estimated.</p></div>
+    <div class="insp-f"><span class="btn primary">Open invoice</span><span class="btn">Record payment</span></div></aside>`;
+  return shell({ current: 'finance', kid: 'Invoices', crumbs: ['Finance', 'Invoices'], body, insp, sectionbar: COMPACT });
+}
+
+/* ---------------- Direction B: workbench (three panes) ---------------- */
+function dirB() {
+  const list = INV.map(([n, c, i, d, s, t, o, sel]) => `<div class="wb-row"${sel ? ' aria-selected="true"' : ''}><b>${n}</b><span class="r">${o === '—' ? t : o}</span><span class="muted">${c}</span><span class="r">${s}</span></div>`).join('');
+  const doc = `<div class="wb-doc"><div class="cap muted">Invoice</div><h2 class="num">INV-0001</h2><div style="margin:6px 0 14px">${st('danger', 'Overdue · part paid')}</div>
+    <dl class="dl" style="max-width:520px"><dt>Bill to</dt><dd>Kelp &amp; Co Seafood</dd><dt>Issued</dt><dd>1 Oct 2026</dd><dt>Due</dt><dd>15 Oct 2026</dd></dl>
+    <table class="lines"><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr></thead><tbody>
+      <tr><td>Packaging design, compostable trays</td><td class="r">1</td><td class="r">2,600.00</td><td class="r">2,600.00</td></tr>
+      <tr><td>Print management</td><td class="r">6</td><td class="r">142.42</td><td class="r">854.55</td></tr>
+      <tr><td>GST 10%</td><td></td><td></td><td class="r">345.45</td></tr>
+      <tr><td><b>Total</b></td><td></td><td></td><td class="r"><b>$3,800.00</b></td></tr></tbody></table>
+    <div style="display:flex;gap:8px;margin-top:16px"><span class="btn primary">Record payment</span><span class="btn">Download PDF</span></div></div>`;
+  return `<div class="app compact"><div class="bezel dark">${(COMPACT_RAIL())}</div><div style="display:flex;min-width:0;min-height:0;background:var(--bg-bezel)"><div class="sheet" style="flex:1">${topbar(['Finance', 'Invoices'])}
+    <div class="wb"><div class="wb-list"><div class="cmd" style="padding:12px 16px 8px 20px"><h1 style="font-size:var(--font-size-section)">Invoices</h1><div class="grow"></div><span class="btn primary sm">${ic('plus')}New</span></div>
+      <div class="filters" style="padding:0 16px 10px 20px"><span class="field" style="flex:1">${ic('search')}Customer</span><span class="field sel">All</span></div>${list}</div>${doc}</div></div></div></div>`;
+}
+const COMPACT_RAIL = () => { const html = rail('finance', 'Invoices'); return html.replace('<div class="kids">', '<div class="kids" hidden>'); };
+
+/* ---------------- Direction C: tiles (V2-A reference style, cards on canvas) ---------------- */
+function dirC() {
+  document.body.classList.add('dirc');
+  const rows = INV.map(([n, c, i, d, s, t, o]) => `<tr><td class="id">${n}</td><td>${c}</td><td>${i}</td><td>${d}</td><td>${s}</td><td class="r">${t}</td><td class="r">${o}</td></tr>`).join('');
+  const side = `<nav class="side" aria-label="Zones"><div class="brand">${MARK}<b>Business OS</b></div><div class="switcher"><span class="mono">HS</span><div class="t"><div>Harbour Design Studio</div><span class="cap muted">Owner</span></div></div>
+    <span class="ri">${ic('home')}<span>Home</span></span><div class="rail-label">Zones</div>${ZONES.map(([id, n, i]) => `<span class="ri"${id === 'finance' ? ' aria-current="page"' : ''}>${ic(i)}<span>${n}</span></span>${id === 'finance' ? `<div class="kids">${FIN_KIDS.map((k) => `<span class="kid"${k === 'Invoices' ? ' aria-current="page"' : ''}>${k}</span>`).join('')}</div>` : ''}`).join('')}</nav>`;
+  return `<div class="app">${side}<div style="display:flex;flex-direction:column;min-width:0;background:var(--bg-canvas)">${topbar(['Finance', 'Invoices'])}<div class="page">
+    <div class="cmd"><h1>Invoices</h1><div class="grow"></div><span class="btn fold">Recurring invoices</span><span class="btn more" aria-label="More actions">More…</span><span class="btn primary">${ic('plus')}New invoice</span></div>
+    <div class="tiles"><div class="tile"><div class="cap muted">Outstanding, AUD</div><div class="fig" style="padding:0;border:0"><div class="v">$9,950.00</div></div><div class="cap subtle">2 open invoices</div></div>
+      <div class="tile"><div class="cap muted">Overdue, AUD</div><div class="fig" style="padding:0;border:0"><div class="v">$1,800.00</div></div><div class="cap" style="color:var(--status-danger-fg)">1 of 2 open</div></div>
+      <div class="tile"><div class="cap muted">Outstanding, USD</div><div class="fig" style="padding:0;border:0"><div class="v">USD 1,350.00</div></div><div class="cap subtle">1 open, none overdue</div></div></div>
+    <div class="filters" style="padding-left:32px"><span class="field" style="width:260px">${ic('search')}Customer</span><span class="field sel">All statuses</span><span class="field sel">Any payment</span><span class="chip">Overdue only</span></div>
+    <div class="panel"><table class="tbl"><thead><tr><th>Number</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th><th class="r">Total</th><th class="r">Open</th></tr></thead><tbody>${rows}</tbody></table></div></div></div></div>`;
+}
+
+const R = { dashboard, projects, finance, 'dir-b': dirB, 'dir-c': dirC }[SCREEN];
+document.getElementById('root').innerHTML = R();
+</script>
+</body>
+</html>
