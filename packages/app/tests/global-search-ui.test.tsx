@@ -266,6 +266,67 @@ describe('search palette', () => {
     expect(search.mock.calls.at(-1)![1].types!.length).toBeGreaterThan(1);
   });
 
+  it('old rows disappear and cannot be opened while a new text or archived scope is loading', async () => {
+    const old = row('customer', 'Kelp old');
+    let release: (v: SearchOutcome<SearchView>) => void = () => {};
+    let calls = 0;
+    const search = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) return { kind: 'ok', data: view([group('customer', [old])]) } as SearchOutcome<SearchView>;
+      return new Promise<SearchOutcome<SearchView>>((r) => { release = r; });
+    });
+    const client = { search, resolve: vi.fn() } as unknown as SearchClient;
+    const user = userEvent.setup();
+    const props = mount(client);
+    await user.type(input(), 'kelp');
+    await screen.findByRole('group', { name: 'Customers' });
+    // A longer text: the first response is delayed, so nothing from the old text may be shown or opened.
+    await user.type(input(), 'x');
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('group', { name: 'Customers' })).toBeNull();
+    await user.keyboard('{Enter}');
+    expect(props.onOpenRecord).not.toHaveBeenCalled();
+    release({ kind: 'ok', data: view([group('customer', [row('customer', 'Kelpx new')])]) });
+    await screen.findByText(/new/);
+    // Include archived: the same rule while the scoped response is delayed.
+    await user.click(screen.getByRole('checkbox', { name: 'Include archived' }));
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(3));
+    expect(screen.queryByText(/new/)).toBeNull();
+    await user.keyboard('{Enter}');
+    expect(props.onOpenRecord).not.toHaveBeenCalled();
+    release({ kind: 'ok', data: view([group('customer', [row('customer', 'Kelpx archived')])]) });
+    await screen.findByText(/archived/);
+  });
+
+  it('a 400 on a later page resets pagination: the next Show more has no cursor, replaces and does not loop', async () => {
+    const five = Array.from({ length: 5 }, (_, i) => row('customer', `Kelp ${i}`));
+    const page1 = Array.from({ length: 25 }, (_, i) => row('customer', `Kelp p${i}`));
+    const fresh = Array.from({ length: 25 }, (_, i) => row('customer', `Kelp f${i}`));
+    let single = 0;
+    const { client, search } = fakeClient((i) => {
+      if (i.types?.length !== 1) return { kind: 'ok', data: view([group('customer', five, { hasMore: true })]) };
+      single += 1;
+      if (single === 1) return { kind: 'ok', data: view([group('customer', page1, { hasMore: true, nextCursor: 'c1' })]) };
+      if (single === 2) return { kind: 'failed', status: 400 };
+      return { kind: 'ok', data: view([group('customer', fresh, { hasMore: false })]) };
+    });
+    const user = userEvent.setup();
+    mount(client);
+    await user.type(input(), 'kelp');
+    await user.click(await screen.findByRole('button', { name: 'Show more customers' }));
+    await screen.findByText(/p24/);
+    await user.click(screen.getByRole('button', { name: 'Show more customers' }));
+    await waitFor(() => expect(screen.getAllByText(/Couldn't load more/).length).toBeGreaterThan(0));
+    expect(search.mock.calls.at(-1)![1].cursor).toBe('c1');
+    const before = search.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(search.mock.calls.length).toBe(before);
+    await user.click(screen.getByRole('button', { name: 'Show more customers' }));
+    await screen.findByText(/f24/);
+    expect(search.mock.calls.at(-1)![1]).toMatchObject({ types: ['customer'], cursor: null, limit: 25 });
+    expect(screen.queryByText(/p24/)).toBeNull();
+  });
+
   it('no results names only the searched Zones and offers Include archived', async () => {
     const { client } = fakeClient(() => ({ kind: 'ok', data: view([], ['customer', 'opportunity']) }));
     const user = userEvent.setup();

@@ -68,13 +68,14 @@ export function paletteReducer(state: PaletteState, action: PaletteAction): Pale
       if (action.query === state.query) return state;
       // Any change to the text discards groups, cursors and expanded state (§5.7 rule 5).
       const ready = queryReady(action.query);
-      return { ...state, query: action.query, seq: state.seq + 1, phase: ready ? 'loading' : 'idle', error: null, ...(ready ? {} : { groups: [], searchedTypes: [] }) };
+      // Old rows never stay on screen for a different text or scope: they could be selected while not matching it.
+      return { ...state, query: action.query, seq: state.seq + 1, phase: ready ? 'loading' : 'idle', error: null, groups: [], searchedTypes: [] };
     }
     case 'archived':
       if (action.value === state.includeArchived) return state;
-      return { ...state, includeArchived: action.value, seq: state.seq + 1, phase: queryReady(state.query) ? 'loading' : 'idle', error: null };
+      return { ...state, includeArchived: action.value, seq: state.seq + 1, phase: queryReady(state.query) ? 'loading' : 'idle', error: null, groups: [], searchedTypes: [] };
     case 'retry':
-      return queryReady(state.query) ? { ...state, seq: state.seq + 1, phase: 'loading', error: null } : state;
+      return queryReady(state.query) ? { ...state, seq: state.seq + 1, phase: 'loading', error: null, groups: [], searchedTypes: [] } : state;
     case 'searched': {
       if (action.seq !== state.seq) return state;
       const groups = [...action.view.groups].sort((a, b) => TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type)).map(fresh);
@@ -82,7 +83,7 @@ export function paletteReducer(state: PaletteState, action: PaletteAction): Pale
     }
     case 'searchFailed':
       if (action.seq !== state.seq) return state;
-      // Earlier same-query results stay (muted by the view); the feature is never hidden (§12.1).
+      // The feature is never hidden (§12.1); there are no rows to keep, they were cleared when the request started.
       return { ...state, phase: 'error', error: action.error };
     case 'pageStart':
       if (action.seq !== state.seq) return state;

@@ -1,4 +1,4 @@
-import { cn, Dialog, DialogContent, DialogDescription, DialogTitle } from '@business-os/ui';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@business-os/ui';
 import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from 'react';
 import type { SearchType } from '@business-os/contracts';
 import type { SearchClient, SearchOutcome, SearchRow } from '../../api/search';
@@ -176,7 +176,9 @@ function PaletteBody({ client, slug, navigation, onOpenRoute, onOpenRecord, onAc
     if ('lost' in r) return onAccessLost();
     if ('error' in r) {
       setPageNote({ seq, text: "Couldn't load more" });
-      return dispatch({ type: 'pageFailed', seq, group: group.type, resetCursor: false });
+      // A 400 (an unusable or expired cursor) goes back to the first expansion step, never retried unchanged (§5.7 rule 8).
+      const unusable = (out.kind === 'failed' && out.status === 400) || out.kind === 'invalid_input';
+      return dispatch({ type: 'pageFailed', seq, group: group.type, resetCursor: unusable });
     }
     const page = r.ok.groups.find((g) => g.type === group.type) ?? null;
     dispatch({ type: 'pageDone', seq, group: group.type, page, replace });
@@ -193,14 +195,15 @@ function PaletteBody({ client, slug, navigation, onOpenRoute, onOpenRecord, onAc
     const out: Option[] = [];
     if (!ready) out.push(...recentRows.map((row): Option => ({ kind: 'row', key: rowKey(row), row })));
     out.push(...commands);
-    if (ready) {
+    // Rows are interactive only for a settled response to the current text and scope.
+    if (ready && state.phase === 'results') {
       for (const g of state.groups) {
         for (const row of g.rows) out.push({ kind: 'row', key: rowKey(row), row });
         if (g.hasMore || g.capped) out.push({ kind: 'more', key: `more-${g.type}`, group: g });
       }
     }
     return out;
-  }, [state.query, state.groups, navigation, recentRows]);
+  }, [state.query, state.phase, state.groups, navigation, recentRows]);
 
   // The active row follows the record, not the position; if it disappears, the first option takes over.
   const active = options.find((o) => o.key === activeKey) ?? options[0] ?? null;
@@ -231,7 +234,6 @@ function PaletteBody({ client, slug, navigation, onOpenRoute, onOpenRecord, onAc
   const ready = queryReady(state.query);
   const searchedZones = [...new Set(state.searchedTypes.map(zoneName).filter(Boolean))];
   const joined = searchedZones.length > 1 ? `${searchedZones.slice(0, -1).join(', ')} and ${searchedZones[searchedZones.length - 1]}` : searchedZones[0] ?? '';
-  const stale = state.phase === 'loading' || state.phase === 'error';
 
   return (
     <div className="flex max-h-[70dvh] flex-col max-sm:h-dvh max-sm:max-h-none" onKeyDown={onKeyDown}>
@@ -263,7 +265,7 @@ function PaletteBody({ client, slug, navigation, onOpenRoute, onOpenRecord, onAc
       </div>
       <div className="h-0.5 shrink-0" aria-hidden="true">{slow ? <div className="h-full w-1/3 animate-pulse bg-primary motion-reduce:animate-none" /> : null}</div>
 
-      <div id={listId} role="listbox" aria-label="Results" className={cn('min-h-0 flex-1 overflow-y-auto px-2 py-2', stale && state.groups.length > 0 && 'opacity-60')}>
+      <div id={listId} role="listbox" aria-label="Results" className={'min-h-0 flex-1 overflow-y-auto px-2 py-2'}>
         {!ready && recentRows.length > 0 ? (
           <Section heading="Recent" id={`${ids}-recent`}>
             {options.filter((o) => o.kind === 'row').map((o) => o.kind === 'row' && <ResultRow key={o.key} id={optionId(o.key)} row={o.row} query="" active={active?.key === o.key} onPick={() => activate(o)} />)}
@@ -279,7 +281,7 @@ function PaletteBody({ client, slug, navigation, onOpenRoute, onOpenRecord, onAc
             ))}
           </Section>
         ) : null}
-        {ready ? state.groups.map((g) => (
+        {ready && state.phase === 'results' ? state.groups.map((g) => (
           <Section key={g.type} heading={TYPE_HEADING[g.type]} id={`${ids}-g-${g.type}`}>
             {g.rows.map((row) => <ResultRow key={rowKey(row)} id={optionId(rowKey(row))} row={row} query={state.query} active={active?.key === rowKey(row)} onPick={() => activate({ kind: 'row', key: rowKey(row), row })} />)}
             {g.paging === 'error' ? <p className="px-3 py-2 text-sm text-muted-foreground">Couldn't load more. Try again.</p> : null}
