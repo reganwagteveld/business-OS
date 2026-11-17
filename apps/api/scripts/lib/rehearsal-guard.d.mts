@@ -9,3 +9,4 @@ export declare function verifyRehearsalTarget(input: {
   fetchImpl?: (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
   now?: Date;
 }): Promise<{ mode: 'local' } | { mode: 'neon-branch'; branchName: string }>;
+export function redactTarget(text: unknown, host?: string): string;

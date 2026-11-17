@@ -5,7 +5,7 @@
  * rehearsal branch must refuse.
  */
 import { describe, expect, it } from 'vitest';
-import { endpointHost, RehearsalTargetError, verifyRehearsalTarget } from '../../scripts/lib/rehearsal-guard.mjs';
+import { endpointHost, redactTarget, RehearsalTargetError, verifyRehearsalTarget } from '../../scripts/lib/rehearsal-guard.mjs';
 
 const NOW = new Date('2026-11-17T12:00:00Z');
 const BRANCH = 'br-rehearsal-1';
@@ -156,5 +156,17 @@ describe('rehearsal target guard: refusals', () => {
     expect(await refusal({ urls: { owner: 'postgresql://a@localhost/db', app: undefined, admin: 'postgresql://c@localhost/db' }, env: {} })).toMatch(/REHEARSAL_APP_DATABASE_URL is not set/);
     expect(await refusal({ urls: urls('localhost', { owner: 'https://localhost/db' }), env: {} })).toMatch(/not a PostgreSQL URL/);
     expect(await refusal({ urls: urls('localhost', { owner: 'postgresql://bos_owner@localhost' }), env: {} })).toMatch(/names no database/);
+  });
+});
+
+describe('rehearsal report redaction', () => {
+  it('removes the target host, connection URLs and any Neon endpoint host from tool output', () => {
+    const prisma = `Datasource "db": PostgreSQL database "neondb", schema "public" at "${BRANCH_HOST}"\n`
+      + `url postgresql://bos_owner:secret@${BRANCH_HOST}/neondb?sslmode=require\nalso ep-other-123.eu-west-2.aws.neon.tech and localhost`;
+    const out = redactTarget(prisma, BRANCH_HOST);
+    expect(out).not.toMatch(/ep-|secret|neon\.tech/);
+    expect(out).toContain('<redacted-host>');
+    expect(out).toContain('localhost');
+    expect(redactTarget(`at "${BRANCH_HOST.replace('abc', 'abc-pooler')}"`, BRANCH_HOST.replace('abc', 'abc-pooler'))).toBe('at "<redacted-host>"');
   });
 });

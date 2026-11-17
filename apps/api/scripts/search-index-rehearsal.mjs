@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pg from 'pg';
-import { RehearsalTargetError, verifyRehearsalTarget } from './lib/rehearsal-guard.mjs';
+import { redactTarget, RehearsalTargetError, verifyRehearsalTarget } from './lib/rehearsal-guard.mjs';
 
 const MIGRATION = '20261206000000_search_indexes';
 const TABLES = ['customers', 'contacts', 'opportunities', 'projects', 'project_tasks', 'finance_documents', 'finance_catalog_items', 'people_employees'];
@@ -61,6 +61,8 @@ const out = option('out', `search-index-rehearsal-${new Date().toISOString().rep
 const pool = new pg.Pool({ connectionString: url, max: 2 }); // owner: _prisma_migrations
 const admin = new pg.Pool({ connectionString: adminUrl, max: 3 }); // seed, sizes, catalog, lock sampling
 const app = new pg.Pool({ connectionString: appUrl, max: writerCount + 1 }); // writers
+// Prisma prints the datasource host; nothing that names the target leaves this process.
+const scrub = (text) => redactTarget(text, host);
 const report = { startedAt: new Date().toISOString(), target: { mode: target.mode, branchName: target.branchName ?? null, host: host.replace(/^[^.]+/, '<redacted>') }, scale, writers: writerCount };
 
 // ---- helpers ---------------------------------------------------------------------------------------------
@@ -96,7 +98,7 @@ function prisma(command) {
     env: { ...process.env, MIGRATION_DATABASE_URL: url, SHADOW_DATABASE_URL: process.env.REHEARSAL_SHADOW_DATABASE_URL ?? shadowUrl },
     encoding: 'utf8',
   });
-  return { status: result.status, ms: Date.now() - started, output: `${result.stdout}\n${result.stderr}`.slice(-4000) };
+  return { status: result.status, ms: Date.now() - started, output: scrub(`${result.stdout}\n${result.stderr}`).slice(-4000) };
 }
 function prismaAsync(command) {
   const started = Date.now();
@@ -108,7 +110,7 @@ function prismaAsync(command) {
     let output = '';
     child.stdout.on('data', (d) => (output += d));
     child.stderr.on('data', (d) => (output += d));
-    child.on('close', (status) => done({ status, ms: Date.now() - started, startedAt: started, endedAt: Date.now(), output: output.slice(-4000) }));
+    child.on('close', (status) => done({ status, ms: Date.now() - started, startedAt: started, endedAt: Date.now(), output: scrub(output).slice(-4000) }));
   });
 }
 async function searchIndexes() {

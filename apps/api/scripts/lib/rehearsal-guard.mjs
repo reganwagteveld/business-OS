@@ -123,3 +123,13 @@ export async function verifyRehearsalTarget({ urls, env, fetchImpl = globalThis.
 
   return { mode: 'neon-branch', branchName: branch.name };
 }
+
+/**
+ * Removes anything that names the rehearsal target from tool output before it reaches a report or the console:
+ * connection URLs, the target host (and its pooled form) and any Neon endpoint host.
+ */
+export function redactTarget(text, host) {
+  let out = String(text ?? '').replace(/postgres(?:ql)?:\/\/\S+/gi, 'postgresql://<redacted>');
+  for (const h of new Set([host, host && endpointHost(host)].filter(Boolean))) out = out.split(h).join('<redacted-host>');
+  return out.replace(/\bep-[a-z0-9-]+(?:\.[a-z0-9-]+)*\.neon\.tech\b/gi, '<redacted-host>');
+}

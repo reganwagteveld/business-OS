@@ -96,6 +96,23 @@ The pattern confirms the audit concern: a table indexed early waits for every bu
 - a rehearsal at production size (§4.2) showing a longest write of at most 2 s;
 - a separately approved alternative from §5.
 
+## 3a. Production preflight and Neon rehearsal result (2026-11-17)
+
+**Read-only production preflight (§4.1): all pass.** 23 migrations applied, the fingerprint matches the repository, and none are unfinished or rolled back. `20261206000000_search_indexes` is the only pending migration. No search index or migration row exists, and there were no long transactions at the time. The 8 tables hold 0 to 3 rows each, between 50 and 240 kB. The live Neon API fields `default`, `protected`, `created_at` and endpoint `host` have the types the guard expects.
+
+**Neon rehearsals (§4.2), run from the Mac against us-east-1 on two temporary branches made from production.** The guard verified both branches. One branch takes one run, because the migration is applied at the end of each run.
+
+| Branch | Seed | Migration | Longest blocked write (customers, contacts, opportunities, projects, tasks, finance docs, catalog, employees) | Longest server lock wait | Verdict |
+|---|---|---|---|---|---|
+| `rehearsal-search-indexes-20261117-prod` | `--scale 0.0005` (hundreds of rows per table, at least production size; contacts and catalog are empty in production, so a no-seed run cannot drive their writers) | 17.5 s, 22 valid | 6.1, 5.0, 4.0, 3.3, 2.9, 2.1, 2.1, 1.1 s | 5.8 s | **NO-GO** |
+| `rehearsal-search-indexes-20261117-seed` | design point plus noisy tenant (~1.2 M rows) | 23.3 s, 22 valid | 10.9, 10.0, 8.6, 7.2, 6.7, 3.2, 2.4, 1.6 s | 10.8 s | **NO-GO** |
+
+Blocked write is the longest write minus the ~1 s round-trip baseline from the Mac. The failure drill passed on both branches: the deploy failed after the lock timeout, no index was left behind, `migrate resolve --rolled-back` worked, and the next deploy applied cleanly. p95 write overhead cannot be measured from the Mac (round-trip noise); use the local +0.1–0.3 ms.
+
+**Reading:** even near-empty tables stall writes for about 6 s, so at today's size the stall is not index build time. The likely cause is latency while the 22 SHARE locks are held until COMMIT: either per-statement client round trips from the Mac, or cold page reads on a just-created Neon branch. **This is not yet verified.** Running `migrate deploy` from a host in us-east-1 may bring it under 2 s, but that has not been measured. §5 options 1 and 2 bound the stall regardless of cause.
+
+Report fix after this run: Prisma prints the target host into the deploy output. The tool now redacts it (`redactTarget` in `scripts/lib/rehearsal-guard.mjs`, with a unit test). The reports from these runs were redacted by hand and kept private.
+
 ## 4. Production procedure
 
 Every step below runs from the Mac Remote Control session, because the cloud container cannot reach Neon. Steps 4.1 and 4.2 are allowed under the standing infrastructure policy (read-only checks, temporary test branches). Steps 4.4 onward need Regan's explicit approval in the thread that carries them out.
