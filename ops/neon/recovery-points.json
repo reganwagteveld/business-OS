@@ -232,6 +232,34 @@
       "restoreDrill": {
         "status": "not-run"
       }
+    },
+    {
+      "branchId": "br-summer-mouse-bb5sg2v3",
+      "name": "pre-workflow-links-migration",
+      "kind": "recovery",
+      "migrations": [
+        "20261207000000_workflow_links"
+      ],
+      "prs": [
+        110
+      ],
+      "createdAt": "2026-11-17T10:22:50Z",
+      "parentLsn": "0/333EF50",
+      "migration": {
+        "status": "pending",
+        "evidence": "recovery point created/verified; migration not yet applied"
+      },
+      "deployment": {
+        "status": "pending",
+        "evidence": "PR #110 not merged"
+      },
+      "recoveryPoint": {
+        "status": "verified",
+        "evidence": "Created 2026-11-17T10:22:50Z from production (default branch, re-verified by read-only Neon API) at LSN 0/333EF50 with a read-only endpoint. Verified read-only: ready; connects on its own endpoint (API: endpoint belongs to this branch, branch not default); _prisma_migrations 24 rows, all finished, 0 rolled back, latest 20261206000000_search_indexes; fingerprint equals the repo (excluding workflow_links) and production; per-migration checksums identical to production; 20261207000000_workflow_links absent."
+      },
+      "restoreDrill": {
+        "status": "not-run"
+      }
     }
   ],
   "deleted": [
