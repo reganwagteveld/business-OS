@@ -78,7 +78,9 @@ async function seed() {
     await q(`INSERT INTO sales_stages (id, business_id, pipeline_id, name, position) VALUES ($1, $2, $3, 'New', 1000)`, [stage, b, pipeline]);
     await q(`INSERT INTO opportunities (id, business_id, title, customer_id, pipeline_id, stage_id, currency_code) VALUES ($1, $2, 'Deal', $3, $4, $5, 'USD')`, [opp, b, cust, pipeline, stage]);
   }
-  await q(`INSERT INTO projects (id, business_id, name) VALUES ($1, $2, 'Fit-out'), ($3, $4, 'B project'), ($5, $6, 'C project')`, [proj1, A, projB, B, projC, C]);
+  // Each project belongs to the customer its documents bill (I1, docs/cross-zone-workflows-wf1.md §5).
+  await q(`INSERT INTO projects (id, business_id, name, customer_id) VALUES ($1, $2, 'Fit-out', $7), ($3, $4, 'B project', $8), ($5, $6, 'C project', $9)`,
+    [proj1, A, projB, B, projC, C, cust1, custB, custC]);
   for (const [b, kind, prefix] of [[A, 'QUOTE', 'Q-'], [A, 'INVOICE', 'INV-'], [A, 'CREDIT_NOTE', 'CN-'], [B, 'INVOICE', 'RE-'], [C, 'INVOICE', 'C-'], [C, 'CREDIT_NOTE', 'CCN-']] as const) {
     await q(`INSERT INTO finance_number_series (id, business_id, kind, prefix) VALUES ($1, $2, $3, $4)`, [uuid(), b, kind, prefix]);
   }
