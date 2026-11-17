@@ -19,7 +19,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const OWNER = ['reporting:read', 'reporting:save', 'reporting:share', 'reporting:manage', 'finance:read', 'sales:read', 'customers:read', 'projects:read'];
+const OWNER = ['reporting:read', 'reporting:save', 'reporting:share', 'reporting:manage', 'finance:read', 'sales:read', 'customers:read', 'projects:read', 'scheduling:read'];
 const MANAGER = ['reporting:read', 'reporting:save', 'reporting:share', 'finance:read', 'sales:read', 'customers:read'];
 const MEMBER = ['reporting:read', 'reporting:save', 'sales:read', 'customers:read'];
 const ctx = (permissions: string[], slug = 'alpha', name = 'Alpha Plumbing'): BusinessContext => ({
@@ -77,35 +77,41 @@ describe('navigation', () => {
 });
 
 describe('Dashboard', () => {
-  it('shows the headline figures and one chart per metric, grouped by Zone, from two bounded requests', async () => {
+  it('shows the headline figures and one chart per metric, grouped by Zone, from bounded requests', async () => {
     const { api } = setup({ permissions: OWNER });
     const region = await kpis();
     await within(region).findByText('$350.50');
     expect(within(region).getByText('USD 75.00')).toBeTruthy(); // never added to AUD
     expect(within(region).getByText('Overdue receivables')).toBeTruthy();
     expect(within(region).getAllByText(/Current balance as of .*Not affected by the date range/)).toHaveLength(2);
-    for (const name of ['Finance charts', 'Sales charts', 'Customers charts']) expect(panel(name)).toBeTruthy();
+    for (const name of ['Finance charts', 'Sales charts', 'Customers charts', 'Projects charts', 'Scheduling charts']) expect(panel(name)).toBeTruthy();
     expect(await screen.findByRole('figure', { name: 'Amount invoiced (AUD)' })).toBeTruthy();
     expect(screen.getByRole('figure', { name: 'Amount received (AUD)' })).toBeTruthy();
     expect(screen.getByRole('figure', { name: 'Invoices issued' })).toBeTruthy();
     expect(screen.getByRole('figure', { name: 'Won opportunity value (AUD)' })).toBeTruthy();
     expect(screen.getByRole('figure', { name: 'Opportunities won' })).toBeTruthy();
     expect(screen.getByRole('figure', { name: 'New customers' })).toBeTruthy();
+    expect(screen.getByRole('figure', { name: 'Expenses recorded (AUD)' })).toBeTruthy();
+    expect(screen.getByRole('figure', { name: 'Tasks completed' })).toBeTruthy();
+    expect(screen.getByRole('figure', { name: 'Events scheduled' })).toBeTruthy();
     const qs = queries(api);
-    expect(qs).toHaveLength(2);
+    expect(qs).toHaveLength(3); // headline totals, then nine charts in requests of at most six metrics
     expect(qs[0]).toMatchObject({ granularity: 'none', comparison: 'previous_period', date: { kind: 'relative', preset: 'last_3_months' } });
     expect(qs[0]!.metrics.map((m) => m.id)).toEqual(DEFAULT_DASHBOARD.kpis);
     // Automatic interval: about three months → weeks. Never more metrics than the API allows per request.
     expect(qs[1]).toMatchObject({ granularity: 'week', comparison: 'previous_period' });
-    expect(qs[1]!.metrics.map((m) => m.id)).toEqual(['finance.invoiced_amount', 'finance.payments_received', 'finance.invoices_issued', 'sales.won_value', 'sales.won_count', 'customers.new_customers']);
+    expect(qs[1]!.metrics.map((m) => m.id)).toEqual(['finance.invoiced_amount', 'finance.payments_received', 'finance.invoices_issued', 'finance.expenses_recorded', 'sales.won_value', 'sales.won_count']);
+    expect(qs[2]).toMatchObject({ granularity: 'week', comparison: 'previous_period' });
+    expect(qs[2]!.metrics.map((m) => m.id)).toEqual(['customers.new_customers', 'projects.tasks_completed', 'scheduling.events_scheduled']);
     for (const q of qs) expect(() => ReportingQueryRequest.parse(q)).not.toThrow();
   });
 
-  it('lists registered but planned figures (expenses, tasks) as not available, with no numbers', async () => {
-    setup({ permissions: OWNER });
+  it('lists registered but planned figures (headcount, messages) as not available, with no numbers', async () => {
+    setup({ permissions: [...OWNER, 'people:read', 'communications:read'] });
     const planned = await screen.findByRole('region', { name: 'Not available yet' });
-    expect(within(planned).getByText(/Expenses recorded/)).toBeTruthy();
-    expect(within(planned).getByText(/Tasks completed/)).toBeTruthy();
+    expect(within(planned).getByText(/Headcount/)).toBeTruthy();
+    expect(within(planned).getByText(/Messages recorded/)).toBeTruthy();
+    expect(within(planned).queryByText(/Expenses recorded/)).toBeNull(); // now executable
     expect(within(planned).queryByText(/\$/)).toBeNull();
   });
 
@@ -117,9 +123,22 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('region', { name: 'Finance charts' })).toBeNull();
     expect(screen.getByRole('region', { name: 'Sales charts' })).toBeTruthy();
     expect(queries(api).flatMap((q) => q.metrics.map((m) => m.id)).some((id) => id.startsWith('finance.'))).toBe(false);
-    // Planned Finance and Projects figures are not even named to someone who cannot read those Zones.
+    // Expenses, tasks and events are not even named to someone who cannot read those Zones, and never requested.
     expect(screen.queryByText(/Expenses recorded/)).toBeNull();
     expect(screen.queryByText(/Tasks completed/)).toBeNull();
+    expect(screen.queryByText(/Events scheduled/)).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Projects charts' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Scheduling charts' })).toBeNull();
+    const asked = queries(api).flatMap((q) => q.metrics.map((m) => m.id));
+    for (const id of ['finance.expenses_recorded', 'projects.tasks_completed', 'scheduling.events_scheduled']) expect(asked).not.toContain(id);
+  });
+
+  it('shows Projects and Scheduling charts only to people who can read those Zones', async () => {
+    const { api } = setup({ permissions: ['reporting:read', 'projects:read'] });
+    expect(await screen.findByRole('region', { name: 'Projects charts' })).toBeTruthy();
+    expect(await screen.findByRole('figure', { name: 'Tasks completed' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Scheduling charts' })).toBeNull();
+    expect(queries(api).flatMap((q) => q.metrics.map((m) => m.id))).toEqual(['projects.tasks_completed']);
   });
 
   it('refuses entry without reporting:read, and explains when no figure is readable', async () => {

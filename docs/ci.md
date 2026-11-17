@@ -1,6 +1,6 @@
 # Continuous integration
 
-One workflow, `.github/workflows/ci.yml`. **The only check to require in branch protection is `CI gate`.**
+One workflow, `.github/workflows/ci.yml` (plus the separate, non-gating visual-regression workflow at the end of this page). **The only check to require in branch protection is `CI gate`.**
 
 ## Jobs
 
@@ -84,3 +84,7 @@ Do not mark individual jobs as required: GitHub treats a skipped required job as
 ## Cancellation
 
 A new commit on a pull request cancels that pull request's previous run. Pushes to `main` or release branches, tags, manual and scheduled runs each get their own concurrency group and are never cancelled by another run.
+
+## Visual regression (separate, non-gating)
+
+`.github/workflows/visual.yml` runs the Chromium golden-screenshot suite in `tooling/visual` (UI V2-B2-1) on pull requests that touch the UI packages, the harness or the lockfile, and on demand. It is **not** part of `CI gate` and must not be made a required check until it has a reviewed baseline and a documented flake rate (D-V2A-11). A difference shows as a warning with the diffs as an artifact; it never fails the run. Chromium goldens do not replace the macOS WKWebView and Windows WebView2 checks. See `tooling/visual/README.md`.

@@ -15,7 +15,7 @@ import { recordAudit } from '@/core/audit';
 import { Decimal, type AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
 import { isUniqueViolation, RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
-import { checkCustomer } from './documents';
+import { checkCustomer, checkProjectCustomer } from './documents';
 import { checkCurrency, currencyScale, formatAmount, formatPlain, roundTo, toAmount } from './money';
 import { activeTaxRate } from './settings';
 import { businessProfile, changedFields, dateOf, dayOf, todayIn } from './shared';
@@ -278,10 +278,16 @@ async function checkCategory(db: AppTenantDb, id: string) {
   if (category.archivedAt) throw new StateConflictError('archived_reference');
 }
 
-async function checkProject(db: AppTenantDb, id: string) {
-  const project = await db.project.findFirst({ where: { id }, select: { archivedAt: true } });
+/**
+ * A newly linked project must be this business's and active. I1 (WF-1 §5.3): an expense with a customer
+ * links only a project of that customer; an expense without one (an internal cost) may link any project
+ * (MATCH SIMPLE, as the composite FK). Checked when the project or the customer changes.
+ */
+async function checkProject(db: AppTenantDb, id: string, customerId: string | null, newlyLinked: boolean) {
+  const project = await db.project.findFirst({ where: { id }, select: { archivedAt: true, customerId: true } });
   if (!project) throw new RuleViolationError('invalid_project', 'Choose a project of this business.');
-  if (project.archivedAt) throw new StateConflictError('archived_reference');
+  if (newlyLinked && project.archivedAt) throw new StateConflictError('archived_reference');
+  checkProjectCustomer(project.customerId, customerId);
 }
 
 async function ratePercentOf(db: AppTenantDb, taxRateId: string | null, newlyLinked: boolean): Promise<Decimal | null> {
@@ -319,8 +325,8 @@ export async function createExpense(db: AppTenantDb, actorUserId: string, input:
   checkTreatmentRate(input.taxTreatment, taxRateId);
   checkDates(input.incurredOn, input.dueDate ?? null, todayIn(business.timeZone));
   await checkCategory(db, input.categoryId);
-  if (input.projectId) await checkProject(db, input.projectId);
   if (input.customerId) await checkCustomer(db, input.customerId);
+  if (input.projectId) await checkProject(db, input.projectId, input.customerId ?? null, true);
   const amounts = expenseAmounts(input.taxTreatment, toAmount(input.amount, scale, currency), await ratePercentOf(db, taxRateId, true), scale);
 
   const id = randomUUID();
@@ -361,8 +367,10 @@ export async function updateExpense(db: AppTenantDb, actorUserId: string, id: st
   checkTreatmentRate(next.taxTreatment, next.taxRateId);
   checkDates(next.incurredOn, next.dueDate, await today(db));
   if (next.categoryId !== before.categoryId) await checkCategory(db, next.categoryId);
-  if (next.projectId && next.projectId !== before.projectId) await checkProject(db, next.projectId);
   if (next.customerId && next.customerId !== before.customerId) await checkCustomer(db, next.customerId);
+  if (next.projectId && (next.projectId !== before.projectId || next.customerId !== before.customerId)) {
+    await checkProject(db, next.projectId, next.customerId, next.projectId !== before.projectId);
+  }
   const entered = input.amount !== undefined ? toAmount(input.amount, scale, before.currencyCode) : enteredOf(before);
   const amounts = expenseAmounts(next.taxTreatment, entered, await ratePercentOf(db, next.taxRateId, next.taxRateId !== before.taxRateId), scale);
 
