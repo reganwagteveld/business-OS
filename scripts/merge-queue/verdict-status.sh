@@ -15,8 +15,15 @@
 #   - its first non-empty line, ignoring leading heading and emphasis markers (#, *, _, spaces; a quoted ">" line never counts), is exactly
 #     "APPROVED — EXECUTE: MERGE" (em dash) and nothing else
 #   - it names exactly one reviewed head SHA (40 hex) on a line that mentions "head"
-#   - it names this PR ("#<n>" or "PR <n>") when it names any PR
-# "ready and merge" (case-insensitive) anywhere in the body authorises marking a draft ready.
+#   - it names this PR ("#<n>" or "PR <n>"); a verdict naming no PR is not covered (--parse without
+#     a PR number skips only this check, for offline listing)
+# ready=true (the verdict authorises marking a draft ready) only if BOTH hold:
+#   - some unquoted line, after leading heading/list/emphasis markers, STARTS with "Ready and merge"
+#     (case-insensitive) and contains no negating or conditional word (not, never, no, don't,
+#     cannot, unless, if, until, once, when, whenever, provided, pending, subject to)
+#   - no other unquoted line mentions "ready and merge" with such a word (contradiction = not ready)
+# Quoted (">") lines never count either way. Anything else is ready=false: the queue reads the
+# verdict itself or asks for a dedicated "Ready and merge ..." line; it never infers readiness.
 set -euo pipefail
 
 REPO="${REPO:-reganwagteveld/business-OS}"
@@ -36,9 +43,13 @@ parse_verdicts() {
     | ([ $lines[] | select(test("head"; "i")) | scan("\\b[0-9a-f]{40}\\b") ] | unique) as $shas
     | select($shas | length == 1)
     | ([ $c.body | scan("(?:\\bPR\\s*#?|#)([0-9]{1,5})\\b"; "i") | .[0] ] | unique) as $prs
-    | select($pr == "" or ($prs | length) == 0 or ($prs | index($pr)) != null)
+    | select($pr == "" or ($prs | index($pr)) != null)
+    | "\\b(not|never|no|don.?t|cannot|can.?t|unless|if|until|once|when|whenever|provided|pending|subject\\s+to)\\b" as $hedge
+    | [ $lines[] | select(test("^\\s*>") | not) | gsub("^[\\s#*_-]+"; "") ] as $plain
+    | ([ $plain[] | select(test("^ready and merge\\b"; "i")) | select(test($hedge; "i") | not) ] | length > 0) as $affirm
+    | ([ $plain[] | select(test("ready and merge"; "i")) | select(test($hedge; "i")) ] | length > 0) as $hedged
     | {id: $c.id, url: $c.html_url, created_at: $c.created_at, sha: $shas[0],
-       ready: ($c.body | test("ready and merge"; "i"))}'
+       ready: ($affirm and ($hedged | not))}'
 }
 
 if [ "${1:-}" = --parse ]; then
@@ -66,7 +77,10 @@ for pr in "$@"; do
          && [ -n "$(patch_id "$vsha")" ] && [ "$(patch_id "$vsha")" = "$(patch_id "$head")" ]; then
       covers="same patch-id"   # later commits must still be conflict-free syncs from main: check by hand
     fi
-    if [ "$draft" = true ] && [ "$ready" != true ]; then covers="$covers; draft without ready-and-merge"; fi
+    # A draft is covered only by an affirmative, dedicated "Ready and merge" line (fail closed).
+    if [ "$draft" = true ] && [ "$ready" != true ] && [ "$covers" != "NOT COVERED" ]; then
+      covers="NOT COVERED (draft, no Ready and merge line)"
+    fi
   fi
   ci="$(gh api "repos/$REPO/commits/$head/check-runs?check_name=CI%20gate" --jq '[.check_runs[] | select(.app.slug == "github-actions")] | max_by(.started_at) | if . == null then "none" else (.conclusion // .status) end')"
   behind="$(gh api "repos/$REPO/compare/main...$head" --jq .behind_by 2>/dev/null || echo '?')"

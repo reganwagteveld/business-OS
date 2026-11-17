@@ -20,14 +20,16 @@ check "plain verdict"                 1 119 $C $T $T "APPROVED — EXECUTE: MERG
 PR #119
 Exact reviewed head SHA: \`$H\`"
 check "heading verdict"               1 141 $C $T $T "## APPROVED — EXECUTE: MERGE
+PR #141
 **Exact approved/reviewed head:** \`$H\`"
 check "bold verdict"                  1 1 $C $T $T "**APPROVED — EXECUTE: MERGE**
+PR #1
 
 **Exact reviewed head:** \`$H\`."
 check "leading blank lines"           1 1 $C $T $T "
 
 APPROVED — EXECUTE: MERGE
-head $H"
+PR #1 head $H"
 check "claude app"                    0 1 claude $T $T "APPROVED — EXECUTE: MERGE
 head $H"
 check "posted by hand (no app)"       0 1 "" $T $T "APPROVED — EXECUTE: MERGE
@@ -59,6 +61,7 @@ check "two different head SHAs"       0 1 $C $T $T "APPROVED — EXECUTE: MERGE
 head $H
 previous head $H2"
 check "base SHA on a non-head line"   1 1 $C $T $T "APPROVED — EXECUTE: MERGE
+PR #1
 Exact reviewed head SHA: $H
 Reviewed base SHA: $H2"
 check "names another PR"              0 120 $C $T $T "APPROVED — EXECUTE: MERGE
@@ -68,11 +71,39 @@ check "workflow run number is not a PR" 1 123 $C $T $T "APPROVED — EXECUTE: ME
 PR #123, audited head $H, CI run #44110822911 succeeded"
 check "names this PR"                 1 120 $C $T $T "APPROVED — EXECUTE: MERGE
 **PR #120 mailbox UI; exact reviewed head \`$H\`.**"
-r="$(jq -n --arg b "APPROVED — EXECUTE: MERGE
-head $H
-Ready and merge this draft" '[{id:1,html_url:"u",created_at:"t",updated_at:"t",body:$b,performed_via_github_app:{slug:"chatgpt-codex-connector"}}]' | "$here/verdict-status.sh" --parse 1 | jq -r .ready)"
-[ "$r" = true ] && echo "ok   ready and merge detected" || { echo "FAIL ready and merge" >&2; fail=1; }
-r="$(jq -n --arg b "APPROVED — EXECUTE: MERGE
-head $H" '[{id:1,html_url:"u",created_at:"t",updated_at:"t",body:$b,performed_via_github_app:{slug:"chatgpt-codex-connector"}}]' | "$here/verdict-status.sh" --parse 1 | jq -r .ready)"
-[ "$r" = false ] && echo "ok   no ready-and-merge" || { echo "FAIL no ready-and-merge" >&2; fail=1; }
+check "names no PR"                    0 1 $C $T $T "APPROVED — EXECUTE: MERGE
+Exact reviewed head SHA: $H"
+check "names no PR, offline listing"  1 "" $C $T $T "APPROVED — EXECUTE: MERGE
+Exact reviewed head SHA: $H"
+
+# ready: name, expected (true|false|none), body after the verdict and head lines
+ready() {
+  local r
+  r="$(jq -n --arg b "APPROVED — EXECUTE: MERGE
+PR #1, exact reviewed head $H
+$3" '[{id:1,html_url:"u",created_at:"t",updated_at:"t",body:$b,performed_via_github_app:{slug:"chatgpt-codex-connector"}}]' \
+    | "$here/verdict-status.sh" --parse 1 | jq -r .ready)"
+  [ -n "$r" ] || r=none
+  if [ "$r" = "$2" ]; then echo "ok   ready: $1 ($r)"; else echo "FAIL ready: $1: expected $2, got $r" >&2; fail=1; fi
+}
+ready "dedicated line"                       true  "Ready and merge this draft PR through the serialized merge queue, within the scope below."
+ready "dedicated line, bold label"           true  "**Ready and merge** this draft PR through the merge queue."
+ready "dedicated list item"                  true  "- Ready and merge this draft PR."
+ready "absent"                               false ""
+ready "negated: do NOT ready and merge"      false "Do NOT ready and merge this PR."
+ready "negated on the dedicated line"        false "Ready and merge is not authorised yet."
+ready "never"                                false "Never ready and merge before main CI."
+ready "conditional: if"                      false "Ready and merge if Regan agrees."
+ready "conditional: once"                    false "Ready and merge once #140 lands."
+ready "conditional: until"                   false "Ready and merge, but not until CI is green."
+ready "conditional: subject to"              false "Ready and merge subject to owner approval."
+ready "conditional: pending"                 false "Ready and merge pending the macOS job."
+ready "contradiction elsewhere"              false "Ready and merge this draft PR.
+Do not ready and merge before the owner replies."
+ready "quoted historical phrase"             false "> Ready and merge this draft PR."
+ready "quoted negation does not veto"        true  "Ready and merge this draft PR.
+> earlier: do not ready and merge"
+ready "mid-sentence phrase is not a directive" false "The serialized merge queue may ready and merge only this patch."
+ready "inline code mention"                  false "This is an explicit \`ready and merge\` approval."
+ready "different phrase"                     false "Mark ready; merge later."
 exit "$fail"
