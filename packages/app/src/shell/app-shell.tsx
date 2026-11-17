@@ -185,9 +185,9 @@ const PEEK_OPEN_MS = 120;
 const PEEK_CLOSE_MS = 200;
 
 /**
- * The rail beside the content. Expanded, it is the sidebar itself. Compact, it keeps its 64 px slot
- * in the layout and, while a mouse rests on it, "peeks": the sidebar draws expanded on top of the
- * content (no layout shift) and collapses again when the pointer leaves. Peeking is mouse-only (touch
+ * The rail beside the content. Expanded, it is the sidebar itself. Compact, while a mouse rests on it
+ * it "peeks": the rail widens to its expanded width in the layout, so the content area beside it
+ * narrows and nothing is covered, and it gives the space back when the pointer leaves. Peeking is mouse-only (touch
  * and pen tap the icons as before) and changes nothing for keyboard or screen-reader users: names,
  * roles and focus order are the same in both states. Right after the person collapses the rail, a
  * peek waits until the pointer has left it once, so "Collapse" visibly collapses.
@@ -213,7 +213,8 @@ function Rail(props: NavProps & { onToggle?: () => void }) {
   return (
     <div
       data-rail-slot=""
-      className="relative z-20 h-full w-(--sidebar-w-compact) shrink-0"
+      data-peek={peek ? '' : undefined}
+      className="flex h-full shrink-0"
       onPointerEnter={(e) => {
         if (e.pointerType === 'mouse' && !suppressed.current) schedule(true, PEEK_OPEN_MS);
       }}
@@ -223,9 +224,7 @@ function Rail(props: NavProps & { onToggle?: () => void }) {
         else clearTimeout(timer.current);
       }}
     >
-      <div data-peek={peek ? '' : undefined} className={cn('absolute inset-y-0 left-0 h-full', peek && 'shadow-overlay')}>
-        <Sidebar {...props} mode={peek ? 'expanded' : 'compact'} peeking={peek} onToggle={toggle} />
-      </div>
+      <Sidebar {...props} mode={peek ? 'expanded' : 'compact'} peeking={peek} onToggle={toggle} />
     </div>
   );
 }
