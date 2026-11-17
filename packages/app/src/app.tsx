@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
 import { createCustomersClient, type CustomersClient } from './api/customers';
 import { createDashboardClient, type DashboardClient } from './api/dashboard';
+import { createSearchClient } from './api/search';
 import { createPeopleClient, type PeopleClient } from './api/people';
 import { createProjectsClient, type ProjectsClient } from './api/projects';
 import { createFinanceClient, type FinanceClient } from './api/finance';
@@ -79,6 +80,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
   const reporting = useMemo(() => reportingOverride ?? createReportingClient(apiBaseUrl, resolvedTransport), [reportingOverride, apiBaseUrl, resolvedTransport]);
   const dashboard = useMemo(() => dashboardOverride ?? createDashboardClient(apiBaseUrl, resolvedTransport), [dashboardOverride, apiBaseUrl, resolvedTransport]);
+  const searchClient = useMemo(() => createSearchClient(apiBaseUrl, resolvedTransport), [apiBaseUrl, resolvedTransport]);
   const dashboardClients = useMemo<DashboardClients>(() => ({ reporting, dashboard, projects, finance }), [reporting, dashboard, projects, finance]);
   const storage = useMemo(() => storageOverride ?? browserStorage(), [storageOverride]);
   const workspace = useWorkspace({ auth, tenancy, storage });
@@ -303,6 +305,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       notice={phase.kind === 'ready' ? phase.notice ?? null : null}
       onDismissNotice={workspace.dismissNotice}
       onNavigate={open}
+      search={{ client: searchClient, onSessionEnded: workspace.retry }}
       onSelectBusiness={(next) => {
         setRoute(HOME);
         workspace.switchTo(next);

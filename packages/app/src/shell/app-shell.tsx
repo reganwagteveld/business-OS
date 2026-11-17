@@ -8,6 +8,7 @@ import { ROLE_LABEL } from './choose';
 import { Icon, type IconName } from './icons';
 import { Menu, type MenuEntry } from './menu';
 import { useSidebarPreference, useThemePreference, type SidebarMode, type ThemePreference } from './preferences';
+import { RECORD_SEARCH_ENABLED, SearchEntry, type ShellSearch } from './palette';
 import { HOME, type ResolvedNavigation, type ResolvedZone, type ShellRoute } from './registry';
 
 /** A problem with the last business switch, shown once above the content. */
@@ -28,6 +29,8 @@ export interface AppShellProps {
   notice?: ShellNotice | null;
   onDismissNotice?: () => void;
   onNavigate: (route: ShellRoute) => void;
+  /** Global search (GS-UI). Used only while `RECORD_SEARCH_ENABLED` is true; otherwise the disabled button stays. */
+  search?: ShellSearch;
   /** Switch straight to another listed business. Omitted where the shell cannot (a Zone on its own). */
   onSelectBusiness?: (slug: string) => void;
   /** The full business chooser. */
@@ -137,7 +140,11 @@ export function AppShell(props: AppShellProps) {
             ) : null}
             {narrow ? <BusinessSwitcher {...shared} variant="bar" /> : <Breadcrumbs {...shared} pageLabel={pageLabel} />}
             <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-              <Unavailable icon="search" label="Search" compact={layout !== 'wide'} />
+              {RECORD_SEARCH_ENABLED && props.search ? (
+                <SearchEntry search={props.search} slug={business.slug} navigation={navigation} route={route} guarded={guarded} onNavigate={props.onNavigate} compact={layout !== 'wide'} />
+              ) : (
+                <Unavailable icon="search" label="Search" compact={layout !== 'wide'} />
+              )}
               <Unavailable icon="bell" label="Notifications" compact />
               <AccountMenu {...shared} showName={layout === 'wide'} />
             </div>
