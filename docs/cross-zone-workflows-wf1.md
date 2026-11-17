@@ -4,7 +4,15 @@
 > else: no migration, route, contract, client code or production action. Implementation (WF-1B, WF-1C, WF-1D) is
 > **not authorised** until the ChatGPT architecture audit and Regan's explicit approval.
 >
-> **Base:** `main` at `ccfcc93` (2026-11-17). Every "verified" statement below cites a file on that commit.
+> **Version 1.1 (2026-11-17)** after the ChatGPT architecture audit on #102 (conditional pass at `219db4d`):
+> H1 the source-quote trigger now locks the quote and its exact commit-order semantics are stated (§5.4, §6.10);
+> M1 complete lock order and deadlock analysis including trigger- and FK-induced locks, exact preflight SQL
+> (§6.10, §10.2); M2 duplicate guard reworded, deliberate repeat creation allowed (§6.2, D-WF1-15); M3 exact,
+> disjoint project summary definitions (§6.6); opportunity status scope made explicit, new D-WF1-16 (§6.2);
+> D-WF1-12 wording; PR #93 merged and #97 migration stamp noted (§10.1, §15).
+>
+> **Base:** `main` at `ccfcc93` (2026-11-17); `main` has since advanced to `4134636` (GS1-A, #93), which adds no
+> migration and does not change any file this spec cites in Sales, Projects or Finance services. Every "verified" statement below cites a file on that commit.
 > Statements marked **(proposal)**, **(recommendation)** or **(assumption)** are not facts about the code.
 >
 > **Builds on [W1](./cross-zone-workflows-w1.md)** (merged #79, decisions W1-D1..D13, FD-P3 and gates G-1..G-4
@@ -71,7 +79,7 @@ and UI panels on three existing detail screens. No change to issuance, numbering
 financial rule. The riskiest parts are the guard triggers and the lock order, both covered by mandatory real
 PostgreSQL tests (W1 gates G-2..G-4).
 
-**Owner decisions needed:** nine new ones, D-WF1-07 to D-WF1-15 (§13). Four amend accepted W1 details and are
+**Owner decisions needed:** ten new ones, D-WF1-07 to D-WF1-16 (§13). Four amend accepted W1 details and are
 flagged as such.
 
 **Recommended next package:** WF-1B-1 (schema and Finance link rules), §14.
@@ -337,14 +345,41 @@ Unchanged from W1 §6.1, scheduled in WF-1B-1:
 
 ### 5.4 Guard trigger `projects_guard_links` (new, `SECURITY INVOKER`)
 
-`BEFORE INSERT OR UPDATE OF source_quote_id, source_opportunity_id, customer_id ON projects`:
+`BEFORE INSERT OR UPDATE OF source_quote_id, source_opportunity_id ON projects` (not `customer_id`, so an ordinary
+customer edit never touches Finance rows; customer drift is caught by the FKs alone):
 
-1. `source_quote_id`: if `OLD.source_quote_id IS NOT NULL` and it changes → `RAISE` (set once).
-   If it becomes non-null (insert or update): read the quote (`kind`, `status`, `project_id`) under the caller's
-   RLS; refuse unless `status = 'ACCEPTED'` and (`project_id IS NULL` or `project_id = NEW.id`).
-2. `source_opportunity_id`: if `NEW.source_quote_id` is not null and that quote's `opportunity_id` is not null,
-   `NEW.source_opportunity_id` must equal it.
-3. Error codes in a new `WF0xx` range, mapped to the HTTP codes in §6.
+1. **Set once.** If `OLD.source_quote_id IS NOT NULL` and `NEW.source_quote_id IS DISTINCT FROM OLD.source_quote_id`
+   → `RAISE` (`WF001`).
+2. **Lock, then check (H1).** Only when `source_quote_id` becomes non-null (insert, or NULL → value):
+   `SELECT kind, status, project_id, opportunity_id FROM finance_documents WHERE business_id = NEW.business_id
+   AND id = NEW.source_quote_id FOR SHARE`. Refuse unless `kind = 'QUOTE'`, `status = 'ACCEPTED'` and
+   (`project_id IS NULL` or `project_id = NEW.id`) (`WF002`, `WF003`).
+3. **Opportunity agrees with the quote.** When either column changes and `NEW.source_quote_id` is not null: if the
+   quote's `opportunity_id` is not null, `NEW.source_opportunity_id` must equal it (`WF004`). The quote's
+   `opportunity_id` is frozen after issue (`finance_guard_document`), so this read needs no lock.
+
+**Why the explicit `FOR SHARE`.** The composite FK alone takes only `FOR KEY SHARE` on the quote, which does
+**not** conflict with the `FOR NO KEY UPDATE` that `lockDocuments` and every quote transition take
+(`finance/server/shared.ts:43-50`). Without the explicit lock, a link could read `ACCEPTED` while a void is in
+flight and commit after it. `FOR SHARE` does conflict with `FOR NO KEY UPDATE`.
+
+**Exact semantics (what is guaranteed, and what is not).** At READ COMMITTED:
+
+| Interleaving | Outcome |
+|---|---|
+| A void (or any transition) of the quote has **committed** before the link's `FOR SHARE` | The locking read waits if needed, then sees the latest committed row (PostgreSQL re-reads the newest version of a locked row): status `VOID` → link refused |
+| The void holds the quote lock but has not committed | The link waits; after the void commits it sees `VOID` → refused; if the void rolls back it sees `ACCEPTED` → allowed |
+| The link took `FOR SHARE` first | The void waits until the link commits or rolls back, then voids the quote. The project keeps its link and shows "source quote void" (§8). This is the defined lifecycle, not a race |
+
+So the guarantee is: **a project's source quote was `ACCEPTED` at the moment the link committed, in commit order
+with every quote transition.** It is not "the quote is still accepted now" (voids after association are allowed
+by design). The same holds for direct SQL that bypasses the service, because the lock is inside the trigger.
+
+**Liveness.** Service paths always lock the quote before the project (§6.10), so they cannot deadlock with each
+other. A **direct SQL** link (no product path does this) locks the project row first and the quote second; racing a
+`from-quote` request on the same quote it can form a cycle with the unique index on `source_quote_id`, which
+PostgreSQL breaks with `40P01`. Both outcomes keep every invariant (one side rolls back); this is stated as tested
+behaviour, not hidden (T-51).
 
 It runs as `bos_app` under forced RLS (the Finance guard pattern, `20261115000000_finance/migration.sql:556-557`),
 so it can only ever see the current tenant's rows. Prisma cannot express it; it lives in the migration SQL and is
@@ -399,8 +434,8 @@ POST workflows/projects/from-opportunity          Idempotency-Key required
 
 | Concern | Rule |
 |---|---|
-| Validation | Opportunity exists and is not archived (`409 archived_reference`); any status (OPEN, WON, LOST): planning may start before a win. Name defaults to the opportunity title. Customer = the opportunity's (`createProject` rules: customer active) |
-| Duplicate guard | `existingProjectCount` must equal the number of projects whose `source_opportunity_id` is this opportunity, counted under the lock below; otherwise `409 opportunity_projects_changed { count }`. Prevents double creation even after an idempotency key expires (D-WF1-15, resolves G-1 for this path) |
+| Validation | Opportunity exists, is not archived (`409 archived_reference`) and is **OPEN or WON**. OPEN is a separate, permitted planning action (work can be planned before a deal closes); WON is the W1-D7 "Start job" case. **LOST is refused** (`409 opportunity_lost`; reopen it in Sales first) per recommended D-WF1-16. Name defaults to the opportunity title. Customer = the opportunity's (`createProject` rules: customer active) |
+| Duplicate guard | `existingProjectCount` must equal the number of projects whose `source_opportunity_id` is this opportunity, counted under the lock below; otherwise `409 opportunity_projects_changed { count }`. This **prevents unconfirmed or stale duplicate creation** (double clicks, retries, a retry after the idempotency key's retention). It does **not** forbid deliberate repeats: a person who sees the new count and confirms it again creates another project, which is intended for phased work (D-WF1-03, D-WF1-15). It contributes to G-1 for this path |
 | Authorisation | `projects:create` and `sales:read`; also `customers:read` when the opportunity has a customer (existing Projects rule) |
 | Customer consistency | Copied, not chosen, so it matches by construction |
 | Idempotency | `workflow_requests` (operation `project.from_opportunity`); same key + same hash → 200 with the original project re-read with the caller's current permissions; different hash → `409 idempotency_conflict` |
@@ -438,10 +473,10 @@ POST workflows/projects/:projectId/link-quote
 
 | Concern | `link-opportunity` | `link-quote` |
 |---|---|---|
-| Validation | Project not archived (`409 archived`); opportunity exists, not archived when newly linked; customers equal if both set; not locked by a source quote | Project not archived and has a customer; quote `ACCEPTED`, same customer (`400 project_customer_mismatch`), its `project_id` NULL or this project; project has no source quote (`409 project_has_quote`); quote not a source elsewhere (`409 quote_has_project`) |
+| Validation | Project not archived (`409 archived`); a newly linked opportunity exists, is not archived and is OPEN or WON (`409 opportunity_lost`, D-WF1-16); customers equal if both set; not locked by a source quote. Clearing (`null`) is always allowed unless locked | Project not archived and has a customer; quote `ACCEPTED`, same customer (`400 project_customer_mismatch`), its `project_id` NULL or this project; project has no source quote (`409 project_has_quote`); quote not a source elsewhere (`409 quote_has_project`) |
 | Authorisation | `projects:update` + `sales:read` | `projects:update` + `finance:read` |
 | Idempotent by state | Same value again → 200, no version bump, no audit | Same quote again → 200, no change |
-| Concurrency | Conditional `UPDATE … WHERE version AND archived_at IS NULL` (Projects pattern) → `409 stale` | quote `FOR SHARE` (blocks a concurrent void) → project conditional `UPDATE` (takes `FOR UPDATE` because a unique-key column changes) |
+| Concurrency | Conditional `UPDATE … WHERE version AND archived_at IS NULL` (Projects pattern) → `409 stale` | quote `FOR SHARE` (blocks a concurrent void) → project conditional `UPDATE` (takes `FOR UPDATE` because a unique-key column changes) → trigger re-takes quote `FOR SHARE` (already held) and re-checks status (§5.4, §6.10) |
 | Side effects | Opportunity untouched | Quote untouched; `source_opportunity_id` set from the quote when the project has none, refused if it differs (`409 opportunity_mismatch`) |
 | Audit | `projects.project.opportunity_linked { from, to }` | `projects.project.quote_linked { quoteId }` |
 
@@ -464,12 +499,38 @@ convert path is the existing one, and the project summary shows quoted versus in
 | Endpoint | Change | Permission |
 |---|---|---|
 | `GET finance/quotes`, `GET finance/invoices`, `GET finance/credit-notes` | add `opportunityId` filter | `finance:read` + `sales:read` for that filter |
-| `GET finance/projects/:projectId/summary` | **new.** Per currency: `quotedNet` (quotes of the project, §5.2, status ISSUED or ACCEPTED), `acceptedNet`, `invoicedNet` (ISSUED invoices), `creditedNet` (ISSUED credit notes of those invoices), `receivedAmount` (allocations + applied credit on those invoices), `outstanding` (Σ total − allocated − credit applied), `draftCount`, `expensesNet` (RECORDED expenses). Counts per status. Derived, read-only | `finance:read` + `projects:read`; project must exist in the business (404 otherwise) |
+| `GET finance/projects/:projectId/summary` | **new.** Exact definitions in §6.6.1. Derived, read-only | `finance:read` + `projects:read`; project must exist in the business (404 otherwise) |
 | `GET projects?sourceOpportunityId=` | **new filter** | `projects:read` + `sales:read` for that filter |
 | `GET sales/opportunities?customerId=` | exists | `sales:read` |
 
-The summary is per currency because documents of one project may use different currencies (Finance never
-converts, `finance-data-model.md` §9). Void documents and discarded drafts never count.
+#### 6.6.1 Project summary definitions (M3)
+
+One row per currency that occurs in any set below; nothing is converted or added across currencies
+(`finance-data-model.md` §9). All amounts are exact decimals already stored at the document's scale. Sets, for
+project `P`:
+
+| Set | Members |
+|---|---|
+| `Q(P)` quotes | the **deduplicated union** of quotes with `project_id = P` and the quote `P.source_quote_id` (a quote is counted once even if both apply; the trigger in §5.4 makes them agree) |
+| `I(P)` invoices | invoices with `project_id = P` (after D-WF1-10 this includes drafts converted from the source quote) |
+| `C(P)` credit notes | credit notes whose `credited_invoice_id` is in `I(P)` (they copy the invoice's project, but membership is defined by the credited invoice so it cannot drift) |
+| `E(P)` expenses | expenses with `project_id = P` |
+
+| Field | Definition | Notes |
+|---|---|---|
+| `quotedNet` | Σ `subtotal` of `Q(P)` with status `ISSUED` or `ACCEPTED` | `DRAFT`, `DECLINED`, `EXPIRED`, `VOID` excluded |
+| `acceptedNet` | Σ `subtotal` of `Q(P)` with status `ACCEPTED` | subset of `quotedNet` |
+| `invoicedNet`, `invoicedGross` | Σ `subtotal`, Σ `total` of `I(P)` with status `ISSUED` | `VOID` and drafts excluded |
+| `creditedNet`, `creditedGross` | Σ `subtotal`, Σ `total` of `C(P)` with status `ISSUED` | |
+| `billedNet` | `invoicedNet − creditedNet` | the revenue view (`finance-data-model.md` §9) |
+| `paymentsAllocated` | Σ `allocated_total` of `ISSUED` invoices in `I(P)` | **payment allocations only**; labelled "Received" in the UI. Reversed allocations are already excluded from the counter |
+| `creditApplied` | Σ `credit_applied_total` of `ISSUED` invoices in `I(P)` | credit notes applied to those invoices; not cash |
+| `outstanding` | Σ (`total − allocated_total − credit_applied_total`) of `ISSUED` invoices in `I(P)` | the existing receivables formula (§18.4 F2); each credit is subtracted once, through `credit_applied_total` only |
+| `unappliedCredit` | Σ (`total − credit_applied_total`) of `ISSUED` credit notes in `C(P)` | issued but not yet applied; shown, never subtracted from `outstanding` (Finance's existing rule) |
+| `expensesNet` | Σ net amount of `RECORDED` expenses in `E(P)` | net of tax, as `finance-data-model.md` §9 |
+| `counts` | number of documents per kind and status in `Q(P)`, `I(P)`, `C(P)`, including drafts | counts only for drafts; draft amounts are not totals |
+
+`paymentsAllocated + creditApplied + outstanding = invoicedGross` for each currency, which T-49 asserts.
 
 ### 6.7 Response changes (additive)
 
@@ -491,11 +552,63 @@ cannot read. Opening a record the viewer can no longer read yields the existing 
 ### 6.9 Error codes (new, additive)
 
 `opportunity_projects_changed`, `quote_not_accepted`, `quote_has_project`, `project_has_quote`,
-`opportunity_set_by_quote`, `opportunity_mismatch`. Existing codes reused: `stale`, `archived`,
+`opportunity_set_by_quote`, `opportunity_mismatch`, `opportunity_lost`. Existing codes reused: `stale`, `archived`,
 `archived_reference`, `project_customer_mismatch`, `project_customer_locked`, `opportunity_customer_mismatch`,
 `idempotency_conflict`. No error names another Zone's record kind, count or id unless the caller can read it.
 
 ---
+
+### 6.10 Lock order and deadlock analysis (M1)
+
+As in W1 §9.2, lock order is about liveness: every invariant rests on FKs, CHECKs, the unique key and the trigger
+lock, and holds in any order; a wrong order can only cost a `40P01` rollback. This section lists **every** lock each
+path takes, including those PostgreSQL takes implicitly for FKs, unique keys and the trigger. It is the design to
+test (T-51, T-52), not a claim that it has been tested.
+
+**Lock facts used** (PostgreSQL row-lock modes): an FK check on insert or on update of FK columns takes
+`FOR KEY SHARE` on the referenced row. An `UPDATE` that changes a column of any unique index takes `FOR UPDATE` on
+the row, otherwise `FOR NO KEY UPDATE`. `FOR KEY SHARE` conflicts only with `FOR UPDATE`; `FOR SHARE` conflicts with
+`FOR NO KEY UPDATE` and `FOR UPDATE`. `ON UPDATE NO ACTION` checks on the referenced side look for committed
+referencing rows; uncommitted rows of another transaction are not visible to them. A locking read that waited
+for a concurrent update re-reads the newest committed row version (READ COMMITTED).
+
+**Paths after WF-1B** (`customer_id` is in `projects_customer_key`, `source_quote_id` in the unique source key):
+
+| # | Path | Locks, in order |
+|---|---|---|
+| P1 | Finance draft create or edit that sets or keeps `project_id` (existing, plus I1 FK) | idempotency advisory lock (create) or document `FOR NO KEY UPDATE` (edit) → row write → FK checks: `FOR KEY SHARE` on customer, opportunity, project (`(business_id, project_id)` and `(business_id, project_id, customer_id)`) |
+| P2 | Project customer change (`updateProject`) | project row `FOR UPDATE` (key column change) → referenced-side `NO ACTION` checks against documents, expenses, templates (committed rows only, no wait on uncommitted rows) → own FK check on the source quote `FOR KEY SHARE` when `source_quote_id` is set (fails `23503` because the quote's customer differs) |
+| P3 | `link-quote` | quote `FOR SHARE` → project row `FOR UPDATE` → trigger: quote `FOR SHARE` (held) → FK `FOR KEY SHARE` on quote (compatible with own lock) → unique index entry for `source_quote_id` |
+| P4 | `from-quote` | idempotency advisory lock → quote `FOR NO KEY UPDATE` → project `INSERT` → trigger: quote `FOR SHARE` (own lock, compatible) → FK `KEY SHARE` on quote, customer, opportunity → unique index entry |
+| P5 | Quote accept, decline, expire, void (existing) | quote `FOR NO KEY UPDATE` (`lockDocuments`) → status update (no unique column changes) |
+| P6 | `link-opportunity` | project row `FOR NO KEY UPDATE` (`source_opportunity_id` is in no unique index) → trigger reads the source quote's frozen `opportunity_id` (no lock) → FK `KEY SHARE` on opportunity |
+| P7 | `from-opportunity` | idempotency advisory lock → advisory `workflows.opportunity_projects:<id>` → opportunity read (no lock) → project `INSERT` → FK `KEY SHARE` on opportunity and customer |
+| P8 | Convert quote (existing, plus D-WF1-10 project lookup) | idempotency advisory lock → quote and project read (no lock) → invoice `INSERT` → FK `KEY SHARE` on quote, project (both FKs), customer |
+| P9 | Direct SQL `UPDATE projects SET source_quote_id` (not a product path) | project row `FOR UPDATE` → trigger quote `FOR SHARE` |
+
+Global class order for service paths (extends W1 §9.2): idempotency lock → **Finance rows** (quote) → Sales
+(advisory or opportunity) → **Projects row** → FK `KEY SHARE` locks at write time.
+
+**Pairs that share rows:**
+
+| Pair | Analysis | Expected result |
+|---|---|---|
+| P2 customer change vs P1 draft linking the same project | P1 waits on the project (`KEY SHARE` vs P2's `FOR UPDATE`) and holds only its own document; P2 never waits on P1 (its `NO ACTION` check does not see P1's uncommitted row). If P2 commits first, P1's FK check re-reads the new project version and fails `23503` → `400 project_customer_mismatch`. If P1 commits first, P2 waits on P1's `KEY SHARE`, then its `NO ACTION` check sees P1's committed row and fails → `409 project_customer_locked` | No cycle, invariant holds either way |
+| P2 vs P3 `link-quote` on the same project | P3 holds the quote `FOR SHARE` and wants the project `FOR UPDATE`; P2 holds the project and never touches the quote unless the project already has a source quote (then only `KEY SHARE`, compatible with `FOR SHARE`). Whoever gets the project first wins; the other sees `stale` (version) or the FK failure | No cycle |
+| P2 vs P5 void of the project's source quote | P2's FK check takes `KEY SHARE` on the quote, compatible with P5's `FOR NO KEY UPDATE` | No wait; P2 fails on the FK anyway (customer locked) |
+| P3 `link-quote` vs P5 void | Both lock the quote first (`FOR SHARE` vs `FOR NO KEY UPDATE` conflict); one queues. §5.4 table gives the outcomes | No cycle; link refused if the void commits first |
+| P4 `from-quote` vs P5 void | Both take `FOR NO KEY UPDATE` on the quote first | No cycle; the later one sees the other's result |
+| P3 vs P4 on the same quote | P3 `FOR SHARE` and P4 `FOR NO KEY UPDATE` conflict on the quote, taken first by both | No cycle; the later one hits the unique key → `409 quote_has_project` |
+| P3 vs P3 on the same quote, different projects | Both hold `FOR SHARE` (compatible), each locks its own project, then the second waits on the first's unique index entry; the first holds nothing the second holds exclusively | No cycle; second gets `409 quote_has_project` |
+| P8 convert vs P3 `link-quote` (D-WF1-10 lookup) | P8 reads without a lock; if P3 commits after P8's read, the draft is created without `project_id`. Accepted gap: the draft is editable and shows no project, so the person can set it; a retry with the same key replays that draft unchanged | No deadlock; a narrow, visible, correctable gap (T-48) |
+| P9 direct SQL vs P4 `from-quote` on the same quote | P9 holds project `FOR UPDATE` + its unique index entry and waits for the quote (`FOR SHARE` vs P4's `FOR NO KEY UPDATE`); P4 holds the quote and may wait on P9's unique index entry | **Possible `40P01`**, broken by PostgreSQL; one side rolls back; invariants hold (T-51e). No product path does P9 |
+| P6 vs P2 on the same project | Both update the project row; conditional `UPDATE` with `version` makes the loser `409 stale` | No cycle |
+| P7 vs P7 on the same opportunity | Advisory lock serialises them; the second recounts and gets `409 opportunity_projects_changed` unless its count already includes the first | No cycle |
+
+**Evidence each WF-1B PR must add** (gate G-2): for every row above a deterministic two-session test using
+advisory-lock barriers to force the interleaving, asserting final rows, error codes, and the absence of `40P01` on
+service-only pairs; and a reproduction harness that runs P3 with the project locked before the quote and shows
+`40P01` against P4, proving the order matters.
 
 ## 7. Authorisation matrix
 
@@ -533,7 +646,8 @@ changes; only creation of a **new** link checks state.
 | Event | Effect on linked records | New links |
 |---|---|---|
 | Opportunity WON | None (D-WF1-02). UI offers "Create project" | allowed |
-| Opportunity LOST / reopened | None. Project shows the opportunity's current status | allowed (planning may continue) |
+| Opportunity LOST | None. Existing project links stay; project shows the opportunity as Lost | refused (`opportunity_lost`, D-WF1-16) until reopened |
+| Opportunity reopened | None | allowed |
 | Opportunity archived | Existing links stay and stay readable | refused (`archived_reference`) |
 | Quote DECLINED / EXPIRED | None | cannot become a source quote |
 | Quote VOID after it became a source quote | Project keeps `source_quote_id`; shows "Quote void" to finance readers; summary excludes it | — |
@@ -570,13 +684,13 @@ Each guarantee names its enforcement and the test that proves it. "Direct SQL" t
 | G-ESC | No privilege escalation through cross-Zone actions | `all-of` keys per route; Zone functions keep their own checks (customers:read for customer links) | T-27..T-30: role-by-endpoint matrix generated from §7, every cell asserted 2xx or 403 |
 | G-TX | Transaction-safe creation | One `withTenant` transaction per request | T-31: fault injection after the project insert (test-only hook) → no project, no key row, no audit |
 | G-IDEM | Safe retry and duplicate prevention | `workflow_requests` unique key; source-quote unique; `existingProjectCount` guard under advisory lock | T-32..T-35: same key twice → one project, 200; same key different body → 409; two keys concurrently from one quote → one 201, one 409; two concurrent from-opportunity with count 0 → one 201, one 409 |
-| G-CONC | No deadlock, invariants under concurrency (W1 gate G-2) | Lock order §6 and W1 §9.2 | T-36..T-39: real PostgreSQL at READ COMMITTED, two sessions: wrong-order harness reproduces `40P01`; shipped order under a mix (from-quote vs void, link-quote vs void, project customer change vs draft link, from-opportunity × 2) produces none and every invariant holds |
+| G-CONC | No deadlock, invariants under concurrency (W1 gate G-2) | Lock order §6.10 and W1 §9.2 | T-51, T-52 (deterministic two-session, below) and T-36..T-39: real PostgreSQL at READ COMMITTED, two sessions: wrong-order harness reproduces `40P01`; shipped order under a mix (from-quote vs void, link-quote vs void, project customer change vs draft link, from-opportunity × 2) produces none and every invariant holds |
 | G-IMM | Immutable financial boundaries | `finance_guard_document` unchanged; no WF path updates an issued document; source-quote set-once trigger | T-40: every WF action leaves `content_sha256`, `version` and all columns of every issued document byte-identical (snapshot compare); direct SQL update of `source_quote_id` from one value to another → trigger error |
 | G-EST | Opportunity estimates untouched (D-WF1-04) | No writer | T-41: create quote from opportunity, edit and issue it, convert it → opportunity row unchanged (all columns, version) |
 | G-DRAFT | Conversions create drafts only (D-WF1-06) | Existing insert guard FN010 | T-42: every create path returns `DRAFT`, no number; direct SQL insert as ISSUED → FN010 |
 | G-AUD | Auditable relationship mutations | `recordAudit` in the same transaction; ids and structured facts only | T-43: each action writes exactly the audit rows in §6, none on rollback or idempotent repeats; audit metadata has no names, titles or notes |
 | G-ARC | Archived or inaccessible sources handled | Service checks; trigger for quote status | T-44..T-46: archived opportunity, archived project, void/declined quote → specific 409; existing links stay readable |
-| G-TRG | DB rules hold without the service | Triggers and CHECKs | T-47: direct SQL — wrong kind, other customer, second project per quote, draft or issued (not accepted) quote, quote drafted for another project, opportunity disagreeing with the source quote → each refused |
+| G-TRG | DB rules hold without the service | Triggers (with the quote lock of §5.4) and CHECKs | T-47, T-51: direct SQL — wrong kind, other customer, second project per quote, draft or issued (not accepted) quote, quote drafted for another project, opportunity disagreeing with the source quote → each refused |
 
 G-3 (production preflight) is a procedure, not a test: §10.
 
@@ -587,7 +701,7 @@ G-3 (production preflight) is a procedure, not a test: §10.
 ### 10.1 One migration, in WF-1B-1
 
 Stamp chosen at implementation time, after every stamp on `main` (latest `20261205000000`) **and** in open PRs,
-including the GS1-A index migration that PR #93 split out (CI `check-migration-order`). Contents, in order:
+currently `20261206000000_search_indexes` in draft PR #97 (CI `check-migration-order`). Contents, in order:
 
 1. `finance_documents_kind_customer_key` (unique, implied by PK).
 2. `projects_customer_key` (unique, implied by PK).
@@ -604,9 +718,35 @@ If review finds one is needed, it is listed in the PR and applied with `db:privi
 ### 10.2 Production steps (Mac session, each needs Regan's own approval in that thread)
 
 1. Read production `_prisma_migrations` read-only; confirm exactly this migration is pending, checksums match.
-2. **Preflight (gate G-3):** read-only counts of rows that would violate each new FK or unique key (documents,
-   expenses, templates whose project has a different or null customer). Last recorded state: no customer
-   businesses in production, so zero is expected; **stop if any count is not zero.**
+2. **Preflight (gate G-3):** read-only (`BEGIN TRANSACTION READ ONLY; … ROLLBACK;`). **Forced RLS also applies to
+   the table owner**, so a role without `BYPASSRLS` that has no `app.business_id` set sees **no rows** and every
+   count below would be a false zero. The preflight therefore runs the queries once per business, with
+   `SET LOCAL app.business_id` to each id from `businesses`, and first runs a **control query** per business
+   (`SELECT count(*) FROM projects`, `… FROM finance_documents`) whose totals must be non-zero wherever data exists
+   and match the row counts reported by `pg_stat_user_tables.n_live_tup` within tolerance. Which production role
+   may read `businesses` and set the variable is confirmed from the Mac session before the run (assumption to
+   verify; `docs/migration-readiness.md` §5 uses `bos_owner` for catalogue checks only). Each I1 query must return
+   **0** for every business; **stop if any does not, or if the control query shows rows are hidden.** Last recorded
+   state: no customer businesses in production, so zero is expected.
+
+   ```sql
+   -- I1 on finance documents (customer always set): project customer must equal document customer.
+   SELECT count(*) FROM finance_documents d JOIN projects p ON p.business_id = d.business_id AND p.id = d.project_id
+    WHERE p.customer_id IS DISTINCT FROM d.customer_id;
+   -- I1 on expenses: only rows WITH a customer are constrained (MATCH SIMPLE); customerless expenses stay valid.
+   SELECT count(*) FROM finance_expenses e JOIN projects p ON p.business_id = e.business_id AND p.id = e.project_id
+    WHERE e.customer_id IS NOT NULL AND p.customer_id IS DISTINCT FROM e.customer_id;
+   -- I1 on recurring templates (customer always set).
+   SELECT count(*) FROM finance_recurring_templates r JOIN projects p ON p.business_id = r.business_id AND p.id = r.project_id
+    WHERE p.customer_id IS DISTINCT FROM r.customer_id;
+   ```
+
+   Also record (not a stop condition) the number of customerless expenses linked to projects, to confirm after
+   migration that they are still present and unchanged. The two new unique keys are implied by primary keys and
+   cannot fail; the new `projects` columns start NULL, so their FKs, CHECKs and unique key cannot fail either.
+   The migration adds the I1 FKs `NOT VALID` and then `VALIDATE`s them in the same migration; validation runs the
+   same check as above inside PostgreSQL's FK machinery (not subject to RLS) and fails the whole migration if a row
+   appeared between preflight and apply.
 3. Create and verify the `pre-wf1b-migration` Neon recovery branch; record it in `ops/neon/recovery-points.json`.
 4. `prisma migrate deploy`; verify constraints exist and are validated (`pg_constraint.convalidated`), trigger
    present, RLS flags on `workflow_requests`.
@@ -648,7 +788,7 @@ and the server still decides.
 | Element | Behaviour | Gate |
 |---|---|---|
 | Action "Create quote" | Opens the Finance quote form in the Finance Zone, prefilled (customer, contact, opportunity, currency). If the opportunity has no customer the form asks for one. Unsaved-changes guard applies | `finance:write` + `sales:read` |
-| Action "Create project" | Dialog: name (default title), owner, dates; shows "This opportunity already has N projects" when N > 0 and sends `existingProjectCount = N` | `projects:create` + `sales:read` (+ `customers:read`) |
+| Action "Create project" | Shown while the opportunity is OPEN or WON (D-WF1-16). Dialog: name (default title), owner, dates; shows "This opportunity already has N projects" when N > 0 and sends `existingProjectCount = N`; on `409 opportunity_projects_changed` it shows the new count and asks again | `projects:create` + `sales:read` (+ `customers:read`) |
 | Action "Link existing project" | Project picker filtered to the opportunity's customer; calls `link-opportunity` | `projects:update` + `sales:read` |
 | Assisted creation after a win | After "Mark won" succeeds, a non-blocking inline notice: "Won. Create a project for this work?" with **Create project** and **Not now**. Never automatic, never modal (D-WF1-02) | `projects:create` |
 | Related: Quotes and invoices | List from `finance/quotes?opportunityId=` and `invoices?opportunityId=`: number, status, total per currency, settlement for invoices | `finance:read` |
@@ -662,7 +802,7 @@ and the server still decides.
 | Source chips in header | "From opportunity: <title> (Won)" and "Accepted quote: Q-0042 (Accepted/Void)", each opening the record | `sales:read` / `finance:read` |
 | Action "Link opportunity" / "Change" / "Remove" | `link-opportunity`; disabled with an explanation when the source quote fixes it | `projects:update` + `sales:read` |
 | Action "Associate accepted quote" | Picker of the customer's ACCEPTED quotes; `link-quote`; shown only while the project has no source quote and a customer | `projects:update` + `finance:read` |
-| Panel "Finance" | Summary per currency (Quoted, Invoiced, Received, Outstanding, Expenses) from the summary endpoint, then the list of the project's quotes, invoices and credit notes with status. Actions "Create quote", "Create invoice", and on an accepted quote row "Create invoice from quote" (convert) | `finance:read`; actions `finance:write` |
+| Panel "Finance" | Summary per currency (Quoted, Invoiced, Received, Outstanding, Expenses; "Received" is payment allocations only, applied and unapplied credit are shown on their own lines, §6.6.1) from the summary endpoint, then the list of the project's quotes, invoices and credit notes with status. Actions "Create quote", "Create invoice", and on an accepted quote row "Create invoice from quote" (convert) | `finance:read`; actions `finance:write` |
 | Non-finance viewers | No panel, no placeholder, no "you need Finance access" text that reveals data exists. Only the generic rule from W1 §11 ("A finance user can invoice this work") on a COMPLETED project, which states no fact about this project's finances | — |
 | Customer change | Handles `409 project_customer_locked` with a plain message ("This project's customer can't change because records for that customer are linked to it.") | — |
 
@@ -719,7 +859,10 @@ roles OWNER, MANAGER, MEMBER unless noted.
 | T-44..46 | Archived opportunity/project, void/declined/expired quote, archived customer | I | 1B |
 | T-47 | Trigger and CHECK refusals by direct SQL (§9 G-TRG) | S | 1B |
 | T-48 | Convert of a source quote puts the project on the draft (D-WF1-10); convert of a quote with `project_id` unchanged | I | 1B |
-| T-49 | Project summary per currency: two currencies, void invoice, credit note, partial payment, reversed payment, expense, discarded draft, void source quote | I | 1B |
+| T-49 | Project summary per currency (§6.6.1): two currencies; a quote linked while draft **and** the same project's source quote linked after issue (counted once each, never twice); a quote that is both (dedup); void invoice; issued credit note applied and one unapplied; partial payment and a reversed payment; expense; discarded draft; void source quote; identity `paymentsAllocated + creditApplied + outstanding = invoicedGross` | I | 1B |
+| T-51 | H1 race, direct SQL and service: (a) void commits first → link refused; (b) void holds lock, link waits, void commits → refused; (c) void rolls back → link allowed; (d) link first → void waits, then succeeds, link kept; (e) direct-SQL link vs `from-quote` on one quote → at most one link, any `40P01` rolls back cleanly; deterministic with advisory-lock barriers | C, S | 1B |
+| T-52 | M1 pairs in §6.10, each as a deterministic two-session test: customer change vs draft link (both orders), customer change vs `link-quote`, customer change vs quote void, `link-quote` vs void, `from-quote` vs `link-quote`; assert final rows, error codes and no `40P01` on service paths | C | 1B |
+| T-53 | `MATCH SIMPLE`: an expense without a customer links a customer-owned project and a customerless project, before and after the migration; preflight queries return the expected rows on a seeded violating fixture | I, S | 1B |
 | T-50 | Contracts: additive only (`pnpm contracts:check`), absent-key schema for redacted fields | U | 1B |
 | T-60..69 | UI behaviours in §11.7 | UI | 1C |
 | E-1 | Opportunity → quote (from opportunity) → issue → accept → project from quote → invoice from quote (draft has project) → issue → partial + final payment → project summary: quoted = invoiced = received; opportunity estimate unchanged | E2E (API + UI) | 1D |
@@ -737,7 +880,8 @@ roles OWNER, MANAGER, MEMBER unless noted.
 ### 13.1 Inherited (accepted, binding)
 
 D-WF1-01..06 (§2). From W1: W1-D1 (thin `workflows` module), W1-D2 (job only from ACCEPTED), W1-D3 (project-side
-source columns, option A), W1-D6 (I1 policy), W1-D7 (project from won opportunity), W1-D10 (one project per
+source columns, option A), W1-D6 (I1 policy), W1-D7 (offer "Start job" after a win; D-WF1-16 proposes also
+allowing OPEN as a planning action), W1-D10 (one project per
 quote), W1-D13 (`workflow_requests`), FD-P3 (over-quote confirmation, applies when W1's invoice package lands),
 gates G-1..G-4.
 
@@ -746,14 +890,15 @@ gates G-1..G-4.
 | Id | Question | Options | Recommendation and why | Amends W1? |
 |---|---|---|---|---|
 | D-WF1-07 | Can a project's opportunity link be changed after it is set? | (a) immutable after insert (W1 §8.2); (b) **set, change or clear, audited**, locked only when a source quote fixes it | **(b)**: "link existing project" is a required action and mistakes must be correctable; it is Sales provenance, not a financial record | Yes: W1 §8.2 said `source_opportunity_id` is set at insert only |
-| D-WF1-08 | How is an accepted quote associated with an existing project? | (a) **`projects.source_quote_id` set once from NULL by `link-quote`**, one per project; further quotes linked while draft (create quote from project); (b) a typed join table allowing several issued quotes per project; (c) unfreeze `finance_documents.project_id` | **(a)**: smallest change; (c) is unsafe because `project_id` is in the sealed content hash (§3.5); (b) adds a second source of truth for an edge case. Limitation: a second, already issued, unlinked quote cannot be attached later | Yes: W1 §8.2 said insert only |
+| D-WF1-08 | How is an accepted quote associated with an existing project? | (a) **`projects.source_quote_id` set once from NULL by `link-quote`**, immutable afterwards, one per project; further quotes linked while draft (create quote from project); (b) a typed join table allowing several issued quotes per project; (c) unfreeze `finance_documents.project_id` | **(a)**: smallest change; (c) is unsafe because `project_id` is in the sealed content hash (§3.5); (b) adds a second source of truth for an edge case. **Intentional limitation:** a second, already issued quote that was not linked while it was a draft can never be attached to the project | Yes: W1 §8.2 said insert only |
 | D-WF1-09 | Can a quote association be removed? | **no** / yes with `finance:issue` | **No in WF-1**: it is financial provenance; revisit if pilots need it | No |
 | D-WF1-10 | Should converting a project's source quote put that project on the draft invoice? | **yes** / no | **Yes**: otherwise invoices from an associated quote lose the project; additive, draft-only, no change to eligibility or issuance | Extends Finance convert (additive) |
 | D-WF1-11 | Should linking an opportunity or project on a Finance document also require `sales:read` / `projects:read`? | **yes** / no | **Yes**: defence in depth for future custom roles; no effect on today's default roles | No |
-| D-WF1-12 | Gate G-1: `workflow_requests` retention | keep forever / **90 days, purged only by a job that is not built and needs its own approval**, with state guards making expired-key retries safe | **90 days + state guards** (§6.2, §6.3, §8): satisfies G-1 without enabling any job | Resolves G-1 |
+| D-WF1-12 | Gate G-1: `workflow_requests` retention | keep forever / **retention target 90 days**, with state guards making expired-key retries safe | **90-day target + state guards** (§6.2, §6.3, §8). No cleanup job exists or is proposed here, so rows physically remain beyond 90 days until a separately approved cleanup; this is a retention *policy*, not enforced retention. Safety never depends on deletion: an old key behaves like an expired one | Resolves G-1 as policy |
 | D-WF1-13 | Scope of WF-1 relative to W1's sequence | **WF-1 = W1 WF-1 + WF-2 + the link half of WF-6**; accept+win (WF-3), portions and over-quote enforcement (WF-6), visits (WF-4/5), reporting (WF-7), timeline (WF-8) stay later; remaining W1 items are renumbered when next scheduled to avoid the WF-1 name clash | **As stated** | Re-plans W1 §13 |
 | D-WF1-14 | Package split | one WF-1B PR / **WF-1B-1 (schema + Finance link rules + reads) then WF-1B-2 (workflows module + endpoints)**; WF-1C-1 / WF-1C-2 | **Split** (§14): one production migration, smaller audits | No |
-| D-WF1-15 | Duplicate guard for project-from-opportunity | key only / **key + `existingProjectCount` confirmation** | **Key + count**: makes double creation impossible even after key expiry and gives the person a clear prompt | No |
+| D-WF1-15 | Duplicate guard for project-from-opportunity | key only / **key + `existingProjectCount` confirmation** | **Key + count**: prevents unconfirmed or stale duplicates (including after key expiry) and gives the person a clear prompt. Deliberate repeat creation with the updated count is **explicitly allowed** (phased work) | No |
+| D-WF1-16 | Which opportunity statuses allow creating or newly linking a project? | WON only (literal W1-D7) / **OPEN or WON** / any status | **OPEN or WON**: OPEN supports planning before a deal closes; WON is W1-D7. LOST is refused until reopened (a project for a lost deal is almost always a mistake). Existing links are never changed by a status change | Widens W1-D7's "after WON" offer to an OPEN planning action |
 
 ---
 
@@ -779,9 +924,9 @@ largest test addition; 2 ≈ 15–20 files; 2′ ≈ 8–12; 3 ≈ 12–18; 4 �
 
 | Id | Item | Type | Impact | Mitigation |
 |---|---|---|---|---|
-| R-1 | **PR #93 (GS1-A, draft)** edits `apps/api/src/app/api/_lib/routes.ts`, `core/http/errors.ts`, the `index.ts` of finance, projects, sales and customers, and `packages/contracts` (`index.ts`, `api-v1.json`) | Conflict | WF-1B-1/2 touch the same files → merge conflicts; GS1 project search results must also omit `sourceQuoteId` for non-finance users | Whichever merges second rebases at the front of the merge queue; WF-1B adds the `all-of` helper as a separate option, not a rewrite; GS1 must reuse the `Viewer` redaction for any project field it later exposes (W1 §10) |
-| R-2 | GS1-A's split-out index migration | Migration order | Stamp collision | Choose WF-1B-1's stamp at implementation after checking open PRs; CI `check-migration-order` |
-| R-3 | **V2-B2 visual identity** (thread active, no PR yet) and V2-B3..B5, V2-D | UI overlap | V2-D will rework the same Sales, Projects and Finance screens | WF-1C keeps changes inside small panels and actions; `RelatedRecords` follows V2-A contracts; coordinate ordering with the V2-D Zone PRs (WF-1C first is recommended) |
+| R-1 | **PR #93 (GS1-A) merged** as `4134636` after v1.0. It changed `apps/api/src/app/api/_lib/routes.ts` (new `maxWaitMs`, `available` options), `core/http/errors.ts`, the `index.ts` of finance, projects, sales and customers, and `packages/contracts` | Dependency | WF-1B builds on the merged versions, so no branch conflict remains; GS1 project search results must also omit any project link field for non-finance or non-sales users | WF-1B adds the `all-of` option to `tenantRoute` alongside GS1's options; GS1 search must reuse the `Viewer` redaction for any project field it later exposes (W1 §10) |
+| R-2 | **PR #97** (GS1-A search index migration, draft, not applied) reserves `20261206000000_search_indexes` | Migration order | Stamp collision or order inversion | WF-1B-1's stamp must sort after `20261206000000` and every other open-PR stamp at implementation time; CI `check-migration-order` |
+| R-3 | **V2-B2 visual identity** (draft docs PR #103) and V2-B3..B5, V2-D | UI overlap | V2-D will rework the same Sales, Projects and Finance screens | WF-1C keeps changes inside small panels and actions; `RelatedRecords` follows V2-A contracts; coordinate ordering with the V2-D Zone PRs (WF-1C first is recommended) |
 | R-4 | I1 FKs reject existing production rows | Migration | Migration fails | Preflight (G-3), `NOT VALID` + `VALIDATE`, stop on non-zero |
 | R-5 | Guard trigger reads `finance_documents` from a Projects trigger | Coupling | Hidden cross-Zone dependency in SQL | Documented here and in the migration; direct-SQL tests; SECURITY INVOKER only |
 | R-6 | New lock paths deadlock with existing ones | Concurrency | `40P01` rollbacks | Lock order §6 + W1 §9.2; G-2 tests |
@@ -800,8 +945,8 @@ largest test addition; 2 ≈ 15–20 files; 2′ ≈ 8–12; 3 ≈ 12–18; 4 �
 | Workstream | Relationship |
 |---|---|
 | **W1** (`docs/cross-zone-workflows-w1.md`) | WF-1 implements W1 §6.1 (I1), §8.1 (filters, summary) and §8.2 (project source) with amendments D-WF1-07/08/10. W1 WF-3, the portion and over-quote half of WF-6, WF-4, WF-5, WF-7 and WF-8 are unchanged and later. W1's lock order (§9.2) and gates G-1..G-4 apply; G-1 is resolved by D-WF1-12 |
-| **GS1/GS2** search (PR #93) | R-1, R-2. Search must apply the same field redaction for project links |
-| **UI V2** (B1 merged; B2 active; B3–B5, C, D later) | R-3; WF-1C reuses V2 tokens and components where merged |
+| **GS1/GS2** search (#93 merged, #97 migration draft) | R-1, R-2. Search must apply the same field redaction for project links |
+| **UI V2** (B1 merged; B2 proposal draft #103; B3–B5, C, D later) | R-3; WF-1C reuses V2 tokens and components where merged |
 | **A3** settings | A per-business "offer project after win" or default status could move there later; WF-1 needs no setting |
 | **N1** notifications | The new audit actions (`projects.project.created_from_*`, `*_linked`) can feed N1's vocabulary later; WF-1 sends nothing |
 | **Reporting** | No metric changes; project margin is W1 WF-7 and can reuse the summary's definitions |
