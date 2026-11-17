@@ -36,6 +36,17 @@ export class TenantScopeError extends Error {
   }
 }
 
+/**
+ * The unit of work could not start within `maxWaitMs` (no pooled connection free). Nothing ran: if the
+ * connection arrives later, the abandoned unit of work stops before its first statement and rolls back.
+ */
+export class TransactionStartTimeoutError extends Error {
+  constructor() {
+    super('Unit of work could not start in time');
+    this.name = 'TransactionStartTimeoutError';
+  }
+}
+
 type IsolationLevel = 'ReadCommitted';
 
 /** The part of a generated Prisma client this module relies on. */
@@ -68,6 +79,8 @@ export type TenantModels<Tx> = Partial<Record<keyof Tx & string, string>>;
 export interface WithTenantOptions {
   role?: TenantRole;
   timeoutMs?: number;
+  /** How long to wait for a pooled connection before the unit of work fails to start (Prisma `maxWait`). */
+  maxWaitMs?: number;
 }
 
 export interface TenantRunnerConfig<Tx, M extends keyof Tx & string> {
@@ -95,8 +108,13 @@ export function createWithTenant<Tx extends RawQueryable, M extends keyof Tx & s
     const userId = ctx.userId ?? '';
     if (userId !== '' && !UUID.test(userId)) throw new TenantContextError();
 
-    return client.$transaction(
+    // Prisma's own maxWait does not bound the driver adapter's pool wait, so the wait is bounded here.
+    let started = false;
+    let abandoned = false;
+    const run = client.$transaction(
       async (tx) => {
+        if (abandoned) throw new TransactionStartTimeoutError();
+        started = true;
         // set_config returns a row, so it goes through tagged $queryRaw. One round trip sets both
         // values; the returned values are checked so a silently ignored call fails closed.
         const rows = await tx.$queryRaw<{ business_id: string; user_id: string }[]>`
@@ -107,8 +125,21 @@ export function createWithTenant<Tx extends RawQueryable, M extends keyof Tx & s
         const db = config.disableScopeGuardForIsolationTests ? narrow(tx, config.models) : scopeToTenant(tx, ctx, config.models);
         return work(db as TenantDb<Tx, M>);
       },
-      { timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, isolationLevel: 'ReadCommitted' },
+      { timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, isolationLevel: 'ReadCommitted', ...(opts.maxWaitMs ? { maxWait: opts.maxWaitMs } : {}) },
     );
+    const maxWaitMs = opts.maxWaitMs;
+    if (!maxWaitMs) return run;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (started) return;
+        abandoned = true;
+        reject(new TransactionStartTimeoutError());
+      }, maxWaitMs);
+      Promise.resolve(run).then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error: unknown) => { clearTimeout(timer); if (!abandoned) reject(error); },
+      );
+    });
   };
 }
 

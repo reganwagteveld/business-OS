@@ -26,10 +26,15 @@ const PEOPLE_MODULE = /^modules\/people\//;
 describe('people boundaries', () => {
   it('only People routes and the tenancy member clean-up import the people module', () => {
     const importers = sources.filter(([, text]) => /from ['"]@\/modules\/people['"/]/.test(text)).map(([name]) => name);
-    const unexpected = importers.filter((n) => !PEOPLE_ROUTES.test(n) && !PEOPLE_MODULE.test(n) && n !== 'modules/tenancy/server/members.ts');
+    const unexpected = importers.filter((n) => !PEOPLE_ROUTES.test(n) && !PEOPLE_MODULE.test(n) && n !== 'modules/tenancy/server/members.ts'
+      && n !== 'modules/search/server/registry.ts');
     expect(unexpected).toEqual([]);
     const tenancy = sources.find(([n]) => n === 'modules/tenancy/server/members.ts')![1];
     expect(tenancy).toMatch(/import \{ unlinkRemovedMember \} from '@\/modules\/people';/);
+    // Global search GS1-A (docs/global-search-gs1.md §6.4): the search registry takes only the People-owned
+    // provider (work fields, written and reviewed in the people module) and its index declarations.
+    const search = sources.find(([n]) => n === 'modules/search/server/registry.ts')![1];
+    expect(search.match(/import [^;]+ from '@\/modules\/people';/g)).toEqual(["import { employeeSearchProvider, PEOPLE_SEARCH_INDEXES } from '@/modules/people';"]);
   });
 
   it('no code outside the people module reads People models or tables', () => {

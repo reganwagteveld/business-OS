@@ -40,6 +40,7 @@ import * as assignmentsRoute from '@/app/api/v1/b/[slug]/people/leave-policies/[
 import { devOutbox } from '@/core/email';
 import { backendPid, waitUntilBlocked } from './support/locks';
 import { inviteForSignup, admitFixture } from './support/admission';
+import { withoutUuids } from './support/uuid';
 
 const BASE = process.env.APP_BASE_URL!;
 const ORIGIN = new URL(BASE).origin;
@@ -925,7 +926,8 @@ describe('audit', () => {
     expect(employeeRows.map((r) => r.action)).toEqual(['people.leave_policy.assigned', 'people.leave_policy.unassigned']);
     expect(employeeRows[0].metadata).toEqual({ policyId: p.id, leaveTypeId: t.id, effectiveDate: todayIn(A.timeZone), replacedPolicyId: null });
     expect([...typeRows, ...policyRows, ...employeeRows].every((r) => r.business_id === A.businessId && r.actor_user_id === A.people.OWNER!.id)).toBe(true);
-    const text = JSON.stringify([...typeRows, ...policyRows, ...employeeRows]);
+    // UUIDs stripped: a random actor/business uuid can contain '4321' or '1234' by chance.
+    const text = withoutUuids(JSON.stringify([...typeRows, ...policyRows, ...employeeRows]));
     for (const secret of ['Secret', 'leak', 'Hidden', 'Private', '4321', '1234', 'Renamed', 'Leave Tester']) expect(text).not.toContain(secret);
   });
 

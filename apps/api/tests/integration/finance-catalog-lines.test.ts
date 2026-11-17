@@ -41,6 +41,7 @@ import * as creditNoteRoute from '@/app/api/v1/b/[slug]/finance/credit-notes/[do
 import { FinanceDocumentResponse } from '@business-os/contracts';
 import { devOutbox } from '@/core/email';
 import { backendPid, waitUntilBlocked } from './support/locks';
+import { withoutUuids } from './support/uuid';
 
 const BASE = process.env.APP_BASE_URL!;
 const ORIGIN = new URL(BASE).origin;
@@ -404,8 +405,10 @@ describe('audit', () => {
     expect(rows.map((r) => [r.action, r.metadata.catalogLineCount ?? null])).toEqual([
       ['finance.document.created', '1'], ['finance.document.updated', '1'], ['finance.document.updated', null],
     ]);
-    const text = JSON.stringify(rows);
-    for (const secret of [it1.id, 'Secret name', '4321']) expect(text).not.toContain(secret);
+    expect(JSON.stringify(rows)).not.toContain(it1.id);
+    // UUIDs stripped: a random uuid can contain '4321' by chance.
+    const text = withoutUuids(JSON.stringify(rows));
+    for (const secret of ['Secret name', '4321']) expect(text).not.toContain(secret);
   });
 });
 

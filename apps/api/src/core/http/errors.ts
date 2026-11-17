@@ -109,3 +109,23 @@ export function isUniqueViolation(error: unknown, name: string): boolean {
   const text = `${error instanceof Error ? error.message : ''} ${JSON.stringify((error as { meta?: unknown } | null)?.meta ?? {})}`;
   return text.includes(name);
 }
+
+/**
+ * Global search (docs/global-search-gs1.md §5.5, §6.9). Raised only by the search service, so the global
+ * handling of 57014 and pool errors elsewhere is unchanged. `slot`: no concurrency slot free (429, with
+ * Retry-After); `pool`: no pooled connection in time (503).
+ */
+export class SearchBusyError extends Error {
+  constructor(readonly reason: 'slot' | 'pool') {
+    super('search_busy');
+    this.name = 'SearchBusyError';
+  }
+}
+
+/** The search statement hit its statement timeout (SQLSTATE 57014 inside the search service only): 503. */
+export class SearchTimeoutError extends Error {
+  constructor() {
+    super('search_timeout');
+    this.name = 'SearchTimeoutError';
+  }
+}

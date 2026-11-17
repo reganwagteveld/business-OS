@@ -106,6 +106,7 @@ const tenancy: TenancyClient = {
   listBusinesses: async () => ({ kind: 'ok' as const, data: [{ slug: SLUG, name: context.business.name, role: 'OWNER' as const }, { slug: 'north-studio', name: 'North Studio', role: 'MANAGER' as const }] }),
   businessContext: async () => ({ kind: 'ok' as const, data: context }),
   createBusiness: async () => ({ kind: 'server_error' as const }) as never,
+  platformAccess: async () => ({ kind: 'ok' as const, data: { canCreateBusiness: true } }),
 };
 const t = { kind: 'cookie' as const };
 createRoot(document.getElementById('root')!).render(

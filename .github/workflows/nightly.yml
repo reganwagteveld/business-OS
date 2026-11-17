@@ -1,0 +1,129 @@
+name: Nightly
+# CI-2B: scheduled full validation, including the native macOS desktop build in its release
+# profile. Daily at 02:00 AWST (18:00 UTC). It is NOT a required check and never blocks pull
+# requests; an unresolved failure blocks release approval (CI-2C). Design: docs/ci-2-runner-efficiency.md.
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+  # Validates this workflow itself when it (or its scripts) change. The full-suite job below is
+  # skipped on pull requests because the normal CI workflow already runs it there.
+  pull_request:
+    paths:
+      - '.github/workflows/nightly.yml'
+      - '.github/scripts/verify-macos-bundle.sh'
+      - '.github/scripts/nightly-report.sh'
+
+permissions:
+  contents: read
+
+# One nightly run at a time. A scheduled run never cancels a running one; at most one waits.
+concurrency:
+  group: nightly-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The complete existing suite: static, unit, database with RLS isolation and pooler suites, build
+  # verification, and the Linux, macOS and Windows desktop matrix. A scheduled or manual event is
+  # always the full tier (classify-changes.sh).
+  full-suite:
+    name: Full CI suite
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      actions: read
+
+  macos-native:
+    name: macOS native validation (release profile)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      # Set the repository variable DESKTOP_API_BASE_URL to the production API origin to make this a
+      # production-configured build. Unset, the build uses the CI placeholder and the summary says so.
+      VITE_API_BASE_URL: ${{ vars.DESKTOP_API_BASE_URL || 'https://api.business-os.invalid' }}
+      API_ORIGIN_IS_PRODUCTION: ${{ vars.DESKTOP_API_BASE_URL != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: false
+      - uses: ./.github/actions/setup-workspace
+        with:
+          filter: '@business-os/desktop...'
+      - name: Desktop frontend typecheck and lint
+        run: |
+          pnpm --filter @business-os/desktop typecheck
+          pnpm --filter @business-os/desktop lint
+      - name: Build the Tauri app (unsigned, release profile) and disk image
+        run: pnpm --filter @business-os/desktop tauri:build --bundles app,dmg
+      - name: Rust unit tests (desktop shell)
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+      - name: Verify the bundle, disk image and checksums
+        run: .github/scripts/verify-macos-bundle.sh apps/desktop/src-tauri/target/release/bundle "$RUNNER_TEMP/macos-evidence"
+      # Starts the built app for ten seconds. A runner without a window server makes this fail,
+      # which is reported as a failure, never as a pass.
+      - name: Launch smoke test
+        run: |
+          app="$(ls -d apps/desktop/src-tauri/target/release/bundle/macos/*.app | head -n1)"
+          bin="$app/Contents/MacOS/$(ls "$app/Contents/MacOS" | head -n1)"
+          "$bin" > "$RUNNER_TEMP/macos-evidence/smoke.log" 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "launch smoke test: process alive after 10 s" | tee -a "$RUNNER_TEMP/macos-evidence/smoke.log"
+            kill "$pid" || true
+          else
+            echo "launch smoke test FAILED: process exited early" >&2
+            tail -n 40 "$RUNNER_TEMP/macos-evidence/smoke.log" >&2
+            exit 1
+          fi
+      - name: Not validated here
+        if: always()
+        run: |
+          {
+            echo "## macOS native validation"
+            echo "- API origin: ${VITE_API_BASE_URL} (production-configured: ${API_ORIGIN_IS_PRODUCTION})"
+            echo "- **Not validated in this workflow:** code signing, notarisation, auto-update, and any test that needs a signed-in user or the production API. These need credentials or interactive access (ADR 0005 is still open) and are not reported as passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload evidence and artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-native-evidence
+          path: |
+            ${{ runner.temp }}/macos-evidence
+            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Runner-minutes per OS, the verdict, and an issue for failed scheduled runs.
+  report:
+    name: Nightly report
+    needs: [full-suite, macos-native]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write # only used to open or update the failure issue on scheduled runs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Runner-minutes, verdict and failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          FULL_SUITE: ${{ needs.full-suite.result }}
+          MACOS_NATIVE: ${{ needs.macos-native.result }}
+          SERVER_URL: ${{ github.server_url }}
+        run: .github/scripts/nightly-report.sh
