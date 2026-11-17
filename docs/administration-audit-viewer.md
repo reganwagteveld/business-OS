@@ -1,6 +1,8 @@
 # Administration audit viewer (A-AUD): architecture and UI plan
 
-Status: **Proposal, documentation only.** Nothing here changes code, schema, RLS, grants, migrations, contracts or
+Status: **Proposal, documentation only.** Revision 2 (2026-11-17) folds in ChatGPT's conditional design pass on PR
+#125 (five corrections: target default-deny, bounded date windows, former-actor privacy, dotted prefix and safe
+display, RLS facts verified first). Decisions remain proposals until Regan accepts them. Nothing here changes code, schema, RLS, grants, migrations, contracts or
 production. Base: `main` at `06405a5`. Open PRs checked for overlap: #119 and #122 (Settings shell and Team, both
 touch `packages/app/src/zones/settings/pages.ts` and `app.tsx`), #118 (C2-B2 docs), #110 (WF-1B-1, links, not audit
 rows). No open PR touches `core/audit`. This plan **refines** the A2-E and A3-C rows of
@@ -76,14 +78,14 @@ catalog|recurring|reminder|reminder_policy|reminder_hold|settings|branding.*`, `
 |---|---|
 | `limit` | 1..100, default 50 (shared `Limit` helper) |
 | `cursor` | opaque base64url encoding of `(created_at, id)` of the last row; invalid cursor answers 400 `invalid_cursor` |
-| `actionPrefix` | optional, `^[a-z_]+(\.[a-z_]+)*$`, max 60; matched as a **parameterised prefix** (`action LIKE $1 \|\| '%'` with `%`/`_` escaped) |
-| `actorUserId` | optional UUID, must be a UUID; shows that actor's events |
+| `actionPrefix` | optional, `^[a-z_]+(\.[a-z_]+)*$`, max 60. Matched on a **dotted boundary**: `action = $1 OR action LIKE $1 \|\| '.%'` with `%`, `_` and `\` escaped, so `sales` never matches `salesforce` |
+| `actorUserId` | optional UUID of a **current member** (taken from the `userId` the response returns). An id that is not a current member of this business, including a departed member's, answers the same empty page as an unused id: no distinguishable error, no count, no hint (D-AUD-9) |
 | `targetType`, `targetId` | optional, together or `targetType` alone |
-| `from`, `to` | optional ISO timestamps, `to - from` at most 92 days, `from <= to` |
+| `from`, `to` | optional ISO timestamps. **Always bounded to 92 days:** neither given means `to = now`, `from = to - 92 d`; only `to` means `from = to - 92 d`; only `from` means `to = min(now, from + 92 d)`; both must satisfy `from <= to` and `to - from <= 92 d` (else 400). "Older history" means moving the window back in 92-day slices, never a wider window. Ties on `created_at` are ordered by `id`, and the cursor binds `(created_at, id)` plus the filter set, so a cursor reused with different filters answers 400 `invalid_cursor` |
 
 Response: `{ events: AuditEventView[], nextCursor: string | null }` where an `AuditEventView` is
 `{ id, createdAt, action, actor: { kind: 'member' \| 'former_member' \| 'system', userId?: string, name?: string },
-targetType, targetId, metadata }`. `userId` is returned only for `kind: 'member'` (to enable the actor filter), never
+target: { type, id } \| null, metadata }` (target disclosure is rule-driven, §5). `userId` is returned only for `kind: 'member'` (to enable the actor filter), never
 for a former member. Contract lives in a new `packages/contracts/src/audit.ts` (strict zod, additive), exported from
 `index.ts`, with the `api-v1.json` snapshot regenerated (shared files, §8).
 
@@ -107,7 +109,7 @@ themselves audited (D-AUD-6).
 Existing metadata is written by many modules and was never designed for display. Rules:
 
 1. **A registry** `AUDIT_VIEW_RULES` (new file in `core/audit`) maps an exact action or prefix to `{ label, group,
-   allowedKeys, target? }`. The server drops every metadata key not in `allowedKeys` and every non-primitive value
+   allowedKeys, target: 'show' \| 'type_only' \| 'hidden' }`. The server drops every metadata key not in `allowedKeys` and every non-primitive value
    except string arrays, truncates strings to 200 characters, and returns `{}` for an action with no rule.
 2. **Unknown actions are still listed** (action string, time, actor, target), with a generic label and **no
    metadata**. A new Zone's events appear immediately and safely.
@@ -118,7 +120,14 @@ Existing metadata is written by many modules and was never designed for display.
    deny side (not in `allowedKeys`): the removal row shows role and `mailboxesStopped` only.
 5. **Role/status codes only:** `from`/`to` roles, statuses, regional codes (`business.updated`), field *names*.
    This matches Settings A3 §12.1.
-6. `ip_address`, `user_agent` are not selectable by the route's `select` list (§2).
+6. **Targets are default-deny too.** `target_type` and `target_id` can name erased subjects, private mailbox
+   references, People records or other entities the viewer should not learn about. An action's rule must say `show`
+   (type and id), `type_only` (id suppressed) or `hidden`. Unknown actions get `type_only` at most; erasure,
+   mailbox-address and People-personal actions start as `type_only` or `hidden`. The server applies this before
+   serialising, and tests seed rows directly in SQL to prove an id never leaves for a `hidden` or `type_only` rule.
+7. **Safe display.** Action strings and labels are bounded (60 and 200 chars) and the UI renders all of them as
+   text, never as HTML.
+8. `ip_address`, `user_agent` are not selectable by the route's `select` list (§2).
 
 A **registry coverage test** lists every action literal found in `apps/api/src` (the same scan used in §2) and fails
 when one is neither in the registry nor in an explicit `UNLABELLED_OK` list, so adding an audited action forces a
@@ -196,6 +205,7 @@ queue). A-AUD-2 touches `pages.ts` and `app.tsx` owned by #119/#122, so it start
 | D-AUD-5 | Export | Deferred (separate approval) |
 | D-AUD-6 | Audit the act of viewing | No in v1. Revisit if the beta widens; adding `audit.viewed` would write in a GET |
 | D-AUD-7 | Index | None now; add only at the measured trigger in §4 |
+| D-AUD-9 | Departed and unknown actor filter | Safe empty page, no leakage (§4); the UI offers only current members plus "System" |
 | D-AUD-8 | Coverage wording | UI says "recorded changes"; registry coverage test enforces labels for new actions |
 
 None of these is a security escalation under `docs/agent-task-protocol.md`: the plan adds a read path under existing
@@ -206,6 +216,11 @@ unresolved authorisation or tenant-isolation risk, that part escalates to Regan.
 
 API/integration (`pnpm test:integration`, `pnpm test:isolation`):
 
+- Implementation fact check first: confirm `bos_app` has SELECT on `audit_events` and that `audit_tenant_read` and the
+  RESTRICTIVE erasure policy are unchanged. If an access assumption is false, **stop for security review**; never add
+  a grant or loosen a policy to make a test pass.
+- Window defaults (§4): no params, only `from`, only `to`, both, over 92 days, reversed; cursor reused with other
+  filters; `sales` vs `salesforce` prefix; departed or random `actorUserId` returns the same empty page.
 - OWNER and ADMIN read; MANAGER, MEMBER, suspended, removed and unauthenticated are refused (403/401).
 - Business A events never appear for business B, with and without filters, with a foreign `actorUserId`/`targetId`,
   and through a tampered cursor from another business (cursor carries no business, the query is RLS-scoped).
