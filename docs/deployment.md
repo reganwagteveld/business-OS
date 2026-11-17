@@ -70,6 +70,7 @@ A second Vercel project, `business-os-web`, with Root Directory `apps/web` (fram
 - Variable for the web project: `VITE_API_BASE_URL` = the web project's own public origin (public value, no secrets).
 - API project: `APP_BASE_URL` must equal that same origin. It drives the cookie, the Origin check on auth requests and the links in emails. Changing it signs everyone out.
 - The desktop app calls the API cross-origin, so the API project needs `CORS_ALLOWED_ORIGINS=tauri://localhost,http://tauri.localhost` (exact origins only).
+- **Never add a preview or `*.vercel.app` origin to the production API's `CORS_ALLOWED_ORIGINS` or `APP_BASE_URL`.** Web previews run unreviewed branch code and proxy `/api` to the production API; the exact-origin check, the host-only cookie and this allow-list are what keep them away from production data. In production the config schema refuses any `vercel.app` CORS origin at startup (INFRA-VC-1 R1). If working previews are ever needed, give them their own non-production API instead (`docs/vercel-builds.md` §8).
 - `vercel.json` sets `ignoreCommand` to `scripts/vercel/ignore-build.sh`: a preview is skipped only when every change since the branch's last successful deployment is documentation or under `apps/api/`. Production always builds, and anything uncertain builds ([vercel-builds.md](./vercel-builds.md)).
 - A custom domain (for example `app.pixakova.com`) can be added later: attach it to the web project and update `APP_BASE_URL` and `VITE_API_BASE_URL` to it.
 

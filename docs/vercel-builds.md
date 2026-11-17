@@ -98,4 +98,19 @@ Path: Vercel dashboard → team **pixakova** → **Settings** → **Billing** �
 - A webhook action is optional.
 - On Pro, a team budget counts only usage beyond the monthly credit.
 
-The public API has no read endpoint for these settings, so their current state is recorded by the owner, not by this document.
+The public API has no read endpoint for these settings, so their current state is recorded by the owner, not by this document. Owner check, 2026-11-17: no budget or pause setting is configured, so nothing can pause production.
+
+## 8. Previews and the production API (security, D-VC-SEC-1 and D-VC-SEC-2)
+
+`apps/web/vercel.json` rewrites `/api/*` to the API project's production alias for every environment, so web previews (unreviewed branch code) talk to the production API. The INFRA-VC-1 security review found no exploitable path:
+- previews sit behind Vercel login;
+- every cookie-authenticated state change, including sign-in, needs `Origin` exactly equal to `APP_BASE_URL`'s origin (`classifyAuthRequest`), so a preview origin gets 403;
+- the session cookie is host-only on the production origin;
+- CORS is an exact allow-list.
+
+Owner decisions (Regan, 2026-11-17 17:14 UTC):
+- **D-VC-SEC-1, approved:** hardening R1.
+  - Production refuses any `vercel.app` CORS origin at startup (`core/config/schema.ts`, tests in `apps/api/tests/unit/env.test.ts`).
+  - Deployment docs forbid adding preview origins to production allow-lists.
+  - The existing CSRF tests (`auth-csrf.test.ts`, `auth.test.ts`) keep covering foreign origins.
+- **D-VC-SEC-2, approved:** keep the current preview model now. When working previews are needed for review, give previews their own non-production API (a staging API on a Neon non-production branch). Never widen the production API's origins, cookie or CSRF rule to make previews work.

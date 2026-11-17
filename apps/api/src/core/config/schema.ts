@@ -38,6 +38,17 @@ const credentialKeys = z
     return keys;
   });
 
+/** True for vercel.app and any subdomain of it (every Vercel-generated deployment and preview host). */
+export function isVercelPreviewHost(origin: string): boolean {
+  let host: string;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return host === 'vercel.app' || host.endsWith('.vercel.app');
+}
+
 export const postgresUrl = z
   .url()
   .refine((url) => url.startsWith('postgresql://') || url.startsWith('postgres://'), 'Must be a PostgreSQL URL');
@@ -86,6 +97,16 @@ export const envSchema = z
     }
     if (value.VERCEL_ENV === 'production' && value.EMAIL_TRANSPORT === 'log') {
       ctx.addIssue({ code: 'custom', path: ['EMAIL_TRANSPORT'], message: 'Production must send real email (EMAIL_TRANSPORT=resend)' });
+    }
+    // INFRA-VC-1 R1: preview deployments run unreviewed branch code, and the browser app's previews
+    // proxy /api to this API. Production must never grant a Vercel preview host cross-origin access,
+    // because the CORS list also feeds Better Auth's trustedOrigins (auth-adapter.ts). Fail closed.
+    if (value.VERCEL_ENV === 'production') {
+      for (const origin of value.CORS_ALLOWED_ORIGINS) {
+        if (isVercelPreviewHost(origin)) {
+          ctx.addIssue({ code: 'custom', path: ['CORS_ALLOWED_ORIGINS'], message: `Production must not allow a vercel.app origin (${origin}): preview deployments run unreviewed code` });
+        }
+      }
     }
     if (value.EMAIL_TRANSPORT === 'resend' && (!value.RESEND_API_KEY || !value.EMAIL_FROM)) {
       ctx.addIssue({ code: 'custom', path: ['RESEND_API_KEY'], message: 'EMAIL_TRANSPORT=resend needs RESEND_API_KEY and EMAIL_FROM' });
