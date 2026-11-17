@@ -100,7 +100,8 @@ horizontal overflow 0 px at 1440 and 390 px, light and dark).
 
 ## 7. Limitations and future Reporting enhancements
 
-- **Expenses and project metrics** do not exist in R1 (`finance.expenses_recorded`, `projects.tasks_completed` are
+- **Update (WP-R1, [reporting-operational-r1.md](reporting-operational-r1.md)):** expenses recorded, tasks completed and events scheduled are now executable and on the dashboard. The next line describes R2 as merged.
+- **Expenses and project metrics** did not exist in R1 (`finance.expenses_recorded`, `projects.tasks_completed` are
   planned). Accepted for R2 by the owner; they need Zone-owned read models in a backend PR. Also future: scheduling,
   headcount and communications metrics (planned in R1).
 - No "revenue" metric: R1 deliberately separates invoiced (billing), received and won value.

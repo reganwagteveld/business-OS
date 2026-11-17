@@ -3,3 +3,5 @@ packages:
   - packages/*
   # Dev-only tooling packages, listed one by one (UI V2-B2-1 visual-regression harness).
   - tooling/visual
+  # Full-stack golden-path E2E suite (WP-T1): run only by its own workflow and `pnpm --filter @business-os/e2e e2e`.
+  - tooling/e2e
