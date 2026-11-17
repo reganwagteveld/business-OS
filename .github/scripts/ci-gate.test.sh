@@ -5,12 +5,13 @@ set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 fail=0
 
-# name, expected exit (pass|fail), CHANGES STATIC UNIT DATABASE BUILD DESKTOP DESKTOP_REQUIRED
+# name, expected exit (pass|fail), CHANGES STATIC UNIT DATABASE BUILD DESKTOP DESKTOP_REQUIRED [DESKTOP_TIER]
+# DESKTOP_TIER defaults to "docs" when DESKTOP_REQUIRED is false and "full" otherwise.
 check() {
   local name="$1" expected="$2"
   local got=pass
   CHANGES="$3" STATIC="$4" UNIT="$5" DATABASE="$6" BUILD="$7" DESKTOP="$8" DESKTOP_REQUIRED="$9" \
-    DESKTOP_REASON=test "$here/ci-gate.sh" > /dev/null 2>&1 || got=fail
+    DESKTOP_TIER="${10-$([ "$9" = false ] && echo docs || echo full)}" DESKTOP_REASON=test "$here/ci-gate.sh" > /dev/null 2>&1 || got=fail
   if [ "$got" = "$expected" ]; then
     echo "ok   $name ($got)"
   else
@@ -36,5 +37,14 @@ check "classifier failed, desktop skipped"       fail failure $S $S $S $S skippe
 check "classifier cancelled, output says false"  fail cancelled $S $S $S $S skipped false
 check "classifier output missing"                fail $S $S $S $S $S skipped  ""
 check "classifier output garbage"                fail $S $S $S $S $S skipped  maybe
+
+check "server tier may skip desktop"             pass $S $S $S $S $S skipped  false server
+check "full tier cannot skip desktop"            fail $S $S $S $S $S skipped  false full
+check "unknown tier cannot skip desktop"         fail $S $S $S $S $S skipped  false bogus
+check "missing tier cannot skip desktop"         fail $S $S $S $S $S skipped  false ""
+check "docs tier, build job failed"              fail $S $S $S $S failure skipped false docs
+check "docs tier, static (typecheck/lint) failed" fail $S failure $S $S $S skipped false docs
+check "docs tier, classifier job failed"         fail failure $S $S $S $S skipped false docs
+check "cancelled required job fails the gate"    fail $S cancelled $S $S $S skipped false docs
 
 exit "$fail"

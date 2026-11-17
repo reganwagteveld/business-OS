@@ -6,6 +6,8 @@ on:
     tags: ['v*']
   # Full validation on demand (any branch): Actions → CI → Run workflow.
   workflow_dispatch:
+  # Called by the nightly workflow (CI-2B); the event there is schedule or workflow_dispatch, so the full tier runs.
+  workflow_call:
   # Weekly full run on main so toolchain drift (Rust stable, runner images) shows up before a release.
   schedule:
     - cron: '17 5 * * 1'
@@ -30,6 +32,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       desktop: ${{ steps.classify.outputs.desktop }}
+      tier: ${{ steps.classify.outputs.tier }}
       desktop_reason: ${{ steps.classify.outputs.desktop_reason }}
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +44,7 @@ jobs:
         run: |
           .github/scripts/classify-changes.test.sh
           .github/scripts/ci-gate.test.sh
+          .github/scripts/changed-files.test.sh
           .github/scripts/check-migration-order.test.sh
       # STAB-01: a new migration must sort after every migration already on the base branch, or a
       # fresh database would apply it in a different order than production (docs/migration-readiness.md §4).
@@ -51,23 +55,31 @@ jobs:
           list HEAD^1 > "$RUNNER_TEMP/base-migrations"
           list HEAD > "$RUNNER_TEMP/head-migrations"
           .github/scripts/check-migration-order.sh "$RUNNER_TEMP/base-migrations" "$RUNNER_TEMP/head-migrations"
+      # CI-2A: the native matrix is skipped only for documentation-only changes (and, on pull requests,
+      # API/web-only source). Every failure to establish the diff selects the full tier.
       - name: Decide whether the desktop matrix is needed
         id: classify
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
           REF: ${{ github.ref }}
         run: |
-          if [ "$EVENT_NAME" = pull_request ]; then
-            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
-            if [ "$parents" -ne 3 ]; then
-              echo "Expected a merge commit for the pull request checkout" >&2
-              exit 1
+          full() {
+            echo "desktop=true"
+            echo "tier=full"
+            echo "desktop_reason=$1"
+          }
+          {
+            if [ "$EVENT_NAME" != pull_request ] && [ "$EVENT_NAME" != push ]; then
+              full "full validation for $EVENT_NAME on $REF"
+            elif ! .github/scripts/changed-files.sh > "$RUNNER_TEMP/changed-files" 2> "$RUNNER_TEMP/changed-files.err"; then
+              cat "$RUNNER_TEMP/changed-files.err" >&2
+              full "changed files could not be established (fail closed): $(head -c 120 "$RUNNER_TEMP/changed-files.err" | tr '\n' ' ')"
+            else
+              tr '\0' '\n' < "$RUNNER_TEMP/changed-files" >&2
+              .github/scripts/classify-changes.sh < "$RUNNER_TEMP/changed-files" || full "classifier failed (fail closed)"
             fi
-            git diff --name-only HEAD^1 HEAD | tee /dev/stderr | .github/scripts/classify-changes.sh | tee -a "$GITHUB_OUTPUT"
-          else
-            echo "desktop=true" | tee -a "$GITHUB_OUTPUT"
-            echo "desktop_reason=full validation for $EVENT_NAME on $REF" | tee -a "$GITHUB_OUTPUT"
-          fi
+          } | tee -a "$GITHUB_OUTPUT"
 
   static:
     name: Static checks (contracts, types, lint, boundaries)
@@ -318,6 +330,7 @@ jobs:
       BUILD: ${{ needs.build.result }}
       DESKTOP: ${{ needs.desktop.result }}
       DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
+      DESKTOP_TIER: ${{ needs.changes.outputs.tier }}
       DESKTOP_REASON: ${{ needs.changes.outputs.desktop_reason }}
     steps:
       - name: Summary
@@ -347,7 +360,7 @@ jobs:
             echo "| Build verification (API, web, desktop frontend, startup, bundles) | $(icon "$BUILD") $BUILD | $(dur 'Build verification') |"
             echo "| Desktop shell (Linux, macOS, Windows) | $(icon "$DESKTOP") $DESKTOP | $(dur 'Desktop shell') (slowest OS) |"
             echo
-            echo "Desktop matrix required: **${DESKTOP_REQUIRED:-unknown}** ($DESKTOP_REASON)"
+            echo "Tier: **${DESKTOP_TIER:-unknown}**. Desktop matrix required: **${DESKTOP_REQUIRED:-unknown}** ($DESKTOP_REASON)"
             started="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT" --jq .run_started_at 2>/dev/null || true)"
             if [ -n "$started" ]; then
               total=$(( $(date +%s) - $(date -d "$started" +%s) ))

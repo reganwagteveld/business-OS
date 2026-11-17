@@ -1,0 +1,107 @@
+name: Visual regression
+# UI V2-B2-1 (docs/ui/pixa-visual-identity-v2-b2.md §14, §15; D-V2A-11). NON-GATING: this workflow is
+# separate from CI, is not part of `CI gate`, and must not be made a required check until the goldens
+# have a reviewed baseline and a documented flake rate (tooling/visual/README.md).
+# Chromium goldens are evidence only. They do not replace the WKWebView (macOS) and WebView2 (Windows)
+# compatibility matrix and real-device checks (D-V2A-10), which stay separate and required.
+on:
+  pull_request:
+    paths:
+      - 'packages/ui/**'
+      - 'packages/app/src/**'
+      - 'packages/app/tests/support/**'
+      - 'packages/contracts/src/**'
+      - 'tooling/visual/**'
+      - 'tooling/eslint-client.mjs'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/visual.yml'
+  workflow_dispatch:
+    inputs:
+      update:
+        description: 'Regenerate every golden and upload them as an artifact (nothing is committed)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visual-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  visual:
+    name: Visual regression (Chromium goldens, non-gating)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The same image as tooling/visual/scripts/docker.sh, pinned by digest: one Chromium, one font set,
+    # one set of system libraries, so local and CI renders match pixel for pixel.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --ipc=host --init
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      # Only the harness and the workspace packages it renders; no API, no database.
+      - name: Install (workspace lockfile must be up to date)
+        run: pnpm install --frozen-lockfile --filter '@business-os/visual...'
+      - name: Compare with the goldens
+        id: compare
+        if: ${{ !inputs.update }}
+        # Non-gating while the baseline settles: a difference is reported, never fails the workflow.
+        continue-on-error: true
+        working-directory: tooling/visual
+        run: pnpm exec playwright test
+      - name: Regenerate the goldens
+        if: ${{ inputs.update }}
+        working-directory: tooling/visual
+        run: pnpm exec playwright test --update-snapshots=all
+      - name: Summary
+        if: always()
+        working-directory: tooling/visual
+        env:
+          OUTCOME: ${{ steps.compare.outcome }}
+          UPDATE: ${{ inputs.update }}
+        run: |
+          {
+            echo "## Visual regression (non-gating)"
+            echo
+            if [ "$UPDATE" = true ]; then
+              echo "Goldens regenerated; download the \`visual-goldens\` artifact, review it and commit what is intended."
+            elif [ -f test-results/results.json ]; then
+              node -e '
+                const r = require("./test-results/results.json");
+                const s = r.stats;
+                console.log(`Captures: ${s.expected} matched, ${s.unexpected} differ or failed, ${s.flaky} flaky, ${s.skipped} skipped.`);
+                const bad = [];
+                const walk = (suite) => { for (const c of suite.suites ?? []) walk(c); for (const sp of suite.specs ?? []) if (!sp.ok) bad.push(sp.title); };
+                for (const s of r.suites) walk(s);
+                if (bad.length) { console.log(""); console.log("Differences (see the `visual-report` artifact):"); for (const t of bad) console.log(`- ${t}`); }
+              '
+            else
+              echo "No results file: the suite did not run ($OUTCOME)."
+            fi
+            echo
+            echo "Evidence only: Chromium on Linux, not macOS WKWebView or Windows WebView2."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$OUTCOME" = failure ]; then echo "::warning title=Visual regression::Screenshots differ from the goldens; see the job summary and the visual-report artifact."; fi
+      - name: Upload the report and the differing captures
+        if: ${{ always() && steps.compare.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-report
+          path: |
+            tooling/visual/playwright-report/
+            tooling/visual/test-results/
+          retention-days: 14
+      - name: Upload the regenerated goldens
+        if: ${{ inputs.update }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-goldens
+          path: tooling/visual/goldens/
+          retention-days: 14

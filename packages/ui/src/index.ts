@@ -7,8 +7,11 @@ export { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, 
 export { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from './components/dialog';
 export { Field, Input, Label, Select, Textarea } from './components/field';
 export { EmptyState, FormSection, PageHeader, SectionHeader, Separator } from './components/layout';
+export { Figure, FigureStrip } from './components/figure';
 export { KpiCard } from './components/kpi-card';
 export { Skeleton, Spinner } from './components/loading';
+export { Marker, PixelMarker, type MarkerTone } from './components/pixel-marker';
+export { PROGRESS_SQUARES_MAX, ProgressSquares } from './components/progress-squares';
 export { StatCard } from './components/stat-card';
 export { StatusIndicator, type StatusTone } from './components/status-indicator';
 export { Atmosphere, Surface, glassClass, type AtmosphereVariant, type GlassStrength, type SurfaceVariant } from './components/surface';
