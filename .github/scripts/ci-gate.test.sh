@@ -11,12 +11,14 @@ fail=0
 check() {
   local name="$1" expected="$2"
   local got=pass
+  # CIQ-A2: the pooler and completeness jobs follow the shard result unless DBP / DBC override them.
+  DATABASE_POOLER="${DBP-$6}" DATABASE_COMPLETE="${DBC-$6}" \
   CHANGES="$3" STATIC="$4" UNIT="$5" DATABASE="$6" BUILD="$7" DESKTOP="$8" DESKTOP_REQUIRED="$9" \
     DESKTOP_TIER="${10-$([ "$9" = false ] && echo docs || echo full)}" DESKTOP_REASON=test \
     GATE_TIER="${11-full}" GATE_REASON=test "$here/ci-gate.sh" > /dev/null 2>&1 || got=fail
   if [ "${11-}" = - ]; then
     got=pass
-    env -u GATE_TIER CHANGES="$3" STATIC="$4" UNIT="$5" DATABASE="$6" BUILD="$7" DESKTOP="$8" DESKTOP_REQUIRED="$9" \
+    env -u GATE_TIER DATABASE_POOLER="${DBP-$6}" DATABASE_COMPLETE="${DBC-$6}" CHANGES="$3" STATIC="$4" UNIT="$5" DATABASE="$6" BUILD="$7" DESKTOP="$8" DESKTOP_REQUIRED="$9" \
       DESKTOP_TIER="${10}" DESKTOP_REASON=test "$here/ci-gate.sh" > /dev/null 2>&1 || got=fail
   fi
   if [ "$got" = "$expected" ]; then
@@ -95,5 +97,21 @@ check "unset gate tier, database skipped"        fail $S $S $S $sk $S $S true fu
 check "unset gate tier, all passed"              pass $S $S $S $S $S $S true full -
 check "upper-case tier is not a tier"            fail $S $sk $sk $sk $sk $sk false docs DOCS
 check "tier with whitespace is not a tier"       fail $S $S $S $sk $S $S true full "client "
+
+# CIQ-A2: the RLS/pooler job and the completeness job are required exactly like the shards.
+DBP=failure   check "full tier, pooler job failed"            fail $S $S $S $S $S $S true full full
+DBP=cancelled check "full tier, pooler job cancelled"         fail $S $S $S $S $S $S true full full
+DBP=skipped   check "full tier, pooler job skipped"           fail $S $S $S $S $S $S true full full
+DBP=""        check "full tier, pooler result missing"        fail $S $S $S $S $S $S true full full
+DBC=failure   check "full tier, completeness failed"          fail $S $S $S $S $S $S true full full
+DBC=skipped   check "full tier, completeness skipped"         fail $S $S $S $S $S $S true full full
+DBC=""        check "full tier, completeness missing"         fail $S $S $S $S $S $S true full full
+DBP=success DBC=success check "full tier, all database jobs passed" pass $S $S $S $S $S $S true full full
+check "full tier, a shard failed (matrix result)"              fail $S $S $S failure $S $S true full full
+DBC=success check "full tier, shard failed but completeness green" fail $S $S $S failure $S $S true full full
+DBP=skipped DBC=skipped check "client tier, all database jobs skipped" pass $S $S $S $sk $S $S true full client
+DBP=failure DBC=skipped check "client tier, pooler ran and failed" fail $S $S $S $sk $S $S true full client
+DBP=skipped DBC=failure check "docs tier, completeness ran and failed" fail $S $sk $sk $sk $sk $sk false docs docs
+DBP=skipped DBC=skipped check "unset tier, all database jobs skipped" fail $S $S $S $sk $S $S true full -
 
 exit "$fail"
