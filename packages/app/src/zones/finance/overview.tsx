@@ -19,7 +19,7 @@ export function FinanceOverview() {
   const { client, slug, locale, today, can } = env;
   const receivables = useLoad(`ov-receivables|${slug}`, (signal) => client.receivables(slug, signal));
   const payables = useLoad(`ov-payables|${slug}`, (signal) => client.payables(slug, signal));
-  const overdue = useLoad(`ov-overdue|${slug}`, (signal) => client.documents(slug, 'invoices', { status: 'all', overdue: true, limit: 5 }, signal));
+  const overdue = useLoad(`ov-overdue|${slug}`, (signal) => client.documents(slug, 'invoices', { status: 'all', overdue: true, sort: 'due_asc', limit: 5 }, signal));
   const drafts = useLoad(`ov-drafts|${slug}`, (signal) => client.documents(slug, 'invoices', { status: 'draft', limit: 5 }, signal));
   const overdueBills = useLoad(`ov-overdue-bills|${slug}`, (signal) => client.expenses(slug, { status: 'recorded', payment: 'overdue', limit: 5 }, signal));
   const unallocated = useLoad(`ov-unallocated|${slug}`, (signal) => client.payments(slug, { status: 'recorded', unallocated: true, limit: 5 }, signal));

@@ -274,6 +274,10 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
           list = query.settlement === 'open' ? list.filter((d) => d.settlementState !== 'PAID') : list.filter((d) => d.settlementState === query.settlement!.toUpperCase());
         }
         if (query.overdue === 'true') list = list.filter((d) => d.status === 'ISSUED' && d.settlementState !== 'PAID' && d.dueDate !== null && d.dueDate < TODAY);
+        // As the server: oldest due first, undated last, ties by id.
+        if (kind === 'INVOICE' && query.sort === 'due_asc') {
+          list = [...list].sort((a, b) => (a.dueDate ?? '\uffff').localeCompare(b.dueDate ?? '\uffff') || a.id.localeCompare(b.id));
+        }
         const limit = Number(query.limit ?? 25);
         return json(200, { documents: list.slice(0, limit).map(listItem), nextCursor: list.length > limit ? 'next' : null });
       }
