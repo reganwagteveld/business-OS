@@ -10,6 +10,9 @@ export {
   voidDocument,
 } from './server/documents';
 export type { DraftPatch, InvoiceInput, IssueInput, LineInput, ListQuery, QuoteInput } from './server/documents';
+// WF-1B-1 (docs/cross-zone-workflows-wf1.md §6.1, §6.6.1): D-WF1-11 link keys and the project financial summary.
+export { authorizeFinanceLinks } from './server/documents';
+export { projectFinanceSummary } from './server/project-summary';
 export { createTaxRate, getSettings, hasRetainedRecords, listSeries, listTaxRates, updateSeries, updateSettings, updateTaxRate } from './server/settings';
 export { idempotencyKeyOf } from './server/shared';
 export type { Kind as FinanceKind } from './server/shared';
