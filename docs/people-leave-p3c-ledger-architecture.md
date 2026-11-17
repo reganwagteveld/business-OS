@@ -14,6 +14,9 @@
 > separate, policy-defined conversion for amounts a policy states in days (§G.3, D-P3C-23a/b).
 > P3-C1 implementation is authorised in a separate draft PR only. Regan then decided D-P3C-23a/b in the thread
 > (2026-11-17 14:36 UTC): methods W (default) and S, configured per policy revision. Index in handoff H-8.
+> v1.5 corrections after ChatGPT's CONDITIONAL DESIGN PASS of `879ec33` (comment 6954198471 on #138): W divides by a
+> fixed 5 (no policy divisor); a conversion-method change inside an accrual period is split by day on the
+> revision's `effective_from`, with segment provenance on the entry (§G.3 rule 3, §G.4, §G.5, T-C24d).
 >
 > **Version 1.4 (2026-11-17)** after ChatGPT's CHANGES REQUIRED re-audit of `fc9785b` (comment 6950206439 on
 > #134): sensitivity is now monotonic along every causal reference (reversal, correction, settlement, carry and
@@ -252,6 +255,18 @@ date-specific leave deductions from policy day-to-hour conversion; update the de
 implementation as a separate draft PR only, subject to unresolved C1 security/technical design prerequisites and
 independent audit. Record this on GitHub. No migration execution, merge, deploy, payroll connection or activation
 is authorized."
+
+**Status note (v1.5).** Statements in H-1 and H-5..H-7 describe the status at the time of each revision. Where they
+call D-P3C-07, -17, -18, -19, -23, -32 or -36 open, they are superseded by this section; the current status of
+every decision is in §M.2.
+
+**v1.5 audit corrections (CONDITIONAL DESIGN PASS of `879ec33`, comment 6954198471 on #138):**
+
+| # | Finding | Correction | Where |
+|---|---|---|---|
+| 1 | W was described with a policy-set "standard days" divisor; the accepted rule is ÷ 5 | W is weekly ordinary hours ÷ 5, fixed, with no divisor field; a configurable divisor would need a new owner decision | §G.2, §G.3 |
+| 2 | Method change inside an accrual period: last-day rule vs day-weighted conversion was ambiguous | The conversion method (and the pattern) is taken **per day** from the revision in force on that day, split on `effective_from`; the period's other rules (entitlement in days, frequency, caps) follow the last-day rule. Entries record per-segment provenance (`conversion_segments`); posted amounts never change. Concrete mid-period figures for full-time, part-time and compressed workers in T-C24d. This is within D-P3C-23b (effective-dated revisions), so no new owner decision | §C.6, §G.3, §G.4, §G.5, T-C24d |
+| — | Non-blocking: G.2 listed F; old handoff text read as still open | G.2 lists W/S only; status note above | §G.2, H-8 |
 
 ### H-4. Requested audit scope
 
@@ -573,8 +588,13 @@ model PeopleLeaveEntry {
   /// The policy and version whose rules produced the amount (D-P3-25 rule 3).
   policyId         String   @map("policy_id") @db.Uuid
   policyVersion    Int      @map("policy_version")
-  /// Hours-per-day basis used for a DAYS→hours conversion, if any (audit of D-P3C-01).
+  /// Hours-per-day basis used for a DAYS→hours conversion, if any (audit of D-P3C-01). For an accrual whose period
+  /// spans a method or pattern change, the day-weighted average; the exact split is in `conversionSegments`.
   hoursPerDay      Decimal? @map("hours_per_day") @db.Decimal(6, 4)
+  /// v1.5. DAYS-policy conversions only: ordered segments [{from, to, method: 'W'|'S', policyVersion,
+  /// patternVersion, hoursPerDay, days}] covering the period, so a replay can reproduce the amount exactly.
+  /// Immutable like the rest of the entry; null for HOURS policies and for non-converted kinds.
+  conversionSegments Json? @map("conversion_segments")
   /// The entry this one reverses (exact opposite, same bucket and book). At most one reversal per entry.
   reversesEntryId  String?  @map("reverses_entry_id") @db.Uuid
   /// CONSUMPTION and RESERVATION_RELEASE: the one-date RESERVATION entry they settle.
@@ -1106,7 +1126,7 @@ interface LeavePolicyAdapter {            // proposal; names may change, semanti
 |---|---|---|
 | Policy and rules on day `d` | assignment covering `d` (E-06) → highest revision with `effective_from ≤ d` (C.8) | P3-A implemented; `effective_from` missing (C1) |
 | Hours basis on day `d` | work pattern covering `d`: scheduled ordinary hours **per date** (rule 1 of §G.3), and per pattern cycle the ordinary hours and number of scheduled working days (methods W and S) | **Dependency: P3-B B1 `people_employee_work_patterns`** (documented only, E-10); must provide per-date scheduled hours and cycle totals (D-P3C-12, D-P3C-23 revised) |
-| Policy days↔hours basis | the policy revision's method (W/S/F) and its parameter | **Dependency: P3-A vocabulary addition** (D-P3C-23b) |
+| Policy days↔hours basis | the method (W or S) of the policy revision in force on day `d`; no other parameter (W divides by 5) | **Dependency: P3-A vocabulary addition** (D-P3C-23b) |
 | Employed on `d` | employee `start_date`, `end_date`, status history (E-08) | Implemented |
 | Service period | count of activations in the status history (E-08); a rehire after `TERMINATED` starts the next | Implemented data; rule D-P3C-28 |
 | Public holidays | B1 `people_holidays` | Dependency; affects consumption hours only, never accrual |
@@ -1128,18 +1148,27 @@ day costs 7.6 h; a day off costs nothing.
 
 **2. How a policy's day amounts become hours (DAYS policies only).** Every amount the rules state in days
 (entitlement, accrual rate, carry cap, maximum balance, negative limit) is converted with
-`daysToHours(days, basis)`, where the **basis is chosen by the policy** (D-P3C-23a/b) and evaluated on the date the
-amount is applied: the period's last day for accrual (weighted by day when the pattern changes inside the period),
-the year's first day for grants, the closing year's last day for carry caps, today for limits. Each converted entry
-records the method, the resulting `hours_per_day` and the pattern version used, so every conversion is auditable
-and replayable.
+`daysToHours(days, basis)`, where the **basis is chosen by the policy** (D-P3C-23a/b). For accrual the basis is
+taken **per day** (rule 3 below); for single-date amounts it is the basis in force on that date: the year's first
+day for grants, the closing year's last day for carry caps, today for limits. Each converted entry records the
+method, the policy version, the pattern version and the resulting `hours_per_day` (with `conversion_segments` when
+a period is split), so every conversion is auditable and replayable.
+
+**3. Method changes inside an accrual period (v1.5).** The conversion method is a property of each **day**, taken
+from the policy revision in force on that day (its `effective_from`), together with that day's work pattern. It is
+deliberately **not** covered by the "last day governs the period" rule of §G.4, which still applies to the
+period's other rules (the entitlement stated in days, frequency, caps, rounding). So a W→S revision effective
+16 June splits June into 1–15 June at W and 16–30 June at S. The accrual entry is still one entry per period
+(same key), its amount is the day-weighted sum, and its `conversion_segments` record both segments. Amounts
+already posted for earlier periods are never recomputed (no retroactive re-conversion; a past error is a
+`CORRECTION`, §G.7). Worked figures are in T-C24d.
 
 Methods (a policy names one). **Accepted (D-P3C-23a): W is the default and S the alternative; F is not offered**
 (it stays in the table only to show why):
 
 | Method | Hours per policy day | Meaning of "a day" |
 |---|---|---|
-| **W. Weekly ordinary hours ÷ standard days** (standard days per week set on the policy, default 5) | ordinary weekly hours (averaged over the pattern cycle) ÷ standard days | A fixed fraction of the employee's ordinary week. N days always fund N ÷ 5 of their ordinary weeks, whatever their pattern |
+| **W. Weekly ordinary hours ÷ 5** (fixed divisor; no policy field) | ordinary weekly hours (averaged over the pattern cycle) ÷ 5 | A fixed fraction of the employee's ordinary week. N days always fund N ÷ 5 of their ordinary weeks, whatever their pattern. A different divisor would need its own owner decision |
 | **S. Average scheduled working day** | ordinary hours in the pattern cycle ÷ scheduled working days in the cycle | One of the employee's own working days, at its average length |
 | **F. Fixed hours per day** (stated on the policy) | the stated number, the same for everyone | A business-wide standard day; does **not** pro-rate part-timers unless the policy's entitlement already does |
 
@@ -1174,15 +1203,18 @@ unaffected, and **P3-C1 is unaffected** (it posts explicit hours with no engine)
 - An `ACCRUAL` entry `applies_on` its period's last day (`period_end − 1`), so as-of views include a period only
   once it is complete. Partial periods (start of employment or assignment, cutover, termination) accrue pro rata by
   days (G.5) and are posted at the period's end (termination: at the end date).
-- Rules in force on the period's **last day** govern the whole period (P3-A §4.7 rule 4); the hours basis is
-  weighted day by day, so an FTE change mid-period is pro rata by days.
+- Rules in force on the period's **last day** govern the whole period (P3-A §4.7 rule 4), **except the hours
+  basis**: the work pattern and the DAYS-policy conversion method are taken day by day (§G.3 rule 3), so an FTE
+  change or a W→S revision mid-period is pro rata by days.
 
 ### G.5 Amounts, precision and rounding
 
 - Exact nominal share: MONTHLY = 1/12 of the annual hours per full month; WEEKLY and FORTNIGHTLY = 7 or 14 over the
   number of days in the leave year (365 or 366; a transition year uses its own length).
 - Day weighting inside a period: `exact = share × Σ_d annualHours(d) / days(period)`, where `annualHours(d)` is the
-  entitlement converted with that day's basis, or 0 when not employed or not assigned on `d`.
+  entitlement in days (from the last-day revision) × `hoursPerDay(d)`, and `hoursPerDay(d)` uses the conversion
+  method of the revision in force on `d` and the pattern on `d`; 0 when not employed or not assigned on `d`.
+  Consecutive days with the same method, revision and pattern form one recorded segment.
 - **Cumulative rounding per bucket:** `posted_k = round(Σ_{i≤k} exact_i) − round(Σ_{i<k} exact_i)`, rounding half
   to even at 4 decimal places. The bucket's accrual total is therefore always within 0.00005 h of the exact total
   and a full year totals exactly the entitlement (§F.7: 12.6667, 12.6666, 12.6667 …). No drift accumulates.
@@ -1723,7 +1755,7 @@ I and R test also runs behind PgBouncer in transaction mode (E-30).
 | T-C24a | Hours (v1.5) | Date cost: full-time, part-time, compressed (9.5 h) and 9-day-fortnight patterns; public holiday and non-working day cost 0; half day costs half; an HOURS entry costs the hours entered. A DAYS policy booking deducts the same scheduled hours as an HOURS policy booking (no conversion applied to dates) | U | C2 |
 | T-C24b | Hours (v1.5) | Conversion table of §G.3 reproduced exactly for each method and pattern (4 dp); method, `hours_per_day` and pattern version recorded on every converted entry; pattern change mid-period weighted by day | U | C2 |
 | T-C24c | Hours (v1.5) | No conflation: changing a policy's conversion method changes future entitlements only, never the cost of an approved date; changing a pattern changes future date costs only (approved reservations keep their hours) | U/I | C2/C3 |
-| T-C24d | Hours (v1.5, owner-required) | Policy revisions: a DAYS policy moves from W to S by a new revision effective mid-year; periods before `effective_from` keep W, periods after use S, each entry records its method and revision; the revision is audited; a revision with an unsupported method (F) is refused. Run for a full-time, a part-time (3 × 7.6 h) and a compressed (4 × 9.5 h) employee, with expected figures from §G.3 | U/I | C2 |
+| T-C24d | Hours (v1.5, owner-required) | Policy revisions: a DAYS policy (20 days a year, MONTHLY accrual, calendar year) moves from W to S by a revision effective **16 June**. May (all W) and July (all S) use one method each; **June is split** 1–15 W and 16–30 S, so its exact accrual is `(1/12) × (15 × A_W + 15 × A_S) / 30 = (A_W + A_S) / 24`: full-time 5 × 7.6 h (A_W = A_S = 152): **12.666667 h** (12.6667 before cumulative rounding); part-time 3 × 7.6 h (A_W = 91.2, A_S = 152): **10.133333 h** (10.1333); compressed 4 × 9.5 h (A_W = 152, A_S = 190): **14.25 h**. Each June entry carries two `conversion_segments` (method, policy version, pattern version, hours per day, days) and an `hours_per_day` equal to the day-weighted average; May's posted entry is unchanged after the revision; replay reproduces every amount exactly; the revision is audited; a revision naming any method other than W or S is refused | U/I | C2 |
 | T-C25 | Max balance | Excess posted as `EXPIRY MAX_BALANCE`; reversal above max not refused | U/I | C2 |
 | T-C26 | Year boundary | CALENDAR, CUSTOM, ANNIVERSARY (incl. 29 February start); carry NONE/UNLIMITED/CAPPED; negative closing carried in full; lapse posted; closed bucket B = 0 | U/I | C2 |
 | T-C27 | Year boundary | Several missed years opened in order in one catch-up | I | C2 |
