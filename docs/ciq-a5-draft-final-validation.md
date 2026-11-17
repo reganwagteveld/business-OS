@@ -17,7 +17,7 @@
 3. **Early CI stays available** two ways: automatically for drafts whose changed paths are security- or governance-sensitive (same keyword list as the A1 classifier plus `.github/**`, migrations and privileged SQL), and on request by a manual `workflow_dispatch` of CI on the branch, recorded in a PR comment. Early CI is supplementary and never replaces final-head validation.
 4. **Merge authority does not move.** It still comes only from a provenance-checked `APPROVED — EXECUTE: MERGE` verdict, a green `CI gate` on the exact up-to-date final head, and the merge API call pinned to that SHA (CIQ-A3). Triggering CI confers nothing, so no privileged dispatcher is needed.
 
-**Why not Option B (trusted queue dispatcher):** the probe on this PR (§1.4) shows that a `workflow_dispatch` run of `ci.yml` on a PR branch *does* attach its `CI gate` check run to the PR head commit and *does* satisfy branch protection. But a dispatched run is a different event: the A1 tier and A4 macOS decision both force `full` for non-`pull_request` events, the migration-order check is `pull_request`-only, the credential scan falls back to scanning every document, and the CIQ-A4 retry workflow ignores dispatched runs. Making B as cheap and as safe as A means rewriting A1/A4 logic and adding a privileged workflow (`actions: write`) for no security gain, because CI itself holds no privilege. B is kept as the early-CI and recovery path only.
+**Why not Option B (trusted queue dispatcher):** the probe on this PR (§1.4) shows that a `workflow_dispatch` run of `ci.yml` on a PR branch attaches a green `CI gate` check run to the PR head commit, which GitHub links to the PR, **and branch protection still reports the PR `blocked`**. Minutes later, on the same PR and settings, an ordinary `pull_request` run's green gate made it `clean`. So a dispatched run, as this repository is configured, does **not** satisfy the required check, and B as specified cannot produce final-head validation without either a `pull_request` event or a privileged commit-status write (rejected below). Even if it could, a dispatched run is a different event: the A1 tier and A4 macOS decision both force `full` for non-`pull_request` events, the migration-order check is `pull_request`-only, the credential scan falls back to scanning every document, and the CIQ-A4 retry workflow ignores dispatched runs. Making B as cheap and as safe as A means rewriting A1/A4 logic and adding a privileged workflow (`actions: write`) for no security gain, because CI itself holds no privilege. B is kept as the early-CI and recovery path only.
 
 **Measured effect on recent history (§9):** 79 merged PRs, 306 PR CI runs, 3.87 runs per PR. 200 runs (2.53 per PR) were development-stage runs that A5 would suppress; 106 (1.34 per PR) were final-candidate runs the queue still needs. With the recommended early-CI scope (S1: CI and governance changes only) A5 avoids 146 of the 200 development-stage full runs (73%, target 70%), 150 database jobs and about 1,400 Linux runner-minutes over these 2.5 days, and changes final-head verification not at all. Only 3 of 200 development-stage runs failed, so the risk of failures surfacing later is measured as low.
 
@@ -72,12 +72,17 @@ The brief asks not to assume it. The probe used this PR's own branch, so no othe
 | 6 | Merged `main` into the branch with a `[skip ci]` merge commit, head `8628ae7` (19:01) | No automatic run. Up to date with `main`. `mergeable_state: blocked` |
 | 7 | Second `workflow_dispatch` (19:01:30), run `44154105031` | All jobs green including macOS; `CI gate` **success** at 19:06:07, check run on `8628ae7`, `pull_requests: [157]`, app `github-actions` |
 | 8 | Read the PR four times over the next minute (head still `8628ae7`, still up to date, no reviews required, both Vercel statuses green) | **`mergeable_state: blocked`** |
-| 9 | Pushed the real proposal commit (this commit) (no skip instruction) | pending: recorded in the next revision |
-| 10 | Converted back to draft | done, pending |
+| 9 | Pushed the proposal commit `17c281a` (no skip instruction), 19:07:47 | Ordinary `pull_request` run `44155244633` (synchronize), gate tier `full` (governance document), desktop skipped; `CI gate` success at 19:15:54. Head up to date with `main`. **`mergeable_state: clean`** (read three times, 19:16:33 to 19:16:53) |
+| 10 | Converted back to draft (19:17:02) | `draft: true`. GitHub still reports `mergeable_state: clean` for a draft, but refuses to merge any draft |
 
-**Conclusion:** pending step 9, recorded in the next revision.
+**Conclusion (measured, one sample):**
 
-What the probe did *not* show, and how A5A will prove it with an end-to-end probe instead of assuming it: when two `CI gate` check runs exist on the same commit, branch protection uses the newest. This is consistent with every failed-job re-run in this repository turning a blocked PR mergeable (merge-queue §5, macOS stalls), but the reverse direction (a newer failing gate after an older green one) is inferred, not measured, and A5 is designed not to depend on it (§4.3, rule 4).
+1. A required check that is **never created** blocks the merge (steps 1, 3, 6). A `[skip ci]` head cannot slip through.
+2. Marking a PR ready **does not start CI** today (step 3).
+3. A `workflow_dispatch` run's green `CI gate` on the exact, up-to-date PR head **did not satisfy** branch protection (step 8), although GitHub associated the run with the PR. A `pull_request` run's green `CI gate` on the next head **did** (step 9). GitHub does not document the mechanism; the observed behaviour is consistent with required checks being evaluated against check suites triggered by the PR's own events. A5A repeats this as an automated e2e test, because Option B's viability, and the safety argument that an early dispatched run can never stand in for final validation (T5, T9), rest on it.
+4. A dispatched run still forces every desktop platform: the first dispatch lost 15 minutes waiting for a macOS runner that never came (step 5), the CIQ-A4 problem live, and the A4 retry workflow would not have retried it because it handles only `pull_request` and `push` runs.
+
+What the probe did *not* show: when two `pull_request` `CI gate` check runs exist on the same commit, branch protection uses the newest. This is consistent with every failed-job re-run in this repository turning a blocked PR mergeable (merge-queue §5, macOS stalls), but the reverse direction (a newer failing gate after an older green one) is inferred, not measured, and A5 is designed not to depend on it (§4.3, rule 4).
 
 ---
 
@@ -92,7 +97,7 @@ flowchart LR
   D2 -->|full CI| R[Marked ready, no CI]
   R --> V[ChatGPT verdict on reviewed head]
   V --> Q[Queue front: sync main]
-  Q -->|full CI on synced head| M{CI gate green\nexact head, up to date}
+  Q -->|full CI on synced head| M{CI gate green<br/>exact head, up to date}
   M -->|yes| MG[Merge pinned to SHA]
   M -->|no| D2
   MG -->|main CI, deploy, smoke| DONE[Next PR]
@@ -102,20 +107,20 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  D[Draft PR opened] -->|suppressed CI:\nDetect changes + red gate| D1[Dev commits\nlocal validation recorded]
+  D[Draft PR opened] -->|suppressed CI:<br/>Detect changes + red gate| D1[Dev commits<br/>local validation recorded]
   D1 -->|suppressed| A[ChatGPT code audit]
   A -->|fixes, suppressed| A
-  A --> V[Verdict on audited head\nD-A5-1]
-  V --> Q[Queue front: sync main\nwhile still draft, suppressed]
-  Q --> RDY[Queue marks ready\nready_for_review]
-  RDY -->|ordinary pull_request CI\nA1 tiers, A2 shards, A4 macOS| M{CI gate green\nexact head, up to date,\npatch-id = audited}
+  A --> V[Verdict on audited head<br/>D-A5-1]
+  V --> Q[Queue front: sync main<br/>while still draft, suppressed]
+  Q --> RDY[Queue marks ready<br/>ready_for_review]
+  RDY -->|ordinary pull_request CI<br/>A1 tiers, A2 shards, A4 macOS| M{CI gate green<br/>exact head, up to date,<br/>patch-id = audited}
   M -->|yes| MG[Merge pinned to SHA]
-  M -->|code failure| BACK[Convert to draft\nback to dev thread]
+  M -->|code failure| BACK[Convert to draft<br/>back to dev thread]
   M -->|runner failure| RETRY[A4 retry once / A3 operator retry once]
   RETRY --> M
-  MG -->|main CI, deploy, smoke\nD-CIQ-4 unchanged| DONE[Next PR]
+  MG -->|main CI, deploy, smoke<br/>D-CIQ-4 unchanged| DONE[Next PR]
   D1 -.->|sensitive paths: automatic early CI| E[Full tiered CI on draft]
-  D1 -.->|on request: workflow_dispatch,\nrecorded on PR| E
+  D1 -.->|on request: workflow_dispatch,<br/>recorded on PR| E
 ```
 
 ### 2.3 Trust boundaries
@@ -130,7 +135,7 @@ flowchart TB
     RUN[CI jobs] --> GATE[CI gate check run on head SHA]
   end
   subgraph Trusted["Default-branch code with write token"]
-    RETRY[ci-runner-retry.yml\nactions write, workflow_run]
+    RETRY[ci-runner-retry.yml<br/>actions write, workflow_run]
   end
   subgraph Authority["Merge authority (outside Actions)"]
     VERDICT[Connector-posted APPROVED — EXECUTE verdict]
@@ -163,8 +168,8 @@ The important property: **nothing in the untrusted or unprivileged zones can pro
 
 A trusted workflow on `main` (or the queue thread through the API) dispatches `ci.yml` for the exact PR branch after sync.
 
-- **Required check:** satisfied (§1.4). The check run lands on the branch tip at dispatch time; if the branch moves, the new head has no gate (fail closed).
-- **But:** the run is not a `pull_request` run. It tests the head, not GitHub's merge ref (equivalent only because `strict: true` forces the head to contain `main`). A1's `docs`/`client` tiers and A4's macOS selection both fall back to `full` for non-PR events, so every final run would build all three desktop platforms, including macOS: the opposite of A4. The STAB-01 migration-order step is skipped (it is `pull_request`-only), a silent regression. The A4 retry workflow ignores dispatched runs. A dispatcher workflow needs `actions: write`, input validation of PR number and SHA, and protection against dispatching on a moved ref: new privileged code for no security benefit, since CI holds no privilege anyway.
+- **Required check: not satisfied** (§1.4, steps 7 and 8). The green dispatched gate landed on the exact, up-to-date head and was linked to the PR, yet the PR stayed `blocked`. Making B work would need the dispatcher to write a commit status or check run named `CI gate` itself, which needs `statuses: write` or `checks: write` and would let a workflow, rather than the checks themselves, declare the gate green: exactly the fabricated-green risk the brief forbids. Rejected.
+- **And even if it were:** the run is not a `pull_request` run. It tests the head, not GitHub's merge ref (equivalent only because `strict: true` forces the head to contain `main`). A1's `docs`/`client` tiers and A4's macOS selection both fall back to `full` for non-PR events, so every final run would build all three desktop platforms, including macOS: the opposite of A4. The STAB-01 migration-order step is skipped (it is `pull_request`-only), a silent regression. The A4 retry workflow ignores dispatched runs. A dispatcher workflow needs `actions: write`, input validation of PR number and SHA, and protection against dispatching on a moved ref: new privileged code for no security benefit, since CI holds no privilege anyway.
 - `repository_dispatch` only runs workflows from the default branch, so it cannot run the PR's own `ci.yml` on the PR head and does not attach to the PR head commit without extra checkout logic and a commit-status write: rejected.
 - `pull_request_target` and `workflow_run` running PR code with a write token: rejected (brief §4, classic "pwn request").
 
@@ -177,8 +182,8 @@ A for draft suppression and final validation; B's mechanism (`workflow_dispatch`
 | | A: draft filter + ready trigger | B: queue dispatch | C (recommended): A + dispatch for early CI only |
 |---|---|---|---|
 | Credential exposure | none new; `contents: read` | new `actions: write` dispatcher, or queue-thread API calls | none new |
-| Branch protection compatibility | unchanged; the required check stays the `pull_request` `CI gate` | satisfied (probe), unchanged settings | unchanged |
-| Required-check behaviour | draft: red gate (never skipped); final: real gate on head | gate on branch tip at dispatch time | as A; an early dispatch gate on a draft head is real validation of that head, superseded at final |
+| Branch protection compatibility | unchanged; the required check stays the `pull_request` `CI gate` (probe: `clean`) | **not satisfied** (probe: green dispatched gate, PR `blocked`) | unchanged |
+| Required-check behaviour | draft: red gate (never skipped); final: real gate on head | dispatched gate visible on head but not counted | as A; an early dispatched gate is evidence for reviewers only and is never counted by GitHub or the queue |
 | Draft and same-repo branches | yes; all PR branches are same-repo here | yes (dispatch needs a branch ref) | yes |
 | Merge refs and head SHAs | final run tests the merge ref; check attaches to head | tests head only; migration-order check lost | as A |
 | A1/A2/A4 reuse | complete | A1 tiers and A4 macOS lost unless rewritten | complete |
@@ -270,7 +275,7 @@ A failed candidate never stalls unrelated PRs: the queue already takes the first
 | reopened | full | final if ready, else suppressed | per mode | per mode |
 | sync merge of `main` while draft | full | suppressed | red on new SHA | no |
 | `[skip ci]` head commit | no run | no run | **missing → blocked** (probe) | no |
-| `workflow_dispatch` on PR branch | full, all platforms | unchanged (`manual`) | real on branch tip; satisfies protection (probe) | never used as the queue's final evidence (§4.3) |
+| `workflow_dispatch` on PR branch | full, all platforms | unchanged (`manual`) | real result on branch tip, but **does not satisfy** protection (probe) | no; never used as the queue's final evidence (§4.3) |
 | re-run failed jobs | newer attempt | unchanged | latest attempt counts | per latest |
 | push to `main`, tags, release branches, weekly, nightly, release validation | unchanged | unchanged | n/a | n/a |
 | PR edits a workflow to skip the gate | gate may go green (T1) | unchanged risk | — | still needs verdict + patch-id |
@@ -422,5 +427,6 @@ Not decisions (already settled and unchanged): `CI gate` stays the only required
 
 - The probe ran once, on one PR; A5A repeats it as automated e2e tests before A5B merges.
 - "Newest `CI gate` check run wins" is inferred from re-run behaviour, not measured in both directions; the design does not depend on it (§4.3 rule 4).
+- "A dispatched gate does not satisfy the required check" is one observation on one PR, and GitHub does not document it. The design is safe either way: if a dispatched gate did count, §4.3 rule 4 still stops the queue using it, and a draft cannot be merged.
 - The replay infers draft periods from `ready_for_review` timeline events and assumes PRs would have stayed draft until the queue front. It does not model behaviour changes (for example, developers batching pushes differently once drafts are cheap).
 - Runner minutes are wall-clock job durations from the Actions API, not billed minutes (public repository: hosted runners are free); "cost" here means runner capacity and macOS contention, not money.
