@@ -16,3 +16,4 @@ export function corsHeaders(origin: string | null, allowedOrigins: readonly stri
   }
   return headers;
 }
+// CIQ-A1 probe
