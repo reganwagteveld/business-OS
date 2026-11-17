@@ -30,13 +30,13 @@ const team = (role: Role) => [member({ id: ME, name: 'Ada Lovelace', email: 'ada
 beforeEach(() => { localStorage.clear(); resetPreferenceMemory(); document.documentElement.className = ''; });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-function mount(role: Role, opts: { fake?: FakeSettings; roster?: ReturnType<typeof team> } = {}) {
+function mount(role: Role, opts: { fake?: FakeSettings; roster?: ReturnType<typeof team>; extra?: string[] } = {}) {
   const fake = opts.fake ?? createFakeSettings(['alpha'], { alpha: opts.roster ?? team(role) });
   fake.setMe(ME);
   const onSignOut = vi.fn();
   const ctx = (slug: string): BusinessContext => ({
     business: { slug, name: fake.profiles[slug]!.name, countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' },
-    membership: { id: ME, role, permissions: ROLE_PERMS[role] },
+    membership: { id: ME, role, permissions: [...ROLE_PERMS[role], ...(opts.extra ?? [])] },
   });
   const auth = { session: vi.fn(async () => ({ kind: 'signed-in', user: USER }) as SessionCheck), signOut: onSignOut } as unknown as AuthClient;
   const tenancy: TenancyClient = {
@@ -304,5 +304,16 @@ describe('Ownership and leaving', () => {
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Leave business' }));
     await waitFor(() => expect(fake.calls.some((c) => c.path.endsWith('/membership/leave'))).toBe(true));
     await waitFor(() => expect(screen.queryByRole('navigation', { name: 'Business settings' })).toBeNull());
+  });
+});
+
+describe('Zone configuration', () => {
+  it('shows links only for Zones the person can open and says when they cannot change it', async () => {
+    const { user } = mount('MANAGER', { extra: ['finance:read'] });
+    await openPage(user, 'Zone configuration');
+    expect(await screen.findByText('Finance settings')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open Products & services in Finance' })).toBeTruthy();
+    expect(screen.queryByText('Departments and locations')).toBeNull(); // no people:read
+    expect(screen.getAllByText(/You can view it but not change it/).length).toBe(2);
   });
 });

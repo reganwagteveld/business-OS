@@ -57,7 +57,7 @@ async function openSettings(user: ReturnType<typeof userEvent.setup>) {
 
 describe('Settings pages and permissions', () => {
   it('lists only pages whose backend exists, filtered by the server\'s permission keys', () => {
-    expect(SETTINGS_PAGES.map((p) => `${p.scope}/${p.id}`)).toEqual(['account/preferences', 'business/profile', 'business/regional', 'business/members', 'business/invitations', 'business/ownership']);
+    expect(SETTINGS_PAGES.map((p) => `${p.scope}/${p.id}`)).toEqual(['account/preferences', 'business/profile', 'business/regional', 'business/members', 'business/invitations', 'business/ownership', 'business/zones']);
     expect(pagesFor('business', MEMBER).map((p) => p.id)).toEqual(['profile', 'regional', 'members', 'ownership']);
     expect(pagesFor('business', []).map((p) => p.id)).toEqual([]); // no business:read: no Business pages
     expect(pagesFor('account', []).map((p) => p.id)).toEqual(['preferences']); // account pages need no business key
