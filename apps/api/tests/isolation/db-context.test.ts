@@ -385,3 +385,5 @@ describe('RLS spike (data-model §5.4)', () => {
     expect(remaining).toEqual({ [A]: COUNTS[A], [B]: COUNTS[B], [C]: COUNTS[C], [RECENT]: COUNTS[RECENT] });
   });
 });
+
+describe("CIQ-A2 injected failure", () => { it("fails", () => { expect(1).toBe(2); }); });
