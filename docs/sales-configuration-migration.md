@@ -32,6 +32,8 @@ One explicit transaction with `SET LOCAL lock_timeout = '3s'` and `statement_tim
 
 So while it runs, pipelines cannot be read and stages and opportunities cannot be written. `lock_timeout` of 3 s makes it fail and roll back rather than queue behind a long transaction. Spec §7.3: if any of the three tables has more than 100,000 rows or 100 MB, stop and re-plan; the preflight enforces this.
 
+**Lock window (changed after the Neon rehearsal of 2026-11-17).** Prisma sends a migration one statement per round trip. In the first version, ten statements ran in sequence after the first table lock, so every round trip from the Mac (about 260 ms to us-east-1) extended the time Sales was blocked: the fresh-branch rehearsal measured 2.94 s for reads and 2.74 s for stage writes, over the 2 s bar. The migration now creates the two functions first (no table lock), then takes every table lock inside **one `DO` block**, followed only by `COMMIT`. The locks are held for the server time of that block plus at most one round trip. Same objects, same names, same transaction; only the order and the statement grouping changed.
+
 **Compatibility.** The old code (still on `main` between apply and merge) never creates a state the triggers reject, and never writes a duplicate active name, so the gap between apply and merge is safe (spec §8.3).
 
 ## 2. Local drill (2026-11-17, PostgreSQL 16)
@@ -50,6 +52,15 @@ On a database with every migration except this one, 2 businesses, 6 stages, 18 o
 | Rehearsal script with one trigger disabled | **STOP**: 2 of 3 guard triggers enabled. |
 | Probe while another session holds ACCESS EXCLUSIVE on `sales_pipelines` for 2 s | Longest read 2,034 ms: the probe sees stalls. |
 | Persistent-connection probe (`.mjs`, replaces the first `.sh` probe, which opened a new connection per sample and so timed about 2 s of connection set-up from the Mac to us-east-1) with a 1.5 s ACCESS EXCLUSIVE hold | Read longest minus median 1,455 ms, write 1 ms. Refuses a role that bypasses RLS. |
+
+**Latency drill (2026-11-17, after the Neon result).** A local TCP proxy added 130 ms each way (260 ms round trip, as measured from the Mac to us-east-1), the deploy ran through it, and the probe ran directly:
+
+| Migration form | Probe read, longest minus median | Probe stage write, longest minus median |
+|---|---|---|
+| Statements in sequence (as rehearsed on Neon) | 2,605 ms (Neon: 2,944 ms) | 2,299 ms (Neon: 2,735 ms) |
+| One `DO` block for every table lock (current) | 2 ms | 3 ms |
+
+With the current form, the lock drill (held `UPDATE` on `sales_stages`, deploy through the proxy) still fails on `lock_timeout` with nothing left behind (no column, no functions), resolves, and redeploys. The rehearsal script passes, and the Sales integration suites pass (102 tests).
 
 Neon adds network round trips from the Mac, which is why §4 measures the real window rather than inheriting these numbers.
 

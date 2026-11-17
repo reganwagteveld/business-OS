@@ -16,23 +16,14 @@ BEGIN;
 -- ADD COLUMN takes ACCESS EXCLUSIVE on sales_pipelines (catalog only), the index builds take SHARE on
 -- sales_stages and sales_pipelines, CREATE TRIGGER takes SHARE ROW EXCLUSIVE on sales_stages and
 -- opportunities, all held until COMMIT. Fail fast rather than queue behind a long transaction.
+--
+-- Lock window. Prisma sends a migration one statement per round trip, so every statement after the first
+-- table lock adds a client round trip to the time Sales is blocked (measured: about 3 s from the Mac to
+-- us-east-1 with the statements in sequence). So the two functions, which take no table lock, are created
+-- first, and every table-locking statement runs inside ONE DO block, followed only by COMMIT: the locks are
+-- held for the server time of that block plus one round trip.
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '60s';
-
--- ---- C. Concurrency token for configuration edits (§6.1 "config_version lifecycle") ----------------------
--- Starts at 1 on every creation path (column default); the configuration service bumps it exactly once per
--- committed configuration mutation. Opportunity writes never change it.
-ALTER TABLE "sales_pipelines"
-  ADD COLUMN "config_version" INTEGER NOT NULL DEFAULT 1,
-  ADD CONSTRAINT sales_pipelines_config_version_positive CHECK ("config_version" >= 1);
-
--- ---- U1, U2. Active names unique, case- and surrounding-whitespace-insensitive (§4.3, D-SCFG-3) ----------
--- Partial expression indexes: they do not make name or archived_at key columns (§5.1 P2). Mapped to
--- 409 name_taken by the API. Archived rows are excluded, so an archived "Proposal" never blocks a new one.
-CREATE UNIQUE INDEX "sales_stages_active_name_key"
-  ON "sales_stages" ("business_id", "pipeline_id", lower(btrim("name"))) WHERE "archived_at" IS NULL;
-CREATE UNIQUE INDEX "sales_pipelines_active_name_key"
-  ON "sales_pipelines" ("business_id", lower(btrim("name"))) WHERE "archived_at" IS NULL;
 
 -- ---- G1. Stage guard (BEFORE UPDATE ON sales_stages) ------------------------------------------------------
 -- * A stage never changes business or pipeline (SA004).
@@ -69,8 +60,6 @@ BEGIN
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION sales_stages_guard() FROM PUBLIC;
-CREATE TRIGGER sales_stages_guard BEFORE UPDATE ON "sales_stages"
-  FOR EACH ROW EXECUTE FUNCTION sales_stages_guard();
 
 -- ---- G2. Opportunity stage guard (BEFORE INSERT, BEFORE UPDATE OF stage_id, pipeline_id, status, archived_at)
 -- Only when the resulting row is OPEN and not archived and, on UPDATE, one of those columns actually changed:
@@ -105,9 +94,32 @@ BEGIN
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION opportunities_stage_guard() FROM PUBLIC;
-CREATE TRIGGER opportunities_stage_guard_insert BEFORE INSERT ON "opportunities"
-  FOR EACH ROW EXECUTE FUNCTION opportunities_stage_guard();
-CREATE TRIGGER opportunities_stage_guard_update BEFORE UPDATE OF "stage_id", "pipeline_id", "status", "archived_at" ON "opportunities"
-  FOR EACH ROW EXECUTE FUNCTION opportunities_stage_guard();
+
+-- ---- Table locks: one statement (see "Lock window" above) -----------------------------------------------
+DO $lock$
+BEGIN
+  -- ---- C. Concurrency token for configuration edits (§6.1 "config_version lifecycle") ----------------------
+  -- Starts at 1 on every creation path (column default); the configuration service bumps it exactly once per
+  -- committed configuration mutation. Opportunity writes never change it.
+  ALTER TABLE "sales_pipelines"
+    ADD COLUMN "config_version" INTEGER NOT NULL DEFAULT 1,
+    ADD CONSTRAINT sales_pipelines_config_version_positive CHECK ("config_version" >= 1);
+
+  -- ---- U1, U2. Active names unique, case- and surrounding-whitespace-insensitive (§4.3, D-SCFG-3) ----------
+  -- Partial expression indexes: they do not make name or archived_at key columns (§5.1 P2). Mapped to
+  -- 409 name_taken by the API. Archived rows are excluded, so an archived "Proposal" never blocks a new one.
+  CREATE UNIQUE INDEX "sales_stages_active_name_key"
+    ON "sales_stages" ("business_id", "pipeline_id", lower(btrim("name"))) WHERE "archived_at" IS NULL;
+  CREATE UNIQUE INDEX "sales_pipelines_active_name_key"
+    ON "sales_pipelines" ("business_id", lower(btrim("name"))) WHERE "archived_at" IS NULL;
+
+  -- G1 and G2 triggers (functions above).
+  CREATE TRIGGER sales_stages_guard BEFORE UPDATE ON "sales_stages"
+    FOR EACH ROW EXECUTE FUNCTION sales_stages_guard();
+  CREATE TRIGGER opportunities_stage_guard_insert BEFORE INSERT ON "opportunities"
+    FOR EACH ROW EXECUTE FUNCTION opportunities_stage_guard();
+  CREATE TRIGGER opportunities_stage_guard_update BEFORE UPDATE OF "stage_id", "pipeline_id", "status", "archived_at" ON "opportunities"
+    FOR EACH ROW EXECUTE FUNCTION opportunities_stage_guard();
+END $lock$;
 
 COMMIT;
