@@ -694,8 +694,6 @@ describe('database guard (G), as bos_app under RLS', () => {
     expect(indexes).toEqual([
       'finance_catalog_items_business_id_archived_at_status_name_i_idx', 'finance_catalog_items_business_id_id_key',
       'finance_catalog_items_business_id_tax_rate_id_idx', 'finance_catalog_items_code_key', 'finance_catalog_items_pkey',
-      // Global search GS1-A (migration 20261206000000_search_indexes, docs/global-search-gs1.md §9.2): read-only lookups.
-      'finance_catalog_items_search_code_idx', 'finance_catalog_items_search_name_idx', 'finance_catalog_items_search_words_idx',
     ]);
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Global search GS1-A unit, contract and source-rule tests (docs/global-search-gs1.md §14): the normaliser,
- * the tsquery text, cursors, the enablement constant, the reviewed field lists, index declarations against
- * the migration, and the source rules for search providers.
+ * the tsquery text, cursors, the enablement constant and what can reach search while it is disabled, the
+ * reviewed field lists, the index declarations, and the source rules for search providers.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
@@ -12,7 +12,7 @@ import { decodeSearchCursor, encodeSearchCursor, normalizeQuery, SEARCH_API_ENAB
 process.env.AUTH_SECRET ??= 'unit-test-only-auth-secret-0123456789abcdef';
 
 const SRC = resolve(__dirname, '../../src');
-const MIGRATION = resolve(__dirname, '../../prisma/migrations/20261206000000_search_indexes/migration.sql');
+const MIGRATIONS = resolve(__dirname, '../../prisma/migrations');
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -37,6 +37,28 @@ describe('enablement', () => {
     env.NODE_ENV = nodeEnv;
     if (saved === undefined) delete process.env.SEARCH_API_TEST_ENABLE;
     else process.env.SEARCH_API_TEST_ENABLE = saved;
+  });
+});
+
+describe('while disabled, nothing else can reach search', () => {
+  it('only the two gated routes call the search service', () => {
+    const callers = sources
+      .filter(([name]) => !name.startsWith('modules/search/'))
+      .filter(([, text]) => /\b(runSearch|resolveRecords)\b/.test(text))
+      .map(([name]) => name);
+    expect(callers.sort()).toEqual(['app/api/v1/b/[slug]/search/resolve/route.ts', 'app/api/v1/b/[slug]/search/route.ts']);
+    for (const name of callers) {
+      const text = sources.find(([n]) => n === name)![1];
+      expect(text).toMatch(/available: searchApiEnabled/);
+    }
+  });
+
+  it('search code starts no timers, background work, outbound calls or jobs, and reads no environment flag', () => {
+    const searchFiles = sources.filter(([name]) => /^modules\/[^/]+\/server\/search\.ts$/.test(name) || name.startsWith('modules/search/') || name === 'core/search/index.ts');
+    const effects = /\b(setTimeout|setInterval|setImmediate|queueMicrotask|fetch|after|waitUntil|cron|enqueue|sendEmail|webhook)\s*\(/;
+    expect(searchFiles.filter(([, text]) => effects.test(text)).map(([n]) => n)).toEqual([]);
+    // The only environment read is the test-runner opt-in, which needs NODE_ENV=test.
+    expect(searchFiles.filter(([, text]) => /process\.env/.test(text)).map(([n]) => n)).toEqual(['modules/search/server/availability.ts']);
   });
 });
 
@@ -304,13 +326,19 @@ describe('providers (§4.1, §6.4)', () => {
     expect(SEARCH_PROVIDERS.map((p) => p.type)).toEqual(SearchType.options);
   });
 
-  it('declares every index the migration creates, verbatim, and nothing else', () => {
-    const migration = readFileSync(MIGRATION, 'utf8');
-    const created = migration.split('\n').filter((l) => l.startsWith('CREATE INDEX'));
-    expect(created).toEqual(SEARCH_INDEXES.map((i) => i.statement));
+  it('declares well-formed, uniquely named indexes, and no migration in this code PR creates them', () => {
+    expect(SEARCH_INDEXES).toHaveLength(22);
     expect(new Set(SEARCH_INDEXES.map((i) => i.name)).size).toBe(SEARCH_INDEXES.length);
-    // Additive only: no table, column, policy, grant, extension or function change.
-    expect(migration.replace(/^--.*$/gm, '')).not.toMatch(/\b(ALTER|DROP|GRANT|REVOKE|EXTENSION|FUNCTION|POLICY|CONCURRENTLY)\b/);
+    for (const index of SEARCH_INDEXES) {
+      expect(index.statement.startsWith(`CREATE INDEX "${index.name}" ON "${index.table}" `)).toBe(true);
+      expect(index.name).toMatch(/_search_/);
+    }
+    // The index migration ships in its own PR with its own approval (Regan, 2026-11-17). Until it lands, no
+    // migration may create a search index; that PR replaces this assertion with the verbatim comparison.
+    const creating = readdirSync(MIGRATIONS)
+      .filter((d) => statSync(join(MIGRATIONS, d)).isDirectory())
+      .filter((d) => /_search_\w*idx/.test(readFileSync(join(MIGRATIONS, d, 'migration.sql'), 'utf8')));
+    expect(creating).toEqual([]);
   });
 });
 

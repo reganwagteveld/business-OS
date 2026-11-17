@@ -1,7 +1,7 @@
 import { inviteForSignup, admitFixture } from './support/admission';
 /**
  * Global search GS1-A (docs/global-search-gs1.md §14) through the real route handlers, against PostgreSQL
- * with the migrations (including 20261206000000_search_indexes) and privileged SQL applied, as bos_app with
+ * with the migrations and privileged SQL applied (the search indexes arrive in a separate migration PR; results do not depend on them), as bos_app with
  * forced RLS. Two businesses with identical names, numbers and emails; every role; record states; leak
  * canaries in non-match columns; cursors; concurrency slots; the statement timeout; term-free logging.
  * Records are seeded directly by the superuser test connection (search only reads them).

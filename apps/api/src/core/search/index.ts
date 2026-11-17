@@ -82,7 +82,10 @@ export interface SearchProvider<P extends string = string> {
   branch(input: BranchInput): SqlFragment;
 }
 
-/** An index the search migration creates, declared once so the migration test and the SQL agree (§5.3, §9.2). */
+/**
+ * An index the search migration creates, declared once so the migration test and the SQL agree (§5.3, §9.2).
+ * The migration itself ships in a separate PR with its own approval; search stays disabled until it is applied.
+ */
 export interface SearchIndex {
   name: string;
   table: string;
