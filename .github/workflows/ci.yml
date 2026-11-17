@@ -46,6 +46,9 @@ jobs:
           .github/scripts/ci-gate.test.sh
           .github/scripts/changed-files.test.sh
           .github/scripts/check-migration-order.test.sh
+          .github/scripts/release-gate.test.sh
+          .github/scripts/release-resolve.test.sh
+          .github/scripts/release-workflow-guard.test.sh
       # STAB-01: a new migration must sort after every migration already on the base branch, or a
       # fresh database would apply it in a different order than production (docs/migration-readiness.md §4).
       - name: New migrations sort after the base branch's newest

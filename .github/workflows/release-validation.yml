@@ -1,0 +1,402 @@
+name: Release validation
+# CI-2C: three-platform release gate (CI-2-G). Design: docs/ci-2-runner-efficiency.md section 4 and docs/ci.md.
+#
+# This workflow VALIDATES a release candidate. It cannot publish: no job has a write permission, a secret,
+# an environment, a release or deploy step. `release-workflow-guard.test.sh` fails CI if one is ever added.
+# It is not a required check and never runs for ordinary pull requests.
+#
+# Triggers:
+#   - push of a `v*` tag (the tagged commit must be on main),
+#   - manual run (Actions -> Release validation -> Run workflow) with the expected 40-character SHA,
+#   - pull requests that change this workflow or its scripts, to validate the workflow itself. Those
+#     runs are NOT release evidence; the gate says so in its summary.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Full 40-character SHA of the release candidate. Must equal the commit of the ref you run this from, and be on main.
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - '.github/workflows/release-validation.yml'
+      - '.github/scripts/release-*.sh'
+      - '.github/scripts/verify-release-bundle.sh'
+      - '.github/scripts/verify-macos-bundle.sh'
+
+permissions:
+  contents: read
+
+# One run per candidate commit; a later trigger never cancels a release validation. Only superseded
+# pull-request runs (workflow self-validation) are cancelled.
+concurrency:
+  group: release-validation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Fixes the exact commit every other job validates, and refuses anything not on main.
+  resolve:
+    name: Resolve candidate commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Self-test the release scripts
+        run: |
+          .github/scripts/release-gate.test.sh
+          .github/scripts/release-resolve.test.sh
+          .github/scripts/release-workflow-guard.test.sh
+      - name: Resolve and validate the candidate
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          git fetch --no-tags --quiet origin main:refs/remotes/origin/main
+          out="$(.github/scripts/release-resolve.sh)"
+          echo "$out" | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "## Release candidate"
+            echo "- Commit: \`${out#sha=}\`"
+            echo "- Event: \`$EVENT_NAME\` (ref \`$GITHUB_REF\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The complete existing suite on the candidate: static, unit, database with RLS isolation and pooler suites,
+  # build verification and the Linux, macOS and Windows desktop matrix. Tag and manual events are
+  # always the `full` tier in ci.yml. Skipped on pull_request runs of this workflow: the normal CI
+  # already runs for that PR (and would share its concurrency group), and the gate accepts the skip
+  # only for that event.
+  full-suite:
+    name: Full CI suite
+    needs: resolve
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      actions: read
+
+  linux:
+    name: Package and verify (Linux)
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VITE_API_BASE_URL: ${{ vars.DESKTOP_API_BASE_URL || 'https://api.business-os.invalid' }}
+      API_ORIGIN_IS_PRODUCTION: ${{ vars.DESKTOP_API_BASE_URL != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - name: Confirm the checkout is the candidate
+        run: test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
+      - name: Linux WebKitGTK prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb file
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: false
+      - uses: ./.github/actions/setup-workspace
+        with:
+          filter: '@business-os/desktop...'
+      - name: Desktop typecheck, lint and package tests
+        run: |
+          pnpm --filter @business-os/desktop typecheck
+          pnpm --filter @business-os/desktop lint
+          pnpm --filter '@business-os/desktop...' --if-present test
+      - name: Build the Tauri app (unsigned, release profile) with .deb and AppImage
+        run: pnpm --filter @business-os/desktop tauri:build --bundles deb,appimage
+      - name: Rust unit tests (desktop shell)
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+      - name: Verify packages and checksums
+        run: .github/scripts/verify-release-bundle.sh linux apps/desktop/src-tauri/target/release/bundle "$RUNNER_TEMP/evidence"
+      # Installs the .deb and starts the installed app under a virtual display for ten seconds.
+      - name: Install and launch smoke test
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          sudo apt-get install -y ./apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          bin="$(dpkg-deb --contents apps/desktop/src-tauri/target/release/bundle/deb/*.deb | grep -oE '/usr/bin/[A-Za-z0-9_-]+$' | head -n1)"
+          test -x "$bin"
+          xvfb-run -a "$bin" > "$RUNNER_TEMP/evidence/smoke.log" 2>&1 &
+          sleep 13
+          if pgrep -f "$bin" > /dev/null; then
+            echo "launch smoke test: installed app $bin alive after 13 s" | tee -a "$RUNNER_TEMP/evidence/smoke.log"
+            pkill -f "$bin" || true
+          else
+            echo "launch smoke test FAILED: process exited early" >&2
+            tail -n 40 "$RUNNER_TEMP/evidence/smoke.log" >&2
+            exit 1
+          fi
+      - name: Not validated here
+        if: always()
+        run: |
+          {
+            echo "## Linux package and verify"
+            echo "- API origin: ${VITE_API_BASE_URL} (production-configured: ${API_ORIGIN_IS_PRODUCTION})"
+            echo "- **Not validated:** package signing, repository publication, auto-update, and tests needing a signed-in user or the production API. Not reported as passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload evidence and release-candidate packages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-linux-${{ needs.resolve.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/evidence
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
+          retention-days: 30
+
+  macos:
+    name: Package and verify (macOS)
+    needs: resolve
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      VITE_API_BASE_URL: ${{ vars.DESKTOP_API_BASE_URL || 'https://api.business-os.invalid' }}
+      API_ORIGIN_IS_PRODUCTION: ${{ vars.DESKTOP_API_BASE_URL != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - name: Confirm the checkout is the candidate
+        run: test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: false
+      - uses: ./.github/actions/setup-workspace
+        with:
+          filter: '@business-os/desktop...'
+      - name: Desktop typecheck, lint and package tests
+        run: |
+          pnpm --filter @business-os/desktop typecheck
+          pnpm --filter @business-os/desktop lint
+          pnpm --filter '@business-os/desktop...' --if-present test
+      - name: Build the Tauri app (unsigned, release profile) and disk image
+        run: pnpm --filter @business-os/desktop tauri:build --bundles app,dmg
+      - name: Rust unit tests (desktop shell)
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+      - name: Verify the bundle, disk image and checksums
+        run: .github/scripts/verify-macos-bundle.sh apps/desktop/src-tauri/target/release/bundle "$RUNNER_TEMP/evidence"
+      - name: Launch smoke test
+        run: |
+          app="$(ls -d apps/desktop/src-tauri/target/release/bundle/macos/*.app | head -n1)"
+          bin="$app/Contents/MacOS/$(ls "$app/Contents/MacOS" | head -n1)"
+          "$bin" > "$RUNNER_TEMP/evidence/smoke.log" 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "launch smoke test: process alive after 10 s" | tee -a "$RUNNER_TEMP/evidence/smoke.log"
+            kill "$pid" || true
+          else
+            echo "launch smoke test FAILED: process exited early" >&2
+            tail -n 40 "$RUNNER_TEMP/evidence/smoke.log" >&2
+            exit 1
+          fi
+      - name: Not validated here
+        if: always()
+        run: |
+          {
+            echo "## macOS package and verify"
+            echo "- API origin: ${VITE_API_BASE_URL} (production-configured: ${API_ORIGIN_IS_PRODUCTION})"
+            echo "- **Not validated:** code signing, notarisation, auto-update, and tests needing a signed-in user or the production API. Not reported as passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload evidence and release-candidate disk image
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-macos-${{ needs.resolve.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/evidence
+            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
+          retention-days: 30
+
+  windows:
+    name: Package and verify (Windows)
+    needs: resolve
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      VITE_API_BASE_URL: ${{ vars.DESKTOP_API_BASE_URL || 'https://api.business-os.invalid' }}
+      API_ORIGIN_IS_PRODUCTION: ${{ vars.DESKTOP_API_BASE_URL != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - name: Confirm the checkout is the candidate
+        run: test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: false
+      - uses: ./.github/actions/setup-workspace
+        with:
+          filter: '@business-os/desktop...'
+      - name: Desktop typecheck, lint and package tests
+        run: |
+          pnpm --filter @business-os/desktop typecheck
+          pnpm --filter @business-os/desktop lint
+          pnpm --filter '@business-os/desktop...' --if-present test
+      - name: Build the Tauri app (unsigned, release profile) and NSIS installer
+        run: pnpm --filter @business-os/desktop tauri:build --bundles nsis
+      - name: Rust unit tests (desktop shell)
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+      - name: Verify the installer and checksums
+        run: .github/scripts/verify-release-bundle.sh windows apps/desktop/src-tauri/target/release/bundle "$RUNNER_TEMP/evidence"
+      # Silently installs the NSIS package into a throwaway directory, then starts the installed app.
+      - name: Install and launch smoke test
+        run: |
+          installer="$(ls apps/desktop/src-tauri/target/release/bundle/nsis/*.exe | head -n1)"
+          dest="$(cygpath -w "$RUNNER_TEMP/bos-install")"
+          # NSIS: /S silent, /D= install directory (must be last, no quotes).
+          "$installer" /S "/D=$dest"
+          for i in $(seq 1 30); do ls "$RUNNER_TEMP/bos-install"/*.exe > /dev/null 2>&1 && break; sleep 2; done
+          app="$(ls "$RUNNER_TEMP/bos-install"/business-os-desktop.exe 2>/dev/null || ls "$RUNNER_TEMP/bos-install"/*.exe | grep -vi uninstall | head -n1)"
+          test -f "$app"
+          "$app" > "$RUNNER_TEMP/evidence/smoke.log" 2>&1 &
+          pid=$!
+          sleep 12
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "launch smoke test: installed app $(basename "$app") alive after 12 s" | tee -a "$RUNNER_TEMP/evidence/smoke.log"
+            kill "$pid" || true
+          else
+            echo "launch smoke test FAILED: process exited early" >&2
+            tail -n 40 "$RUNNER_TEMP/evidence/smoke.log" >&2
+            exit 1
+          fi
+      - name: Not validated here
+        if: always()
+        run: |
+          {
+            echo "## Windows package and verify"
+            echo "- API origin: ${VITE_API_BASE_URL} (production-configured: ${API_ORIGIN_IS_PRODUCTION})"
+            echo "- **Not validated:** Authenticode signing, SmartScreen reputation, MSI packaging, auto-update, and tests needing a signed-in user or the production API. Not reported as passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload evidence and release-candidate installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-windows-${{ needs.resolve.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/evidence
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
+          retention-days: 30
+
+  # The single verdict for this workflow. Runs even after failures, cancellation or skips, and passes
+  # only if every required result is `success`. Not a required status check until Regan configures it.
+  release-gate:
+    name: Release gate
+    if: always()
+    needs: [resolve, full-suite, linux, macos, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # job timings and the latest nightly run
+      issues: read # open "Nightly validation failed" issue
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      # Unresolved nightly failure blocks the gate. An unreadable status is not "clear".
+      - name: Nightly status
+        id: nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          status=unknown
+          if open="$(gh issue list --repo "$REPO" --state open --limit 100 --json title --jq '[.[] | select(.title == "Nightly validation failed")] | length')" \
+             && last="$(gh run list --repo "$REPO" --workflow nightly.yml --branch main --status completed --limit 1 --json conclusion --jq '.[0].conclusion // "none"')"; then
+            if [ "$open" != 0 ]; then status=blocked
+            elif [ "$last" = success ] || [ "$last" = none ]; then status=clear
+            else status=blocked
+            fi
+            echo "open nightly-failure issues: $open; latest nightly run on main: $last"
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Evidence summary
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          NIGHTLY: ${{ steps.nightly.outputs.status }}
+          R_RESOLVE: ${{ needs.resolve.result }}
+          R_FULL: ${{ needs.full-suite.result }}
+          R_LINUX: ${{ needs.linux.result }}
+          R_MACOS: ${{ needs.macos.result }}
+          R_WINDOWS: ${{ needs.windows.result }}
+        run: |
+          jobs="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs?per_page=100" --paginate --jq '.jobs[]' | jq -s '.' || echo '[]')"
+          usage() { # label substring -> "X.Y min wall, Z billed min (each job rounded up), longest queue N s"
+            echo "$jobs" | jq -r --arg l "$1" '
+              [.[] | select((.labels // []) | map(ascii_downcase) | any(contains($l))) | select(.completed_at != null and .started_at != null)] as $j
+              | [$j[] | ((.completed_at | fromdate) - (.started_at | fromdate))] as $d
+              | [$j[] | ((.started_at | fromdate) - (.created_at | fromdate))] as $q
+              | "\($j | length) jobs, \((($d | add // 0) / 60 * 10 | round) / 10) min, \([$d[] | (. / 60 | ceil)] | add // 0) billed min, longest queue \($q | max // 0) s"'
+          }
+          dur() { echo "$jobs" | jq -r --arg p "$1" '[.[] | select(.name | startswith($p)) | select(.completed_at != null) | ((.completed_at | fromdate) - (.started_at | fromdate))] | max // empty | "\(. / 60 | floor)m \(. % 60)s"'; }
+          icon() { case "$1" in success) echo "✅";; *) echo "❌";; esac; }
+          {
+            echo "## Release gate"
+            echo
+            echo "Candidate commit: \`${SHA:-unresolved}\`"
+            echo
+            echo "| Required check | Result | Slowest job |"
+            echo "|---|---|---|"
+            echo "| Resolve candidate commit | $(icon "$R_RESOLVE") $R_RESOLVE | |"
+            echo "| Full CI suite (static, unit, database, build, desktop matrix) | $(icon "$R_FULL") $R_FULL | $(dur 'Full CI suite') |"
+            echo "| Package and verify (Linux) | $(icon "$R_LINUX") $R_LINUX | $(dur 'Package and verify (Linux)') |"
+            echo "| Package and verify (macOS) | $(icon "$R_MACOS") $R_MACOS | $(dur 'Package and verify (macOS)') |"
+            echo "| Package and verify (Windows) | $(icon "$R_WINDOWS") $R_WINDOWS | $(dur 'Package and verify (Windows)') |"
+            echo "| Nightly validation clear | $([ "$NIGHTLY" = clear ] && echo ✅ || echo ❌) $NIGHTLY | |"
+            echo
+            echo "| Runner | Usage |"
+            echo "|---|---|"
+            echo "| macOS | $(usage macos) |"
+            echo "| Windows | $(usage windows) |"
+            echo "| Linux | $(usage ubuntu) |"
+            echo
+            if [ "$EVENT_NAME" = pull_request ]; then
+              echo "**This is a pull_request run that validates the workflow itself. It is not release evidence.**"
+            fi
+            echo "Release candidates are built **unsigned** against the API origin recorded in each platform summary. A candidate whose summary says \`production-configured: false\` must not be released."
+            echo "Nothing was published, uploaded to a release channel or deployed by this workflow. Artifacts are Actions artifacts only (30 days)."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Require every release check
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+          FULL_SUITE: ${{ needs.full-suite.result }}
+          LINUX: ${{ needs.linux.result }}
+          MACOS: ${{ needs.macos.result }}
+          WINDOWS: ${{ needs.windows.result }}
+          NIGHTLY: ${{ steps.nightly.outputs.status }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: .github/scripts/release-gate.sh
