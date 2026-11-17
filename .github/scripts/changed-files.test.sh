@@ -76,4 +76,42 @@ verdict "push: before is a different commit"     push fail "$(printf 'a%.0s' $(s
 verdict "scheduled run"                          schedule fail ""
 verdict "manual run"                             workflow_dispatch fail ""
 
+# CIQ-A4: the macOS leg, through real git diffs (renames are a deletion plus an addition). Expected
+# "desktop/macos"; "fail" means the diff is refused and the workflow keeps all three platforms.
+macv() {
+  local name="$1" event="$2" expected="$3" before="${4:-}"
+  local out actual files="$tmp/files"
+  if EVENT_NAME="$event" EVENT_BEFORE="$before" "$here/changed-files.sh" > "$files" 2>/dev/null; then
+    out="$(EVENT_NAME="$event" "$here/classify-changes.sh" < "$files")"
+    actual="$(echo "$out" | sed -n 's/^desktop=//p')/$(echo "$out" | sed -n 's/^macos=//p')"
+  else
+    actual=fail
+  fi
+  if [ "$actual" = "$expected" ]; then echo "ok   macOS: $name ($actual)"; else echo "FAIL macOS: $name: expected $expected, got $actual" >&2; fail=1; fi
+}
+new_repo; echo b >> packages/app/x.ts; as_pr
+macv "PR: shared client source"                  pull_request true/false
+new_repo; echo b >> packages/app/x.ts; echo b >> docs/a.md; echo n > packages/app/new.ts; as_pr
+macv "PR: client edit, new client file and docs" pull_request true/false
+new_repo; git rm -q packages/app/x.ts; as_pr
+macv "PR: client source deleted"                 pull_request true/false
+new_repo; git rm -q apps/desktop/src-tauri/src/lib.rs; as_pr
+macv "PR: native source deleted"                 pull_request true/true
+new_repo; mkdir -p apps/desktop/src; git mv packages/app/x.ts apps/desktop/src/x.ts; as_pr
+macv "PR: client file renamed into desktop app"  pull_request true/true
+new_repo; git mv apps/desktop/src-tauri/src/lib.rs packages/app/lib.ts; as_pr
+macv "PR: Rust file renamed into a package"      pull_request true/true
+new_repo; echo b >> packages/app/x.ts; echo '{}' > pnpm-lock.yaml; as_pr
+macv "PR: client source plus lockfile"           pull_request true/true
+new_repo; echo b >> packages/app/x.ts; mkdir -p .github/workflows; echo x > .github/workflows/ci.yml; as_pr
+macv "PR: client source plus CI config"          pull_request true/true
+new_repo; echo b >> packages/app/x.ts; mkdir -p release; echo x > release/notes.sh; as_pr
+macv "PR: client source plus unfamiliar path"    pull_request true/true
+new_repo; echo b >> packages/app/x.ts; echo x > packages/app/build.mjs; as_pr
+macv "PR: client source plus package script"     pull_request true/true
+new_repo; echo b >> packages/app/x.ts; git add -A; git commit -qm c
+macv "PR: checkout is not a merge commit"        pull_request fail
+new_repo; before="$(git rev-parse HEAD)"; echo b >> packages/app/x.ts; as_push
+macv "push: shared client source"                push true/true "$before"
+
 exit "$fail"

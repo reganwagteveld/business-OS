@@ -34,3 +34,4 @@ export async function recordSystemAudit(
     data: { id: randomUUID(), actorUserId: null, action, targetType: target.type, targetId: target.id, metadata } as never,
   });
 }
+export { listAuditEvents } from './read';
