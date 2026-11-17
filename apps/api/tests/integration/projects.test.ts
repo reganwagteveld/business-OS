@@ -1063,3 +1063,5 @@ describe('PR 19 review: archive/restore vs move, and row-lock order (docs/projec
     expect((await admin.query('SELECT count(*)::int AS n FROM project_tasks WHERE assignee_user_id = $1', [temp.id])).rows[0].n).toBe(0);
   });
 });
+
+describe("CIQ-A2 injected failure", () => { it("fails", () => { expect(1).toBe(2); }); });
