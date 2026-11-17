@@ -80,7 +80,8 @@ catalog|recurring|reminder|reminder_policy|reminder_hold|settings|branding.*`, `
 | `cursor` | opaque base64url encoding of `(created_at, id)` of the last row; invalid cursor answers 400 `invalid_cursor` |
 | `actionPrefix` | optional, `^[a-z_]+(\.[a-z_]+)*$`, max 60. Matched on a **dotted boundary**: `action = $1 OR action LIKE $1 \|\| '.%'` with `%`, `_` and `\` escaped, so `sales` never matches `salesforce` |
 | `actorUserId` | optional UUID of a **current member** (taken from the `userId` the response returns). An id that is not a current member of this business, including a departed member's, answers the same empty page as an unused id: no distinguishable error, no count, no hint (D-AUD-9) |
-| `targetType`, `targetId` | optional, together or `targetType` alone |
+| `targetType`, `targetId` | **Not accepted in v1** (400 `unsupported_filter`). Filtering by a target would let a caller guess a restricted UUID and infer existence from whether events appear, whatever the response hides. A `targetType` filter is also refused, because a hidden type is itself information. Per-record history is a Zone feature with the Zone's own permission (§9). Revisit only when authorisation of the underlying target can be proven (D-AUD-10) |
+| `actorKind` | optional, `system`; mutually exclusive with `actorUserId`. Matches `actor_user_id IS NULL` only, under the same tenant RLS; a former member is never matched by it (D-AUD-9) |
 | `from`, `to` | optional ISO timestamps. **Always bounded to 92 days:** neither given means `to = now`, `from = to - 92 d`; only `to` means `from = to - 92 d`; only `from` means `to = min(now, from + 92 d)`; both must satisfy `from <= to` and `to - from <= 92 d` (else 400). "Older history" means moving the window back in 92-day slices, never a wider window. Ties on `created_at` are ordered by `id`, and the cursor binds `(created_at, id)` plus the filter set, so a cursor reused with different filters answers 400 `invalid_cursor` |
 
 Response: `{ events: AuditEventView[], nextCursor: string | null }` where an `AuditEventView` is
@@ -158,7 +159,7 @@ tests. No new design token, no new shell concept; it uses `states.tsx`, the Sett
   "Showing recorded changes as of 14:02 · Refresh". Rows are not clickable cards; a row has a "Details" disclosure
   that shows the allow-listed metadata as labelled key/value pairs (never raw JSON).
 - **Filters:** Group (Team, Customers, Sales, Projects, Scheduling, People, Finance, Communications, Settings, Other),
-  Person (members plus "System"), Date range (24 h, 7 d, 30 d, custom up to 92 d). Filters live in the URL query.
+  Person (current members, plus "System" via `actorKind=system`), Date range (24 h, 7 d, 30 d, custom up to 92 d). Filters live in the URL query.
   Empty-filter copy: "No recorded changes match".
 - **Time:** shown in the business time zone (`business.timeZone`), with the UTC ISO in the row's `title`.
 - **Targets:** a label (customer, invoice, member) and, when the viewer's own permissions open the target Zone route,
@@ -200,11 +201,12 @@ queue). A-AUD-2 touches `pages.ts` and `app.tsx` owned by #119/#122, so it start
 |---|---|---|
 | D-AUD-1 | Who can read the audit log | OWNER and ADMIN via the existing `audit:read`; no grant change |
 | D-AUD-2 | Metadata exposure | Default-deny allow-list per action, unknown actions shown without metadata |
-| D-AUD-3 | Depth of history | 92-day query window, keyset paging, no export; older events stay stored and are reached by widening the window |
+| D-AUD-3 | Depth of history | 92-day query window, keyset paging, no export; older events stay stored and are reached by shifting the 92-day window back in slices, never by widening it |
 | D-AUD-4 | Member-visible history | Not in v1; revisit with Zone-owned record history |
 | D-AUD-5 | Export | Deferred (separate approval) |
 | D-AUD-6 | Audit the act of viewing | No in v1. Revisit if the beta widens; adding `audit.viewed` would write in a GET |
 | D-AUD-7 | Index | None now; add only at the measured trigger in §4 |
+| D-AUD-10 | Target filters | Refused in v1 so no existence oracle is possible; tests cover matching, non-matching and cross-business ids and a hidden target type |
 | D-AUD-9 | Departed and unknown actor filter | Safe empty page, no leakage (§4); the UI offers only current members plus "System" |
 | D-AUD-8 | Coverage wording | UI says "recorded changes"; registry coverage test enforces labels for new actions |
 
@@ -219,6 +221,8 @@ API/integration (`pnpm test:integration`, `pnpm test:isolation`):
 - Implementation fact check first: confirm `bos_app` has SELECT on `audit_events` and that `audit_tenant_read` and the
   RESTRICTIVE erasure policy are unchanged. If an access assumption is false, **stop for security review**; never add
   a grant or loosen a policy to make a test pass.
+- Target filters: `targetId`/`targetType` answer 400 for any value, with no difference between existing,
+  non-existing and cross-business ids. `actorKind=system` returns only null-actor rows and never a former member's.
 - Window defaults (§4): no params, only `from`, only `to`, both, over 92 days, reversed; cursor reused with other
   filters; `sales` vs `salesforce` prefix; departed or random `actorUserId` returns the same empty page.
 - OWNER and ADMIN read; MANAGER, MEMBER, suspended, removed and unauthenticated are refused (403/401).
@@ -245,11 +249,11 @@ CHANGED FILES: docs/administration-audit-viewer.md
 VERIFIED REPO FACTS: audit_events schema, RLS (tenant read, actor-bound write, system and erasure restrictions),
   audit:read held by OWNER/ADMIN and used by no route, ip_address/user_agent never written, action families (§2),
   Settings pages model in #122 (pages.ts)
-DECISIONS: D-AUD-1..8 (§10), recommended options only, none approved
+DECISIONS: D-AUD-1..10 (§10), recommended options only, none approved
 DEPENDENCIES / CONFLICTS: #119, #122 (pages.ts, app.tsx) for A-AUD-2; contracts index/snapshot shared
 TESTS RUN / RESULTS: none (docs only)
 MIGRATIONS / PROD ACTIONS: None
 KNOWN LIMITATIONS: audit coverage depends on each module calling it; created_at is transaction-start time (§4)
-NEEDS REGAN: decisions D-AUD-1..8, or confirmation that A-AUD-1 may start
+NEEDS REGAN: decisions D-AUD-1..10, or confirmation that A-AUD-1 may start
 NEXT ACTION: ChatGPT audit, then A-AUD-1 thread (API)
 ```
