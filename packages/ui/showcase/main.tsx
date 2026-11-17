@@ -2,8 +2,8 @@ import { StrictMode, useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Alert, AlertDescription, AlertTitle, Atmosphere, Badge, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle,
-  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger, EmptyState, Field, FormSection, Input,
-  PageHeader, SectionHeader, Select, Separator, Skeleton, Spinner, StatCard, StatusIndicator, Surface, Table, TableBody, TableCaption,
+  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger, EmptyState, Field, Figure, FigureStrip,
+  FormSection, Input, Marker, PageHeader, PixelMarker, ProgressSquares, SectionHeader, Select, Separator, Skeleton, Spinner, StatCard, StatusIndicator, Surface, Table, TableBody, TableCaption,
   TableCell, TableHead, TableHeader, TableRow, Textarea, cn, type AtmosphereVariant,
 } from '../src';
 import './showcase.css';
@@ -64,6 +64,60 @@ const ROWS = [
   { ref: 'INV-1039', customer: 'Bramble Foods', zone: 'Finance', owner: 'R. Wagteveld', amount: '£960.00', status: ['danger', 'Overdue'] },
   { ref: 'CUS-0904', customer: 'Odessa Health', zone: 'Customers', owner: 'J. Park', amount: '—', status: ['neutral', 'Draft'] },
 ] as const;
+
+// V2-B2 identity foundations (docs/ui/pixa-visual-identity-v2-b2.md §6). Sample data only.
+const MARKERS = [
+  ['success', false, 'Paid'],
+  ['info', false, 'Sent'],
+  ['warning', false, 'Due soon'],
+  ['danger', false, 'Overdue'],
+  ['neutral', true, 'Draft'],
+  ['neutral', false, 'Void'],
+] as const;
+
+function Identity() {
+  return (
+    // The bezel with an 8 px gutter and the sheet inside it, as the shell will draw them in V2-C.
+    <div className="rounded-panel bg-bezel p-bezel">
+      <div className="rounded-panel border border-transparent bg-surface p-6 dark:border-line">
+        <SectionHeader variant="ruled" title="Money" meta="November 2026 · as of 17 Nov" action={<Button size="sm" variant="ghost">Open Finance ›</Button>} />
+        <FigureStrip columns={4} className="mt-2" aria-label="Money, November 2026">
+          <Figure label="Invoiced" value="£48,210.00" secondaryValue="€3,400.00" note="Issued this month" />
+          <Figure label="Outstanding" value="£9,340.00" note="5 invoices" />
+          <Figure label="Overdue" marker="danger" value="£960.00" note="2 invoices, oldest 12 days" />
+          <Figure label="Paid" marker="success" value="£38,870.00" note="By payment date" />
+        </FigureStrip>
+
+        <SectionHeader variant="ruled" className="mt-6" title="Home figures" meta="Display size, Home only" />
+        <FigureStrip columns={3}>
+          <Figure size="display" label="Open opportunities" value="23" note="£182,400.00 weighted" />
+          <Figure size="display" label="Active projects" value="7" note="1 at risk" />
+          <Figure label="Payroll" state="unavailable" unavailableText="You do not have access" note="Owner only" />
+        </FigureStrip>
+
+        <SectionHeader variant="ruled" className="mt-6" title="Status" meta="Square marker and word; hollow means not started" />
+        <ul className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
+          {MARKERS.map(([tone, hollow, word]) => (
+            <li key={word}><PixelMarker tone={tone} hollow={hollow}>{word}</PixelMarker></li>
+          ))}
+        </ul>
+
+        <SectionHeader variant="ruled" className="mt-6" title="Progress" meta="Squares up to 24, then a bar" />
+        <div className="mt-2 grid gap-3">
+          <ProgressSquares done={2} total={6} />
+          <ProgressSquares done={17} total={24} />
+          <ProgressSquares done={31} total={40} label="31 of 40 tasks done" />
+        </div>
+
+        <SectionHeader variant="ruled" className="mt-6" title="Legend" meta="Markers in chart legends" />
+        <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-small text-fg-muted">
+          <span className="inline-flex items-center gap-1.5"><Marker tone="info" />This year</span>
+          <span className="inline-flex items-center gap-1.5"><Marker hollow />Last year</span>
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
@@ -292,6 +346,10 @@ function Showcase() {
 
       <Section title="Foundations (V2)" description="Type scale, control and row heights, state recipes and status tones from the V2 tokens (V2-B1). Components adopt them from V2-B3 onwards.">
         <Foundations />
+      </Section>
+
+      <Section title="Pixa identity (V2-B2)" description="The parts Direction A adds: the ink bezel around the sheet, ruled section headers instead of cards, figure strips, square pixel markers and progress squares. Square, never round: no pills. The shell and Zones adopt them in V2-C and V2-D.">
+        <Identity />
       </Section>
 
       <Section title="Colour system" description="The Pixakova palette only feeds the semantic tokens. Components use semantic tokens, never palette colours. Every V1 name (background, primary, muted-foreground …) is now an alias of a V2 token.">

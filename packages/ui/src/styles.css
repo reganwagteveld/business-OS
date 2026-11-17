@@ -88,6 +88,12 @@
   --sidebar-w-compact: 64px;
   --topbar-h: 48px;
   --content-max: 1240px;
+  /* Pixa identity (V2-B2, docs/ui/pixa-visual-identity-v2-b2.md §7): the inspector column, the sheet's
+     inset inside the bezel, and the square pixel marker (status, progress, legends). */
+  --inspector-w: 360px;
+  --bezel-gutter: 8px;
+  --marker-size: 6px;
+  --marker-radius: 1.5px;
 
   --duration-fast: 100ms;
   --duration-base: 160ms;
@@ -133,7 +139,9 @@
 :root {
   color-scheme: light;
 
-  /* Canvas and surfaces (V2) */
+  /* Canvas and surfaces (V2). `--bg-bezel` is the frame around the sheet (V2-B2): the same ink in both
+     themes, equal to the dark canvas, so the dark-scope rail and the frame match. */
+  --bg-bezel: #0b0f1e;
   --bg-canvas: #f7f7fb;
   --bg-surface: #ffffff;
   --bg-sunken: #f2f2f8;
@@ -231,6 +239,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
+    --bg-bezel: #0b0f1e;
     --bg-canvas: #0b0f1e;
     --bg-surface: #121729;
     --bg-sunken: #0e1324;
@@ -306,6 +315,7 @@
 /* 4. Semantic tokens: dark (`.dark` class). Keep identical to the block above. ------------------- */
 .dark {
   color-scheme: dark;
+  --bg-bezel: #0b0f1e;
   --bg-canvas: #0b0f1e;
   --bg-surface: #121729;
   --bg-sunken: #0e1324;
@@ -418,6 +428,7 @@
   --radius-panel: var(--radius-panel);
   --radius-dialog: var(--radius-dialog);
   --radius-pill: var(--radius-pill);
+  --radius-marker: var(--marker-radius);
 
   --font-sans: var(--font-family-sans);
   --font-mono: var(--font-family-mono);
@@ -484,6 +495,7 @@
 
   /* V2 names. Utilities: bg-canvas, bg-surface, text-fg-muted, border-line-strong, bg-accent-solid,
      text-status-danger-fg, outline-focus-ring ... */
+  --color-bezel: var(--bg-bezel);
   --color-canvas: var(--bg-canvas);
   --color-surface: var(--bg-surface);
   --color-sunken: var(--bg-sunken);
@@ -548,6 +560,59 @@
 @utility min-target {
   min-width: var(--target-min);
   min-height: var(--target-min);
+}
+@utility w-inspector {
+  width: var(--inspector-w);
+}
+@utility p-bezel {
+  padding: var(--bezel-gutter);
+}
+
+/* Pixa identity parts (V2-B2 §6.10). Square, never round: the marker takes its colour from `color`
+   (a status token via text-status-*-solid), filled by default, hollow with data-hollow. In forced
+   colours it becomes a CanvasText square (hollow: a CanvasText outline) and the word beside it carries
+   the meaning. */
+@utility pixel-marker {
+  display: inline-block;
+  flex-shrink: 0;
+  width: var(--marker-size);
+  height: var(--marker-size);
+  border-radius: var(--marker-radius);
+  border: 1px solid currentColor;
+  background-color: currentColor;
+  &[data-hollow] {
+    background-color: transparent;
+  }
+  @media (forced-colors: active) {
+    forced-color-adjust: none;
+    color: CanvasText;
+    border-color: CanvasText;
+    background-color: CanvasText;
+    &[data-hollow],
+    &[data-off] {
+      background-color: Canvas;
+    }
+  }
+}
+/* Progress beyond 24 items: a 4 px square-ended bar. Decorative; the text beside it carries the value. */
+@utility pixel-track {
+  display: block;
+  height: 4px;
+  background-color: var(--border-strong);
+  @media (forced-colors: active) {
+    forced-color-adjust: none;
+    background-color: Canvas;
+    outline: 1px solid CanvasText;
+  }
+}
+@utility pixel-track-fill {
+  display: block;
+  height: 100%;
+  background-color: var(--accent-solid);
+  @media (forced-colors: active) {
+    forced-color-adjust: none;
+    background-color: CanvasText;
+  }
 }
 @utility duration-fast {
   transition-duration: var(--duration-fast);
