@@ -295,7 +295,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         key={slug}
         client={settings} user={phase.user} context={active} scope={current.child} page={target}
         // Moving between scopes and pages keeps the Zone mounted; the shell route follows.
-        onNavigate={open} onContextChanged={workspace.refresh}
+        onNavigate={open} onContextChanged={workspace.refresh} onLeft={() => { setRoute(HOME); workspace.retry(); }}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );

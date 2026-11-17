@@ -20,6 +20,9 @@ export const SETTINGS_PAGES: readonly SettingsPageDefinition[] = [
   { id: 'preferences', scope: 'account', label: 'Preferences', description: 'How Pixa OS looks on this device.', requires: [] },
   { id: 'profile', scope: 'business', label: 'Business profile', description: 'Your business’s name, contact details and address.', requires: ['business:read'] },
   { id: 'regional', scope: 'business', label: 'Regional settings', description: 'Country, time zone, language, currency and financial year.', requires: ['business:read'] },
+  { id: 'members', scope: 'business', label: 'Members', description: 'Who is in this business and what they can do.', requires: ['members:read'] },
+  { id: 'invitations', scope: 'business', label: 'Invitations', description: 'Invite people and manage open invitations.', requires: ['members:invite'] },
+  { id: 'ownership', scope: 'business', label: 'Ownership and leaving', description: 'Hand over ownership, step down or leave.', requires: ['business:read'] },
 ];
 
 export function pagesFor(scope: SettingsScope, permissions: readonly string[]): SettingsPageDefinition[] {

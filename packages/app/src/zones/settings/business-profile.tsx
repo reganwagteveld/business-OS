@@ -1,3 +1,4 @@
+import type { Role } from '@business-os/contracts';
 import { Alert, AlertDescription, Button, Field, Input, Select, SectionHeader } from '@business-os/ui';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { BusinessProfileData, SettingsClient } from '../../api/settings';
@@ -17,6 +18,15 @@ export interface SettingsPageEnv {
   onSessionEnded: () => void;
   /** The name shown across the shell changed, so the shell should refresh its business context. */
   onSaved: () => void;
+  /** The signed-in person's membership in this business, from the server's business context. */
+  me: { membershipId: string; role: Role; permissions: readonly string[] };
+  businessName: string;
+  locale: string;
+  timeZone: string;
+  /** The person left this business: the app re-reads their memberships. */
+  onLeft: () => void;
+  /** Moves to another Settings page (guarded). */
+  go: (page: string) => void;
 }
 
 type Values = { name: string; legalName: string; tradingName: string; contactEmail: string; contactPhone: string; website: string; line1: string; line2: string; city: string; region: string; postalCode: string; addressCountry: string };
