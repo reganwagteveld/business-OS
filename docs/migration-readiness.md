@@ -291,6 +291,6 @@ Delegated operation under ChatGPT's `APPROVED — EXECUTE: MIGRATION` ([verdict]
 | Schema | 3 new `projects` columns; 4 new indexes, all valid; trigger `projects_guard_links` (SECURITY INVOKER function) |
 | Grants | `workflow_requests`: `bos_app` SELECT and INSERT only; policies `tenant_isolation` and restrictive `actor_is_session_user` |
 | Data | Row totals and A6 unchanged; `workflow_requests` empty |
-| Health | `GET /api/v1/health` 200. No signed-in smoke test: no production test account is available to the operator session |
+| Health | `GET /api/v1/health` 200 (12:15 and again 14:50). Signed-in smoke: Regan signed in and opened Projects and Finance, reported OK in the project thread at 14:50 UTC |
 
 Not done, by instruction: PR #110 not merged (a separate merge verdict is needed). Keep `pre-workflow-links-migration` until the next migration is verified.
