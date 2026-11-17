@@ -31,6 +31,7 @@ import * as archiveRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opport
 import * as restoreRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportunityId]/restore/route';
 import * as summaryRoute from '@/app/api/v1/b/[slug]/sales/summary/route';
 import { devOutbox } from '@/core/email';
+import { withoutUuids } from './support/uuid';
 
 const BASE = process.env.APP_BASE_URL!;
 const ORIGIN = new URL(BASE).origin;
@@ -702,8 +703,9 @@ describe('R2 dashboard: open pipeline summary', () => {
     expect(anon.status).toBe(401);
     const outsider = await api(B.people.OWNER!, fresh.slug).summary();
     expect(outsider.status).toBe(404);
-    expect(JSON.stringify(outsider.body)).not.toContain('4242');
+    expect(withoutUuids(JSON.stringify(outsider.body))).not.toContain('4242');
     const own = (await api(B.people.OWNER!, B.slug).summary()).body.summary;
-    expect(JSON.stringify(own)).not.toContain('4242');
+    // UUIDs stripped: stage and pipeline ids are random and can contain '4242' by chance.
+    expect(withoutUuids(JSON.stringify(own))).not.toContain('4242');
   });
 });
