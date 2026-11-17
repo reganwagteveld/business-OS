@@ -9,6 +9,7 @@ import 'server-only';
 // totals, transitions and links.
 import { randomUUID } from 'node:crypto';
 import type { FinanceDocument as DocumentDto, FinanceDocumentListItem as ListItemDto } from '@business-os/contracts';
+import { authorize, type Principal } from '@/modules/access';
 import { recordAudit, recordSystemAudit } from '@/core/audit';
 import { Decimal, type AppTenantDb } from '@/core/db';
 import { decodeCursor, encodeCursor, invalidCursor } from '@/core/db/cursor';
@@ -155,11 +156,35 @@ export async function checkLinks(
       throw new RuleViolationError('opportunity_customer_mismatch', 'This opportunity is for a different customer.');
     }
   }
-  if (next.projectId && changed.project) {
-    const project = await db.project.findFirst({ where: { id: next.projectId }, select: { archivedAt: true } });
+  if (next.projectId && (changed.project || changed.customer)) {
+    const project = await db.project.findFirst({ where: { id: next.projectId }, select: { archivedAt: true, customerId: true } });
     if (!project) throw new RuleViolationError('invalid_project', 'Choose a project of this business.');
-    if (project.archivedAt) throw new StateConflictError('archived_reference');
+    if (changed.project && project.archivedAt) throw new StateConflictError('archived_reference');
+    checkProjectCustomer(project.customerId, next.customerId);
   }
+}
+
+/**
+ * W1 invariant I1 (docs/cross-zone-workflows-wf1.md §5.3, W1-D6): a record with a customer links only a
+ * project of the same customer. A customerless project cannot carry a document, which always has a
+ * customer. The composite FK (business_id, project_id, customer_id) holds the same rule in the database;
+ * this gives the clear error first. Checked whenever the project or the customer changes.
+ */
+export function checkProjectCustomer(projectCustomerId: string | null, recordCustomerId: string | null) {
+  if (recordCustomerId !== null && projectCustomerId !== recordCustomerId) {
+    throw new RuleViolationError('project_customer_mismatch', 'This project is for a different customer. Choose one of this customer\'s projects or clear the project.');
+  }
+}
+
+/**
+ * D-WF1-11 (docs/cross-zone-workflows-wf1.md §6.1, §7): naming an opportunity or a project on a Finance
+ * record also needs that Zone's read key, so finance access alone never reaches into Sales or Projects.
+ * Default roles with finance:write already hold both; this is defence in depth for custom roles. Applies
+ * when the request carries the field at all (setting or clearing it).
+ */
+export function authorizeFinanceLinks(principal: Principal, input: { opportunityId?: string | null; projectId?: string | null }) {
+  if (input.opportunityId !== undefined) authorize(principal, 'sales:read');
+  if (input.projectId !== undefined) authorize(principal, 'projects:read');
 }
 
 export type LineInput = { description: string; quantity: string; unitPrice: string; discountAmount?: string; taxRateId?: string | null };
@@ -339,9 +364,16 @@ export async function convertQuote(db: AppTenantDb, actorUserId: string, quoteId
   const quote = await load(db, 'QUOTE', quoteId);
   if (quote.status !== 'ISSUED' && quote.status !== 'ACCEPTED') throw new StateConflictError('quote_not_convertible');
   const lines = await linesOf(db, quoteId);
+  // D-WF1-10 (docs/cross-zone-workflows-wf1.md §6.5): a quote associated with a project after issue
+  // (projects.source_quote_id, its own project_id frozen and NULL) puts that project on the draft. Same
+  // customer by construction (the source-quote FK includes it). Read without a lock (§6.10 P8): a link
+  // committed after this read leaves the draft without a project, which the person can set on the draft.
+  const projectId = quote.projectId
+    ?? (await db.project.findFirst({ where: { sourceQuoteId: quoteId }, select: { id: true } }))?.id
+    ?? null;
   // The quote's customer may have been archived since; converting an issued quote is still allowed.
   return insertDraft(db, actorUserId, {
-    kind: 'INVOICE', customerId: quote.customerId, contactId: quote.contactId, opportunityId: quote.opportunityId, projectId: quote.projectId,
+    kind: 'INVOICE', customerId: quote.customerId, contactId: quote.contactId, opportunityId: quote.opportunityId, projectId,
     currencyCode: quote.currencyCode, dueDate: input.dueDate ?? null, validUntil: null, notes: input.notes !== undefined ? input.notes : quote.notes,
     lines: linesAsInput(lines, quote.currencyScale), sourceQuoteId: quoteId,
     alreadyUsedRates: new Set(lines.map((l) => l.taxRateId).filter((v): v is string => !!v)),
@@ -374,6 +406,8 @@ export async function createCreditNote(
 
 export type ListQuery = {
   status: 'draft' | 'issued' | 'accepted' | 'declined' | 'expired' | 'void' | 'all'; customerId?: string; projectId?: string;
+  /** WF-1 §6.6: documents linked to this opportunity (the route also requires sales:read). */
+  opportunityId?: string;
   from?: string; to?: string; cursor?: string; limit: number; overdue?: 'true' | 'false'; invoiceId?: string;
   settlement?: 'unpaid' | 'partially_paid' | 'paid' | 'open';
   /** Invoices only. Omitted means created_desc. */
@@ -392,6 +426,7 @@ export async function listDocuments(db: AppTenantDb, kind: Kind, query: ListQuer
   if (query.status !== 'all') where.push({ status: query.status.toUpperCase() });
   if (query.customerId) where.push({ customerId: query.customerId });
   if (query.projectId) where.push({ projectId: query.projectId });
+  if (query.opportunityId) where.push({ opportunityId: query.opportunityId });
   if (query.invoiceId) where.push({ creditedInvoiceId: query.invoiceId });
   if (query.from) where.push({ issueDate: { gte: dateOf(query.from) } });
   if (query.to) where.push({ issueDate: { lt: dateOf(query.to) } });
