@@ -118,3 +118,5 @@ Brief item to evidence:
 | 8 | Failing required check fails the gate | gate cases, demo run |
 
 Real Actions demonstrations and the before/after report are in the PR description.
+
+CI-2 demo: documentation-only change (not for merge).
