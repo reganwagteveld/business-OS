@@ -35,6 +35,14 @@
 > replaces the conservative proposal. Changed: §5.6 rules 3, 4 and new rule 8, C-04, C-14, C-20, C-21, new C-26,
 > §9.6, §10.3, §15 (D-P3-42 superseded; new D-P3-52..54), tests T-59, T-60a. No other decision is accepted.
 >
+> **Version 1.4 (2026-11-17)** after the focused re-audit of `c1dbecc` (conditional design pass, four coherence
+> corrections; D-P3-45 and D-P3-50 not reopened): §5.6 rule 8 split into 8a replay invariant (each quantity from one
+> source by date; bookings in progress and cancellations counted once), 8b one booking-window and horizon rule
+> (window limits new requests only; approved bookings always protected), 8c accrual basis separate from leave
+> duration, estimate labelling, and 8d; §9.6 entitlement `NONE` exempt from all balance checks; §11.4 errors
+> `outside_booking_window`, `leave_year_closed`; §14.2 estimate and "decision order" wording; C-26; D-P3-52..54
+> wording with the audit's recommendations; tests T-48a, T-59a..c. D-P3-52..54 remain proposed.
+>
 > **Consolidation note.** An earlier draft of this spec was opened as #115 from a separate local session. This
 > version supersedes it and folds in its distinct findings: leave-year attribution (D-P3-45, a conflict with the
 > D-P3-25 proposal), per-employee work patterns (D-P3-46), the "verified link" decision (D-P3-47), restrictive
@@ -277,7 +285,7 @@ State on 2026-11-17: **every row is unmet** (P3-C does not exist).
 | C-22 | `postReversal(db, { entryId, effectiveDate, source })` | Locks the bucket the deduction was charged to (and, if that year is closed, the following open buckets in ascending order), posts the exact opposite amount **into the original bucket**, references `entryId`, never touches the original; a closed year's carry-over correction follows §5.6 rule 6; idempotent by C-12/C-13; respects `maxBalance` as P3-C defines (decision for P3-C: a reversal is never refused for exceeding `maxBalance`, recommended) | Unmet |
 | C-23 | `bucketSummary(db, employeeId, leaveTypeId, leaveYearStart)` | Read-only, same figures as C-20 without locks, plus a `pending` figure P3-B supplies (sum of pending requested amounts charged to that year) | Unmet |
 | C-24 | Lock discipline | Buckets of one employee and type are always locked in ascending `leave_year_start`; P3-C takes **no People row lock after** a bucket (it may read policies and revisions without locks). Documented and tested, so P3-B's order (§10.2) cannot cycle | Unmet |
-| C-26 | `project(db, employeeId, leaveTypeId, { horizon, extraBookings })` | §5.6 rule 8: date-ordered simulation with forecast accrual, carry-over, grants, caps and bookings; pure given its inputs; read-only; callable with or without the lock (advisory without, authoritative with) | Unmet |
+| C-26 | `project(db, employeeId, leaveTypeId, { horizon, extraBookings })` | §5.6 rule 8: date-ordered simulation with forecast accrual, carry-over, grants, caps and bookings; meets the replay invariant (8a), the single horizon rule (8b) and the accrual-basis/duration split (8c), with a ledger-only reconciliation check; pure given its inputs; read-only; callable with or without the lock (advisory without, authoritative with); P3-C owns the algorithm and its test corpus | Unmet |
 | C-25 | Entitlement `NONE` | Policies with no balance post nothing; `lockBucket` is not called (P3-B skips the ledger) | Unmet (P3-B side defined) |
 
 ### 5.4 Tests P3-C must have passed (from `people-leave-p3.md` §4.7)
@@ -328,24 +336,79 @@ requirement on P3-C's design, to be confirmed in P3-C's own spec and audit; P3-B
    Concurrency tests must span years (T-41a).
 8. **Projected availability (D-P3-50 accepted as revised).** For a request of type T with dates `[s, e]` charged to
    leave year Y, P3-C provides `project(employee, T, horizon, bookings)`, a **date-ordered simulation** from today to
-   the horizon (the later of `e` and the last approved booking of T, bounded by D-P3-53):
-   - **Start:** real posted balance of the current bucket (after accrue-up-to-date), **excluding** deductions whose
-     `applies_on` is after today (they re-enter as events on their own dates).
-   - **Events, in date order** (ties: credits before debits on the same date, then by booking id):
-     forecast accrual credits at each future period end (rules in force today, the work pattern in force today,
-     `maxBalance` cap applied at each credit); at each leave-year boundary, carry-over with the policy cap, then the
-     grant for the new year (rules in force today); each booking as a debit on its first leave date, with its
-     chargeable amount; expiry only if a later accepted policy rule introduces it (P3-A has none).
-   - **Bookings included:** at **submission**, approved bookings (from the ledger) plus every other `PENDING` request
-     of that type as a provisional reservation, plus the new request. At **approval**, approved bookings plus this
-     request; other pending requests are reported in the response (their own approval re-checks them), never
-     blocking this one (D-P3-52).
-   - **Result:** the projected balance after each event and the minimum over the horizon. A request **fits** when the
-     projected balance never falls below `−negativeBalanceLimit` at any event from its first date to the horizon
-     (so it can never starve leave that is already approved later in time).
-   - **Determinism:** inputs are today's rules, today's pattern, the posted ledger and the booking set; revisions are
-     never future-dated (D-P3-9), so the same inputs always give the same projection. Rule changes and actual
-     accruals later replace forecasts with real entries; approved deductions are never revisited.
+   the horizon H (8b). It is an **estimate**: it forecasts entitlement not yet earned, is recomputed under the lock at
+   approval, and promises nothing about future earnings. P3-C owns the exact algorithm and its test corpus (C-26);
+   the rules below are the contract it must meet.
+
+   **8a. Replay invariant (no double counting).** Every quantity is counted from exactly one source, split by date:
+   - **Dated on or before today: the ledger.** The start value is the real balance of the current bucket after
+     accrue-up-to-date, counting every entry dated on or before today: accrual, grant, adjustment, `CARRY_IN`/
+     `CARRY_OUT`, carry-over corrections (rule 6), and deductions whose `applies_on` is on or before today.
+     Earlier buckets are not read separately: their closing balance already reached the current bucket through
+     the real `CARRY_OUT`/`CARRY_IN` pairs.
+   - **Dated after today: the simulation.** Forecast accrual, forecast carry-over and forecast grants are generated
+     **only for dates after today**. A bucket that has already opened (its year has started) holds its real grant and
+     `CARRY_IN`, dated on or before today, so no forecast is generated for that boundary. A bucket that has not opened
+     holds no entitlement entries (rule 3), so its boundary is forecast exactly once.
+   - **The only ledger entries dated after today** are booking deductions (`applies_on` after today), in whichever
+     bucket they sit (current bucket or a future one), and their reversals. They are **not** read as balances. The
+     simulation reads them as the booking set: each approved, unreversed deduction becomes one debit event on its
+     `applies_on`, for its posted amount. A reversed deduction (cancelled booking) contributes nothing: the deduction
+     and its reversal are excluded as a pair, whatever their dates, because a reversal always carries the bucket and
+     the amount of the deduction it reverses.
+   - **Consequence:** every approved, unreversed booking is counted exactly once, either in the start value (it
+     began on or before today) or as an event (it begins after today), never both and never neither. P3-C must
+     provide a reconciliation check that proves this from the ledger alone (T-59a).
+   - **Booking already in progress** (first date before or on today, last date after today): its deduction's
+     `applies_on` is its first date, so the whole amount is already in the start value. It is **not** added again as
+     an event, and its remaining days are not debited again. A new candidate request that starts on or before today
+     (backdating allowed) is debited as the first event, at today.
+
+   **8b. Booking window and horizon (D-P3-53 as proposed, one rule).**
+   - **Window (new requests only):** a new request must be charged to the current leave year or the next one. Because
+     a request cannot cross a leave-year boundary (D-P3-45), this is the same as `e` ≤ the last day of the next
+     leave year, computed from the employee's policy leave year (CALENDAR, ANNIVERSARY from `start_date`, CUSTOM)
+     on the submission date. A request charged to a closed earlier year is refused (`409 leave_year_closed`);
+     correcting a closed year is a P3-C adjustment. The window is checked at submission only; the window only moves
+     forward, so an approval is never refused because of it. Error: `400 outside_booking_window`.
+   - **Horizon:** H = the latest last date among the candidate and every booking in the booking set. H is **never**
+     cut by the window: an approved booking is always in the simulation, however far ahead it is, so a new request
+     can never starve it. After the last debit only credits and carry-over follow, so nothing later can change
+     whether a request fits.
+   - **Edges** (T-59b): `e` on the last day of the next leave year is allowed; one day later is refused; the same for
+     ANNIVERSARY years from a mid-year `start_date` and from 29 February (§9.2a).
+
+   **8c. Accrual basis versus leave duration.** These are separate inputs:
+   - **Leave duration** (what a booking costs) is counted per date with the work pattern in force on that date
+     (§9.2a). Patterns cannot be future-dated (D-P3-9), so future dates use the current pattern; the amount is fixed
+     at approval and never recalculated.
+   - **Forecast accrual basis** (what is earned in future periods) uses the accrual rule, policy version and accrual
+     inputs (pattern or hours basis) in force **today**, applied to every future accrual period up to H, with the
+     `maxBalance` cap applied at each credit and the policy's period boundaries (D-P3-21, D-P3-25 rule 4).
+   - **Scheduled grants:** only the GRANT policy's grant at each future leave-year start is forecast. Manual
+     adjustments are never forecast.
+   - **Employment end:** P1 sets `end_date` only when an employee is terminated (CHECK on `people_employees`), so no
+     future-dated end exists today and none is forecast. Leave cannot be requested by or for a terminated employee
+     (§9.3). If a future-dated end is ever introduced, forecast accrual stops at it; that is P3-C's to specify.
+   - The response labels every forecast figure as an estimate (`basis: 'forecast'`) and states that it is rechecked
+     at approval (§9.6, §14.2).
+
+   **8d. Events, bookings and result.**
+   - **Events, in date order** (ties: credits before debits on the same date, then by booking id): forecast accrual
+     credits (8c); at each leave-year boundary after today, carry-over with the policy cap, then the grant for the
+     new year; each booking as one debit on its first leave date (or at today, 8a); expiry only if a later accepted
+     policy rule introduces it (P3-A has none).
+   - **Bookings included:** at **submission**, approved bookings (from the ledger, 8a) plus every other `PENDING`
+     request of that type as a provisional reservation, plus the new request. At **approval**, approved bookings
+     plus this request; other pending requests are reported in the response (their own approval re-checks them),
+     never blocking this one (D-P3-52). This is "decision order, not submission order", and it is shown to people
+     (§14.2) and recorded in the decision's computation (§6.5).
+   - **Result:** the projected balance of the bucket in force after each event, and the minimum over the horizon. A
+     request **fits** when that balance never falls below `−negativeBalanceLimit` at any event from its first date
+     (or today) to H, so it can never starve leave that is already approved later in time.
+   - **Determinism:** inputs are today's date, today's rules and pattern, the posted ledger and the booking set;
+     revisions are never future-dated (D-P3-9), so the same inputs always give the same projection. Rule changes
+     and real accruals later replace forecasts with real entries (8a); approved deductions are never revisited.
    - **Not posted:** the projection writes nothing. Only an approval posts a deduction (`applies_on` = first leave
      date, into the bucket of Y); only a cancellation posts a reversal.
    - **Submission vs approval are distinct (D-P3-54):** a projected shortfall at submission is a warning shown to
@@ -353,6 +416,7 @@ requirement on P3-C's design, to be confirmed in P3-C's own spec and audit; P3-B
      (`409 insufficient_balance`, with the projection) unless it fits. Auto-approved policies (`requiresApproval =
      false`) refuse at submission when it does not fit, because submitting is approving. No approver can override
      a shortfall in P3-B; a leave manager corrects entitlement with a P3-C adjustment instead.
+   - **Entitlement `NONE`:** no projection is run at all (§9.6, C-25).
 
 ### 5.5 Release state
 
@@ -740,7 +804,11 @@ assignments cover parts of it (a policy change inside the range) the request is 
 
 ### 9.6 Balance check
 
-- Entitlement `NONE`: no balance, no ledger (the request is a record of absence only).
+- Entitlement `NONE` (unpaid, unlimited or otherwise unmetered types): no balance, no ledger and **no projection**
+  (the request is a record of absence only). Such requests never get an insufficient-balance warning, a projected
+  shortfall or `insufficient_balance`, and the response carries no balance figures. Every other check still
+  applies in full: overlap (§9.4), authority and self-decision (§8), notice, backdating, waiting period and
+  employment dates (§9.3), policy applicability (§9.5), leave-year boundary and booking window (below) (T-48a).
 - Otherwise every check is the **projection** of §5.6 rule 8 (D-P3-50 as revised):
   - **estimate / submission:** without locks, with approved bookings and all pending requests of the type as
     provisional reservations. A shortfall is a **warning** (`projectedShortfall` with the date and amount), and the
@@ -749,11 +817,14 @@ assignments cover parts of it (a policy change inside the range) the request is 
   - **approval:** inside the bucket lock (§10), with approved bookings plus this request; refused unless it fits over
     the whole horizon. Other pending requests are listed as "would no longer fit" information for the approver.
 - The response always shows the figures by date (balance before, on the leave dates and at the horizon), never a
-  bare "available" number that hides forecast accrual.
+  bare "available" number that hides forecast accrual. Every forecast figure is labelled an estimate
+  (`basis: 'forecast'`) that is rechecked at approval (§5.6 rule 8c).
 - **Leave-year boundary:** a request whose dates fall in two leave years of its policy is refused
   (`400 crosses_leave_year`); the person splits it (D-P3-45). Leave years follow the policy (`CALENDAR`,
-  `ANNIVERSARY`, `CUSTOM`). **Horizon:** a request may start no later than the end of the next leave year
-  (D-P3-53), so forecasts never run more than about two years ahead.
+  `ANNIVERSARY`, `CUSTOM`). **Booking window and horizon:** one rule, §5.6 rule 8b (D-P3-53): a new request must
+  be charged to the current or the next leave year (`400 outside_booking_window`; a closed year is
+  `409 leave_year_closed`), checked at submission only; the projection horizon is never cut by the window, so
+  already-approved bookings always stay protected.
 - A calendar change (work week, holidays) after approval never recalculates an approved request; correcting it
   means cancelling and resubmitting.
 
@@ -898,11 +969,12 @@ balances; redacted projection (§12.3) omits type, amounts, notes and history.
 ### 11.4 Errors (new, additive)
 
 `400`: `invalid_input`, `invalid_query`, `invalid_cursor`, `zero_duration`, `invalid_granularity`, `crosses_leave_year`,
-`backdated_not_allowed`, `notice_period`, `waiting_period`, `outside_employment`, `request_too_long`.
+`backdated_not_allowed`, `notice_period`, `waiting_period`, `outside_employment`, `request_too_long`,
+`outside_booking_window`.
 `403`: `forbidden`, `self_approval`. `404`: `not_found` (incl. other businesses' and invisible requests),
 `not_linked`. `409`: `stale`, `invalid_transition`, `leave_overlap`, `no_policy`,
 `policy_changes_within_request`, `insufficient_balance` (with `available`, `requested`, `limit`),
-`amount_changed` (with `amount`), `terminated`, `idempotency_conflict`, `immutable`.
+`amount_changed` (with `amount`), `terminated`, `idempotency_conflict`, `immutable`, `leave_year_closed`.
 
 ### 11.5 Audit (references only; regression-tested like P1/P3-A)
 
@@ -1012,6 +1084,13 @@ Finance and Projects, D-V2B2-5): detail is its own view.
 
 Markers are never the only signal; forced-colours mode keeps the word.
 
+**Projection figures** (types with a balance only): balance figures that include forecast accrual or carry-over
+carry the word "Estimate" and the note "Rechecked when a manager decides". Where pending requests were counted as
+reservations, the request form and the approval inbox say so in words: "Requests are decided in the order managers
+decide them, not the order they were sent. Another pending request may no longer fit after this one is approved"
+(D-P3-52). The approval view lists those affected requests by the fields the approver may see (§12). Types with
+entitlement `NONE` show no balance figures at all.
+
 ### 14.3 Components
 
 | Need | Existing piece (`packages/ui`, `packages/app`) | Change |
@@ -1086,9 +1165,9 @@ delegated approval policy.
 | D-P3-47 | What "verified" user link means | require user confirmation (new People change) / **accept the admin-asserted, audited link; show the linked employee to the user** | **Accept for P3-B**; confirmation can follow if pilots need it |
 | D-P3-48 | Restrictive RLS on notes | service check only / transaction-flag RLS / **service check plus restrictive RLS derived from the session user and the data** | **Data-derived RLS** (revised after audit): a writable flag proves nothing; the session user is the existing trust anchor |
 | D-P3-50 | Future availability | **ACCEPTED AS REVISED (owner decision record on #116, 2026-11-17):** projected entitlement on the leave dates: earned balance and carry-over, forecast accrual through the dates, grants, caps and year boundaries, approved and pending bookings in date order, negative-balance allowance; submission distinct from approval; re-evaluated under the lock at decision time. The earlier conservative proposal is **withdrawn** | §5.6 rule 8 |
-| D-P3-52 | Pending requests at approval | block on all pending / **pending reserve at submission; at approval only approved bookings + this request count, other pending ones are re-checked at their own approval and listed as affected** | **As stated**: first decided, first served; no deadlock between two pending requests that each fit alone |
-| D-P3-53 | Projection horizon | unlimited / **start date no later than the end of the next leave year** | **Bounded**: forecasts beyond about two years are unreliable and costly |
-| D-P3-54 | Shortfall at submission | refuse / **warn and allow submission for manager review; refuse only under auto-approval; no approver override of a shortfall in P3-B** | **Warn**: matches the owner record ("submit with a clear warning"); a leave manager fixes entitlement by adjustment, not by override |
+| D-P3-52 | Pending requests at approval | block on all pending / **pending reserve at submission; at approval only approved bookings + this request count, other pending ones are re-checked at their own approval and listed as affected** | **As stated**: first decided, first served; no deadlock between two pending requests that each fit alone. "Decision order, not submission order" is shown in the form and inbox (§14.2) and recorded in the decision's computation. ChatGPT audit recommends YES |
+| D-P3-53 | Booking window for new requests | unlimited / configurable / **new requests charged to the current or next leave year only (`e` ≤ last day of the next leave year); fixed for the first release, a configurable window flagged as later work** | **Bounded**: forecasts beyond about two years are unreliable. The window limits new requests only; the projection horizon is the latest booking and is never cut, so approved leave beyond the window stays protected (§5.6 rule 8b). ChatGPT audit recommends YES as an initial documented window |
+| D-P3-54 | Shortfall at submission | refuse / **warn and allow submission for manager review; refuse only under auto-approval; no approver override of a shortfall in P3-B** | **Warn**: matches the owner record ("submit with a clear warning"); a leave manager fixes entitlement by adjustment, not by override. Warnings are visible to approvers. ChatGPT audit recommends YES |
 | D-P3-51 | How the database proves who made a transition | service-written actor (v1.0) / **session user + basis re-derived in SQL by the trigger** / privileged session-token function | **Session user + SQL re-derivation**: no privileged SQL; same trust boundary as tenant isolation; the privileged option stays available if Regan wants it |
 | D-P3-49 | Team leave audience | approvers only / **`people:read` holders (sensitive as "Away") plus approvers for their reports; MEMBER own only** | **As stated** (§12.3): the brief asks for filtered team visibility without fixing the audience |
 | D-P3-44 | Release switch | ship enabled / **routes off (`available`) until B4 and Regan's explicit switch-on** | **Off**: enabling a feature in production escalates to Regan anyway (protocol "Merges are deployments") |
@@ -1166,6 +1245,10 @@ plus a unit-level custom principal where noted.
 | T-49b | Two concurrent auto-approved submissions (different dates) on one bucket: second sees the first's deduction; both orders | C, P | B3 |
 | T-41a | Cross-year concurrency: approvals charged to the current and next year of one employee and type, both orders; year opening (carry-over) racing a next-year deduction; reversal into a closed year with carry-over correction | C | B3 (needs P3-C) |
 | T-59 | Projection (§5.6 rule 8), unit on a fixed calendar: monthly/weekly/fortnightly accrual forecast through the dates; `maxBalance` cap mid-horizon; carry-over NONE/UNLIMITED/CAPPED at the boundary; grant at a new year; an approved later booking starved by an earlier request → refused; pending reservations at submission vs approval (D-P3-52); same-date tie order; horizon limit (D-P3-53); same inputs → same output | U | B1 (pure engine) / P3-C |
+| T-59a | Replay invariant (§5.6 rule 8a), unit and integration: approved booking in the current bucket after today; approved booking in a future-year bucket before that year opens and again after it opens (now the current bucket); cancelled booking (deduction + reversal) before and after its first date; reversal into a closed year with carry-over correction; booking in progress across today (counted once in the start value, not as an event); year opened with real grant and `CARRY_IN` (no forecast for that boundary). In each case the ledger-only reconciliation counts every approved, unreversed booking exactly once | U, I | P3-C / B3 |
+| T-59b | Booking window and horizon (§5.6 rule 8b): `e` on the last day of the next leave year accepted, one day later `outside_booking_window`; request charged to a closed year `leave_year_closed`; ANNIVERSARY year from a mid-year `start_date` and from 29 February; window rolls forward between submission and approval (approval not refused); an approved booking beyond today's window still blocks a new request that would starve it | U, I | B1 / B2–B3 |
+| T-59c | Accrual basis vs duration (§5.6 rule 8c): pattern change today alters forecast accrual and the quote of a pending request but not an approved amount; `maxBalance` reached mid-horizon; GRANT forecast only at year starts; manual adjustments never forecast; response fields marked `basis: 'forecast'` | U, I | P3-C / B2 |
+| T-48a | Entitlement `NONE`: no projection, no warning, no balance figures, no `insufficient_balance`; overlap, self-decision, notice, backdating, waiting period, policy applicability, leave-year boundary and booking window still refused | I | B2–B3 |
 | T-60a | Submission with projected shortfall → accepted with warning; approval of it → `insufficient_balance` with projection; auto-approval with shortfall → refused at submit; real accrual and year opening later never double-count forecasts | I | B2–B3 |
 | T-28 | Notes RLS by direct SQL as `bos_app` with `app.user_id` set to each viewer class (author, submitter, linked user, line manager, leave manager, unrelated MEMBER, MANAGER without reports): only allowed classes see rows | S | B2 |
 | T-29 | Linked-self visibility and approver changes under concurrency: link moved to another user while a request is open; manager reassigned during a decision (both commit orders); approver suspended mid-inbox | C, I | B2–B3 |
