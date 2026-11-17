@@ -50,6 +50,8 @@ On a database with every migration except this one, 2 businesses, 6 stages, 18 o
 | Rehearsal script with one trigger disabled | **STOP**: 2 of 3 guard triggers enabled. |
 | Fixture on an empty, fully migrated database, then rehearsal script and probe | Fixture created, second run a no-op; rehearsal **PASS**; probe ran without errors. Without `SCFG_FIXTURE_TARGET=rehearsal` it refuses. |
 | Probe while another session holds ACCESS EXCLUSIVE on `sales_pipelines` for 2 s | Longest read 2,034 ms: the probe sees stalls. |
+| Persistent-connection probe (`.mjs`, replaces the first `.sh` probe, which opened a new connection per sample and so timed about 2 s of connection set-up from the Mac to us-east-1) with a 1.5 s ACCESS EXCLUSIVE hold | Read longest minus median 1,455 ms, write 1 ms. Refuses a role that bypasses RLS. |
+| Reset script, then preflight, then deploy with the new probe | Reset removed objects and ledger rows; preflight **PASS** (0 resolved attempts); deploy applied; probe longest minus median 4 ms (read) and 3 ms (write); rehearsal **PASS**. Without `SCFG_RESET_TARGET=rehearsal` it refuses. |
 
 Neon adds network round trips from the Mac, which is why §4 measures the real window rather than inheriting these numbers.
 
@@ -102,13 +104,15 @@ Keep the raw output in the private Mac session. Post only the pass/fail summary 
    It commits 1 business, 1 owner on an `.invalid` address, 1 pipeline, 3 stages and 200 OPEN opportunities, and is a no-op when run twice. Never run it with a production URL.
 6. **Lock drill.** In one psql session as the admin role, hold a write: `BEGIN; UPDATE sales_stages SET name = name WHERE id = (SELECT id FROM sales_stages ORDER BY id LIMIT 1);` and leave it open. In another, run `pnpm exec prisma migrate deploy` against the branch. It must fail within a few seconds (Prisma shows `current transaction is aborted`; that is expected, see §2). Then `ROLLBACK` the held session, and confirm that `config_version` does not exist on the branch. Run `pnpm exec prisma migrate resolve --rolled-back 20261210000000_sales_configuration`. Re-run §3 on the branch: it must pass and report 1 resolved attempt.
    If the branch has no Sales rows at all, skip the `UPDATE` and hold `LOCK TABLE sales_stages IN ROW EXCLUSIVE MODE` instead (same conflict).
-7. **Timed apply.** Start the probe in a second terminal, then deploy, and record the deploy wall time and the probe's numbers:
+7. **Timed apply.** Start the probe in a second terminal, wait until it has run about 5 s (its baseline), then deploy. Record the deploy wall time and the probe's two lines:
    ```sh
    export SCFG_PROBE_APP_URL=<bos_app URL, rehearsal branch, direct>
    export SCFG_PROBE_BUSINESS_ID=<any business with a stage, from the rehearsal branch; not posted anywhere>
-   scripts/sales-configuration-probe.sh          # terminal 2, runs 20 s
+   node scripts/sales-configuration-probe.mjs    # terminal 2, runs 30 s
    pnpm exec prisma migrate deploy               # terminal 1, against the rehearsal branch
    ```
+   The probe keeps two connections open and samples every 100 ms, so connection set-up is never timed. Its median is the network round trip; **longest minus median** is the stall the migration caused.
+   **Repeating a measurement** on a branch where the migration is already applied: `SCFG_RESET_TARGET=rehearsal psql "$ADMIN_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/sales-configuration-rehearsal-reset.sql` drops the migration's objects and ledger rows on the **rehearsal branch only**. Re-run §3 on the branch (PASS, 0 resolved attempts), then repeat this step and step 8. No new Neon branch is needed.
 8. **Rehearsal checks** on the branch:
    ```sh
    export SCFG_REHEARSAL_APP_URL=<bos_app URL, rehearsal branch, direct>
@@ -127,9 +131,9 @@ Post to PR #135, as one comment, with no ids, names, hosts or URLs: the head SHA
 - the production preflight passed and the rehearsal preflight passed;
 - the lock drill failed cleanly and resolved;
 - the rehearsal deploy succeeded and its checks passed;
-- the probe's longest read and longest stage write are each at most **2 s** (proposed threshold).
+- the probe's **longest minus median**, for reads and for stage writes, is each at most **2 s** (proposed threshold).
 
-If either probe number is over 2 s, the migration escalates (protocol: locking not accepted under documented thresholds), and Regan must accept the stall himself, for this migration (§10, message 3). A stall accepted for an earlier migration does not carry over.
+If either is over 2 s, the migration escalates (protocol: locking not accepted under documented thresholds), and Regan must accept the stall himself, for this migration (§10, message 3). A stall accepted for an earlier migration does not carry over.
 
 ## 6. Recovery branch
 
