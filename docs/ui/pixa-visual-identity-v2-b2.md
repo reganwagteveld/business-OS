@@ -1,6 +1,6 @@
 # UI V2-B2: Pixa visual identity, audit and design proposal
 
-**Status:** draft for audit. Documentation and reference renders only: no code in `packages/`, no dependency, no API, permission, schema or money change, no deploy.
+**Status:** draft, revised after the ChatGPT audit of `c70c4cc` (CONDITIONAL PASS on Direction A; revisions in §17). Documentation and reference renders only: no code in `packages/`, no dependency, no API, permission, schema or money change, no deploy.
 **Builds on:** [V2-A spec](pixa-design-system-v2-a.md) (direction, D-V2A-1..13) and [V2-B1 notes](pixa-design-system-v2-b1.md) (tokens on `main` since `e78c971`, D-V2B1-1..4).
 **Base:** `main` at `ccfcc93`. No open UI PR overlaps this one (open PRs on 2026-11-17: #93 GS1-A backend, #53, #48).
 **Evidence:** `v2-b2/before/` (current `main`, captured with the V2-A harness), `v2-b2/reference/` (concept renders, built from `reference.html` with the real V2-B1 tokens injected by `render.cjs.txt`).
@@ -93,7 +93,7 @@ V2-A's six principles stand (calm, precise, trustworthy, fast, approachable, del
 1. **The work is a sheet.** One continuous surface per screen. Structure comes from rules, alignment and type, not from boxes inside boxes. Maximum nesting: sheet, then one bordered thing (a task item, a field, a menu).
 2. **Every number is a fact.** Figures are tabular, carry their currency or unit, say what period or "as of" date they cover, and never mix currencies in one total. A figure without a source is left out (§9).
 3. **Colour is spent on state and the one primary action.** Accent: primary button, selection, links, current place. Status colours only in markers and status words. No decorative colour, no gradients on working screens.
-4. **Square, not round.** Status and progress markers are squares from the mark; pills are reserved for chips (removable filters, toggles) and avatars.
+4. **Square, not round. No pills anywhere** (owner requirement, §17). No capsule or fully rounded shape on any control: buttons, filters, chips, toggles, search and select fields, tabs, navigation, status, labels and badges. Geometry is rectilinear with small, deliberate radii: 8 px (`--radius-control`) for controls, 6 px for small square items (avatars with initials, icon buttons inside rows), 4 px for keys, labels and tags, 1.5–2 px for markers. Status and progress use 6 px squares from the mark plus words. `--radius-pill` stays in V2-B1 for its existing consumers until they migrate (no B1 change) but **no new component uses it**. Target sizes and focus rings are unaffected: 32 px controls, ≥ 24 px targets (44 on coarse pointers), 2 px focus outline.
 5. **One frame, many layouts.** The frame (bezel, rail, sheet, top bar, title row) never changes; the content layout follows the job: figures and lists on Home, a ledger table on Finance, lanes on Projects. Same frame plus different interiors is what stops "same layout everywhere".
 6. **Density is a contract.** 40 px rows, 32 px controls, 12/13/14 px text in working areas, 24 px sheet padding, 12 px between groups. Large type (22/28 px) only for page titles and Home's figures.
 
@@ -156,7 +156,9 @@ Full bleed to the sheet edges with 24 px inner padding on the first and last col
 
 ### 6.9 Inspector
 
-- 360 px (`--inspector-w`, new), right of the list inside the sheet, separated by a rule. Opens when a row is selected (click or Enter on the row's link), closes with its close button or `Esc`; focus moves to the inspector heading on open and back to the row on close.
+- 360 px (`--inspector-w`, new), right of the list inside the sheet, separated by a rule.
+- **Two distinct actions per row (revised after audit).** Where a record has its own page (an invoice), the record link in the first cell **navigates to the record**, exactly as today. Previewing is a **separate, visible "Preview" icon button** in a trailing column (`aria-label="Preview INV-0001"`, `aria-expanded`, `aria-controls` pointing at the inspector, a tooltip with the same words). Where a record has no page of its own (a project task, whose full form is the existing dialog), activating the item opens the inspector and "Edit task" in the inspector opens the dialog. Both rules are tested per screen.
+- **Focus.** Opening moves focus to the inspector heading. Closing (close button or `Esc`) returns focus to the Preview button of the same row. If that row is no longer in the list (filter changed, reload, record removed or now hidden by permissions), the inspector closes, a polite live region says "INV-0001 is no longer in this list", and focus goes to the list's heading (`h1`). Switching business or role closes the inspector with no announcement of the old record. A Preview on another row replaces the content and keeps focus in the inspector heading.
 - Header: record kind (12 px muted), identifier (`h2`, 18 px), status marker. Body: a `DescriptionList` (V2-B4) of fields from the **list response only**, so opening it costs no extra request; where a field is not in the list response it is left out. Footer: "Open …" (full record) and at most one existing action the person is allowed to take.
 - Read-first: no inline editing. "Edit" opens the existing form or dialog with its guard. Money shown is exactly what the record holds; any derived "open" amount uses the existing exact decimal helper (`zones/finance/decimal.ts`), never floats (ADR 0007).
 - Below 1280 px, and at 900 px, it is an overlay sheet (V2-B3 `Sheet`, modal, focus-trapped) instead of a column.
@@ -304,6 +306,7 @@ Each is checkable in review or by a source scan; the counts are on `ccfcc93` and
 | AT-8 | No uppercase labels or letter-spaced eyebrows | Scan `uppercase tracking` (now 7) |
 | AT-9 | No widget without a source (§9); no "Soon" or disabled placeholders | Endpoint-to-widget map in every V2-D PR (V2-A §10) |
 | AT-10 | One primary action per view, at most two secondary visible | Review |
+| AT-11 | No pills: no `rounded-full`, `rounded-pill` or `--radius-pill` on controls, chips, fields, tabs, badges or labels in new or migrated code | Source scan (now 21 uses in `packages/app/src`, 5 in `packages/ui/src/components`), to 0 per migrated Zone; new `packages/ui` components start at 0 |
 
 ## 11. Responsive desktop, keyboard and focus, motion, contrast
 
@@ -357,7 +360,8 @@ All text pairs inside the sheet are V2-B1 pairs already in `tokens.test.ts`. B2-
 | Command area | `PageHeader` (`packages/ui` `layout.tsx`), `shell/zone-page.tsx` | **Extend**: inline meta, "More" overflow, no eyebrow | V2-B3 (`Menu`) + V2-C |
 | Ruled section header | `SectionHeader` | **Extend**: `variant="ruled"`, meta and one action | B2-2 |
 | Figure strip | `KpiCard`, `StatCard` (`packages/ui`) | **Replace** in screens; old components kept until their last consumer moves (V2-E) | B2-2 (component), V2-D (adoption) |
-| Pixel marker | `Badge`, `StatusIndicator`, local badges | **Extend** V2-B4 `StatusBadge` contract: marker + word, `tone`, `hollow`; pills only for chips | B2-2 (`PixelMarker`), V2-B4 (`StatusBadge`) |
+| Pixel marker | `Badge`, `StatusIndicator`, local badges | **Extend** V2-B4 `StatusBadge` contract: marker + word, `tone`, `hollow`; no pill form | B2-2 (`PixelMarker`), V2-B4 (`StatusBadge`) |
+| Toggle and removable filter ("chip") | Local pill chips and `rounded-full` toggles | **Replace**: rectangular 32 px control, `--radius-control`, pressed state by border, weight and `aria-pressed` | V2-B4 `FilterBar` |
 | Ledger table | `Table` (`packages/ui`), hand-written tables | **Extend** V2-B4 `DataTable`: `bleed`, `selectedRowId`, column `priority` | V2-B4 |
 | Inspector | Task dialog in `task-board.tsx`, detail pages | **New** pattern on V2-B3 `Sheet` plus a column mode | V2-B5 (pattern), V2-D (per Zone) |
 | Description list | 7 local grid templates | V2-B4 `DescriptionList` (already planned) | V2-B4 |
@@ -383,13 +387,13 @@ Each slice is its own thread, branch and draft PR, audited and approved separate
 
 | Slice | Scope | Paths | Needs | Conflicts |
 |---|---|---|---|---|
-| **B2-1 Visual-regression harness** (the original V2-B2) | Promote the V2-A harness to a dev-only package; lossless goldens with bundled Inter, fixed clock, both themes, 1440 / 900 × 600 / 834 / 390; non-gating CI job (D-V2A-11) | new `tooling/visual/` (or `apps/web/visual/`), `.github/workflows` (new job only) | D-V2B2-1 | None |
+| **B2-1 Visual-regression harness** (the original V2-B2) | Promote the V2-A harness to a dev-only package; lossless goldens with bundled Inter, fixed clock, both themes, 1440 / 900 × 600 / 834 / 390, plus forced-colours, reduced-motion and focus captures; non-gating CI job until stable (D-V2A-11). Chromium goldens are **not** a substitute for macOS WKWebView or Windows WebView2: the D-V2A-10 compatibility matrix and real-device checks stay separate and required | new `tooling/visual/` (or `apps/web/visual/`), `.github/workflows` (new job only) | D-V2B2-1 | None |
 | **B2-2 Identity foundations** (first implementation candidate) | `--bg-bezel`, `--inspector-w`, `--marker-*`, `--bezel-gutter`; components `PixelMarker`, `FigureStrip`/`Figure`, `SectionHeader variant="ruled"`, `ProgressSquares`; token and contrast tests; showcase section | `packages/ui/src/styles.css`, `packages/ui/src/components/*`, `packages/ui/tests/*`, `packages/ui/showcase/*` | D-V2B2-2, -4 | None: nothing in `packages/app` uses them yet |
 | B2-3 Contract amendments | Fold into V2-B3/B4/B5 specs: `StatusBadge` marker form, `DataTable` bleed/selection/priority, `Inspector` pattern on `Sheet` | Docs in this file; code in those PRs | D-V2B2-5 | Coordinates with whoever opens B3/B4/B5 |
 | V2-C Shell | Bezel, sheet, rail restyle, top bar, section bar | `packages/app/src/shell/*` | B2-2, V2-B3 | Shell is owned by V2-C only |
 | V2-D Zones | Home (R2), Finance, Projects first for this identity, one Zone per PR, each with its endpoint-to-widget map | each Zone's folder | V2-C, B4/B5 parts it uses | One Zone per PR; R2 owner area for Home |
 
-Order: B2-1 and B2-2 in parallel (disjoint paths), then V2-B3, V2-C, then V2-D. This keeps every PR inside one package or one Zone, so other threads are not blocked.
+Order: B2-1 and B2-2 in parallel (disjoint paths), each a **separately audited draft PR**, started only after this revised document is approved; then V2-B3, V2-C, then V2-D. Approving B2-1 and B2-2 does **not** authorise the shell or Zone rework: V2-C and each V2-D PR get their own audit and approval. This keeps every PR inside one package or one Zone, so other threads are not blocked.
 
 ## 15. Acceptance criteria and visual QA checklist
 
@@ -409,7 +413,8 @@ Order: B2-1 and B2-2 in parallel (disjoint paths), then V2-B3, V2-C, then V2-D. 
 - [ ] Title row: one `h1` at 22 px, at most one primary and two secondary actions, the rest in "More".
 - [ ] No cards around sections, figures, tables or lists; nesting depth ≤ 2.
 - [ ] Rules: section headers ruled; figure strips ruled; table full bleed with 24 px insets.
-- [ ] Status: square marker plus word everywhere; no pill badges for status; danger word coloured.
+- [ ] Status: square marker plus word everywhere; danger word coloured.
+- [ ] No pills: no capsule or `rounded-full` shape on any control, chip, field, tab, badge or label; radii only 8 / 6 / 4 / 2 px as in §4 rule 4.
 - [ ] Numbers: tabular, right-aligned in tables, currency stated, no mixed-currency totals, period or "as of" stated.
 - [ ] Density: 40 px rows, 32 px controls, 24 px sheet padding, no arbitrary values.
 - [ ] 900 × 600: data above the fold (AT-7); inspector becomes overlay; secondary actions folded.
@@ -430,7 +435,21 @@ None of these authorises a merge, a deploy or work beyond the slice it names.
 | D-V2B2-2 | Identity direction | **A. Ledger** (§5) | B. Workbench; C. Tiles (V2-A reference as drawn) |
 | D-V2B2-3 | Rail material, superseding D-V2A-4 (subtle glass sidebar) | Opaque ink rail on an ink bezel, in both themes; glass only on overlays | Keep glass sidebar; ink rail only in dark |
 | D-V2B2-4 | Tokens | Add `--bg-bezel` (one colour) and the three layout/component tokens in §7; no V2-B1 value changes | No bezel (sheet fills the window, rail only) |
-| D-V2B2-5 | Inspector scope | Finance document and expense lists and Projects tasks only; read-first; overlay below 1280 px; the Projects task modal is replaced in V2-D Projects | Inspector nowhere in V2; or everywhere |
+| D-V2B2-5 | Inspector scope | Finance document and expense lists and Projects tasks only; read-first; a separate Preview action where a record page exists (§6.9); overlay below 1280 px; the Projects task modal is replaced in V2-D Projects | Inspector nowhere in V2; or everywhere |
 | D-V2B2-6 | Atmosphere | Retire from Home and Zones; keep on sign-in, onboarding and empty first-run | Keep `calm` behind Zones (V2-A §6.2) |
-| D-V2B2-7 | Status display | Square pixel marker plus word replaces pill badges for status (amends the V2-A §9.2 `StatusBadge` "dot + text + border"); pills only for chips and avatars | Keep pill badges |
-| D-V2B2-8 | First implementation | Authorise **B2-1** and **B2-2** (§14) as two draft PRs in their own threads after this document is audited | Wait until V2-B3 is specified |
+| D-V2B2-7 | Status display and shape | **Amended after audit:** square pixel marker plus word for status (amends the V2-A §9.2 `StatusBadge` "dot + text + border"), and **no pills anywhere** in functional UI, including chips, buttons, filters, fields, tabs and labels (§4 rule 4). Avatars use a 6 px rounded square; a circular crop is allowed only for a real photo, never for control chrome | Keep pill badges |
+| D-V2B2-8 | First implementation | Authorise **B2-1** and **B2-2** (§14) as two separately audited draft PRs in their own threads, after this revised document is approved. Not an authorisation for V2-C or V2-D | Wait until V2-B3 is specified |
+
+## 17. Audit log
+
+**ChatGPT audit of `c70c4cc` (2026-11-17, posted on PR #103): CONDITIONAL PASS on Direction A.** Required revisions and where they are addressed:
+
+| Audit item | Change in this revision |
+|---|---|
+| No pills anywhere, stated as an owner requirement (buttons, filters, fields, dropdowns, tabs, badges, chips, labels) | §4 rule 4 rewritten; AT-11 added with current counts; QA checklist item; §12 chip row; D-V2B2-7 amended; renders updated (chips, avatar and concept label are rectangular; no `--radius-pill` in the reference) |
+| Inspector: keep record links as navigation, add a separate accessible preview action, define focus when the row disappears | §6.9 and §11.2; renders show the Preview button column and its focus state (`b2-desktop-light-finance-focus.png`) |
+| Harness: Chromium goldens are not WKWebView; keep real-device checks separate; non-gating until stable; cover fonts, focus, forced colours, reduced motion, 900 × 600 and narrow | §14 B2-1 row |
+| `--bg-bezel` acceptable with contrast and light/dark tests; markers always with text; money per currency, exact | Already in §6.10, §7, §9.3, §11.4; unchanged |
+| B2-1 and B2-2 as separate draft PRs, not authorisation for the shell or Zone rework | §14 order note; D-V2B2-8 |
+
+The audit's recommendations on D-V2B2-1..8 are recommendations, not decisions; §16 records only Regan's own decisions.
