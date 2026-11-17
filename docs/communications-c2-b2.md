@@ -183,7 +183,7 @@ is `OWN_SENT`, classified like matched mail (the user chose to write it).
 |---|---|---|---|
 | PERSONAL, OWNER_ONLY | matched, own sent or follow-up | yes | `PERSONAL_UNSHARED` |
 | PERSONAL, OWNER_ONLY | unmatched | only if policy `RETAIN` | `PERSONAL_UNSHARED` |
-| PERSONAL, sharing BUSINESS | as above | as above | `ORDINARY` (D-B2-4) |
+| PERSONAL, sharing BUSINESS | as above | as above | new copies: `ORDINARY` if within the ordinary period at ingest, otherwise not stored (§5 rule on already-due copies); existing copies per §5.1 (D-B2-4) |
 | BUSINESS | matched, own sent | yes | `ORDINARY` |
 | BUSINESS | unmatched follow-up in a thread already stored (`THREAD_FOLLOWUP`) | yes, under every policy (exception below) | `ORDINARY` (or `STAGED_INTAKE` if the whole thread is still staged) |
 | BUSINESS | unmatched | `DISCARD`: no. `STAGE_30D`: yes. `RETAIN`: yes | `STAGE_30D` → `STAGED_INTAKE`; `RETAIN` → `ORDINARY` |
@@ -245,7 +245,7 @@ must respect visibility at the time of export.
 | Copy in… | Readable by (each must be an ACTIVE member with `communications:read`) |
 |---|---|
 | PERSONAL, OWNER_ONLY | The mailbox owner only. `manage_connections` sees connection metadata, never content or counts (§4). |
-| PERSONAL, sharing BUSINESS | Every member with `communications:read`. |
+| PERSONAL, sharing BUSINESS | Every member with `communications:read`, **per copy**: only copies that are `ORDINARY` because of the share. Copies left `PERSONAL_UNSHARED` (older than the period when the mailbox was shared, §5.1) stay owner-only: not listed, not counted, not searchable, attachments not downloadable, hidden by RLS. A thread mixing both shows shared viewers only its shared copies. |
 | PERSONAL, one thread shared (B2-2) | Owner, plus every member with `communications:read` for that thread only. |
 | BUSINESS | Members of `mail_connection_members` with READ or SEND. `manage_connections` without membership sees metadata only (C2-B1 §16.4); an admin who wants content adds themselves, which is audited. |
 | BUSINESS thread linked to a customer/contact | **The same mailbox members only** (D-B2-3, revised). The customer's correspondence view lists a linked thread only to viewers who could already read it in the mailbox, and they also need `customers:read` to open the customer. A link adds no readers and no future-message exposure beyond the mailbox's own rule. |
@@ -328,8 +328,14 @@ service, refuses an unauthorised promotion.
 ## 8. Retention and erasure over `mail_*` (E1 extension)
 
 ### 8.1 Retention
-- `mail_retention_due_at` is reused unchanged: ORDINARY = `occurred_at` + period in force (with the 30-day
-  shortening delay), STAGED_INTAKE = `recorded_at` + 30 days, PERSONAL_UNSHARED and RETAINED_RECORD never.
+- `mail_retention_due_at` is reused: ORDINARY = `occurred_at` + period in force (with the 30-day shortening
+  delay), STAGED_INTAKE = `recorded_at` + 30 days, PERSONAL_UNSHARED never (approved register; bounded in
+  practice by self-erasure, D-B2-5, and the departure purge, §8.4).
+- **RETAINED_RECORD:** while "Keep as record" is disabled (D-B2-6) the writer and every action function refuse
+  this category for mail copies, so **no live mail copy can hold it** (tested). Enabling the action is a later,
+  separately approved change that must, in the same change, give `mail_retention_due_at` the approved finite
+  E1 §13.1 durations for mail record copies, so that eligibility and purge treat them like every other dated
+  category. This design never relies on, or promises, indefinite retention for this category.
 - The purge, the scheduler due query and the eligibility endpoint read `mail_messages` as well as `messages`,
   with the same function, so "due" means the same everywhere (E1 test carried over).
 
@@ -341,13 +347,24 @@ service, refuses an unauthorised promotion.
 - Targets: `MESSAGE` and `CONVERSATION` (as E1) gain their mail equivalents `MAIL_MESSAGE` and `MAIL_THREAD`;
   `CONTACT` erasure also scans `mail_message_participants.address_norm` across **every** mailbox (personal
   included), applying E1's full/partial rule per copy. Erasure is a duty, so it sees mail no admin can read.
-  **Privacy of the result (audit condition):** the request, its ledger rows visible to `bos_app` and its audit
-  event report one total of affected records and the review count only. Ledger items for copies in a mailbox
-  the requester cannot read are stored by id under the privileged role and are not returned by the request
-  read API, so an admin learns neither which personal mailboxes held the contact's mail nor how much. A test
-  compares the response for a business with and without personal copies of the contact (same shape, totals
-  only). Whether a statutory obligation requires keeping some of those copies is an E1 §13 legal item; holds
-  and deferrals apply exactly as for C1 copies.
+  **Non-disclosure policy (audit condition, revised):** a requester never learns anything about copies they
+  cannot read.
+  - Everything the requester sees (the request status, its counts, its review items, its audit event, the
+    ledger rows `bos_app` can select) is computed **only** from records the requester could read at request
+    time: C1 rows and mail copies visible to them under §6.1.
+  - Erasure of copies they cannot read (other people's personal mail, business mailboxes they are not a
+    member of) is carried out in the same request, but its items, counts and any hold deferral are recorded
+    only in privileged ledger rows that no runtime role can select. The requester-visible status is derived
+    from visible items alone, so a hold deferring only an invisible copy does not show as `DEFERRED` to them;
+    the privileged part is rechecked daily like any deferral.
+  - Global totals are available only to the owner through a documented privileged procedure (the same
+    `bos_maint` access used for replay), to evidence compliance if a regulator or the data subject requires
+    it; each such read is logged in the ledger.
+  - Tests compare **values**, not just shape: the same request, against the same visible data, returns
+    identical counts, status and items whether the business holds zero or many invisible personal copies of
+    that contact, including when one of them is under a hold.
+  Whether a statutory obligation requires keeping some of those copies is an E1 §13 legal item; holds and
+  deferrals apply exactly as for C1 copies.
 - Re-import markers: kind `MESSAGE` (and `THREAD`) with source `mail:<provider>:<connection_id>`, so the
   HMAC input is `MESSAGE:mail:<provider>:<connection_id>:<provider_message_id>` and the
   same provider id in two mailboxes is two markers. Ingest checks them before writing (§7), and only for its
@@ -442,7 +459,9 @@ C2-B1 did. Once real mail exists rollback is not offered; fixes go forward.
 | Departure | `personal_purge_after` set on removal, cleared on rejoin, copies due after 30 days, shared copies untouched. |
 | HTML (unit) | Hostile corpus: scripts, event handlers, `javascript:`/`data:` links, CSS expressions, forms, tracking pixels, remote images blocked by default, `cid:` references to other messages or missing parts, malformed MIME, huge parts (truncation), charset edge cases. |
 | Linked views (D-B2-3) | Customer correspondence view hides linked threads from viewers without mailbox READ, in the service and by RLS; later messages in a linked thread follow mailbox rules only. |
-| Personal categories (D-B2-4) | Share → ORDINARY with unchanged due date; share refused for past-due threads; unshare keeps ORDINARY; share/unshare cycles never move a due date; hold defers purge. |
+| Personal categories (D-B2-4) | Share → ORDINARY with unchanged due date; share refused for past-due threads; unshare keeps ORDINARY; share/unshare cycles never move a due date; hold defers purge. Mailbox-wide share: excluded older copies stay hidden from shared viewers in lists, counts, thread views, search, attachment download and direct SQL under RLS; new mail follows the same per-copy rule. |
+| Erasure non-disclosure | Requester-visible status, counts and items are equal with and without invisible personal copies of the contact (including one under a hold); privileged totals readable only by the owner procedure. |
+| RETAINED_RECORD | No writer or action can create a mail copy in this category while disabled. |
 | Follow-up exception | Under `DISCARD`, an unmatched reply is stored only when the same mailbox already stores that thread; never creates a thread; another mailbox's threads have no effect. |
 | Keep as record | Refused by the database while disabled. |
 | Definer hygiene | Fixed `search_path`, no PUBLIC execute, helpers not callable by `bos_app`, all as the runtime role under forced RLS. |
