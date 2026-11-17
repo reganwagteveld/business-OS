@@ -57,3 +57,7 @@ export {
   archiveCatalogItem, createCatalogItem, getCatalogItem, lineDefaultsOf, listCatalogItems, restoreCatalogItem, updateCatalogItem,
 } from './server/catalog';
 export type { CatalogItemInput, CatalogItemPatch, CatalogLineDefaults, ListCatalogQuery } from './server/catalog';
+// Global search GS1-A (docs/global-search-gs1.md §6.2).
+export {
+  catalogItemSearchProvider, creditNoteSearchProvider, FINANCE_SEARCH_INDEXES, invoiceSearchProvider, quoteSearchProvider,
+} from './server/search';

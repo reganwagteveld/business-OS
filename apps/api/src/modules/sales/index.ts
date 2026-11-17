@@ -9,3 +9,5 @@ export { wonOpportunityDetails, wonOpportunityTotals } from './server/reporting'
 export type { SalesPeriodQuery, SalesPeriodRow, WonOpportunityDetail } from './server/reporting';
 // R2 operational dashboard (docs/dashboard-r2.md §3): the open pipeline as grouped totals.
 export { salesSummary } from './server/summary';
+// Global search GS1-A (docs/global-search-gs1.md §6.2).
+export { opportunitySearchProvider, SALES_SEARCH_INDEXES } from './server/search';

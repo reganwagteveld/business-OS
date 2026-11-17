@@ -15,3 +15,5 @@ export {
   listLeaveTypes, restoreLeavePolicy, restoreLeaveType, updateLeavePolicy, updateLeaveType,
 } from './server/leave-config';
 export { assignLeavePolicy, employeeLeavePolicies, endLeavePolicyAssignment, listPolicyAssignments } from './server/leave-assignments';
+// Global search GS1-A (docs/global-search-gs1.md §6.2, §6.4): work fields only.
+export { employeeSearchProvider, PEOPLE_SEARCH_INDEXES } from './server/search';
