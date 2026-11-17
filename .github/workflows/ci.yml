@@ -48,6 +48,7 @@ jobs:
           .github/scripts/classify-changes.test.sh
           .github/scripts/classify-gate-tier.test.sh
           .github/scripts/scan-doc-credentials.test.sh
+          .github/scripts/doc-credential-gate.test.sh
           .github/scripts/ci-gate.test.sh
           .github/scripts/changed-files.test.sh
           .github/scripts/check-migration-order.test.sh
@@ -113,19 +114,16 @@ jobs:
               echo "$out"
             fi
           } | tee -a "$GITHUB_OUTPUT"
-      # Every tier: added lines in documentation must not look like credentials. On events without a
-      # single-step diff there is nothing to compare, and the full tier runs everything else.
+      # Every tier, every event: documentation must not contain credentials. A pull request is scanned
+      # over its whole change (merge commit against the base tip, every PR commit included); a
+      # single-step push over that step; anything else scans every documentation file at HEAD.
+      # Never skipped (doc-credential-gate.sh).
       - name: Added documentation lines contain no credentials
-        if: github.event_name == 'pull_request' || github.event_name == 'push'
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_BEFORE: ${{ github.event.before }}
-        run: |
-          if .github/scripts/changed-files.sh > /dev/null 2>&1; then
-            git diff --unified=0 --no-renames HEAD^1 HEAD | .github/scripts/scan-doc-credentials.sh
-          else
-            echo "no single-step diff for this event; skipped (the full tier runs every job)"
-          fi
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/doc-credential-gate.sh
 
   # CIQ-A1: static, unit and build are skipped only for the docs tier; database also for the client tier.
   # The conditions are "run unless the classifier explicitly said otherwise", so an empty or unknown
