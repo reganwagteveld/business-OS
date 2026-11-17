@@ -1,4 +1,4 @@
-import { Alert, AlertDescription, AlertTitle, Button, cn, glassClass, Skeleton, Spinner } from '@business-os/ui';
+import { Alert, AlertDescription, AlertTitle, Button, cn, Skeleton, Spinner } from '@business-os/ui';
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import type { BusinessSummary } from '../api/tenancy';
 import { useDialog } from '../zones/dialog';
@@ -173,25 +173,34 @@ interface NavProps extends AppShellProps {
   onAfterNavigate: () => void;
 }
 
+/*
+ * The Pixa Rail (UI V2-B2 Direction A, §6.2): the sidebar as a dark-scope island. The rail element
+ * carries the `dark` class, so every colour inside it resolves to the dark semantic tokens in both
+ * themes (no new colours; every text pair is already contrast-tested in V2-B1). Geometry follows
+ * §4 rule 4: rectangular controls, 8 px controls, 6 px small squares, 4 px labels, square markers,
+ * no pills.
+ */
 function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; onClose?: () => void; closeRef?: Ref<HTMLButtonElement> }) {
   const { mode, onToggle, inDrawer, onClose, closeRef } = props;
   const compact = mode === 'compact';
-  const glass = glassClass('strong');
   return (
     <div
-      className={cn('flex h-full shrink-0 flex-col', inDrawer ? 'w-full bg-card' : cn(glass.className, 'rounded-none border-y-0 border-l-0'), !inDrawer && (compact ? 'w-[4.5rem]' : 'w-64'))}
-      style={inDrawer ? undefined : glass.style}
+      data-rail=""
+      className={cn(
+        'dark flex h-full shrink-0 flex-col bg-canvas text-fg',
+        inDrawer ? 'w-full' : cn('border-r border-line transition-[width] duration-slow ease-standard motion-reduce:transition-none', compact ? 'w-(--sidebar-w-compact)' : 'w-(--sidebar-w)'),
+      )}
     >
-      <div className={cn('flex h-16 shrink-0 items-center gap-3', compact ? 'justify-center px-2' : 'px-5')}>
+      <div className={cn('flex h-16 shrink-0 items-center gap-3', compact ? 'justify-center px-2' : 'px-4')}>
         <BusinessOsMark className="size-8 shrink-0" />
         {compact ? null : (
-          <div className="min-w-0 flex-1 leading-tight">
-            <p className="text-sm font-extrabold tracking-tight">BUSINESS OS</p>
-            <p className="text-[10px] tracking-[.16em] text-muted-foreground">POWERED BY PIXAKOVA</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-body font-semibold text-fg">Business OS</p>
+            <p className="truncate text-caption text-fg-subtle">Powered by Pixakova</p>
           </div>
         )}
         {inDrawer ? (
-          <button ref={closeRef} type="button" aria-label="Close navigation" onClick={onClose} className={cn('flex size-11 items-center justify-center rounded-lg hover:bg-accent', focusRing)}>
+          <button ref={closeRef} type="button" aria-label="Close navigation" onClick={onClose} className="focus-ring state-interactive flex size-11 items-center justify-center rounded-control text-fg-muted hover:text-fg">
             <Icon name="close" />
           </button>
         ) : null}
@@ -201,9 +210,9 @@ function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; 
       </div>
       <ZoneNav {...props} />
       {onToggle ? (
-        <div className={cn('shrink-0 border-t p-3', compact && 'flex justify-center px-2')}>
-          <button type="button" onClick={onToggle} aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'} title={compact ? 'Expand sidebar' : 'Collapse sidebar'} className={cn('flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-muted-foreground hover:bg-accent hover:text-foreground', compact ? 'w-10 justify-center px-0' : 'w-full', focusRing)}>
-            <Icon name={compact ? 'expand' : 'collapse'} />
+        <div className={cn('shrink-0 border-t border-line p-2', compact ? 'flex justify-center' : 'px-3')}>
+          <button type="button" onClick={onToggle} aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'} title={compact ? 'Expand sidebar' : 'Collapse sidebar'} className={cn('focus-ring state-interactive flex h-10 items-center gap-3 rounded-control px-3 text-small text-fg-muted hover:text-fg', compact ? 'w-10 justify-center px-0' : 'w-full')}>
+            <Icon name={compact ? 'expand' : 'collapse'} className="size-5 shrink-0" />
             {compact ? null : <span>Collapse</span>}
           </button>
         </div>
@@ -223,41 +232,51 @@ function ZoneNav({ navigation, mode, pageZone, route, guarded, onNavigate, onAft
   const state = switching ? 'loading' : navigation.state;
   return (
     <nav aria-label="Zones" className={cn('min-h-0 flex-1 overflow-y-auto pb-4', compact ? 'px-2' : 'px-3')}>
-      <ul className="space-y-1">
+      <ul className="space-y-0.5">
         <li><NavItem icon="home" label="Home" active={pageZone === 'home'} compact={compact} onClick={() => go(HOME)} /></li>
       </ul>
-      {compact ? <div className="mx-2 my-3 h-px bg-border" /> : <p className="px-3 pt-5 pb-2 text-[11px] font-semibold tracking-[.12em] text-muted-foreground uppercase">Zones</p>}
+      {compact ? <div aria-hidden="true" className="mx-2 my-3 h-px bg-line" /> : <p className="px-3 pt-5 pb-1.5 text-caption font-medium text-fg-subtle">Zones</p>}
       {state === 'loading' ? (
         <div role="status" aria-label="Loading your Zones" className="space-y-2 px-1">
-          {[0, 1, 2].map((i) => <Skeleton key={i} className={cn('h-9', compact ? 'mx-auto w-9' : 'w-full')} />)}
+          {[0, 1, 2].map((i) => <Skeleton key={i} className={cn('h-9 rounded-control', compact ? 'mx-auto w-9' : 'w-full')} />)}
         </div>
       ) : state === 'failed' ? (
-        <p role="alert" className={cn('text-xs text-muted-foreground', compact ? 'sr-only' : 'px-3')}>Your Zones could not be loaded.</p>
+        <p role="alert" className={cn('text-caption text-fg-muted', compact ? 'sr-only' : 'px-3')}>Your Zones could not be loaded.</p>
       ) : navigation.available.length === 0 ? (
-        <p className={cn('text-xs text-muted-foreground', compact ? 'sr-only' : 'px-3')}>No Zones are open to your role in this business.</p>
+        <p className={cn('text-caption text-fg-muted', compact ? 'sr-only' : 'px-3')}>No Zones are open to your role in this business.</p>
       ) : (
-        <ul className="space-y-1">
-          {navigation.available.map((zone) => (
-            <li key={zone.id}>
-              <NavItem icon={zone.icon} label={zone.name} badge={zone.status?.label} active={pageZone === zone.id && !(route.zone !== 'home' && route.child)} compact={compact} onClick={() => go({ zone: zone.id })} />
-              {!compact && pageZone === zone.id && zone.children?.length ? (
-                <ul className="mt-1 ml-6 space-y-1 border-l pl-3">
-                  {zone.children.map((child) => (
-                    <li key={child.id}>
-                      <NavItem label={child.label} active={route.zone === zone.id && route.child === child.id} compact={false} onClick={() => go({ zone: zone.id, child: child.id })} />
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          ))}
+        <ul className="space-y-0.5">
+          {navigation.available.map((zone) => {
+            const open = pageZone === zone.id;
+            const onChild = open && route.zone !== 'home' && !!route.child;
+            return (
+              <li key={zone.id}>
+                <NavItem icon={zone.icon} label={zone.name} badge={zone.status?.label} active={open && !onChild} inZone={onChild} compact={compact} onClick={() => go({ zone: zone.id })} />
+                {!compact && open && zone.children?.length ? (
+                  <ul className="mt-0.5 mb-1.5 space-y-px">
+                    {zone.children.map((child) => (
+                      <li key={child.id}>
+                        <NavItem label={child.label} active={route.zone === zone.id && route.child === child.id} compact={false} child onClick={() => go({ zone: zone.id, child: child.id })} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       )}
     </nav>
   );
 }
 
-function NavItem({ icon, label, badge, active, compact, onClick }: { icon?: IconName; label: string; badge?: string; active: boolean; compact: boolean; onClick: () => void }) {
+/**
+ * One rail row. Current page: selected background, `aria-current="page"` and, for a Zone, a 4 x 16 px
+ * accent bar on the inner edge. A Zone whose child page is open keeps the bar (no background), so the
+ * current Zone stays visible while the child holds `aria-current`. Children show a 6 px square marker
+ * in the icon column: hollow, or filled with the accent when current.
+ */
+function NavItem({ icon, label, badge, active, inZone, compact, child, onClick }: { icon?: IconName; label: string; badge?: string; active: boolean; inZone?: boolean; compact: boolean; child?: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -265,26 +284,32 @@ function NavItem({ icon, label, badge, active, compact, onClick }: { icon?: Icon
       aria-current={active ? 'page' : undefined}
       title={compact ? label : undefined}
       className={cn(
-        'group relative flex min-h-10 w-full items-center gap-3 rounded-lg text-sm font-medium transition-colors motion-reduce:transition-none',
-        compact ? 'justify-center px-0 py-2.5' : 'px-3 py-2',
-        active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-        focusRing,
+        'focus-ring group relative flex w-full items-center gap-3 rounded-control transition-colors duration-fast motion-reduce:transition-none',
+        child ? 'min-h-8 px-3 py-1.5 text-small' : 'min-h-10 py-2 text-body font-medium',
+        !child && (compact ? 'justify-center px-0' : 'px-3'),
+        active ? cn('state-selected text-fg', child && 'font-semibold') : inZone ? 'state-interactive text-fg' : 'state-interactive text-fg-muted hover:text-fg',
       )}
     >
-      {active ? <span aria-hidden="true" className="absolute top-2 bottom-2 left-0 w-0.5 rounded-full bg-ring" /> : null}
+      {!child && (active || inZone) ? <span aria-hidden="true" className="absolute top-1/2 left-0 h-4 w-1 -translate-y-1/2 bg-fg-accent forced-colors:bg-[CanvasText]" /> : null}
       {icon ? <Icon name={icon} className="size-5 shrink-0" /> : null}
+      {child ? (
+        <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center">
+          <span className={cn('size-1.5 rounded-[1.5px] border', active ? 'border-fg-accent bg-fg-accent forced-colors:bg-[CanvasText]' : 'border-fg-subtle')} />
+        </span>
+      ) : null}
       <span className={cn('truncate', compact && 'sr-only')}>{label}</span>
-      {badge && !compact ? <span className="ml-auto rounded-md bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-secondary-foreground">{badge}</span> : null}
+      {badge && !compact ? <span className="ml-auto rounded-[4px] bg-muted px-1.5 py-0.5 text-[11px] leading-4 font-semibold text-fg-muted">{badge}</span> : null}
     </button>
   );
 }
 
 function BusinessSwitcher({ business, businesses, switching, guarded, onSelectBusiness, onChooseBusiness, onCreateBusiness, onAfterNavigate, variant }: NavProps & { variant: 'panel' | 'rail' | 'bar' }) {
   const shown = switching ?? business;
+  const inRail = variant !== 'bar';
   if (switching) {
     return (
-      <div role="status" className={cn('flex min-h-11 min-w-0 items-center gap-3 rounded-xl text-sm', variant === 'panel' && 'border bg-background/40 px-3 py-2', variant === 'rail' && 'justify-center')}>
-        <span aria-hidden="true" className="flex size-8 shrink-0 animate-pulse items-center justify-center rounded-lg bg-muted text-xs font-bold motion-reduce:animate-none">{initials(shown.name)}</span>
+      <div role="status" className={cn('flex min-h-11 min-w-0 items-center gap-3 text-sm', inRail ? 'rounded-control' : 'rounded-xl', variant === 'panel' && 'border border-line bg-surface px-2.5 py-2', variant === 'rail' && 'justify-center')}>
+        <span aria-hidden="true" className={cn('flex size-8 shrink-0 animate-pulse items-center justify-center bg-muted text-xs font-bold motion-reduce:animate-none', inRail ? 'rounded-[6px]' : 'rounded-lg')}>{initials(shown.name)}</span>
         <span className={cn('min-w-0 truncate text-muted-foreground', variant === 'rail' && 'sr-only')}>Switching to {shown.name}…</span>
       </div>
     );
@@ -308,7 +333,7 @@ function BusinessSwitcher({ business, businesses, switching, guarded, onSelectBu
   if (onCreateBusiness) entries.push({ kind: 'item', id: 'new', label: 'Create another business', icon: <Icon name="plus" className="size-4" />, onSelect: () => run(onCreateBusiness) });
 
   const role = business.role ? ROLE_LABEL[business.role] : null;
-  const badge = <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">{initials(business.name)}</span>;
+  const badge = <span aria-hidden="true" className={cn('flex size-8 shrink-0 items-center justify-center bg-primary text-xs font-bold text-primary-foreground', inRail ? 'rounded-[6px]' : 'rounded-lg')}>{initials(business.name)}</span>;
   return (
     <Menu
       label={`Switch business, current business ${business.name}`}
@@ -316,11 +341,11 @@ function BusinessSwitcher({ business, businesses, switching, guarded, onSelectBu
       placement={variant === 'rail' ? 'right-start' : 'bottom-start'}
       className={variant === 'bar' ? 'min-w-0' : undefined}
       triggerClassName={cn(
-        'flex min-h-11 w-full min-w-0 items-center gap-3 rounded-xl text-left text-sm hover:bg-accent',
-        variant === 'panel' && 'border bg-background/40 px-3 py-2',
-        variant === 'rail' && 'justify-center p-1.5',
+        'flex min-h-11 w-full min-w-0 items-center gap-3 text-left text-sm',
+        inRail ? 'focus-ring rounded-control' : cn('rounded-xl hover:bg-accent', focusRing),
+        variant === 'panel' && 'border border-line bg-surface px-2.5 py-2 hover:border-line-strong hover:bg-raised',
+        variant === 'rail' && 'state-interactive justify-center p-1.5',
         variant === 'bar' && 'max-w-[55vw] px-2 py-1',
-        focusRing,
       )}
       trigger={
         <>
