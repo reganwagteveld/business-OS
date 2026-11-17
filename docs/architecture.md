@@ -564,3 +564,4 @@ These are the decisions to get right now. Everything else in this document can b
 ### 13.7 Keeping it simple for small customers
 
 Enterprise structure must be **additive and invisible** until used: an SMB has one business, no organisation, no org units, three fixed roles and no SSO configuration, and never sees settings for any of them. New enterprise capabilities are introduced as optional layers above the Phase 1 model, never as required fields or extra steps in the SMB experience.
+probe key AKIAIOSFODNN7EXAMPLE
