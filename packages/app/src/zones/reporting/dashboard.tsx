@@ -11,8 +11,9 @@ import { MetricChartWidget, type DashboardLayout, type DashboardWidgetDef } from
 /**
  * The R2 dashboard: fixed for now (owner decision 2026-11-16), described as data so configurable dashboards
  * can follow without new rendering code. Only R1's registered, available metrics: there is no "revenue"
- * metric (R1 keeps billing, money received and sales outcomes apart), and expenses and projects have no
- * executable metric yet, so they appear under "Not available yet" from the registry instead.
+ * metric (R1 keeps billing, money received and sales outcomes apart). WP-R1 added expenses recorded, tasks
+ * completed and events scheduled; figures the registry still marks planned (headcount, messages) appear under
+ * "Not available yet" instead.
  */
 export const DEFAULT_DASHBOARD: DashboardLayout = {
   layoutVersion: 1,
@@ -23,6 +24,7 @@ export const DEFAULT_DASHBOARD: DashboardLayout = {
         { id: 'invoiced', kind: 'metric-chart', metricId: 'finance.invoiced_amount', chart: 'bar' },
         { id: 'received', kind: 'metric-chart', metricId: 'finance.payments_received', chart: 'line' },
         { id: 'invoices-issued', kind: 'metric-chart', metricId: 'finance.invoices_issued', chart: 'bar' },
+        { id: 'expenses', kind: 'metric-chart', metricId: 'finance.expenses_recorded', chart: 'bar' },
       ],
     },
     {
@@ -32,6 +34,8 @@ export const DEFAULT_DASHBOARD: DashboardLayout = {
       ],
     },
     { id: 'customers', title: ZONE_LABEL.customers!, widgets: [{ id: 'new-customers', kind: 'metric-chart', metricId: 'customers.new_customers', chart: 'line' }] },
+    { id: 'projects', title: ZONE_LABEL.projects!, widgets: [{ id: 'tasks-completed', kind: 'metric-chart', metricId: 'projects.tasks_completed', chart: 'bar' }] },
+    { id: 'scheduling', title: ZONE_LABEL.scheduling!, widgets: [{ id: 'events-scheduled', kind: 'metric-chart', metricId: 'scheduling.events_scheduled', chart: 'bar' }] },
   ],
 };
 

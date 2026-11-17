@@ -2,12 +2,15 @@ import 'server-only';
 // Source bindings (docs/reporting-r1.md §4): each registry source calls the OWNING Zone's reporting read
 // model through that Zone's public API. Reporting has no SQL of its own over another Zone's tables, so
 // every amount has exactly one definition: Finance's for invoices, credit notes, payments and receivables;
-// Sales' for won opportunities; Customers' for new customers.
+// Sales' for won opportunities; Customers' for new customers; Finance's for recorded expenses; Projects' for
+// completed tasks; Scheduling's for scheduled events (WP-R1).
 import type { ReportingFilters, ReportingRange } from '@business-os/contracts';
 import type { AppTenantDb } from '@/core/db';
 import { customerLabels, newCustomerCounts, newCustomerDetails } from '@/modules/customers';
-import { invoiceReceivables, issuedDocumentDetails, issuedDocumentTotals, receivedPaymentDetails, receivedPaymentTotals } from '@/modules/finance';
+import { invoiceReceivables, issuedDocumentDetails, issuedDocumentTotals, receivedPaymentDetails, receivedPaymentTotals, recordedExpenseDetails, recordedExpenseTotals } from '@/modules/finance';
+import { completedTaskCounts, completedTaskDetails } from '@/modules/projects';
 import { wonOpportunityDetails, wonOpportunityTotals } from '@/modules/sales';
+import { scheduledEventCounts, scheduledEventDetails } from '@/modules/scheduling';
 import type { SourceKey } from './registry';
 
 /** One aggregated row from a source: a bucket, its currency and customer when relevant, and its sums. */
@@ -39,6 +42,15 @@ export const PERIOD_SOURCES: Partial<Record<SourceKey, PeriodSource>> = {
   'finance.credit_notes': finance('CREDIT_NOTE'),
   'finance.payments_received': (db, a) => receivedPaymentTotals(db, { from: a.range.from, to: a.range.to, unit: a.unit, byCustomer: a.byCustomer, ...a.filters }),
   'sales.won': (db, a) => wonOpportunityTotals(db, { from: a.range.from, to: a.range.to, unit: a.unit, timeZone: a.timeZone, byCustomer: a.byCustomer, ...a.filters }),
+  'finance.expenses': (db, a) => recordedExpenseTotals(db, { from: a.range.from, to: a.range.to, unit: a.unit, byCustomer: a.byCustomer, ...a.filters }),
+  'projects.tasks_done': async (db, a) =>
+    (await completedTaskCounts(db, { from: a.range.from, to: a.range.to, unit: a.unit, timeZone: a.timeZone })).map((r) => ({
+      bucket: r.bucket, currencyCode: null, customerId: null, amount: null, count: r.count,
+    })),
+  'scheduling.events': async (db, a) =>
+    (await scheduledEventCounts(db, { from: a.range.from, to: a.range.to, unit: a.unit, timeZone: a.timeZone, byCustomer: a.byCustomer, customerId: a.filters.customerId })).map((r) => ({
+      bucket: r.bucket, currencyCode: null, customerId: r.customerId, amount: null, count: r.count,
+    })),
   'customers.new': async (db, a) =>
     (await newCustomerCounts(db, { from: a.range.from, to: a.range.to, unit: a.unit, timeZone: a.timeZone })).map((r) => ({
       bucket: r.bucket, currencyCode: null, customerId: null, amount: null, count: r.count,
@@ -104,6 +116,46 @@ export const DETAIL_SOURCES: Partial<Record<SourceKey, DetailSource>> = {
         id: r.id, currencyCode: r.currencyCode, customerId: r.customerId,
         cells: { receivedOn: r.receivedOn, method: r.method, reference: r.reference, amount: r.amount },
       })),
+      nextCursor: page.nextCursor,
+    };
+  },
+  'finance.expenses': async (db, a) => {
+    const page = await recordedExpenseDetails(db, { from: a.range.from, to: a.range.to, ...a.filters, cursor: a.cursor, limit: a.limit });
+    return {
+      columns: [
+        { key: 'incurredOn', label: 'Date', type: 'date' },
+        { key: 'description', label: 'Expense', type: 'text' },
+        { key: 'supplierName', label: 'Supplier', type: 'text' },
+        { key: 'categoryName', label: 'Category', type: 'text' },
+        { key: 'amount', label: 'Amount', type: 'money' },
+      ],
+      rows: page.rows.map((r) => ({
+        id: r.id, currencyCode: r.currencyCode, customerId: r.customerId,
+        cells: { incurredOn: r.incurredOn, description: r.description, supplierName: r.supplierName, categoryName: r.categoryName, amount: r.amount },
+      })),
+      nextCursor: page.nextCursor,
+    };
+  },
+  'projects.tasks_done': async (db, a) => {
+    const page = await completedTaskDetails(db, { from: a.range.from, to: a.range.to, timeZone: a.timeZone, cursor: a.cursor, limit: a.limit });
+    return {
+      columns: [
+        { key: 'title', label: 'Task', type: 'text' },
+        { key: 'projectName', label: 'Project', type: 'text' },
+        { key: 'completedAt', label: 'Completed', type: 'datetime' },
+      ],
+      rows: page.rows.map((r) => ({ id: r.id, currencyCode: null, customerId: null, cells: { title: r.title, projectName: r.projectName, completedAt: r.completedAt } })),
+      nextCursor: page.nextCursor,
+    };
+  },
+  'scheduling.events': async (db, a) => {
+    const page = await scheduledEventDetails(db, { from: a.range.from, to: a.range.to, timeZone: a.timeZone, customerId: a.filters.customerId, cursor: a.cursor, limit: a.limit });
+    return {
+      columns: [
+        { key: 'title', label: 'Event', type: 'text' },
+        { key: 'startAt', label: 'Starts', type: 'datetime' },
+      ],
+      rows: page.rows.map((r) => ({ id: r.id, currencyCode: null, customerId: r.customerId, cells: { title: r.title, startAt: r.startAt } })),
       nextCursor: page.nextCursor,
     };
   },

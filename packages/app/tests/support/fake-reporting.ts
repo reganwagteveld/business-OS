@@ -32,9 +32,11 @@ export const METRICS = [
   def({ id: 'sales.won_value', name: 'Won opportunity value', zone: 'sales', valueType: 'money', requires: ['sales:read'] }),
   def({ id: 'sales.won_count', name: 'Opportunities won', zone: 'sales', valueType: 'count', requires: ['sales:read'] }),
   def({ id: 'customers.new_customers', name: 'New customers', zone: 'customers', valueType: 'count', requires: ['customers:read'] }),
-  def({ id: 'finance.expenses_recorded', name: 'Expenses recorded', zone: 'finance', valueType: 'money', requires: ['finance:read'], availability: 'planned', plannedNote: 'Waits for Finance expense reporting rules.' }),
-  def({ id: 'projects.tasks_completed', name: 'Tasks completed', zone: 'projects', valueType: 'count', requires: ['projects:read'], availability: 'planned', plannedNote: 'Projects has no completion time yet.' }),
+  def({ id: 'finance.expenses_recorded', name: 'Expenses recorded', zone: 'finance', valueType: 'money', requires: ['finance:read'] }),
+  def({ id: 'projects.tasks_completed', name: 'Tasks completed', zone: 'projects', valueType: 'count', requires: ['projects:read'] }),
+  def({ id: 'scheduling.events_scheduled', name: 'Events scheduled', zone: 'scheduling', valueType: 'count', requires: ['scheduling:read'] }),
   def({ id: 'people.headcount', name: 'Headcount', zone: 'people', valueType: 'count', requires: ['people:read'], availability: 'planned', plannedNote: 'Planned.' }),
+  def({ id: 'communications.messages_recorded', name: 'Messages recorded', zone: 'communications', valueType: 'count', requires: ['communications:read'], availability: 'planned', plannedNote: 'Planned.' }),
 ];
 
 function rangeOf(date: { kind: 'fixed'; from: string; to: string } | { kind: 'relative'; preset: string }) {
@@ -67,6 +69,9 @@ export const FIGURES: Record<string, { currency: string | null; total: string; p
   'finance.receivables_outstanding': [{ currency: 'AUD', total: '265.00', previous: '0', change: null }],
   'sales.won_value': [{ currency: 'AUD', total: '1200.00', previous: '1500.00', change: '-20.0' }],
   'customers.new_customers': [{ currency: null, total: '3', previous: '1', change: '200.0' }],
+  'finance.expenses_recorded': [{ currency: 'AUD', total: '140.00', previous: '100.00', change: '40.0' }],
+  'projects.tasks_completed': [{ currency: null, total: '12', previous: '8', change: '50.0' }],
+  'scheduling.events_scheduled': [{ currency: null, total: '5', previous: '5', change: '0.0' }],
 };
 
 export interface ReportingCall { method: string; path: string; body: unknown; slug: string }
