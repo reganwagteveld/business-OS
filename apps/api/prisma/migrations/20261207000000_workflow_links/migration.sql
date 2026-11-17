@@ -7,6 +7,11 @@
 
 -- One transaction: a failure leaves nothing behind (docs/migration-readiness.md §7).
 BEGIN;
+-- Fail fast instead of queueing: projects takes ACCESS EXCLUSIVE (ADD COLUMN) and several tables take
+-- write-blocking locks that are all held until COMMIT, so waiting behind a long transaction would stall the
+-- app. A timeout rolls everything back (recovery: docs/workflow-links-migration.md §6).
+SET LOCAL lock_timeout = '3s';
+SET LOCAL statement_timeout = '60s';
 
 -- ---- 1. Finance key referenced by the source-quote FK (implied by the primary key, cannot fail) -------
 CREATE UNIQUE INDEX "finance_documents_kind_customer_key" ON "finance_documents"("business_id", "id", "kind", "customer_id");
@@ -40,16 +45,40 @@ ALTER TABLE "projects" ADD CONSTRAINT "projects_source_quote_fkey" FOREIGN KEY (
 -- MATCH SIMPLE: a record without a customer (an internal expense) may link any project; documents and
 -- recurring templates always have one. Referenced side ON UPDATE NO ACTION: a project cannot change or
 -- lose its customer while any such record links it, in any status (W1-D6).
--- Added NOT VALID and then validated: validation runs PostgreSQL's own FK check over existing rows (not
--- subject to RLS) and fails this whole migration if any row violates I1, so the apply fails closed even if
--- a row appeared after the read-only preflight (§10.2).
+-- Added NOT VALID and then validated: validation runs PostgreSQL's own FK check over existing rows and fails
+-- this whole migration if any row violates I1, so the apply fails closed even if a row appeared after the
+-- read-only preflight (§10.2). See the note before the VALIDATE statements for why FORCE is lifted there.
 ALTER TABLE "finance_documents" ADD CONSTRAINT "finance_documents_project_customer_fkey" FOREIGN KEY ("business_id", "project_id", "customer_id") REFERENCES "projects"("business_id", "id", "customer_id") ON DELETE NO ACTION ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "finance_expenses" ADD CONSTRAINT "finance_expenses_project_customer_fkey" FOREIGN KEY ("business_id", "project_id", "customer_id") REFERENCES "projects"("business_id", "id", "customer_id") ON DELETE NO ACTION ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "finance_recurring_templates" ADD CONSTRAINT "finance_recurring_templates_project_customer_fkey" FOREIGN KEY ("business_id", "project_id", "customer_id") REFERENCES "projects"("business_id", "id", "customer_id") ON DELETE NO ACTION ON UPDATE NO ACTION NOT VALID;
 
+-- >>> validate-i1 (tests/integration/workflow-links.test.ts runs this block verbatim as bos_owner)
+-- VALIDATE checks existing rows as the table owner (bos_owner). FORCE ROW LEVEL SECURITY binds the owner to
+-- the tenant policies, which grant it no rows, so under FORCE the check sees nothing and passes even when
+-- rows violate I1 (verified on PostgreSQL 16 in PR #110). FORCE is therefore lifted for the owner on the
+-- four tables the check reads, for the validation only, and restored before this transaction ends. No other
+-- session can observe the gap: ALTER TABLE holds ACCESS EXCLUSIVE on each table until COMMIT, and a failure
+-- rolls the change back. bos_app is not the owner, so its policies apply throughout either way.
+ALTER TABLE "projects" NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE "finance_documents" NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE "finance_expenses" NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE "finance_recurring_templates" NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE "finance_documents" VALIDATE CONSTRAINT "finance_documents_project_customer_fkey";
 ALTER TABLE "finance_expenses" VALIDATE CONSTRAINT "finance_expenses_project_customer_fkey";
 ALTER TABLE "finance_recurring_templates" VALIDATE CONSTRAINT "finance_recurring_templates_project_customer_fkey";
+ALTER TABLE "projects" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "finance_documents" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "finance_expenses" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "finance_recurring_templates" FORCE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM pg_class WHERE oid IN ('public.projects'::regclass, 'public.finance_documents'::regclass,
+        'public.finance_expenses'::regclass, 'public.finance_recurring_templates'::regclass)
+        AND relrowsecurity AND relforcerowsecurity) <> 4 THEN
+    RAISE EXCEPTION 'forced row-level security not restored on all four tables';
+  END IF;
+END $$;
+-- <<< validate-i1
 
 -- ---- 6. Guard trigger projects_guard_links (§5.4) ------------------------------------------------------
 -- SECURITY INVOKER: it runs as bos_app under forced RLS (the Finance guard pattern), so it only ever sees

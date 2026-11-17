@@ -16,6 +16,8 @@
 > **Version 1.3 (2026-11-17):** Regan accepted D-WF1-07..16 as recommended (§13.2). Architecture only.
 > **Version 1.4 (2026-11-17, WF-1B-1 #110):** §5.4 and §6.10 P9 vs P4 corrected to the behaviour observed on real
 > PostgreSQL (quote lock serialises the pair; loser gets `23505`, no `40P01`); T-51(e) wording aligned. Audit item 4.
+> §10.2 corrected: `VALIDATE` as the owner is subject to forced RLS, so the migration lifts FORCE around it;
+> recovery branch named `pre-workflow-links-migration`; procedure in [workflow-links-migration.md](./workflow-links-migration.md).
 >
 > **Base:** `main` at `ccfcc93` (2026-11-17); `main` has since advanced to `4134636` (GS1-A, #93), which adds no
 > migration and does not change any file this spec cites in Sales, Projects or Finance services. Every "verified" statement below cites a file on that commit.
@@ -758,9 +760,12 @@ If review finds one is needed, it is listed in the PR and applied with `db:privi
    migration that they are still present and unchanged. The two new unique keys are implied by primary keys and
    cannot fail; the new `projects` columns start NULL, so their FKs, CHECKs and unique key cannot fail either.
    The migration adds the I1 FKs `NOT VALID` and then `VALIDATE`s them in the same migration; validation runs the
-   same check as above inside PostgreSQL's FK machinery (not subject to RLS) and fails the whole migration if a row
-   appeared between preflight and apply, so the migration itself also fails closed.
-3. Create and verify the `pre-wf1b-migration` Neon recovery branch; record it in `ops/neon/recovery-points.json`.
+   same check as above inside PostgreSQL's FK machinery and fails the whole migration if a row appeared between
+   preflight and apply, so the migration itself also fails closed. **Correction (v1.4, verified in #110):** that
+   check runs as the table owner and **is** subject to forced RLS, which grants the owner no rows, so under FORCE it
+   passes vacuously. The migration lifts FORCE for the owner on the four tables for the validation only, restores
+   it and asserts it in the same transaction (T-53 runs that block verbatim as `bos_owner`).
+3. Create and verify the `pre-workflow-links-migration` Neon recovery branch; record it in `ops/neon/recovery-points.json`.
 4. `prisma migrate deploy`; verify constraints exist and are validated (`pg_constraint.convalidated`), trigger
    present, RLS flags on `workflow_requests`.
 5. Merge through the merge queue only afterwards (code never lands before its schema).

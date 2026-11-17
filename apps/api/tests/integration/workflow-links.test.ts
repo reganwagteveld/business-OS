@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { inviteForSignup, admitFixture } from './support/admission';
 /**
  * WF-1B-1 (docs/cross-zone-workflows-wf1.md §5, §6.1, §6.5–6.7, §9, §12): the workflow-link migration,
@@ -452,7 +453,7 @@ describe('I1 customer consistency (T-10..16, T-53)', () => {
     expect((await change(free)).status).toBe(200);
   });
 
-  it('the §10.2 preflight queries find a seeded violation, and VALIDATE would fail the migration on it (T-53)', async () => {
+  it('the §10.2 preflight queries find a seeded violation, and the migration\'s own VALIDATE, run as bos_owner, fails on it (T-53)', async () => {
     const c1 = await customer();
     const c2 = await customer();
     const p1 = await project(c1);
@@ -463,27 +464,75 @@ describe('I1 customer consistency (T-10..16, T-53)', () => {
                WHERE e.customer_id IS NOT NULL AND p.customer_id IS DISTINCT FROM e.customer_id AND e.business_id = $1)::int AS expenses,
              (SELECT count(*) FROM finance_recurring_templates r JOIN projects p ON p.business_id = r.business_id AND p.id = r.project_id
                WHERE p.customer_id IS DISTINCT FROM r.customer_id AND r.business_id = $1)::int AS templates`;
+    // Seed a pre-migration-style violation and COMMIT it, so the migration role's own session can see it
+    // (FK triggers off for this administrative session only). It is removed in finally.
+    const badDoc = randomUUID();
+    const okExpense = randomUUID();
     await admin.query('BEGIN');
+    await admin.query("SET LOCAL session_replication_role = 'replica'");
+    await admin.query(`INSERT INTO finance_documents (id, business_id, kind, customer_id, project_id, currency_code, currency_scale, updated_at)
+      VALUES ($1, $2, 'QUOTE', $3, $4, 'AUD', 2, now())`, [badDoc, A.businessId, c2, p1]);
+    await admin.query(`INSERT INTO finance_expenses (id, business_id, category_id, description, incurred_on, currency_code, currency_scale, tax_treatment,
+      subtotal, tax_amount, amount, project_id, customer_id, updated_at)
+      VALUES ($1, $2, $3, 'x', '2026-01-10', 'AUD', 2, 'NO_TAX', 1, 0, 1, $4, NULL, now())`, [okExpense, A.businessId, travel, p1]);
+    await admin.query('COMMIT');
+    const owner = new pg.Client({ connectionString: process.env.MIGRATION_DATABASE_URL });
+    await owner.connect();
     try {
-      // Seed a pre-migration-style violation: FK triggers off for this administrative session only.
-      await admin.query("SET LOCAL session_replication_role = 'replica'");
-      await admin.query(`INSERT INTO finance_documents (id, business_id, kind, customer_id, project_id, currency_code, currency_scale, updated_at)
-        VALUES ($1, $2, 'QUOTE', $3, $4, 'AUD', 2, now())`, [randomUUID(), A.businessId, c2, p1]);
-      await admin.query(`INSERT INTO finance_expenses (id, business_id, category_id, description, incurred_on, currency_code, currency_scale, tax_treatment,
-        subtotal, tax_amount, amount, project_id, customer_id, updated_at)
-        VALUES ($1, $2, $3, 'x', '2026-01-10', 'AUD', 2, 'NO_TAX', 1, 0, 1, $4, NULL, now())`, [randomUUID(), A.businessId, travel, p1]);
-      await admin.query("SET LOCAL session_replication_role = 'origin'");
       expect((await admin.query(preflight, [A.businessId])).rows[0]).toEqual({ documents: 1, expenses: 0, templates: 0 });
-      // The migration's own fail-closed step: re-adding the FK NOT VALID and validating it refuses the row.
-      await admin.query('ALTER TABLE finance_documents DROP CONSTRAINT finance_documents_project_customer_fkey');
-      await admin.query(`ALTER TABLE finance_documents ADD CONSTRAINT finance_documents_project_customer_fkey FOREIGN KEY (business_id, project_id, customer_id)
-        REFERENCES projects (business_id, id, customer_id) ON DELETE NO ACTION ON UPDATE NO ACTION NOT VALID`);
-      await expect(admin.query('ALTER TABLE finance_documents VALIDATE CONSTRAINT finance_documents_project_customer_fkey')).rejects.toMatchObject({ code: '23503' });
+      const migration = readFileSync(new URL('../../prisma/migrations/20261207000000_workflow_links/migration.sql', import.meta.url), 'utf8');
+      const block = migration.slice(migration.indexOf('-- >>> validate-i1'), migration.indexOf('-- <<< validate-i1'));
+      expect(block).toContain('VALIDATE CONSTRAINT');
+      const readd = (name: string, table: string) => `ALTER TABLE ${table} DROP CONSTRAINT ${name};
+        ALTER TABLE ${table} ADD CONSTRAINT ${name} FOREIGN KEY (business_id, project_id, customer_id)
+          REFERENCES projects (business_id, id, customer_id) ON DELETE NO ACTION ON UPDATE NO ACTION NOT VALID;`;
+      const readdAll = readd('finance_documents_project_customer_fkey', 'finance_documents')
+        + readd('finance_expenses_project_customer_fkey', 'finance_expenses')
+        + readd('finance_recurring_templates_project_customer_fkey', 'finance_recurring_templates');
+      expect((await owner.query('SELECT current_user AS u')).rows[0].u).toBe('bos_owner');
+      // The hazard the block exists for: under FORCE, the owner's VALIDATE sees no rows and passes.
+      await owner.query('BEGIN');
+      try {
+        await owner.query(readdAll);
+        await expect(owner.query('ALTER TABLE finance_documents VALIDATE CONSTRAINT finance_documents_project_customer_fkey')).resolves.toBeDefined();
+      } finally {
+        await owner.query('ROLLBACK');
+      }
+      // The migration's block, verbatim, as the migration role: it refuses the violating row.
+      await owner.query('BEGIN');
+      try {
+        await owner.query(readdAll);
+        await expect(owner.query(block)).rejects.toMatchObject({ code: '23503' });
+      } finally {
+        await owner.query('ROLLBACK');
+      }
+      // On clean data the block passes and leaves FORCE in place.
+      await admin.query('BEGIN');
+      await admin.query("SET LOCAL session_replication_role = 'replica'");
+      await admin.query('DELETE FROM finance_documents WHERE id = $1', [badDoc]);
+      await admin.query('COMMIT');
+      await owner.query('BEGIN');
+      try {
+        await owner.query(readdAll);
+        await owner.query(block);
+        const forced = await owner.query(`SELECT count(*)::int AS n FROM pg_class WHERE relname IN ('projects', 'finance_documents', 'finance_expenses',
+          'finance_recurring_templates') AND relnamespace = 'public'::regnamespace AND relrowsecurity AND relforcerowsecurity`);
+        expect(forced.rows[0].n).toBe(4);
+      } finally {
+        await owner.query('ROLLBACK');
+      }
     } finally {
-      await admin.query('ROLLBACK');
+      await owner.end();
+      await admin.query('BEGIN');
+      await admin.query("SET LOCAL session_replication_role = 'replica'");
+      await admin.query('DELETE FROM finance_documents WHERE id = $1', [badDoc]);
+      await admin.query('DELETE FROM finance_expenses WHERE id = $1', [okExpense]);
+      await admin.query('COMMIT');
     }
     expect((await admin.query(preflight, [A.businessId])).rows[0]).toEqual({ documents: 0, expenses: 0, templates: 0 });
-    expect((await admin.query("SELECT convalidated FROM pg_constraint WHERE conname = 'finance_documents_project_customer_fkey'")).rows).toEqual([{ convalidated: true }]);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM pg_constraint WHERE conname LIKE '%project_customer_fkey' AND convalidated`)).rows[0].n).toBe(3);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM pg_class WHERE relname IN ('projects', 'finance_documents', 'finance_expenses',
+      'finance_recurring_templates') AND relnamespace = 'public'::regnamespace AND relforcerowsecurity`)).rows[0].n).toBe(4);
   });
 });
 
@@ -541,7 +590,6 @@ describe('source-quote guard trigger by direct SQL (T-47, G-TRG)', () => {
     // A customer edit on a quote-linked project that slipped past the service check would hit the FK: the
     // route answers 409 project_customer_locked (T-52 exercises it under a real race); here the mapping
     // of every WF code is checked through the module that owns it.
-    const { readFileSync } = await import('node:fs');
     const routes = readFileSync(new URL('../../src/app/api/_lib/routes.ts', import.meta.url), 'utf8');
     for (const [code, error] of [['WF001', 'project_has_quote'], ['WF002', 'quote_not_accepted'], ['WF003', 'quote_has_project'], ['WF004', 'opportunity_mismatch']]) {
       expect(routes).toContain(`${code}: [409, '${error}']`);
