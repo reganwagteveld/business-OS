@@ -31,6 +31,7 @@ export * from './access.ts';
 export * from './customers.ts';
 export * from './sales.ts';
 export * from './projects.ts';
+export * from './workflows.ts';
 export * from './finance.ts';
 export * from './finance-expenses.ts';
 export * from './finance-documents.ts';
@@ -67,6 +68,7 @@ import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
 } from './projects.ts';
+import { LinkProjectOpportunityRequest, LinkProjectQuoteRequest, ProjectFromOpportunityRequest, ProjectFromQuoteRequest } from './workflows.ts';
 import {
   CreateDocumentPdfVersionRequest, DocumentBrandingResponse, DocumentPdfVersionResponse, ListDocumentPdfVersionsResponse, UpdateDocumentBrandingRequest,
   UploadBrandingLogoRequest,
@@ -306,6 +308,19 @@ export const endpoints = {
   restoreTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/restore', response: TaskResponse },
   /** Board move: status and order in one server-authoritative change (docs/projects-data-model.md §4). */
   moveTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/move', request: MoveTaskRequest, response: TaskResponse },
+  // Cross-Zone workflows LC-1 (docs/cross-zone-workflows-wf1.md §6.2–6.4). The two creates need an Idempotency-Key header.
+  /** 201 with the new project; 200 with the same project when the key and body are repeated. */
+  createProjectFromOpportunity: {
+    method: 'POST', path: '/api/v1/b/:slug/workflows/projects/from-opportunity', request: ProjectFromOpportunityRequest, response: ProjectResponse,
+  },
+  /** 201 with the new project; 200 on replay. The quote must be ACCEPTED and not yet a project's. */
+  createProjectFromQuote: { method: 'POST', path: '/api/v1/b/:slug/workflows/projects/from-quote', request: ProjectFromQuoteRequest, response: ProjectResponse },
+  linkProjectOpportunity: {
+    method: 'POST', path: '/api/v1/b/:slug/workflows/projects/:projectId/link-opportunity', request: LinkProjectOpportunityRequest, response: ProjectResponse,
+  },
+  linkProjectQuote: {
+    method: 'POST', path: '/api/v1/b/:slug/workflows/projects/:projectId/link-quote', request: LinkProjectQuoteRequest, response: ProjectResponse,
+  },
   // Finance Zone F1 (docs/finance-data-model.md). No DELETE endpoints: drafts are discarded, issued documents voided.
   listQuotes: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes', query: ListQuotesQuery, response: ListFinanceDocumentsResponse },
   /** WF-1 §6.6.1: a project's figures per currency, derived from the ledger. finance:read + projects:read. */

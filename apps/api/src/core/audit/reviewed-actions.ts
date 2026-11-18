@@ -137,6 +137,11 @@ export const REVIEWED_ACTIONS: ReadonlySet<string> = new Set([
   'projects.project.archived',
   'projects.project.assigned',
   'projects.project.created',
+  // WF-1 (LC-1): metadata holds record ids only (opportunityId, quoteId, from, to), which the projects family never discloses.
+  'projects.project.created_from_opportunity',
+  'projects.project.created_from_quote',
+  'projects.project.opportunity_linked',
+  'projects.project.quote_linked',
   'projects.project.restored',
   'projects.project.status_changed',
   'projects.project.updated',
