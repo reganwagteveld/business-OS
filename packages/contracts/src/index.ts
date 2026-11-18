@@ -22,9 +22,14 @@ import {
 import {
   DesktopTokenRequest, DesktopTokenResponse, MeResponse, RequestPasswordResetRequest, ResetPasswordRequest, SignInRequest, SignUpRequest,
 } from './auth.ts';
+import {
+  AccountSessionsResponse, ChangePasswordRequest, ChangePasswordResponse, RevokeOtherSessionsRequest, RevokeOtherSessionsResponse, RevokeSessionResponse,
+  UpdateProfileRequest, UpdateProfileResponse,
+} from './account.ts';
 
 export { HealthResponse } from './health.ts';
 export * from './auth.ts';
+export * from './account.ts';
 export * from './tenancy.ts';
 export * from './audit.ts';
 export * from './access.ts';
@@ -136,6 +141,12 @@ export const API_VERSION = 'v1' as const;
 export const endpoints = {
   health: { method: 'GET', path: '/api/v1/health', response: HealthResponse },
   me: { method: 'GET', path: '/api/v1/me', response: MeResponse },
+  // Account management (Settings A3-A): the signed-in person only, no slug, admission required.
+  updateMe: { method: 'PATCH', path: '/api/v1/me', request: UpdateProfileRequest, response: UpdateProfileResponse },
+  changePassword: { method: 'POST', path: '/api/v1/me/password', request: ChangePasswordRequest, response: ChangePasswordResponse },
+  listMySessions: { method: 'GET', path: '/api/v1/me/sessions', response: AccountSessionsResponse },
+  revokeMySession: { method: 'DELETE', path: '/api/v1/me/sessions/:sessionId', response: RevokeSessionResponse },
+  revokeMyOtherSessions: { method: 'POST', path: '/api/v1/me/sessions/revoke-others', request: RevokeOtherSessionsRequest, response: RevokeOtherSessionsResponse },
   desktopToken: { method: 'POST', path: '/api/v1/auth/desktop/token', request: DesktopTokenRequest, response: DesktopTokenResponse },
   listBusinesses: { method: 'GET', path: '/api/v1/businesses', response: ListBusinessesResponse },
   createBusiness: { method: 'POST', path: '/api/v1/businesses', request: CreateBusinessRequest, response: CreateBusinessResponse },

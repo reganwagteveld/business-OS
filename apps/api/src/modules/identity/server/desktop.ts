@@ -16,6 +16,9 @@ import { getEnv } from '@/core/config/env';
 import { getAuth } from './auth-adapter';
 import { getCurrentSession, getSessionToken, signSessionToken } from './session';
 
+/** Stamped on every desktop session at creation; the account sessions list derives the client kind from it. */
+export const DESKTOP_SESSION_USER_AGENT = 'Business OS desktop';
+
 const LOOPBACK = /^http:\/\/127\.0\.0\.1:(\d{4,5})\/callback$/;
 const CODE_TTL_MS = 2 * 60 * 1000;
 const CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -198,7 +201,7 @@ export async function exchangeDesktopCode(request: Request): Promise<Response> {
 
   const user = await ctx.internalAdapter.findUserById(data.data.userId);
   if (!user || !user.emailVerified) return fail();
-  const session = await ctx.internalAdapter.createSession(user.id, false, { userAgent: 'Business OS desktop', ipAddress: '' }).catch(() => null);
+  const session = await ctx.internalAdapter.createSession(user.id, false, { userAgent: DESKTOP_SESSION_USER_AGENT, ipAddress: '' }).catch(() => null);
   if (!session) return fail();
   if (!await betaSessionAdmitted(session.token)) {
     await ctx.internalAdapter.deleteSession(session.token);
