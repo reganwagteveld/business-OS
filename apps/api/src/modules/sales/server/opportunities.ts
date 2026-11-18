@@ -70,11 +70,25 @@ async function checkOwner(db: AppTenantDb, ownerUserId: string) {
   if (!member) throw new RuleViolationError('invalid_owner', 'The owner must be an active member of this business.');
 }
 
-/** The stage must be an active stage of the given pipeline (the three-column FK enforces membership too). */
+/**
+ * The stage must be an active stage of the given, active pipeline (the three-column FK enforces membership
+ * too). S-CFG (docs/sales-pipeline-configuration-scfg.md §5.2, F3, F4): a locking read, FOR SHARE on the
+ * target stage, issued BEFORE the opportunity write, so the lock order is stage (L2) then opportunity (L3)
+ * as in configuration. A stage archive holds the stage FOR UPDATE, so it either committed before this read
+ * (the stage is seen archived: 409 archived_reference) or waits until this write commits and then moves
+ * the opportunity. Trigger G2 repeats the lock as the database backstop.
+ */
 async function checkStage(db: AppTenantDb, pipelineId: string, stageId: string) {
-  const stage = await db.salesStage.findFirst({ where: { id: stageId, pipelineId }, select: { archivedAt: true } });
+  const rows = await db.$queryRaw<{ stageArchived: boolean; pipelineArchived: boolean }[]>`
+    SELECT s.archived_at IS NOT NULL AS "stageArchived",
+           (SELECT p.archived_at IS NOT NULL FROM sales_pipelines p WHERE p.business_id = s.business_id AND p.id = s.pipeline_id) AS "pipelineArchived"
+    FROM sales_stages s
+    WHERE s.id = ${stageId}::uuid AND s.pipeline_id = ${pipelineId}::uuid
+      AND s.business_id = nullif(current_setting('app.business_id', true), '')::uuid
+    FOR SHARE OF s`;
+  const stage = rows[0];
   if (!stage) throw new RuleViolationError('invalid_stage', 'Choose a stage of this pipeline.');
-  if (stage.archivedAt) throw new StateConflictError('archived_reference');
+  if (stage.stageArchived || stage.pipelineArchived) throw new StateConflictError('archived_reference');
 }
 
 /**
@@ -113,12 +127,13 @@ const dateOf = (v: string) => new Date(`${v}T00:00:00Z`);
 export async function createOpportunity(db: AppTenantDb, actorUserId: string, input: OpportunityInput & { title: string }) {
   const pipeline = await activePipeline(db, actorUserId, input.pipelineId);
   let stageId = input.stageId;
-  if (stageId) await checkStage(db, pipeline.id, stageId);
-  else {
+  if (!stageId) {
     const first = (await activeStages(db, pipeline.id))[0];
     if (!first) throw new RuleViolationError('invalid_stage', 'This pipeline has no active stages.');
     stageId = first.id;
   }
+  // Locks the stage (L2) before the insert, also when it was chosen as the first active stage above.
+  await checkStage(db, pipeline.id, stageId);
   // A customer counts as chosen only when one is given; a contact alone files its own customer.
   const customerId = await linkage(db, { customerId: input.customerId ?? null, contactId: input.contactId ?? null }, { customer: Boolean(input.customerId), contact: true });
   if (input.ownerUserId) await checkOwner(db, input.ownerUserId);
@@ -265,6 +280,7 @@ export async function reopenOpportunity(db: AppTenantDb, actorUserId: string, id
   if (before.archivedAt) throw new StateConflictError('archived');
   if (before.status === 'OPEN') throw new StateConflictError('not_closed');
   const stageId = input.stageId ?? before.stageId;
+  // Refuses an archived stage or an archived pipeline (S-CFG F4): 409 archived_reference.
   await checkStage(db, before.pipelineId, stageId);
   const result = await db.opportunity.updateMany({
     where: { id, status: before.status, archivedAt: null },
@@ -288,11 +304,35 @@ export async function archiveOpportunity(db: AppTenantDb, actorUserId: string, i
   return toDto(await load(db, id));
 }
 
-export async function restoreOpportunity(db: AppTenantDb, actorUserId: string, id: string) {
-  await load(db, id);
-  const result = await db.opportunity.updateMany({ where: { id, archivedAt: { not: null } }, data: { archivedAt: null, ...BUMP, updatedById: actorUserId } as never });
-  if (result.count === 0) throw new StateConflictError('not_archived');
+/**
+ * Restores an archived opportunity. An OPEN one goes back on the board, so it must land in an active stage of
+ * its own, active pipeline (S-CFG §4.4, §6.2): when its stage was archived meanwhile, the client names another
+ * active stage of the same pipeline (`stageId`) and the restore moves it in the same unit of work. In an
+ * archived pipeline an OPEN opportunity cannot be restored at all (409 archived_reference). A WON or LOST one
+ * is restored where it is, and a stage cannot be given for it (409 not_open).
+ */
+export async function restoreOpportunity(db: AppTenantDb, actorUserId: string, id: string, input: { stageId?: string } = {}) {
+  const before = await load(db, id);
+  if (!before.archivedAt) throw new StateConflictError('not_archived');
+  if (input.stageId !== undefined && before.status !== 'OPEN') throw new StateConflictError('not_open');
+  const stageId = before.status === 'OPEN' ? (input.stageId ?? before.stageId) : before.stageId;
+  // OPEN: lock the target stage first (L2), refusing an archived stage or pipeline. G2 is the backstop.
+  if (before.status === 'OPEN') await checkStage(db, before.pipelineId, stageId);
+  const moving = stageId !== before.stageId;
+  const result = await db.opportunity.updateMany({
+    where: { id, archivedAt: { not: null }, status: before.status, stageId: before.stageId },
+    data: { archivedAt: null, ...(moving ? { stageId } : {}), ...BUMP, updatedById: actorUserId } as never,
+  });
+  if (result.count === 0) {
+    const now = await load(db, id);
+    throw new StateConflictError(now.archivedAt ? 'stale' : 'not_archived');
+  }
   await recordAudit(db, actorUserId, 'sales.opportunity.restored', { type: 'opportunity', id });
+  if (moving) {
+    await recordAudit(db, actorUserId, 'sales.opportunity.stage_changed', { type: 'opportunity', id }, {
+      fromPipelineId: before.pipelineId, fromStageId: before.stageId, toPipelineId: before.pipelineId, toStageId: stageId, cause: 'restored',
+    });
+  }
   return toDto(await load(db, id));
 }
 

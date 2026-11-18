@@ -659,7 +659,7 @@ describe('private beta: business creation is offered only with the platform gran
   it('hides "Create another business" in the switcher and the chooser without the grant', async () => {
     const { user, tenancy } = mountApp({ canCreateBusiness: false });
     await h1('Welcome to Alpha Plumbing.');
-    expect(tenancy.platformAccess).toHaveBeenCalled();
+    await waitFor(() => expect(tenancy.platformAccess).toHaveBeenCalled());
     switcher().focus();
     await user.keyboard('{ArrowDown}');
     const menu = screen.getByRole('menu', { name: 'Businesses' });
