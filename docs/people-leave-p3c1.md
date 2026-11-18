@@ -140,13 +140,48 @@ one audited time-zone change after a revision.
 
 Not yet run: the Neon rehearsal on a branch from production (§3.2), which is what the apply verdict relies on.
 
+### 3.4 Production preflight results (read-only, 2026-11-18)
+
+Authorised by the owner decision record on #140 (19 November 2026, item 1). Run from the Mac session in one
+`READ ONLY` transaction as the admin role (`transaction_read_only = on` confirmed), through Neon's HTTPS SQL
+endpoint. Nothing was written, created or deleted. Counts only; no identifiers.
+
+| Check | Result |
+|---|---|
+| Reviewed head / `migration.sql` sha256 | `4f151d7` / `70797060566811067f727692349ba0827073f699939877902d27f161a74eef40` (unchanged by the later merge of `main`) |
+| `_prisma_migrations` | 26 of 26 finished, 0 unfinished, 0 rolled back; newest `20261210000000_sales_configuration` |
+| Applied checksums vs `main` | 26 of 26 match |
+| Pending set (main + this branch) | exactly `20261211000000_people_leave_ledger`, sorting after every applied stamp |
+| `people_leave_policy_revisions` | 0 rows, 0 businesses, 0 with NULL `recorded_at` |
+| Policies / businesses | 0 / 2 |
+| Businesses with revisions and an invalid time zone | 0 |
+| Audited time-zone changes after a first revision | 0 (no time-zone change events at all) |
+| Ledger tables present | 0 |
+
+**D-P3C-35 is not triggered**: there are no revisions to infer, so the back-fill changes nothing in production
+today. Its assertions still run and would abort the migration if a row were missed.
+
+Recovery readiness (read-only): two recovery points are verified per `ops/neon/recovery-points.json`, the newest
+taken before `20261210000000`; no restore drill has been run on any branch. The apply itself still needs its own
+`pre-people-leave-ledger-migration` recovery branch, created and validated at that time.
+
+Proposed Neon rehearsal (**not done; needs Regan's specific approval of both the create and the delete**): a
+disposable child of production named `rehearsal-people-leave-ledger-<date>`; on the child only, `prisma migrate
+deploy` from the reviewed head as the owner role, then this preflight again, `migrate status`, and checks that the
+five ledger tables exist with FORCE RLS, both policies and the grants, and that row totals are unchanged; evidence
+posted to #140; then delete only that child branch.
+
+Open operational blocker: the Mac currently cannot reach PostgreSQL on port 5432 (TCP connects, the SSL request
+gets no answer; HTTPS works). `prisma migrate deploy` needs 5432, so this must be fixed before any rehearsal or
+apply.
+
 ## 4. Decisions still open for this package
 
-Need ChatGPT technical acceptance or an owner record during the audit (the code follows the recommendation):
+Status after the audits: D-P3C-09, -10, -27, -29, -33, -34 and -37 technically accepted by ChatGPT for C1 (comment on #140 at e2093ba); D-P3-25 r.1 accepted by Regan; D-P3C-35 not triggered (§3.4).
 
 | Decision | What C1 does |
 |---|---|
-| D-P3-25 r.1 | Revisions get `effective_from` (business today, `RECORDED`; back-filled rows `INFERRED`). |
+| D-P3-25 r.1 | **Accepted by Regan** (2026-11-17, his own message in the P3-C1 thread). Revisions get `effective_from` (business today, `RECORDED`; back-filled rows `INFERRED`). |
 | D-P3C-09 | One serialisation point per account: the account row (version bump). |
 | D-P3C-10 | No stored totals; balances are sums of entries. |
 | D-P3C-27 | Back-fill in the migration (rehearsed). |
