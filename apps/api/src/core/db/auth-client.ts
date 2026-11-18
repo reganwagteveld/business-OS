@@ -3,7 +3,7 @@ import 'server-only';
 // the identity tables and nothing else. Only modules/identity/server/auth-adapter.ts may import
 // this file (source rule `auth-client-only-in-identity`).
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../../generated/prisma/client';
+import { PrismaClient, type Prisma } from '../../generated/prisma/client';
 import { getEnv } from '../config/env';
 
 let client: PrismaClient | undefined;
@@ -14,3 +14,5 @@ export function getAuthPrisma(): PrismaClient {
 }
 
 export type AuthPrisma = PrismaClient;
+/** A bos_auth unit of work (identity module account services, Settings A3-A). */
+export type AuthTx = Prisma.TransactionClient;

@@ -81,7 +81,9 @@ export function serverViolations(files) {
     if (/^app\/api\/v1\/.*route\.ts$/.test(name)) {
       const methods = [...content.matchAll(/export\s+(?:async\s+)?(?:const|function)\s+(GET|POST|PUT|PATCH|DELETE)\b(.*)/g)];
       const tenant = name.startsWith('app/api/v1/b/');
-      const unwrappedAllowed = /^app\/api\/v1\/(health|me|auth)\//.test(name);
+      // Only GET /me is unwrapped (identity only, before admission). Every other /me route (account
+      // management, Settings A3-A) changes the account and must go through publicRoute (CSRF and admission).
+      const unwrappedAllowed = /^app\/api\/v1\/(health|auth)\//.test(name) || name === 'app/api/v1/me/route.ts';
       // Browser navigation targets that answer with a page (the OAuth callback, docs/communications-c2.md §7.1).
       const browserAllowed = name === 'app/api/v1/communications/oauth/callback/route.ts';
       for (const [, method, rest] of methods) {
@@ -93,6 +95,7 @@ export function serverViolations(files) {
         const runAllowed = name === 'app/api/v1/b/[slug]/communications/business-domains/[domainId]/verify/route.ts';
         if (wrapper === 'tenantRunRoute' && !runAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} may not use tenantRunRoute (domain verification only)`);
         if (tenant && wrapper !== 'tenantRoute' && wrapper !== 'tenantFileRoute' && wrapper !== 'tenantRunRoute') errors.push(`tenant-route-wrapper: ${name} ${method} must be defined with tenantRoute`);
+        if (name === 'app/api/v1/me/route.ts' && method !== 'GET' && wrapper !== 'publicRoute') errors.push(`account-route-wrapper: ${name} ${method} must use publicRoute`);
         if (!tenant && !wrapper && !unwrappedAllowed) errors.push(`tenant-route-wrapper: ${name} ${method} must use publicRoute (or be an allowed unauthenticated endpoint)`);
       }
     }
@@ -107,6 +110,10 @@ export function serverViolations(files) {
       errors.push(`erasure-functions-only-in-erasure-service: ${name} calls an E1 erasure function; only modules/communications/server/erasure.ts may`);
     }
 
+    // Account routes have no tenant (settings-a3 §15.2): they never resolve a business or read role permissions.
+    if (/^app\/api\/v1\/me\//.test(name) && importsOf(content).some((spec) => /(^|\/)modules\/(tenancy|access)(\/|$)/.test(spec) || /(^|\/)core\/db(\/|$)/.test(spec))) {
+      errors.push(`account-routes-no-tenant: ${name} imports tenant authority (modules/tenancy, modules/access or core/db); account routes act on the signed-in person only`);
+    }
     // The bos_auth client can read password hashes and session data (data-model §5.1).
     if (name !== 'modules/identity/server/auth-adapter.ts' && importsOf(content).some((spec) => /(^|\/)core\/db\/auth-client(\.ts)?$/.test(spec))) {
       errors.push(`auth-client-only-in-identity: ${name} imports the bos_auth client; only modules/identity/server/auth-adapter.ts may`);
