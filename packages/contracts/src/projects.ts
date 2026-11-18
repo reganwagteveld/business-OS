@@ -115,6 +115,11 @@ export const ListProjectsQuery = z
     archived: z.enum(['active', 'archived', 'all']).default('active'),
     customerId: Uuid.optional(),
     ownerUserId: Uuid.optional(),
+    /**
+     * WF-1 §6.6 (LC-1): projects whose source opportunity is this one. Needs sales:read as well as
+     * projects:read. Combine with archived=all to count every project made from the opportunity.
+     */
+    sourceOpportunityId: Uuid.optional(),
     /** newest: created, newest first. name: A to Z. due: soonest due first, undated last. Ties by id. */
     sort: ProjectSort.default('newest'),
     cursor: Cursor,

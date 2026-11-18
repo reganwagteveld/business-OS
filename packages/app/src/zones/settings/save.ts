@@ -61,6 +61,8 @@ export function conflictMessage(code: string | undefined): string {
     case 'already_member': return 'That email address already belongs to a member of this business.';
     case 'invitation_exists': return 'There is already an open invitation for that email address. Resend or revoke it instead.';
     case 'invitation_closed': return 'That invitation was already accepted or revoked. The list has been refreshed.';
+    case 'use_sign_out': return 'That is the device you are using now. Use Sign out in the account menu instead.';
+    case 'no_password': return 'Your account has no password to change.';
     default: return 'That change could not be made. Reload and try again.';
   }
 }

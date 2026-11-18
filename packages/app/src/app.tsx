@@ -11,6 +11,7 @@ import { createReportingClient, type ReportingClient } from './api/reporting';
 import { createSchedulingClient, type SchedulingClient } from './api/scheduling';
 import { createSalesClient, type SalesClient } from './api/sales';
 import { createSettingsClient, type SettingsClient } from './api/settings';
+import { createAccountClient, type AccountClient } from './api/account';
 import { createTenancyClient, type TenancyClient } from './api/tenancy';
 import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
 import type { ClientPlatform } from './config';
@@ -62,6 +63,8 @@ export interface AppProps {
   finance?: FinanceClient;
   reporting?: ReportingClient;
   settings?: SettingsClient;
+  /** Account management (Settings A3-A): the signed-in person's name, password and sessions. */
+  account?: AccountClient;
   scheduling?: SchedulingClient;
   /** The operational dashboard's own reads (pipeline summary, business activity, upcoming events). */
   dashboard?: DashboardClient;
@@ -85,7 +88,7 @@ type Mode = 'default' | 'choose' | 'new';
  * open the right one. Offline, server errors and an ended session each get their own screen, and
  * the active business is only ever one the server lists for you.
  */
-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, communications: communicationsOverride, finance: financeOverride, reporting: reportingOverride, scheduling: schedulingOverride, settings: settingsOverride, dashboard: dashboardOverride, storage: storageOverride, history }: AppProps) {
+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, communications: communicationsOverride, finance: financeOverride, reporting: reportingOverride, scheduling: schedulingOverride, settings: settingsOverride, account: accountOverride, dashboard: dashboardOverride, storage: storageOverride, history }: AppProps) {
   const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
   const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
@@ -97,6 +100,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
   const reporting = useMemo(() => reportingOverride ?? createReportingClient(apiBaseUrl, resolvedTransport), [reportingOverride, apiBaseUrl, resolvedTransport]);
   const settings = useMemo(() => settingsOverride ?? createSettingsClient(apiBaseUrl, resolvedTransport), [settingsOverride, apiBaseUrl, resolvedTransport]);
+  const account = useMemo(() => accountOverride ?? createAccountClient(apiBaseUrl, resolvedTransport), [accountOverride, apiBaseUrl, resolvedTransport]);
   const scheduling = useMemo(() => schedulingOverride ?? createSchedulingClient(apiBaseUrl, resolvedTransport), [schedulingOverride, apiBaseUrl, resolvedTransport]);
   const dashboard = useMemo(() => dashboardOverride ?? createDashboardClient(apiBaseUrl, resolvedTransport), [dashboardOverride, apiBaseUrl, resolvedTransport]);
   const searchClient = useMemo(() => createSearchClient(apiBaseUrl, resolvedTransport), [apiBaseUrl, resolvedTransport]);
@@ -357,7 +361,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     screen = (
       <SettingsZone
         key={slug}
-        client={settings} user={phase.user} context={active} scope={current.child} page={target}
+        client={settings} account={account} user={phase.user} context={active} scope={current.child} page={target}
         // Moving between scopes and pages keeps the Zone mounted; the shell route follows.
         onNavigate={open} onContextChanged={workspace.refresh} onLeft={() => { setRoute(HOME); workspace.retry(); }}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}

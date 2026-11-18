@@ -1,6 +1,6 @@
 # WF-2: End-to-end customer lifecycle audit
 
-**Status:** audit only, docs-only draft PR. No product code, migrations, merges or deployments.
+**Status:** audit only (merged in #165); decisions D-WF2-1..4 accepted 2026-11-18 (§10). No product code, migrations, merges or deployments.
 **Base:** `main` at `2a96f44` (2026-11-18). **Author:** Claude (WF-2 audit thread), for Regan and ChatGPT audit.
 **Scope:** customer/contact → opportunity → quote → explicit project creation → project execution → invoice →
 payment → reporting, checked in the backend routes, schema, UI, RBAC and tests, against the accepted W1
@@ -294,13 +294,16 @@ Each criterion is a test in the named package. "Role" means the default roles in
 
 ---
 
-## 10. Decisions needed
+## 10. Decisions
 
-None blocks the audit. For the next packages:
+**Decided (Regan, 2026-11-18 15:46 UTC, "I approve all"):** every recommendation below is accepted as written.
+This authorises starting the LC-1 and LC-2 build threads (draft PRs). It does not approve any merge, migration or
+production action; each package still goes through ChatGPT audit, a merge verdict and the merge queue. LC-1
+stays migration-free as designed.
 
-| Id | Question | Recommendation |
+| Id | Question | Decision (recommendation accepted) |
 |---|---|---|
 | D-WF2-1 | Start LC-1 (WF-1B-2) now? It is already designed and its decisions accepted (D-WF1-07..16); it needs no migration | **Yes** |
-| D-WF2-2 | Start LC-2 (WF-1C-1) in parallel with LC-1? | **Yes**; it uses only existing APIs |
+| D-WF2-2 | Start LC-2 (WF-1C-1) in parallel with LC-1? | **Yes**; it uses only existing APIs, in its own thread and PR |
 | D-WF2-3 | Package naming: adopt LC-1..LC-7 for the lifecycle work (mapping in §8), to end the WF-1/W1 numbering clash (D-WF1-13) | **Yes** |
 | D-WF2-4 | Should deal value (opportunity amount) stay visible to MEMBER (§5 P-2)? | **Keep as is** until custom roles exist |
