@@ -1,0 +1,303 @@
+// AUDIT EVIDENCE ONLY (WF-2 lifecycle audit). Not part of the test suite: the .txt suffix keeps it out of vitest.
+// To re-run: copy to apps/api/tests/integration/zz-wf2-lifecycle-probe.test.ts with a migrated local database
+// (same env as the CI integration job) and run: pnpm exec vitest run --config vitest.integration.config.ts <file>.
+// Delete the copy afterwards.
+import { inviteForSignup, admitFixture } from './support/admission';
+import { randomUUID } from 'node:crypto';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import * as authRoute from '@/app/api/v1/auth/[...all]/route';
+import * as businessesRoute from '@/app/api/v1/businesses/route';
+import * as businessRoute from '@/app/api/v1/b/[slug]/route';
+import * as acceptRoute from '@/app/api/v1/invitations/accept/route';
+import * as invitationsRoute from '@/app/api/v1/b/[slug]/invitations/route';
+import * as customersRoute from '@/app/api/v1/b/[slug]/customers/route';
+import * as customerRoute from '@/app/api/v1/b/[slug]/customers/[customerId]/route';
+import * as customerProjectsRoute from '@/app/api/v1/b/[slug]/customers/[customerId]/projects/route';
+import * as contactsRoute from '@/app/api/v1/b/[slug]/contacts/route';
+import * as activitiesRoute from '@/app/api/v1/b/[slug]/activities/route';
+import * as conversationsRoute from '@/app/api/v1/b/[slug]/conversations/route';
+import * as messagesRoute from '@/app/api/v1/b/[slug]/conversations/[conversationId]/messages/route';
+import * as opportunitiesRoute from '@/app/api/v1/b/[slug]/sales/opportunities/route';
+import * as opportunityRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportunityId]/route';
+import * as winRoute from '@/app/api/v1/b/[slug]/sales/opportunities/[opportunityId]/win/route';
+import * as projectsRoute from '@/app/api/v1/b/[slug]/projects/route';
+import * as projectRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/route';
+import * as tasksRoute from '@/app/api/v1/b/[slug]/projects/[projectId]/tasks/route';
+import * as taxRatesRoute from '@/app/api/v1/b/[slug]/finance/tax-rates/route';
+import * as quotesRoute from '@/app/api/v1/b/[slug]/finance/quotes/route';
+import * as quoteIssue from '@/app/api/v1/b/[slug]/finance/quotes/[documentId]/issue/route';
+import * as quoteAccept from '@/app/api/v1/b/[slug]/finance/quotes/[documentId]/accept/route';
+import * as quoteConvert from '@/app/api/v1/b/[slug]/finance/quotes/[documentId]/convert/route';
+import * as invoicesRoute from '@/app/api/v1/b/[slug]/finance/invoices/route';
+import * as invoiceRoute from '@/app/api/v1/b/[slug]/finance/invoices/[documentId]/route';
+import * as invoiceIssue from '@/app/api/v1/b/[slug]/finance/invoices/[documentId]/issue/route';
+import * as invoiceCreditNotes from '@/app/api/v1/b/[slug]/finance/invoices/[documentId]/credit-notes/route';
+import * as settlementRoute from '@/app/api/v1/b/[slug]/finance/invoices/[documentId]/settlement/route';
+import * as creditIssue from '@/app/api/v1/b/[slug]/finance/credit-notes/[documentId]/issue/route';
+import * as creditApplications from '@/app/api/v1/b/[slug]/finance/credit-notes/[documentId]/applications/route';
+import * as paymentsRoute from '@/app/api/v1/b/[slug]/finance/payments/route';
+import * as balancesRoute from '@/app/api/v1/b/[slug]/finance/customer-balances/route';
+import * as reconciliationRoute from '@/app/api/v1/b/[slug]/finance/reconciliation/route';
+import * as categoriesRoute from '@/app/api/v1/b/[slug]/finance/expense-categories/route';
+import * as expensesRoute from '@/app/api/v1/b/[slug]/finance/expenses/route';
+import * as expenseRoute from '@/app/api/v1/b/[slug]/finance/expenses/[expenseId]/route';
+import * as expenseRecord from '@/app/api/v1/b/[slug]/finance/expenses/[expenseId]/record/route';
+import * as expensePaymentsRoute from '@/app/api/v1/b/[slug]/finance/expense-payments/route';
+import * as payablesRoute from '@/app/api/v1/b/[slug]/finance/expense-payables/route';
+import * as defaultCalendarRoute from '@/app/api/v1/b/[slug]/scheduling/calendars/default/route';
+import * as calendarsRoute from '@/app/api/v1/b/[slug]/scheduling/calendars/route';
+import * as eventsRoute from '@/app/api/v1/b/[slug]/scheduling/events/route';
+import * as eventRoute from '@/app/api/v1/b/[slug]/scheduling/events/[eventId]/route';
+import * as eventCancel from '@/app/api/v1/b/[slug]/scheduling/events/[eventId]/cancel/route';
+import * as employeesRoute from '@/app/api/v1/b/[slug]/people/employees/route';
+import * as employeeRoute from '@/app/api/v1/b/[slug]/people/employees/[employeeId]/route';
+import * as personalRoute from '@/app/api/v1/b/[slug]/people/employees/[employeeId]/personal/route';
+import { devOutbox } from '@/core/email';
+
+const BASE = process.env.APP_BASE_URL!;
+const ORIGIN = new URL(BASE).origin;
+const PASSWORD = 'correct horse battery staple';
+const admin = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
+
+beforeAll(async () => {
+  await admin.connect();
+});
+afterAll(async () => {
+  await admin.end();
+});
+
+// An address range of its own, so rate-limit counters never collide with the other suites. The start is
+// random so that back-to-back runs on one database do not hit the previous run's sign-in limits.
+let ip = 1 + Math.floor(Math.random() * 200) * 250;
+type User = { email: string; cookie: string; id: string };
+type Handler = (req: Request, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>;
+
+function req(method: string, path: string, opts: { cookie?: string; body?: unknown } = {}) {
+  const headers = new Headers({ 'x-forwarded-for': `100.124.${Math.floor(ip / 250) % 256}.${ip++ % 250}`, origin: ORIGIN });
+  if (opts.cookie) headers.set('cookie', opts.cookie);
+  if (opts.body !== undefined) headers.set('content-type', 'application/json');
+  // Payments require one; every other route ignores it.
+  if (method === 'POST') headers.set('idempotency-key', randomUUID());
+  return new Request(`${BASE}${path}`, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
+}
+const ctx = (params: Record<string, string>) => ({ params: Promise.resolve(params) });
+
+async function newUser(prefix: string): Promise<User> {
+  const email = `${prefix}-${randomUUID()}@example.com`;
+  await inviteForSignup(admin, email);
+  await authRoute.POST(req('POST', '/api/v1/auth/sign-up/email', { body: { email, password: PASSWORD, name: prefix } }));
+  await admitFixture(admin, email);
+  const mail = [...devOutbox].reverse().find((m) => m.to === email)!;
+  const link = new URL(/(https?:\/\/\S+)/.exec(mail.text)![1]!);
+  await authRoute.GET(new Request(`${BASE}${link.pathname}${link.search}`, { method: 'GET', headers: { 'x-forwarded-for': `100.125.${Math.floor(ip / 250) % 256}.${ip++ % 250}` } }));
+  const res = await authRoute.POST(req('POST', '/api/v1/auth/sign-in/email', { body: { email, password: PASSWORD } }));
+  const cookie = res.headers.getSetCookie().find((c) => /session_token=/.test(c))!.split(';')[0]!;
+  const { rows } = await admin.query('SELECT id FROM users WHERE email = $1', [email]);
+  return { email, cookie, id: rows[0].id };
+}
+
+async function invite(owner: User, slug: string, user: User, role: string) {
+  await invitationsRoute.POST(req('POST', `/api/v1/b/${slug}/invitations`, { cookie: owner.cookie, body: { email: user.email, role } }), ctx({ slug }));
+  const mail = [...devOutbox].reverse().find((m) => m.to === user.email)!;
+  const token = new URL(/(https?:\/\/\S+)/.exec(mail.text)![1]!).searchParams.get('token');
+  expect((await acceptRoute.POST(req('POST', '/api/v1/invitations/accept', { cookie: user.cookie, body: { token } }))).status).toBe(200);
+}
+
+async function team(label: string) {
+  const owner = await newUser(`${label}-owner`);
+  const slug = `${label}-${randomUUID().slice(0, 8)}`;
+  const created = await businessesRoute.POST(req('POST', '/api/v1/businesses', {
+    cookie: owner.cookie, body: { name: `Business ${label}`, slug, countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' },
+  }));
+  expect(created.status).toBe(201);
+  const people: Record<string, User> = { OWNER: owner };
+  for (const role of ['ADMIN', 'MANAGER', 'MEMBER']) {
+    const user = await newUser(`${label}-${role.toLowerCase()}`);
+    await invite(owner, slug, user, role);
+    people[role] = user;
+  }
+  return { slug, people };
+}
+
+type Result = { status: number; body: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+/** Calls one route handler as `who` in business `slug`. `path` is the part after /b/:slug. */
+async function call(who: User, slug: string, handler: Handler, method: string, path: string, params: Record<string, string> = {}, body?: unknown): Promise<Result> {
+  const res = await handler(req(method, `/api/v1/b/${slug}${path}`, { cookie: who.cookie, body }), ctx({ slug, ...params }));
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : null };
+}
+
+const line = (overrides: Record<string, unknown> = {}) => ({ description: 'Consulting', quantity: '2', unitPrice: '150.00', ...overrides });
+/** A date in the past in every time zone, so "not in the future" rules always pass. */
+const PAST = '2026-11-01';
+
+import * as quoteRoute from '@/app/api/v1/b/[slug]/finance/quotes/[documentId]/route';
+import * as projectFinanceSummary from '@/app/api/v1/b/[slug]/finance/projects/[projectId]/summary/route';
+import * as reportingQuery from '@/app/api/v1/b/[slug]/reporting/query/route';
+import * as customerProjects2 from '@/app/api/v1/b/[slug]/customers/[customerId]/projects/route';
+import { existsSync } from 'node:fs';
+
+/**
+ * WF-2 audit probe (docs/cross-zone-workflows-wf2-audit.md, Appendix A). AUDIT ONLY: this file records
+ * what the API does today on main; it asserts current behaviour, including the gaps, so a reviewer can
+ * re-run the scenario matrix. It is not part of the product test suite.
+ */
+const ev: Record<string, unknown> = {};
+const note = (id: string, v: unknown) => { ev[id] = v; };
+afterAll(() => { console.log('WF2-EVIDENCE ' + JSON.stringify(ev, null, 1)); });
+
+let T: Awaited<ReturnType<typeof team>>;
+let X: Awaited<ReturnType<typeof team>>;
+const r = {} as Record<string, string>;
+
+beforeAll(async () => { T = await team('wf2'); X = await team('wf2x'); }, 120_000);
+
+describe('WF-2 lifecycle probe', () => {
+  it('L1 customer and contact', async () => {
+    const own = T.people.OWNER!;
+    const c = await call(own, T.slug, customersRoute.POST, 'POST', '/customers', {}, { displayName: 'Probe Pty' });
+    expect(c.status).toBe(201); r.customer = c.body.customer.id;
+    const c2 = await call(own, T.slug, customersRoute.POST, 'POST', '/customers', {}, { displayName: 'Other Pty' });
+    r.customer2 = c2.body.customer.id;
+    const k = await call(own, T.slug, contactsRoute.POST, 'POST', '/contacts', {}, { firstName: 'Pat', lastName: 'Probe', customerId: r.customer });
+    expect(k.status).toBe(201); r.contact = k.body.contact.id;
+  });
+
+  it('L2 opportunity (MEMBER creates it and sees the amount)', async () => {
+    const o = await call(T.people.MEMBER!, T.slug, opportunitiesRoute.POST, 'POST', '/sales/opportunities', {}, { title: 'Fit-out', customerId: r.customer, contactId: r.contact, amount: '5000.00' });
+    expect(o.status).toBe(201); r.opp = o.body.opportunity.id;
+    note('L2.opportunityKeys', Object.keys(o.body.opportunity).sort());
+  });
+
+  it('L3 quote from opportunity: existing create with opportunityId; listable by opportunity', async () => {
+    const q = await call(T.people.MANAGER!, T.slug, quotesRoute.POST, 'POST', '/finance/quotes', {}, { customerId: r.customer, contactId: r.contact, opportunityId: r.opp, lines: [line()] });
+    expect(q.status).toBe(201); r.quote = q.body.document.id;
+    note('L3.quoteLinesFromOpportunityAmount', q.body.document.total);
+    const byOpp = await call(T.people.MANAGER!, T.slug, quotesRoute.GET, 'GET', `/finance/quotes?opportunityId=${r.opp}`);
+    expect(byOpp.status).toBe(200);
+    expect(byOpp.body.documents.map((d: { id: string }) => d.id)).toContain(r.quote);
+    const oppAfter = await call(T.people.OWNER!, T.slug, opportunityRoute.GET, 'GET', `/sales/opportunities/${r.opp}`, { opportunityId: r.opp });
+    note('L3.opportunityHasQuoteField', 'quotes' in oppAfter.body.opportunity || 'financeDocuments' in oppAfter.body.opportunity);
+  });
+
+  it('L4 issue and accept the quote: the opportunity is NOT won (no accept→win link)', async () => {
+    const own = T.people.OWNER!;
+    expect((await call(own, T.slug, quoteIssue.POST, 'POST', `/finance/quotes/${r.quote}/issue`, { documentId: r.quote }, { version: 1, issueDate: PAST })).status).toBe(200);
+    expect((await call(own, T.slug, quoteAccept.POST, 'POST', `/finance/quotes/${r.quote}/accept`, { documentId: r.quote }, { version: 2 })).status).toBe(200);
+    const opp = await call(own, T.slug, opportunityRoute.GET, 'GET', `/sales/opportunities/${r.opp}`, { opportunityId: r.opp });
+    note('L4.opportunityStatusAfterQuoteAccepted', opp.body.opportunity.status);
+    expect(opp.body.opportunity.status).toBe('OPEN');
+    const won = await call(own, T.slug, winRoute.POST, 'POST', `/sales/opportunities/${r.opp}/win`, { opportunityId: r.opp }, {});
+    expect(won.status).toBe(200);
+  });
+
+  it('L5 explicit project creation from the opportunity or quote: no endpoint, and plain create refuses source fields', async () => {
+    const base = 'src/app/api/v1/b/[slug]';
+    note('L5.workflowsRoutesExist', existsSync(`${base}/workflows`));
+    note('L5.workflowsModuleExists', existsSync('src/modules/workflows'));
+    const withSrc = await call(T.people.MANAGER!, T.slug, projectsRoute.POST, 'POST', '/projects', {}, { name: 'Fit-out job', customerId: r.customer, sourceOpportunityId: r.opp });
+    note('L5.createWithSourceOpportunityId', { status: withSrc.status, code: withSrc.body?.error?.code });
+    expect(withSrc.status).toBe(400);
+    const p = await call(T.people.MANAGER!, T.slug, projectsRoute.POST, 'POST', '/projects', {}, { name: 'Fit-out job', customerId: r.customer });
+    expect(p.status).toBe(201); r.project = p.body.project.id;
+    note('L5.projectSourceFields', { sourceOpportunityId: p.body.project.sourceOpportunityId, sourceQuoteId: p.body.project.sourceQuoteId });
+    const patch = await call(T.people.MANAGER!, T.slug, projectRoute.PATCH, 'PATCH', `/projects/${r.project}`, { projectId: r.project }, { version: 1, sourceOpportunityId: r.opp });
+    note('L5.patchSourceOpportunityId', { status: patch.status });
+    const filt = await call(T.people.MANAGER!, T.slug, projectsRoute.GET, 'GET', `/projects?sourceOpportunityId=${r.opp}`);
+    note('L5.listBySourceOpportunity', { status: filt.status });
+  });
+
+  it('L6 the issued quote cannot be pointed at the new project afterwards (frozen, sealed)', async () => {
+    const q = await call(T.people.OWNER!, T.slug, quoteRoute.GET, 'GET', `/finance/quotes/${r.quote}`, { documentId: r.quote });
+    const v = q.body.document.version;
+    const res = await call(T.people.OWNER!, T.slug, quoteRoute.PATCH, 'PATCH', `/finance/quotes/${r.quote}`, { documentId: r.quote }, { version: v, projectId: r.project });
+    note('L6.patchIssuedQuoteProject', { status: res.status, code: res.body?.error?.code });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('L7 convert accepted quote: the draft invoice has no project (quote had none, project has no source quote)', async () => {
+    const conv = await call(T.people.MANAGER!, T.slug, quoteConvert.POST, 'POST', `/finance/quotes/${r.quote}/convert`, { documentId: r.quote }, {});
+    expect(conv.status).toBe(201);
+    r.inv1 = conv.body.document.id;
+    note('L7.convertedInvoiceProjectId', conv.body.document.projectId);
+    // The draft can be pointed at the project before issue (API only; no UI field).
+    const linked = await call(T.people.MANAGER!, T.slug, invoiceRoute.PATCH, 'PATCH', `/finance/invoices/${r.inv1}`, { documentId: r.inv1 }, { version: conv.body.document.version, projectId: r.project });
+    note('L7.linkDraftInvoiceToProject', { status: linked.status, projectId: linked.body?.document?.projectId });
+    expect(linked.status).toBe(200);
+  });
+
+  it('L8 invoice from project: existing create with projectId; I1 refuses another customer', async () => {
+    const ok = await call(T.people.MANAGER!, T.slug, invoicesRoute.POST, 'POST', '/finance/invoices', {}, { customerId: r.customer, projectId: r.project, opportunityId: r.opp, lines: [line({ quantity: '1', unitPrice: '100.00' })] });
+    expect(ok.status).toBe(201); r.inv2 = ok.body.document.id;
+    const bad = await call(T.people.MANAGER!, T.slug, invoicesRoute.POST, 'POST', '/finance/invoices', {}, { customerId: r.customer2, projectId: r.project, lines: [line()] });
+    note('L8.otherCustomersProject', { status: bad.status, code: bad.body?.error?.code });
+    expect(bad.status).toBe(400);
+  });
+
+  it('L9 issue and get paid; settlement reaches zero', async () => {
+    const own = T.people.OWNER!;
+    const inv = await call(own, T.slug, invoiceRoute.GET, 'GET', `/finance/invoices/${r.inv1}`, { documentId: r.inv1 });
+    const iss = await call(own, T.slug, invoiceIssue.POST, 'POST', `/finance/invoices/${r.inv1}/issue`, { documentId: r.inv1 }, { version: inv.body.document.version, issueDate: PAST, dueDate: '2026-12-31' });
+    expect(iss.status).toBe(200);
+    const total = iss.body.document.total;
+    const pay = await call(own, T.slug, paymentsRoute.POST, 'POST', '/finance/payments', {}, { customerId: r.customer, amount: total, receivedOn: PAST, method: 'BANK_TRANSFER', allocations: [{ invoiceId: r.inv1, amount: total }] });
+    expect(pay.status).toBe(201);
+    const s = await call(T.people.MANAGER!, T.slug, settlementRoute.GET, 'GET', `/finance/invoices/${r.inv1}/settlement`, { documentId: r.inv1 });
+    note('L9.settlement', s.body.settlement);
+    const mgrPay = await call(T.people.MANAGER!, T.slug, paymentsRoute.POST, 'POST', '/finance/payments', {}, { customerId: r.customer, amount: '1.00', receivedOn: PAST, method: 'CASH' });
+    note('L9.managerRecordsPayment', mgrPay.status);
+  });
+
+  it('L10 project completion has no Finance effect; project summary per role', async () => {
+    const p = await call(T.people.MANAGER!, T.slug, projectRoute.GET, 'GET', `/projects/${r.project}`, { projectId: r.project });
+    const done = await call(T.people.MANAGER!, T.slug, projectRoute.PATCH, 'PATCH', `/projects/${r.project}`, { projectId: r.project }, { version: p.body.project.version, status: 'COMPLETED' });
+    expect(done.status).toBe(200);
+    const res: Record<string, number> = {};
+    for (const role of ['OWNER', 'ADMIN', 'MANAGER', 'MEMBER']) {
+      const s = await call(T.people[role]!, T.slug, projectFinanceSummary.GET, 'GET', `/finance/projects/${r.project}/summary`, { projectId: r.project });
+      res[role] = s.status;
+      if (role === 'OWNER') note('L10.summaryOwner', s.body.summary);
+    }
+    note('L10.summaryStatusByRole', res);
+    expect(res.MEMBER).toBe(403);
+    const cross = await call(X.people.OWNER!, X.slug, projectFinanceSummary.GET, 'GET', `/finance/projects/${r.project}/summary`, { projectId: r.project });
+    note('L10.crossTenantSummary', cross.status);
+    expect(cross.status).toBe(404);
+  });
+
+  it('L11 MEMBER visibility: project has no finance keys; customer projects list has none; finance reads 403', async () => {
+    const mem = T.people.MEMBER!;
+    const p = await call(mem, T.slug, projectRoute.GET, 'GET', `/projects/${r.project}`, { projectId: r.project });
+    note('L11.memberProjectKeys', Object.keys(p.body.project).sort());
+    expect(JSON.stringify(p.body)).not.toMatch(/sourceQuote|invoiced|outstanding|"amount"/i);
+    const cp = await call(mem, T.slug, customerProjects2.GET, 'GET', `/customers/${r.customer}/projects`, { customerId: r.customer });
+    expect(JSON.stringify(cp.body)).not.toMatch(/sourceQuote|invoiced|outstanding/i);
+    const inv = await call(mem, T.slug, invoiceRoute.GET, 'GET', `/finance/invoices/${r.inv1}`, { documentId: r.inv1 });
+    expect(inv.status).toBe(403);
+    const opp = await call(mem, T.slug, opportunityRoute.GET, 'GET', `/sales/opportunities/${r.opp}`, { opportunityId: r.opp });
+    note('L11.memberSeesOpportunityAmount', opp.body.opportunity.amount);
+  });
+
+  it('L12 project customer is locked while Finance links it', async () => {
+    const p = await call(T.people.MANAGER!, T.slug, projectRoute.GET, 'GET', `/projects/${r.project}`, { projectId: r.project });
+    const ch = await call(T.people.MANAGER!, T.slug, projectRoute.PATCH, 'PATCH', `/projects/${r.project}`, { projectId: r.project }, { version: p.body.project.version, customerId: r.customer2 });
+    note('L12.changeLinkedProjectCustomer', { status: ch.status, code: ch.body?.error?.code });
+    expect(ch.status).toBe(409);
+  });
+
+  it('L13 reporting: no project or opportunity dimension or filter', async () => {
+    const q = await call(T.people.OWNER!, T.slug, reportingQuery.POST, 'POST', '/reporting/query', {}, { metrics: [{ id: 'finance.invoiced_amount', version: 1 }], date: { preset: 'last_30_days' }, filters: { projectId: r.project } });
+    note('L13.reportingProjectFilter', { status: q.status, code: q.body?.error?.code });
+    expect(q.status).toBe(400);
+    const g = await call(T.people.OWNER!, T.slug, reportingQuery.POST, 'POST', '/reporting/query', {}, { metrics: [{ id: 'finance.invoiced_amount', version: 1 }], date: { preset: 'last_30_days' }, groupBy: 'project' });
+    note('L13.reportingProjectGroupBy', { status: g.status });
+    expect(g.status).toBe(400);
+  });
+
+  it('L14 customer timeline: no Sales, Projects or Finance lifecycle entries', async () => {
+    const t = await call(T.people.OWNER!, T.slug, activitiesRoute.GET, 'GET', `/activities?customerId=${r.customer}&limit=100`);
+    expect(t.status).toBe(200);
+    note('L14.timelineTypes', [...new Set(t.body.activities.map((x: { type: string }) => x.type))].sort());
+  });
+});
