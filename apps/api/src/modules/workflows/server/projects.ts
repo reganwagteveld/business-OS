@@ -76,6 +76,22 @@ async function sourceQuoteKey<T>(work: Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * The opportunity project-set lock (D-WF1-15 duplicate guard; audit of #169). Every path that changes which
+ * projects carry an opportunity as source_opportunity_id takes it for each opportunity it adds a project to or
+ * removes one from: from-opportunity, from-quote (the quote's opportunity), link-opportunity (old and new) and
+ * link-quote (when it sets the quote's opportunity). So the count that from-opportunity checks under this lock
+ * cannot change until it commits. Transaction-scoped advisory locks, taken in id order so two paths that lock
+ * two opportunities cannot deadlock; class order per §6.10: after the quote, before the project row.
+ */
+async function lockOpportunitySets(db: AppTenantDb, ids: (string | null)[]) {
+  for (const id of [...new Set(ids.filter((v): v is string => v !== null))].sort()) {
+    await db.$queryRaw<{ locked: number }[]>`
+      SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(
+        'workflows.opportunity_projects:' || current_setting('app.business_id', true) || ':' || ${id}::text, 0))) AS l`;
+  }
+}
+
 /** The optional project details a workflow create passes through to the Projects Zone unchanged. */
 const details = ({ ownerUserId, startDate, dueDate, status, priority }: Omit<ProjectFromQuoteRequest, 'quoteId'>) => ({ ownerUserId, startDate, dueDate, status, priority });
 
@@ -94,9 +110,7 @@ export async function projectFromOpportunity(
   const replay = await claimKey(db, operation, key, hash);
   if (replay) return { status: 200, project: await getProject(db, viewer, replay) };
 
-  await db.$queryRaw<{ locked: number }[]>`
-    SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(
-      'workflows.opportunity_projects:' || current_setting('app.business_id', true) || ':' || ${input.opportunityId}::text, 0))) AS l`;
+  await lockOpportunitySets(db, [input.opportunityId]);
   const opportunity = await linkableOpportunity(db, input.opportunityId);
   // The customer is copied from the opportunity, so the Projects rule applies: linking a customer needs customers:read.
   if (opportunity.customerId && !viewer.canReadCustomers) throw new ForbiddenError();
@@ -114,7 +128,7 @@ export async function projectFromOpportunity(
 
 /**
  * §6.3 Create project from an accepted quote (W1-D2). Lock order (P4): key lock → quote FOR NO KEY UPDATE →
- * project insert (the trigger re-takes the quote FOR SHARE, compatible with our own lock; FK KEY SHARE on
+ * the quote's opportunity project-set lock → project insert (the trigger re-takes the quote FOR SHARE, compatible with our own lock; FK KEY SHARE on
  * quote, customer, opportunity). A concurrent void waits for us or we see its VOID; a second create for the
  * same quote waits and then sees ours (409 quote_has_project).
  */
@@ -129,6 +143,8 @@ export async function projectFromQuote(
   const quote = await lockQuote(db, input.quoteId, 'update');
   if (quote.status !== 'ACCEPTED') throw new StateConflictError('quote_not_accepted');
   if (quote.project_id !== null || await quoteIsSource(db, quote.id)) throw new StateConflictError('quote_has_project');
+  // The new project joins the quote's opportunity's project set (D-WF1-15).
+  await lockOpportunitySets(db, [quote.opportunity_id]);
 
   let name = input.name;
   if (!name) {
@@ -149,14 +165,21 @@ export async function projectFromQuote(
 /**
  * §6.4 link-opportunity (D-WF1-07): set, change or clear. Same value again is a no-op (200, no version bump,
  * no audit). Locked while the source quote fixes the opportunity (409 opportunity_set_by_quote). Lock order
- * (P6): project row FOR NO KEY UPDATE by the conditional update; the opportunity is not locked (FK KEY SHARE).
+ * (P6): opportunity project-set locks (old and new, id order) → project row FOR NO KEY UPDATE by the conditional
+ * update; the opportunity row itself is not locked (FK KEY SHARE).
  */
 export async function linkProjectOpportunity(
   db: AppTenantDb, viewer: Viewer, actorUserId: string, projectId: string, input: LinkProjectOpportunityRequest,
 ) {
+  const seen = await projectLinks(db, projectId);
+  if (seen.archived) throw new StateConflictError('archived');
+  if (seen.sourceOpportunityId === input.opportunityId) return getProject(db, viewer, projectId);
+  if (seen.version !== input.version) throw new StateConflictError('stale');
+  // The project leaves one opportunity's project set and joins another's: lock both (D-WF1-15), then re-read.
+  // Any change to the link since the first read bumped the version, so a moved link is 409 stale.
+  await lockOpportunitySets(db, [seen.sourceOpportunityId, input.opportunityId]);
   const project = await projectLinks(db, projectId);
   if (project.archived) throw new StateConflictError('archived');
-  if (project.sourceOpportunityId === input.opportunityId) return getProject(db, viewer, projectId);
   if (project.version !== input.version) throw new StateConflictError('stale');
   if (project.sourceQuoteId !== null) {
     // The quote's opportunity is frozen after issue (finance_guard_document), so this read needs no lock.
@@ -176,6 +199,8 @@ export async function linkProjectOpportunity(
  * §6.4 link-quote (D-WF1-08): associate an ACCEPTED quote of the same customer once. The same quote again is a
  * no-op. Lock order (P3): quote FOR SHARE (a concurrent void waits, or we see its VOID) → project conditional
  * update (FOR UPDATE, a unique-key column changes) → the trigger re-takes the quote lock and re-checks (§5.4).
+ * When it sets the project's opportunity from the quote, the opportunity project-set lock is taken between the
+ * quote and the project.
  */
 export async function linkProjectQuote(db: AppTenantDb, viewer: Viewer, actorUserId: string, projectId: string, input: LinkProjectQuoteRequest) {
   const quote = await lockQuote(db, input.quoteId, 'share');
@@ -194,5 +219,10 @@ export async function linkProjectQuote(db: AppTenantDb, viewer: Viewer, actorUse
     throw new StateConflictError('opportunity_mismatch');
   }
   if (project.version !== input.version) throw new StateConflictError('stale');
+  if (quote.opportunity_id !== null && project.sourceOpportunityId === null) {
+    // The project joins the quote's opportunity's project set (D-WF1-15). The quote's opportunity is frozen after
+    // issue, and a concurrent link of this project bumps its version, which the conditional update then refuses.
+    await lockOpportunitySets(db, [quote.opportunity_id]);
+  }
   return sourceQuoteKey(setProjectQuote(db, viewer, actorUserId, project, input.version, quote.id, quote.opportunity_id));
 }

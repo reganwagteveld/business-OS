@@ -759,6 +759,91 @@ describe('concurrency, deterministic two-session (§6.10, gate G-2, T-34, T-36..
     expect(await count('projects WHERE source_quote_id = $1', [q.id])).toBe(1);
   });
 
+  it('create-from-opportunity vs link, unlink, link-quote and from-quote: every path that changes the count holds the opportunity lock (audit of #169)', async () => {
+    // Each case: the barrier holds a row the changing path needs AFTER it took the opportunity lock, so that path
+    // holds the lock while it waits; from-opportunity then queues on the lock. Without the lock in the changing
+    // path, from-opportunity would not wait and would create with a stale count.
+    const run = async (hold: { sql: string; params: unknown[] }, change: () => Promise<R>, o: string, seenCount: number) => {
+      const gate = await barrier();
+      await gate.q(hold.sql, hold.params);
+      const changing = change();
+      await waitUntilBlocked(admin, gate.pid);
+      const creating = own.fromOpportunity({ opportunityId: o, existingProjectCount: seenCount });
+      await waitUntilBlocked(admin, gate.pid, { count: 2 }); // create waits on the change, which waits on the barrier
+      await gate.rollback();
+      return Promise.all([changing, creating]);
+    };
+    const c = await customer();
+    // Link an existing project to o while a create saw 0.
+    {
+      const o = await opportunity(c);
+      const p = await project(c);
+      const [linked, created] = await run({ sql: 'SELECT id FROM projects WHERE id = $1 FOR UPDATE', params: [p.id] },
+        () => own.linkOpportunity(p.id, { version: 1, opportunityId: o }), o, 0);
+      expect(linked.status).toBe(200);
+      expect(created).toEqual({ status: 409, body: { error: 'opportunity_projects_changed' } });
+      expect(await count('projects WHERE source_opportunity_id = $1', [o])).toBe(1);
+    }
+    // Unlink (clear) while a create saw 1: the count drops to 0, so the create is refused, not silently accepted.
+    {
+      const o = await opportunity(c);
+      const p = await project(c);
+      expect((await own.linkOpportunity(p.id, { version: 1, opportunityId: o })).status).toBe(200);
+      const [cleared, created] = await run({ sql: 'SELECT id FROM projects WHERE id = $1 FOR UPDATE', params: [p.id] },
+        () => own.linkOpportunity(p.id, { version: 2, opportunityId: null }), o, 1);
+      expect(cleared.status).toBe(200);
+      expect(created).toEqual({ status: 409, body: { error: 'opportunity_projects_changed' } });
+    }
+    // Move a project from o1 to o2: both sets change (both locked, in id order).
+    {
+      const o1 = await opportunity(c);
+      const o2 = await opportunity(c);
+      const p = await project(c);
+      expect((await own.linkOpportunity(p.id, { version: 1, opportunityId: o1 })).status).toBe(200);
+      const [moved, created] = await run({ sql: 'SELECT id FROM projects WHERE id = $1 FOR UPDATE', params: [p.id] },
+        () => own.linkOpportunity(p.id, { version: 2, opportunityId: o2 }), o1, 1);
+      expect(moved.status).toBe(200);
+      expect(created).toEqual({ status: 409, body: { error: 'opportunity_projects_changed' } });
+      expect(await count('projects WHERE source_opportunity_id = $1', [o2])).toBe(1);
+    }
+    // link-quote that sets the project's opportunity from the quote.
+    {
+      const o = await opportunity(c);
+      const q = await acceptedQuote(c, { opportunityId: o });
+      const p = await project(c);
+      const [linked, created] = await run({ sql: 'SELECT id FROM projects WHERE id = $1 FOR UPDATE', params: [p.id] },
+        () => own.linkQuote(p.id, { version: 1, quoteId: q.id }), o, 0);
+      expect(linked).toMatchObject({ status: 200, body: { project: { sourceOpportunityId: o } } });
+      expect(created).toEqual({ status: 409, body: { error: 'opportunity_projects_changed' } });
+    }
+    // from-quote whose quote carries the opportunity (it waits on the customer row FK after taking the lock).
+    {
+      const o = await opportunity(c);
+      const q = await acceptedQuote(c, { opportunityId: o });
+      const [fromQuote, created] = await run({ sql: 'SELECT id FROM customers WHERE id = $1 FOR UPDATE', params: [c] },
+        () => own.fromQuote({ quoteId: q.id }), o, 0);
+      expect(fromQuote.status).toBe(201);
+      expect(created).toEqual({ status: 409, body: { error: 'opportunity_projects_changed' } });
+      expect(await count('projects WHERE source_opportunity_id = $1', [o])).toBe(1);
+    }
+  });
+
+  it('a link that moved while link-opportunity waited for the opportunity lock is 409 stale (re-read under the lock)', async () => {
+    const c = await customer();
+    const o1 = await opportunity(c);
+    const o2 = await opportunity(c);
+    const p = await project(c);
+    const gate = await barrier();
+    await gate.q(`SELECT pg_advisory_xact_lock(hashtextextended('workflows.opportunity_projects:' || current_setting('app.business_id', true) || ':' || $1::text, 0))`, [o1]);
+    const first = own.linkOpportunity(p.id, { version: 1, opportunityId: o1 });
+    await waitUntilBlocked(admin, gate.pid);
+    // Meanwhile the project is linked to o2 directly (as a concurrent request that committed would have).
+    await admin.query('UPDATE projects SET source_opportunity_id = $2, version = version + 1 WHERE id = $1', [p.id, o2]);
+    await gate.rollback();
+    expect(await first).toEqual({ status: 409, body: { error: 'stale' } });
+    expect((await projectRow(p.id)).source_opportunity_id).toBe(o2);
+  });
+
   it('lock order matters: a writer that takes the project before the quote deadlocks with one that takes the quote first (harness, T-36)', async () => {
     const c = await customer();
     const q = await acceptedQuote(c);
