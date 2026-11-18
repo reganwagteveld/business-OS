@@ -13,7 +13,7 @@ import { betaSessionAdmitted, myMemberships, TenantScopeError, TransactionStartT
 import { getEnv } from '@/core/config/env';
 import { apiHeaders } from '@/core/http';
 import {
-  isUniqueViolation, RateLimitedError, RecordNotFoundError, RuleViolationError, SearchBusyError, SearchTimeoutError, ServiceFailureError, sqlState, StateConflictError,
+  isUniqueViolation, RateLimitedError, RecordNotFoundError, RuleViolationError, SearchBusyError, SessionEndedError, SearchTimeoutError, ServiceFailureError, sqlState, StateConflictError,
 } from '@/core/http/errors';
 
 type Params = Promise<Record<string, string | string[] | undefined>>;
@@ -99,6 +99,8 @@ export const isUuid = (value: unknown): value is string => typeof value === 'str
 
 /** Maps known failures to generic responses; anything unexpected is a 500 with no detail. */
 function errorResponse(request: Request, error: unknown): Response {
+  // The session ended between authentication and the unit of work (account routes re-check it under lock).
+  if (error instanceof SessionEndedError) return fail(request, 401, 'unauthenticated');
   if (error instanceof ForbiddenError || error instanceof TenantScopeError) return fail(request, 403, 'forbidden');
   if (error instanceof NotFoundError || error instanceof RecordNotFoundError) return fail(request, 404, 'not_found');
   if (error instanceof StateConflictError) return fail(request, 409, error.code);
@@ -184,15 +186,19 @@ async function authenticate(request: Request, invitationRedemption = false): Pro
 /** Signed-in routes that do not belong to one business (list/create businesses, accept invitation). */
 export function publicRoute<S extends z.ZodType | undefined, T>(
   opts: { input?: S; response: z.ZodType<T>; invitationRedemption?: boolean },
-  handler: (args: { request: Request; user: CurrentUser; sessionToken: string; input: S extends z.ZodType ? z.infer<S> : undefined }) => Promise<Result<T>>,
+  handler: (args: {
+    request: Request; user: CurrentUser; sessionToken: string; input: S extends z.ZodType ? z.infer<S> : undefined; params: Record<string, string>;
+  }) => Promise<Result<T>>,
 ) {
-  return async (request: Request): Promise<Response> => {
+  return async (request: Request, context?: RouteContext): Promise<Response> => {
     try {
       const auth = await authenticate(request, opts.invitationRedemption === true);
       if (auth instanceof Response) return auth;
       const input = await readInput(request, opts.input);
       if (!input.ok) return fail(request, 400, 'invalid_input');
-      const result = await handler({ request, ...auth, input: input.data as never });
+      const raw = context ? await context.params : {};
+      const params = Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => typeof e[1] === 'string'));
+      const result = await handler({ request, ...auth, input: input.data as never, params });
       await result.afterCommit?.();
       return json(request, result.status ?? 200, opts.response.parse(result.body));
     } catch (error) {
