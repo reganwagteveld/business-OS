@@ -6,7 +6,7 @@ import { actionClass, secondaryClass } from '../../shell/frame';
 import { useDialog } from '../dialog';
 import { aboveShell } from '../drafts';
 import { ZoneFrame } from '../zone-frame';
-import { CustomerDetail, type FinanceLink, type ProjectsLink } from './customer-detail';
+import { CustomerDetail, type FinanceLink, type ProjectsLink, type SalesLink } from './customer-detail';
 import { CustomerForm } from './customer-form';
 import { ContactEntry, type ContactFocus } from './contact-entry';
 import { Directory, type DirectoryQuery } from './directory';
@@ -33,12 +33,16 @@ export function customerTarget(target: string | undefined): { customerId?: strin
  * so switching business discards every bit of this state; nothing here is persisted or cached
  * outside the component, and every request names the business only through the URL.
  */
-export function CustomerZone({ client, context, userLabel, projects, finance, initialCustomerId, initialContactId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function CustomerZone({ client, context, userLabel, projects, finance, sales, userId, initialCustomerId, initialContactId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: CustomersClient; context: BusinessContext; userLabel: string; onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
   /** Linked projects on each customer's page (passed only to people who may read projects). */
   projects?: ProjectsLink;
   /** The finance panel on each customer's page (passed only to people who may read finance). */
   finance?: FinanceLink;
+  /** The opportunities panel on each customer's page (passed only to people who may read sales). */
+  sales?: SalesLink;
+  /** The signed-in user: lets authors edit or remove their own timeline entries. */
+  userId?: string;
   /** Opens straight into one customer (for example from a project's page). */
   initialCustomerId?: string;
   /**
@@ -109,7 +113,7 @@ export function CustomerZone({ client, context, userLabel, projects, finance, in
         ) : null}
         {view.name === 'detail' ? (
           <CustomerDetail
-            client={client} slug={slug} id={view.id} contact={view.contact} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages} projects={projects} finance={finance}
+            client={client} slug={slug} id={view.id} contact={view.contact} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages} projects={projects} finance={finance} sales={sales} userId={userId}
             onBack={() => leave(() => go({ name: 'list' }))} onEdit={(customer) => go({ name: 'edit', customer })}
             onDraftChange={markDraft} confirmDiscard={leave} onSessionEnded={onSessionEnded}
           />

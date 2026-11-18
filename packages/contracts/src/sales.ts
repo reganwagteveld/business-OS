@@ -32,6 +32,11 @@ export const Pipeline = z
   .object({
     id: Uuid, name: z.string(), isDefault: z.boolean(), position: z.number().int(),
     createdAt: z.string().datetime(), updatedAt: z.string().datetime(), archivedAt: z.string().datetime().nullable(),
+    /**
+     * S-CFG (docs/sales-pipeline-configuration-scfg.md §6.1): the configuration version. Every configuration
+     * write names the version it was based on; a change by someone else since then is refused (409 stale).
+     */
+    configVersion: z.number().int().min(1),
   })
   .strict();
 export type Pipeline = z.infer<typeof Pipeline>;
@@ -59,6 +64,53 @@ export const PipelineResponse = z.object({ pipeline: Pipeline, stages: z.array(S
 
 export const ListStagesQuery = z.object({ pipelineId: Uuid.optional() }).strict();
 export const ListStagesResponse = z.object({ pipeline: Pipeline, stages: z.array(Stage) }).strict();
+
+// ---- S-CFG-1A: pipeline and stage configuration (docs/sales-pipeline-configuration-scfg.md §6.1) -------------
+// Reads need sales:read; every write needs sales:manage (OWNER, ADMIN) and names the pipeline's configVersion.
+// Errors: 409 stale (configVersion or stage set changed), name_taken, stage_limit, last_stage,
+// has_open_opportunities, archived, not_archived, busy (lock or time limit; nothing was changed);
+// 400 invalid_stage.
+
+/** At most 20 active stages per pipeline (D-SCFG-6). */
+export const MAX_ACTIVE_STAGES = 20;
+/** At most 10 active pipelines per business (D-SCFG-6). */
+export const MAX_ACTIVE_PIPELINES = 10;
+
+const StageName = z.string().trim().min(1, 'A stage name is required').max(60);
+const ConfigVersion = z.number().int().min(1);
+
+/** A stage as the configuration page shows it: active and archived, with its open-opportunity count. */
+export const ConfiguredStage = Stage.extend({ openCount: z.number().int().min(0) }).strict();
+export type ConfiguredStage = z.infer<typeof ConfiguredStage>;
+/** The pipeline and all its stages: active ones in board order, then archived ones. */
+export const PipelineConfigResponse = z.object({ pipeline: Pipeline, stages: z.array(ConfiguredStage) }).strict();
+export type PipelineConfigResponse = z.infer<typeof PipelineConfigResponse>;
+/** Archive answer: the configuration plus how many open opportunities were moved to the target stage. */
+export const ArchiveStageResponse = PipelineConfigResponse.extend({ moved: z.number().int().min(0) }).strict();
+
+export const UpdatePipelineRequest = z.object({ configVersion: ConfigVersion, name: z.string().trim().min(1, 'A name is required').max(100) }).strict();
+export const CreateStageRequest = z
+  .object({
+    configVersion: ConfigVersion,
+    name: StageName,
+    /** A hint for new opportunities only; never applied to an opportunity by the server (D-SCFG-4). */
+    defaultProbability: Probability.nullable().optional(),
+    /** Insert after this active stage; at the end when omitted. */
+    afterStageId: Uuid.optional(),
+  })
+  .strict();
+export const UpdateStageRequest = z
+  .object({ configVersion: ConfigVersion, name: StageName.optional(), defaultProbability: Probability.nullable().optional() })
+  .strict()
+  .refine((v) => v.name !== undefined || v.defaultProbability !== undefined, 'Nothing to update');
+/** The complete new order of the pipeline's active stages. */
+export const ReorderStagesRequest = z
+  .object({ configVersion: ConfigVersion, stageIds: z.array(Uuid).min(1).max(MAX_ACTIVE_STAGES) })
+  .strict()
+  .refine((v) => new Set(v.stageIds.map((id) => id.toLowerCase())).size === v.stageIds.length, 'A stage is listed twice');
+/** Archiving a stage that holds open opportunities requires a target stage of the same pipeline (D-SCFG-2). */
+export const ArchiveStageRequest = z.object({ configVersion: ConfigVersion, moveOpenTo: Uuid.optional() }).strict();
+export const RestoreStageRequest = z.object({ configVersion: ConfigVersion }).strict();
 
 // ---- opportunities -----------------------------------------------------------------------------
 
@@ -127,6 +179,11 @@ export const UpdateOpportunityRequest = z
 export const LoseOpportunityRequest = z.object({ lossReason: optionalText(500) }).strict();
 /** Reopening returns a won or lost opportunity to an open stage (its last stage unless one is given). */
 export const ReopenOpportunityRequest = z.object({ stageId: Uuid.optional() }).strict();
+/**
+ * Restore (S-CFG-1A §6.2). Optional body: an archived OPEN opportunity whose stage was archived meanwhile names an
+ * active stage of its own pipeline and is restored into it. In an archived pipeline it cannot be restored (409).
+ */
+export const RestoreOpportunityRequest = z.object({ stageId: Uuid.optional() }).strict().optional();
 
 const Limit = z.coerce.number().int().min(1).max(100).default(25);
 const Cursor = z.string().max(500).regex(/^[A-Za-z0-9_-]+$/).optional();

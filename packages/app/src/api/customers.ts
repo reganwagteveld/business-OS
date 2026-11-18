@@ -1,5 +1,5 @@
 import {
-  ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse, endpointPath, endpoints,
+  ActivityResponse, UpdateNoteRequest, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse, endpointPath, endpoints,
   ListActivitiesResponse, ListContactsResponse, ListCustomersResponse, UpdateContactRequest,
   MembersResponse, UpdateCustomerRequest, ListConversationsResponse, ListMessagesResponse, type Conversation, type Message, type Activity, type Contact, type Customer, type CustomerSummary, Member as MemberSchema,
 } from '@business-os/contracts';
@@ -39,6 +39,10 @@ export interface CustomersClient {
   restoreContact(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Contact>>;
   /** Logs a note, call, meeting or email. The server attributes it to the signed-in person. */
   createActivity(slug: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Activity>>;
+  /** The author edits a note's subject or text (the server refuses anyone else and any other kind of entry). */
+  updateNote(slug: string, id: string, input: unknown, signal?: AbortSignal): Promise<Outcome<Activity>>;
+  /** The author removes their own logged entry (soft delete: it leaves the timeline). */
+  removeActivity(slug: string, id: string, signal?: AbortSignal): Promise<Outcome<Activity>>;
   /** One customer's timeline, newest first; `types` narrows it to some activity types. */
   activities(slug: string, customerId: string, cursor?: string, signal?: AbortSignal, types?: string[]): Promise<Outcome<ActivityPage>>;
   /** Conversations recorded for one customer (history from outside Business OS), newest first. */
@@ -153,6 +157,14 @@ export function createCustomersClient(baseUrl: string, transport: AuthTransport,
       const checked = CreateActivityRequest.safeParse(input);
       if (!checked.success) return invalid(checked.error);
       return settle(await http.request('POST', path(endpoints.createActivity.path, { slug }), checked.data, signal), ActivityResponse, (d) => d.activity);
+    },
+    async updateNote(slug, id, input, signal) {
+      const checked = UpdateNoteRequest.safeParse(input);
+      if (!checked.success) return invalid(checked.error);
+      return settle(await http.request('PATCH', path(endpoints.updateNote.path, { slug, activityId: id }), checked.data, signal), ActivityResponse, (d) => d.activity);
+    },
+    async removeActivity(slug, id, signal) {
+      return settle(await http.request('POST', path(endpoints.removeActivity.path, { slug, activityId: id }), undefined, signal), ActivityResponse, (d) => d.activity);
     },
     async activities(slug, customerId, cursor, signal, types) {
       const raw = await http.request('GET', path(endpoints.listActivities.path, { slug }) + qs({ customerId, cursor, limit: 25, types: types?.join(',') }), undefined, signal);

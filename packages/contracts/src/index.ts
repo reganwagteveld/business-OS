@@ -26,6 +26,7 @@ import {
 export { HealthResponse } from './health.ts';
 export * from './auth.ts';
 export * from './tenancy.ts';
+export * from './audit.ts';
 export * from './customers.ts';
 export * from './sales.ts';
 export * from './projects.ts';
@@ -94,6 +95,9 @@ import {
   CreateOpportunityRequest, CreatePipelineRequest, ListOpportunitiesQuery, ListOpportunitiesResponse, ListPipelinesResponse, ListStagesQuery,
   ListOutcomesResponse, ListStagesResponse, LoseOpportunityRequest, OpportunityResponse, PipelineResponse, ReopenOpportunityRequest, SalesSummaryResponse,
   UpdateOpportunityRequest,
+  // S-CFG-1A: pipeline and stage configuration.
+  ArchiveStageRequest, ArchiveStageResponse, CreateStageRequest, PipelineConfigResponse, ReorderStagesRequest, RestoreOpportunityRequest,
+  RestoreStageRequest, UpdatePipelineRequest, UpdateStageRequest,
 } from './sales.ts';
 import {
   ActivityResponse, ContactResponse, CreateActivityRequest, CreateContactRequest, CreateCustomerRequest, CustomerResponse, CustomerSummaryResponse,
@@ -122,6 +126,7 @@ import {
   CreateSavedViewRequest, DeleteSavedViewResponse, ListSavedViewsQuery, ListSavedViewsResponse, ReportingCatalogResponse, ReportingDetailsRequest,
   ReportingDetailsResponse, ReportingQueryRequest, ReportingQueryResponse, RunSavedViewResponse, SavedViewResponse, UpdateSavedViewRequest,
 } from './reporting.ts';
+import { ListAuditEventsQuery, ListAuditEventsResponse } from './audit.ts';
 import { SearchRequest, SearchResolveRequest, SearchResolveResponse, SearchResponse } from './search.ts';
 
 export const API_VERSION = 'v1' as const;
@@ -138,6 +143,8 @@ export const endpoints = {
   getBusinessProfile: { method: 'GET', path: '/api/v1/b/:slug/business', response: BusinessProfileResponse },
   updateBusinessProfile: { method: 'PATCH', path: '/api/v1/b/:slug/business', request: UpdateBusinessProfileRequest, response: BusinessProfileResponse },
   listMembers: { method: 'GET', path: '/api/v1/b/:slug/members', response: MembersResponse },
+  /** Recorded changes, newest first (audit:read: OWNER and ADMIN). Follow nextCursor; each request covers at most 92 days. */
+  listAuditEvents: { method: 'GET', path: '/api/v1/b/:slug/audit-events', query: ListAuditEventsQuery, response: ListAuditEventsResponse },
   /** Role change ({ role }) or, A2-B, suspend/reactivate ({ status }). */
   changeMemberRole: { method: 'PATCH', path: '/api/v1/b/:slug/members/:membershipId', request: UpdateMemberRequest, response: MemberResponse },
   removeMember: { method: 'DELETE', path: '/api/v1/b/:slug/members/:membershipId', response: OkResponse },
@@ -258,6 +265,14 @@ export const endpoints = {
   /** Idempotent: creates the default pipeline and standard stages if missing (201), else returns them (200). */
   initialiseDefaultPipeline: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines/default', response: PipelineResponse },
   listStages: { method: 'GET', path: '/api/v1/b/:slug/sales/stages', query: ListStagesQuery, response: ListStagesResponse },
+  // S-CFG-1A (docs/sales-pipeline-configuration-scfg.md §6.1): reads sales:read, writes sales:manage.
+  getPipelineConfig: { method: 'GET', path: '/api/v1/b/:slug/sales/pipelines/:pipelineId', response: PipelineConfigResponse },
+  updatePipeline: { method: 'PATCH', path: '/api/v1/b/:slug/sales/pipelines/:pipelineId', request: UpdatePipelineRequest, response: PipelineConfigResponse },
+  createStage: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines/:pipelineId/stages', request: CreateStageRequest, response: PipelineConfigResponse },
+  updateStage: { method: 'PATCH', path: '/api/v1/b/:slug/sales/pipelines/:pipelineId/stages/:stageId', request: UpdateStageRequest, response: PipelineConfigResponse },
+  reorderStages: { method: 'PUT', path: '/api/v1/b/:slug/sales/pipelines/:pipelineId/stages/order', request: ReorderStagesRequest, response: PipelineConfigResponse },
+  archiveStage: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines/:pipelineId/stages/:stageId/archive', request: ArchiveStageRequest, response: ArchiveStageResponse },
+  restoreStage: { method: 'POST', path: '/api/v1/b/:slug/sales/pipelines/:pipelineId/stages/:stageId/restore', request: RestoreStageRequest, response: PipelineConfigResponse },
   // R2 operational dashboard: the open pipeline as grouped totals (sales:read).
   salesSummary: { method: 'GET', path: '/api/v1/b/:slug/sales/summary', response: SalesSummaryResponse },
   listOpportunities: { method: 'GET', path: '/api/v1/b/:slug/sales/opportunities', query: ListOpportunitiesQuery, response: ListOpportunitiesResponse },
@@ -269,7 +284,7 @@ export const endpoints = {
   reopenOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/reopen', request: ReopenOpportunityRequest, response: OpportunityResponse },
   listOpportunityOutcomes: { method: 'GET', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/outcomes', response: ListOutcomesResponse },
   archiveOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/archive', response: OpportunityResponse },
-  restoreOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/restore', response: OpportunityResponse },
+  restoreOpportunity: { method: 'POST', path: '/api/v1/b/:slug/sales/opportunities/:opportunityId/restore', request: RestoreOpportunityRequest, response: OpportunityResponse },
   // Projects Zone (docs/projects-data-model.md)
   listProjects: { method: 'GET', path: '/api/v1/b/:slug/projects', query: ListProjectsQuery, response: ListProjectsResponse },
   createProject: { method: 'POST', path: '/api/v1/b/:slug/projects', request: CreateProjectRequest, response: ProjectResponse },
