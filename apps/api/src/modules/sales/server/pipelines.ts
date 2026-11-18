@@ -3,10 +3,10 @@ import 'server-only';
 // client adds the business id, RLS enforces it again, and composite foreign keys keep every stage
 // inside its pipeline and business.
 import { randomUUID } from 'node:crypto';
-import type { Pipeline as PipelineDto, Stage as StageDto } from '@business-os/contracts';
+import { MAX_ACTIVE_PIPELINES, type Pipeline as PipelineDto, type Stage as StageDto } from '@business-os/contracts';
 import { recordAudit } from '@/core/audit';
 import type { AppTenantDb } from '@/core/db';
-import { RecordNotFoundError, StateConflictError } from '@/core/http/errors';
+import { RecordNotFoundError, RuleViolationError, StateConflictError } from '@/core/http/errors';
 
 /** Spaced positions, so a later drag-and-drop reorder can move one stage without renumbering the rest. */
 export const POSITION_STEP = 1000;
@@ -19,14 +19,17 @@ export const DEFAULT_STAGES: ReadonlyArray<{ name: string; defaultProbability: n
   { name: 'Negotiation', defaultProbability: 75 },
 ];
 
-type PipelineRow = { id: string; name: string; defaultSlot: string | null; position: number; createdAt: Date; updatedAt: Date; archivedAt: Date | null };
-type StageRow = { id: string; pipelineId: string; name: string; position: number; defaultProbability: number | null; archivedAt: Date | null };
-const pipelineSelect = { id: true, name: true, defaultSlot: true, position: true, createdAt: true, updatedAt: true, archivedAt: true } as const;
+export type PipelineRow = {
+  id: string; name: string; defaultSlot: string | null; position: number; createdAt: Date; updatedAt: Date; archivedAt: Date | null; configVersion: number;
+};
+export type StageRow = { id: string; pipelineId: string; name: string; position: number; defaultProbability: number | null; archivedAt: Date | null };
+export const pipelineSelect = { id: true, name: true, defaultSlot: true, position: true, createdAt: true, updatedAt: true, archivedAt: true, configVersion: true } as const;
 export const stageSelect = { id: true, pipelineId: true, name: true, position: true, defaultProbability: true, archivedAt: true } as const;
 
 export const toPipeline = (r: PipelineRow): PipelineDto => ({
   id: r.id, name: r.name, isDefault: r.defaultSlot !== null, position: r.position,
   createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(), archivedAt: r.archivedAt?.toISOString() ?? null,
+  configVersion: r.configVersion,
 });
 export const toStage = (r: StageRow): StageDto => ({ ...r, archivedAt: r.archivedAt?.toISOString() ?? null });
 
@@ -70,15 +73,42 @@ export async function listPipelines(db: AppTenantDb) {
   return { pipelines: rows.map(toPipeline) };
 }
 
+/** Case- and surrounding-whitespace-insensitive name key, as the partial unique indexes U1/U2 compare names (S-CFG §4.3). */
+export const nameKey = (name: string) => name.trim().toLowerCase();
+
+/**
+ * S-CFG L0 (docs/sales-pipeline-configuration-scfg.md §5.2): business-wide pipeline operations (create
+ * now; restore, make default and archive in S-CFG-2) are serialized, so the active-name and 10-pipeline
+ * checks below count exactly. One statement per lock, ahead of every other lock this request takes.
+ */
+async function lockBusinessPipelines(db: AppTenantDb) {
+  await db.$queryRaw<{ locked: number }[]>`
+    SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(
+      'sales.pipelines:' || nullif(current_setting('app.business_id', true), ''), 0))) AS l`;
+}
+
+/**
+ * Creates another pipeline (API only until S-CFG-2 has a UI). Under L0: the name must not match an active
+ * pipeline (409 name_taken, U2 as backstop), at most 10 active pipelines (409 pipeline_limit), and stage
+ * names in the request must be distinct (400 duplicate_stage_name, U1 as backstop).
+ */
 export async function createPipeline(db: AppTenantDb, actorUserId: string, input: { name: string; stages?: { name: string; defaultProbability?: number | null }[] }) {
+  const requested = input.stages ?? DEFAULT_STAGES;
+  if (new Set(requested.map((st) => nameKey(st.name))).size !== requested.length) {
+    throw new RuleViolationError('duplicate_stage_name', 'Each stage in a pipeline needs a different name.');
+  }
+  await lockBusinessPipelines(db);
   await ensureDefaultPipeline(db, actorUserId);
+  const active = (await db.salesPipeline.findMany({ where: { archivedAt: null }, select: { name: true } })) as { name: string }[];
+  if (active.some((p) => nameKey(p.name) === nameKey(input.name))) throw new StateConflictError('name_taken');
+  if (active.length >= MAX_ACTIVE_PIPELINES) throw new StateConflictError('pipeline_limit');
   const last = await db.salesPipeline.findFirst({ select: { position: true }, orderBy: [{ position: 'desc' }] });
   const id = randomUUID();
   const row = (await db.salesPipeline.create({
     data: { id, name: input.name, position: (last?.position ?? 0) + POSITION_STEP, createdById: actorUserId, updatedById: actorUserId } as never,
     select: pipelineSelect,
   })) as PipelineRow;
-  const stages = stageRows(id, input.stages ?? DEFAULT_STAGES);
+  const stages = stageRows(id, requested);
   await db.salesStage.createMany({ data: stages as never });
   await recordAudit(db, actorUserId, 'sales.pipeline.created', { type: 'sales_pipeline', id }, { stages: String(stages.length) });
   return { pipeline: toPipeline(row), stages: stages.map((s) => toStage({ ...s, archivedAt: null })) };
@@ -97,12 +127,13 @@ export async function activeStages(db: AppTenantDb, pipelineId: string): Promise
   return (await db.salesStage.findMany({ where: { pipelineId, archivedAt: null }, select: stageSelect, orderBy: [{ position: 'asc' }, { id: 'asc' }] })) as StageRow[];
 }
 
-/** Read only. With no pipeline named, the default; 404 until it has been initialised. */
+/** Read only. With no pipeline named, the default; 404 until it has been initialised. An archived pipeline is refused (F6). */
 export async function listStages(db: AppTenantDb, query: { pipelineId?: string }) {
   const pipeline = (await db.salesPipeline.findFirst({
     where: query.pipelineId ? { id: query.pipelineId } : { defaultSlot: 'default' },
     select: pipelineSelect,
   })) as PipelineRow | null;
   if (!pipeline) throw new RecordNotFoundError();
+  if (pipeline.archivedAt) throw new StateConflictError('archived_reference');
   return { pipeline: toPipeline(pipeline), stages: (await activeStages(db, pipeline.id)).map(toStage) };
 }

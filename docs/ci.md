@@ -54,6 +54,40 @@ Always `full`: pushes to `release/**`, `v*` tags, manual runs and the weekly sch
 
 Change the rules only together with `classify-changes.test.sh` (and `changed-files.test.sh` for diff handling). The self-tests run in "Detect changes" before the classifier is used.
 
+### macOS leg on pull requests (CIQ-A4)
+
+GitHub's hosted macOS (arm64) runners are often unavailable: of 175 macOS jobs from 16 to 17 November 2026, 18 were never given a runner and GitHub cancelled them after 15 minutes ("The job was not acquired by Runner", with a capacity notice), even when no other macOS job of ours was running. When a runner is found, the macOS job queues for a median of 0.1 min and runs in 2.7 min. Two changes, approved by Regan on 2026-11-17 with the safeguards below:
+
+**1. macOS only where it can matter.** When the desktop matrix runs on a **pull request**, `classify-changes.sh` also prints `macos=false` if every changed path is on a second allow-list of paths that cannot change what the macOS leg builds. In that case the matrix runs Linux (compile check) and Windows only.
+
+The allow-list covers:
+- documentation (`docs/**`, `*.md` outside `apps/desktop/`) and `ops/**` data;
+- `apps/api/**` and `apps/web/**`;
+- `scripts/vercel/**`, `scripts/merge-queue/**` and root `tests/**/*.ts`;
+- `.ts`, `.tsx`, `.css`, `.json`, `.html`, `.svg`, `.png`, `.woff2` and `.txt` files in `packages/{app,ui,contracts}/**`. The shared frontend is bundled identically on every OS and is still built by the Linux and Windows legs and by Build verification.
+
+macOS stays in the matrix (fail closed) for:
+- anything in `apps/desktop/**`, Rust, `Cargo.*` and `rust-toolchain*`;
+- every `package.json`, lockfile, `pnpm-workspace.yaml`, `*.config.*`, `tsconfig*` and hidden file;
+- `.github/**` (CI and release tooling), any other path and any unknown extension;
+- an empty or unsafe path list.
+
+Pushes to `main`, release branches, tags, nightly, manual and release runs always include macOS. Only the literal value `false` removes macOS from the matrix; anything else keeps all three platforms. The gate fails if macOS was left out on anything other than a pull request with a successful classifier. Replaying 48 recent PRs: 26 ran the matrix, and 18 of those would leave macOS out.
+
+**2. One automatic retry of a runner that was never allocated** (`.github/workflows/ci-runner-retry.yml`, decision in `runner-retry-decide.sh`, self-tested by `runner-retry-decide.test.sh`). When a CI run on a pull request or push fails, the workflow re-runs its failed jobs once, but only if every failed job other than `CI gate` is a confirmed allocation failure. A confirmed allocation failure means all of these hold:
+- the job finished as `cancelled`;
+- no runner was assigned and no step ran;
+- GitHub's failure annotation says "not acquired by Runner".
+
+Safeguards:
+- A test failure, timeout, start-up failure or ordinary cancellation is never retried.
+- Only attempt 1 is retried. The attempt is re-read just before the request, and a concurrency group per run prevents duplicate requests.
+- If attempt 2 fails the same way, the workflow reports an **infrastructure failure** and does nothing else, so `CI gate` stays red.
+- The retry never marks anything successful: the re-run repeats the failed jobs and `CI gate`, which still requires every applicable job to succeed.
+- The workflow runs from the default branch and never checks out pull request code.
+
+Paid larger macOS runners and self-hosted runners are not used (owner decision 2026-11-17: measure these two changes first).
+
 ## Nightly validation (CI-2B)
 
 `.github/workflows/nightly.yml` runs daily at 02:00 AWST (18:00 UTC) and on demand (Actions → Nightly → Run workflow). It is not a required check and does not block pull requests. An unresolved failure blocks release approval (CI-2C, separate PR).

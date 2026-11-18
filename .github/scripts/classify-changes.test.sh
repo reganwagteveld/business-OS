@@ -115,4 +115,54 @@ check "double slash"                    $PR   true/full docs//a.md
 check "empty list fails closed"         $PR   true/full
 check "empty path fails closed"         $PR   true/full ""
 
+# 8. CIQ-A4: the macOS leg. Expected "desktop/macos".
+mac() {
+  local name="$1" event="$2" expected="$3"; shift 3
+  local out actual
+  out="$( (if [ "$#" -gt 0 ]; then printf '%s\0' "$@"; fi) | EVENT_NAME="$event" "$here/classify-changes.sh")"
+  actual="$(echo "$out" | sed -n 's/^desktop=//p')/$(echo "$out" | sed -n 's/^macos=//p')"
+  if [ "$actual" = "$expected" ]; then
+    echo "ok   macOS: $name ($actual)"
+  else
+    echo "FAIL macOS: $name: expected $expected, got $actual" >&2
+    fail=1
+  fi
+}
+mac "shared app source on a PR"          $PR  true/false packages/app/src/projects/board.tsx
+mac "shared UI source and test"          $PR  true/false packages/ui/src/button.tsx packages/ui/tests/button.test.tsx
+mac "contracts schema"                   $PR  true/false packages/contracts/schema/api-v1.json
+mac "contracts source"                   $PR  true/false packages/contracts/src/index.ts
+mac "client source with docs and API"    $PR  true/false packages/app/src/a.tsx docs/ui/shot.png apps/api/src/x.ts
+mac "API config with client source"      $PR  true/false apps/api/vercel.json packages/app/src/a.tsx
+mac "ops data"                           $PR  true/false ops/neon/recovery-points.json
+mac "vercel script"                      $PR  true/false scripts/vercel/ignore-build.sh
+mac "root ops test"                      $PR  true/false tests/ops/vercel-ignore-build.test.ts
+mac "docs harness config text"           $PR  true/false docs/ui/harness/vite.config.ts.txt packages/app/src/a.tsx
+mac "package README"                     $PR  true/false packages/ui/README.md
+mac "same change pushed to main"         push true/true packages/app/src/projects/board.tsx
+mac "same change, scheduled"             schedule true/true packages/app/src/projects/board.tsx
+mac "same change, manual"                workflow_dispatch true/true packages/app/src/projects/board.tsx
+mac "desktop frontend"                   $PR  true/true apps/desktop/src/main.tsx
+mac "desktop markdown"                   $PR  true/true apps/desktop/src-tauri/NOTES.md
+mac "desktop public asset"               $PR  true/true apps/desktop/public/theme-boot.js
+mac "Rust"                               $PR  true/true apps/desktop/src-tauri/src/lib.rs
+mac "lockfile with client source"        $PR  true/true pnpm-lock.yaml packages/app/src/a.tsx
+mac "package manifest"                   $PR  true/true packages/ui/package.json
+mac "package tsconfig"                   $PR  true/true packages/ui/tsconfig.json
+mac "package vite config"                $PR  true/true packages/ui/vite.config.ts
+mac "hidden file in a package"           $PR  true/true packages/app/src/.env
+mac "unknown extension in a package"     $PR  true/true packages/app/src/native.rs
+mac "package script (mjs)"               $PR  true/true packages/ui/scripts/build.mjs
+mac "CI workflow"                        $PR  true/true .github/workflows/ci.yml packages/app/src/a.tsx
+mac "macOS bundle check script"          $PR  true/true .github/scripts/verify-macos-bundle.sh
+mac "Cargo manifest anywhere"            $PR  true/true packages/app/src/Cargo.toml
+mac "Rust toolchain"                     $PR  true/true rust-toolchain.toml
+mac "unknown script dir"                 $PR  true/true scripts/other/run.sh
+mac "unknown top-level path"             $PR  true/true mystery/file.txt
+mac "path traversal"                     $PR  true/true packages/app/../../apps/desktop/src/main.tsx
+mac "docs package manifest"              $PR  true/true docs/package.json packages/app/src/a.tsx
+mac "empty list fails closed"            $PR  true/true
+mac "docs only (no matrix at all)"       $PR  false/false docs/architecture.md
+mac "API/web only (no matrix at all)"    $PR  false/false apps/api/src/x.ts
+
 exit "$fail"
