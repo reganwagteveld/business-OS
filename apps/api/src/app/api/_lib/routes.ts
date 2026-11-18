@@ -196,7 +196,8 @@ export function publicRoute<S extends z.ZodType | undefined, T>(
       if (auth instanceof Response) return auth;
       const input = await readInput(request, opts.input);
       if (!input.ok) return fail(request, 400, 'invalid_input');
-      const raw = context ? await context.params : {};
+      // Next.js passes a context to every handler; a route without dynamic segments has no `params` in it.
+      const raw = (await context?.params) ?? {};
       const params = Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => typeof e[1] === 'string'));
       const result = await handler({ request, ...auth, input: input.data as never, params });
       await result.afterCommit?.();

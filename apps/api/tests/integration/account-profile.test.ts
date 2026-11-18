@@ -8,7 +8,8 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { UpdateProfileResponse } from '@business-os/contracts';
 import { ACCOUNT_RATE_LIMITS } from '@/modules/identity/server/account-support';
-import { account, desktopSession, identityEvents, person } from './support/account';
+import * as meRoute from '@/app/api/v1/me/route';
+import { account, BASE, desktopSession, identityEvents, ORIGIN, person } from './support/account';
 
 const admin = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
 beforeAll(() => admin.connect());
@@ -30,6 +31,14 @@ describe('PATCH /api/v1/me (display name)', () => {
     expect(events[0]).toMatchObject({ action: 'identity.profile.name_changed', business_id: null, target_type: 'user', target_id: me.id });
     expect(events[0]!.metadata).toEqual({ fields: ['name'], actorSessionId: expect.any(String) });
     expect(JSON.stringify(events[0])).not.toMatch(/Ada|Old Name|example\.com/);
+  });
+
+  it('accepts the context Next.js passes to a route without dynamic segments (no params)', async () => {
+    const me = await person(admin);
+    const call = meRoute.PATCH as unknown as (request: Request, context: unknown) => Promise<Response>;
+    const request = () => new Request(`${BASE}/api/v1/me`, { method: 'PATCH', headers: { origin: ORIGIN, cookie: me.cookie, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Via Next' }) });
+    expect((await call(request(), {})).status).toBe(200);
+    expect((await call(request(), { params: Promise.resolve(undefined) })).status).toBe(200);
   });
 
   it('works for the desktop client with its bearer token', async () => {
