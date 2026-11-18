@@ -1,12 +1,17 @@
 import type { CurrentUser } from '@business-os/contracts';
 import { cn } from '@business-os/ui';
 import { useEffect, useMemo, useRef } from 'react';
+import type { AccountClient } from '../../api/account';
 import type { SettingsClient } from '../../api/settings';
 import type { BusinessContext } from '../../api/tenancy';
 import type { ShellRoute } from '../../shell/registry';
 import { useDraftGuard } from '../drafts';
 import { ZoneFrame } from '../zone-frame';
+import { AccountDevicesPage } from './account-devices';
+import type { AccountPageEnv } from './account-env';
+import { AccountPasswordPage } from './account-password';
 import { AccountPreferences } from './account-preferences';
+import { AccountProfilePage } from './account-profile';
 import { BusinessProfilePage, type SettingsPageEnv } from './business-profile';
 import { isScope, pagesFor, resolvePage, type SettingsScope } from './pages';
 import { InvitationsPage } from './invitations';
@@ -25,8 +30,10 @@ const focusRing = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-
  * discards every bit of state. Unsaved edits are protected on every way of leaving (pages, scopes,
  * Zones, business switcher, sign out, closing the window).
  */
-export function SettingsZone({ client, user, context, scope: scopeId, page: pageId, onNavigate, onContextChanged, onLeft, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function SettingsZone({ client, account, user, context, scope: scopeId, page: pageId, onNavigate, onContextChanged, onLeft, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: SettingsClient;
+  /** Account management (A3-A): the signed-in person's own name, password and sessions. */
+  account: AccountClient;
   user: CurrentUser;
   context: BusinessContext;
   /** The shell route's child: `account` or `business`. Anything else opens the Business scope. */
@@ -70,6 +77,11 @@ export function SettingsZone({ client, user, context, scope: scopeId, page: page
     [client, slug, canManage, markDraft, onSessionEnded, membershipId, role, permissions, name, locale, timeZone, onContextChanged, onLeft],
   );
 
+  const accountEnv: AccountPageEnv = useMemo(
+    () => ({ client: account, user, markDraft, onSessionEnded, onUserChanged: onContextChanged, locale, timeZone }),
+    [account, user, markDraft, onSessionEnded, onContextChanged, locale, timeZone],
+  );
+
   return (
     <ZoneFrame zone="Settings" business={name} user={user.name || user.email} leave={guard.leave} onHome={onHome} onSwitch={onSwitch} onSignOut={onSignOut}>
       <div className="flex min-w-0 flex-col gap-6 lg:flex-row lg:gap-10">
@@ -91,6 +103,9 @@ export function SettingsZone({ client, user, context, scope: scopeId, page: page
           </ul>
         </nav>
         <div ref={content} className="min-w-0 max-w-5xl flex-1">
+          {page?.id === 'account-profile' ? <AccountProfilePage key={pageKey} env={accountEnv} /> : null}
+          {page?.id === 'password' ? <AccountPasswordPage key={pageKey} env={accountEnv} /> : null}
+          {page?.id === 'devices' ? <AccountDevicesPage key={pageKey} env={accountEnv} /> : null}
           {page?.id === 'preferences' ? <AccountPreferences key={pageKey} user={user} /> : null}
           {page?.id === 'profile' ? <BusinessProfilePage key={`${pageKey}|${slug}`} env={env} /> : null}
           {page?.id === 'regional' ? <RegionalSettingsPage key={`${pageKey}|${slug}`} env={env} /> : null}
