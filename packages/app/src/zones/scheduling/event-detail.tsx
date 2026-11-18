@@ -9,8 +9,10 @@ import { STATUS_LABEL, TYPE_LABEL } from './resource-labels';
 import { ConflictList } from './resource-picker';
 
 /** One event: when (in the calendar's zone), where, status, overlaps; edit, cancel and archive as permitted. */
-export function EventDetail({ client, slug, id, calendars, locale, canUpdate, canCancel, onEdit, onChanged, onClose, onSessionEnded }: {
+export function EventDetail({ client, slug, id, calendars, locale, canUpdate, canCancel, onOpenCustomer, onEdit, onChanged, onClose, onSessionEnded }: {
   client: SchedulingClient; slug: string; id: string; calendars: SchedulingCalendar[]; locale: string; canUpdate: boolean; canCancel: boolean;
+  /** Present only when the viewer may read Customers; opens the linked customer in its own Zone, where the API checks access again. */
+  onOpenCustomer?: (customerId: string) => void;
   onEdit: (event: SchedulingEvent) => void; onChanged: (message: string) => void; onClose: () => void; onSessionEnded: () => void;
 }) {
   const loaded = useLoad(`scheduling-event|${slug}|${id}`, (signal) => client.event(slug, id, signal));
@@ -70,7 +72,7 @@ export function EventDetail({ client, slug, id, calendars, locale, canUpdate, ca
                 </dd></>
               ) : null}
               {event.location ? <><dt className="text-muted-foreground">Location</dt><dd>{event.location}</dd></> : null}
-              {event.customer ? <><dt className="text-muted-foreground">Customer</dt><dd>{event.customer.displayName}</dd></> : null}
+              {event.customer ? <><dt className="text-muted-foreground">Customer</dt><dd>{onOpenCustomer ? <button type="button" className="text-left font-medium text-fg-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => onOpenCustomer(event.customer!.id)}>{event.customer.displayName}</button> : event.customer.displayName}</dd></> : null}
               {event.description ? <><dt className="text-muted-foreground">Notes</dt><dd className="whitespace-pre-wrap">{event.description}</dd></> : null}
               {event.cancelledAt ? <><dt className="text-muted-foreground">Cancelled</dt><dd>{formatDateTime(event.cancelledAt, locale, zone)}</dd></> : null}
             </dl>
