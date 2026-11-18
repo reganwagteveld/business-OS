@@ -29,6 +29,8 @@ export const SETTINGS_PAGES: readonly SettingsPageDefinition[] = [
   { id: 'regional', scope: 'business', label: 'Regional settings', description: 'Country, time zone, language, currency and financial year.', requires: ['business:read'] },
   { id: 'members', scope: 'business', label: 'Members', description: 'Who is in this business and what they can do.', requires: ['members:read'] },
   { id: 'invitations', scope: 'business', label: 'Invitations', description: 'Invite people and manage open invitations.', requires: ['members:invite'] },
+  // Every member may read the fixed roles (D-A3 §8, A2-C `GET /access/roles` needs only business:read).
+  { id: 'access', scope: 'business', label: 'Roles and access', description: 'The fixed roles and what each one can do.', requires: ['business:read'] },
   { id: 'ownership', scope: 'business', label: 'Ownership and leaving', description: 'Hand over ownership, step down or leave.', requires: ['business:read'] },
   { id: 'zones', scope: 'business', label: 'Zone configuration', description: 'Where each part of Pixa OS keeps its own settings.', requires: ['business:read'], when: (permissions) => zoneLinksFor(permissions).length > 0 },
 ];

@@ -20,3 +20,4 @@ export { createDashboardClient, type DashboardClient } from './api/dashboard';
 export { createSettingsClient, type SettingsClient } from './api/settings';
 export { createAccountClient, type AccountClient } from './api/account';
 export { createSearchClient, type SearchClient, type SearchRow } from './api/search';
+export { createHashHistory, createPathHistory, type ShellHistory } from './shell/history';

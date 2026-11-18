@@ -13,6 +13,7 @@ import type { IconName } from './icons';
 
 export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'scheduling' | 'people' | 'operations' | 'reporting' | 'communications' | 'settings';
 
+/** `route` values are the shell's real addresses (shell/url-routes.ts). */
 export interface ZoneChild {
   /** Stable within its Zone. */
   id: string;
@@ -21,7 +22,7 @@ export interface ZoneChild {
 }
 
 export interface ZoneDefinition {
-  /** Stable identifier: used for state, tests and future URLs. Never shown. */
+  /** Stable identifier: used for state and tests. Never shown. */
   id: ZoneId;
   name: string;
   description: string;
