@@ -133,7 +133,13 @@ export type ProjectInput = {
   startDate?: string | null; dueDate?: string | null;
 };
 
-export async function createProject(db: AppTenantDb, viewer: Viewer, actorUserId: string, input: ProjectInput & { name: string }) {
+/**
+ * Where a project came from (WF-1 §5.1, §5.2). Set only by the workflows module, which has already checked
+ * the other Zone's record under its locks (§6.2, §6.3); the guard trigger and composite FKs are the backstop.
+ */
+export type ProjectSources = { sourceOpportunityId?: string | null; sourceQuoteId?: string | null };
+
+export async function createProject(db: AppTenantDb, viewer: Viewer, actorUserId: string, input: ProjectInput & { name: string }, sources: ProjectSources = {}) {
   if (input.customerId) await checkCustomer(db, viewer, input.customerId);
   if (input.ownerUserId) await checkMember(db, input.ownerUserId, 'invalid_owner');
   const startDate = input.startDate ? dateOf(input.startDate) : null;
@@ -146,6 +152,8 @@ export async function createProject(db: AppTenantDb, viewer: Viewer, actorUserId
       id, name: input.name, description: input.description ?? null, status, priority: input.priority ?? 'MEDIUM', customerId: input.customerId ?? null,
       ownerUserId: input.ownerUserId ?? null, startDate, dueDate, completedAt: status === 'COMPLETED' ? new Date() : null,
       createdById: actorUserId, updatedById: actorUserId,
+      ...(sources.sourceOpportunityId ? { sourceOpportunityId: sources.sourceOpportunityId } : {}),
+      ...(sources.sourceQuoteId ? { sourceQuoteId: sources.sourceQuoteId } : {}),
     } as never,
   });
   // Structured facts only: no name or description (they may hold customer details).
@@ -227,7 +235,7 @@ export async function restoreProject(db: AppTenantDb, viewer: Viewer, actorUserI
 }
 
 export type ProjectQuery = {
-  q?: string; status: Status | 'all'; archived: 'active' | 'archived' | 'all'; customerId?: string; ownerUserId?: string;
+  q?: string; status: Status | 'all'; archived: 'active' | 'archived' | 'all'; customerId?: string; ownerUserId?: string; sourceOpportunityId?: string;
   sort: 'newest' | 'name' | 'due'; cursor?: string; limit: number;
 };
 
@@ -242,6 +250,8 @@ export async function listProjects(db: AppTenantDb, viewer: Viewer, query: Proje
   if (query.archived === 'archived') where.push({ archivedAt: { not: null } });
   if (query.customerId) where.push({ customerId: query.customerId });
   if (query.ownerUserId) where.push({ ownerUserId: query.ownerUserId });
+  // WF-1 §6.6: the route checks sales:read for this filter (it reveals which projects an opportunity has).
+  if (query.sourceOpportunityId) where.push({ sourceOpportunityId: query.sourceOpportunityId });
   const term = query.q?.trim();
   if (term) where.push({ name: { contains: term, mode: 'insensitive' } });
 
@@ -315,3 +325,70 @@ export const viewerOf = (principal: Principal): Viewer => ({
   canReadSales: can(principal, 'sales:read'),
   canReadFinance: can(principal, 'finance:read'),
 });
+
+// ---- WF-1 links (docs/cross-zone-workflows-wf1.md §6.2–6.4, LC-1) ------------------------------------
+// The workflows module decides whether a link is allowed (the other Zone's state, under its locks); these
+// functions own the Projects side: the row, its version and its audit. They never read or change another
+// Zone's record.
+
+/** A project's link state as the workflows module needs it, regardless of the caller's view. */
+export type ProjectLinks = {
+  id: string; customerId: string | null; version: number; archived: boolean; sourceOpportunityId: string | null; sourceQuoteId: string | null;
+};
+
+export async function projectLinks(db: AppTenantDb, id: string): Promise<ProjectLinks> {
+  const row = await db.project.findFirst({
+    where: { id }, select: { id: true, customerId: true, version: true, archivedAt: true, sourceOpportunityId: true, sourceQuoteId: true },
+  });
+  if (!row) throw new RecordNotFoundError();
+  const { archivedAt, ...rest } = row;
+  return { ...rest, archived: archivedAt !== null };
+}
+
+/** D-WF1-15: how many projects (archived included) were made from or linked to this opportunity. */
+export async function countOpportunityProjects(db: AppTenantDb, opportunityId: string): Promise<number> {
+  return db.project.count({ where: { sourceOpportunityId: opportunityId } as never });
+}
+
+/**
+ * Conditional UPDATE on the version the caller saw (the Projects pattern): 409 stale or archived when the
+ * row moved on. Bumps the version. `data` holds only source columns.
+ */
+async function writeLinks(db: AppTenantDb, actorUserId: string, id: string, version: number, data: ProjectSources) {
+  const result = await db.project.updateMany({
+    where: { id, archivedAt: null, version },
+    data: { ...data, ...BUMP, updatedById: actorUserId } as never,
+  });
+  if (result.count === 0) {
+    const now = await db.project.findFirst({ where: { id }, select: { archivedAt: true } });
+    if (!now) throw new RecordNotFoundError();
+    throw new StateConflictError(now.archivedAt ? 'archived' : 'stale');
+  }
+}
+
+/** §6.4 link-opportunity: set, change or clear the source opportunity (D-WF1-07). Audited with from and to. */
+export async function setProjectOpportunity(
+  db: AppTenantDb, viewer: Viewer, actorUserId: string, project: ProjectLinks, version: number, opportunityId: string | null,
+) {
+  await writeLinks(db, actorUserId, project.id, version, { sourceOpportunityId: opportunityId });
+  await recordAudit(db, actorUserId, 'projects.project.opportunity_linked', { type: 'project', id: project.id }, {
+    from: project.sourceOpportunityId, to: opportunityId,
+  });
+  return present(db, viewer, project.id);
+}
+
+/**
+ * §6.4 link-quote: set the source quote once (D-WF1-08), and the source opportunity from the quote when the
+ * project had none. The guard trigger re-checks the quote under its lock (§5.4).
+ */
+export async function setProjectQuote(
+  db: AppTenantDb, viewer: Viewer, actorUserId: string, project: ProjectLinks, version: number, quoteId: string, opportunityId: string | null,
+) {
+  const setsOpportunity = opportunityId !== null && project.sourceOpportunityId === null;
+  await writeLinks(db, actorUserId, project.id, version, { sourceQuoteId: quoteId, ...(setsOpportunity ? { sourceOpportunityId: opportunityId } : {}) });
+  await recordAudit(db, actorUserId, 'projects.project.quote_linked', { type: 'project', id: project.id }, { quoteId });
+  if (setsOpportunity) {
+    await recordAudit(db, actorUserId, 'projects.project.opportunity_linked', { type: 'project', id: project.id }, { from: null, to: opportunityId });
+  }
+  return present(db, viewer, project.id);
+}

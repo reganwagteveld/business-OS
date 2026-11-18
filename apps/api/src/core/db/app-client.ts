@@ -36,6 +36,8 @@ const TENANT_MODELS = {
   reportingSavedView: 'businessId',
   mailBusinessDomain: 'businessId', mailBusinessAddress: 'businessId', mailConnectionMember: 'businessId', mailRetentionSetting: 'businessId',
   communicationsErasure: 'businessId', communicationsErasureItem: 'businessId', communicationsLegalHold: 'businessId',
+  // WF-1 §5.5 (LC-1): the workflows module's idempotency ledger.
+  workflowRequest: 'businessId',
 } as const;
 type AppTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;
 export type AppTenantDb = TenantDb<AppTx, keyof typeof TENANT_MODELS>;

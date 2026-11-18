@@ -1,6 +1,6 @@
 # Scheduling S2: resources, availability and conflict-safe bookings
 
-> Status: **Merged** (PR #61, `9dc670d`, 2026-11-16). Migration applied to production before the merge (see migration-readiness.md §9). Scheduling navigation is still off (D-S2-8).
+> Status: **Merged** (PR #61, `9dc670d`, 2026-11-16). Migration applied to production before the merge (see migration-readiness.md §9). Scheduling navigation was switched on in S3 (D-S2-8, docs/scheduling-s3.md).
 > Builds on [scheduling-s1.md](./scheduling-s1.md) (PR #38). Conflict prevention is recorded in [ADR 0008](./adr/0008-scheduling-ordered-lock-conflict-prevention.md), which supersedes [ADR 0006](./adr/0006-scheduling-conflicts-and-privacy.md) §2–§3. ADR 0006's privacy and erasure sections stay future requirements (§10).
 > Every S1 invariant is kept: half-open intervals, `enforceConflicts` per write, the S1 lock steps, optimistic versions, forced RLS, composite tenant keys, no DELETE grant.
 

@@ -113,7 +113,10 @@ describe('Home', () => {
 
   it('launches only the Zones the role can open; Zones not built yet are honest, non-clickable "coming soon" cards', () => {
     for (const zone of ['Customers', 'Sales', 'Projects']) expect(html).toContain(`Open the ${zone} Zone`);
-    for (const zone of ['Operations', 'Settings']) expect(html).toContain(`${zone} Zone — coming soon`);
+    expect(html).toContain('Operations Zone — coming soon');
+    // Settings is built (A3 / A2-D stage 1): every member holds business:read, so it opens for every role.
+    expect(html).toContain('Open the Settings Zone');
+    expect(html).not.toContain('Settings Zone — coming soon');
     // People P2 is built: not a planned card (it needs people:read, which this role list lacks).
     expect(html).not.toContain('People Zone — coming soon');
     // Reporting R1 is built (it replaced the planned Insights card) and needs reporting:read.

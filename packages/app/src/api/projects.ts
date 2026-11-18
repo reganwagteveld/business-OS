@@ -61,7 +61,7 @@ export function createProjectsClient(baseUrl: string, transport: AuthTransport, 
     if (raw.kind === 'network') return { kind: 'unreachable' };
     if (raw.status === 400) {
       const body = raw.json as { error?: string; message?: string } | undefined;
-      return { kind: 'invalid_input', message: body?.message ?? (body?.error === 'invalid_cursor' ? 'That page is no longer valid. Start again from the first page.' : 'Please check the details and try again.') };
+      return { kind: 'invalid_input', message: body?.message ?? (body?.error === 'invalid_cursor' ? 'That page is no longer valid. Start again from the first page.' : 'Please check the details and try again.'), ...(typeof body?.error === 'string' ? { code: body.error } : {}) };
     }
     const bad = classify(raw.status, raw.json);
     if (bad) return bad;

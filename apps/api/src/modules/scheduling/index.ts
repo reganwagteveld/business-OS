@@ -9,3 +9,6 @@ export {
 } from './server/resources';
 export { viewerOf } from './server/shared';
 export type { Viewer } from './server/shared';
+// Reporting WP-R1 (docs/reporting-operational-r1.md): the Scheduling Zone's own reporting read model.
+export { scheduledEventCounts, scheduledEventDetails } from './server/reporting';
+export type { EventPeriodQuery, EventPeriodRow, ScheduledEventDetail } from './server/reporting';

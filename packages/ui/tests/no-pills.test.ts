@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { findPills, findUses, roundComponents, scan } from '../scripts/pill-scan';
 
 // AT-11 (docs/ui/pixa-visual-identity-v2-b2.md §10): no pills. The scan must catch round shapes however they
 // are written, and the B2-2 components must have none.
-const components = new URL('../src/components', import.meta.url).pathname;
+const components = fileURLToPath(new URL('../src/components', import.meta.url));
 
 describe('AT-11 pill scan', () => {
   it.each([

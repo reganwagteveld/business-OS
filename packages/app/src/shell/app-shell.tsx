@@ -8,6 +8,7 @@ import { ROLE_LABEL } from './choose';
 import { Icon, type IconName } from './icons';
 import { Menu, type MenuEntry } from './menu';
 import { useSidebarPreference, useThemePreference, type SidebarMode, type ThemePreference } from './preferences';
+import { RECORD_SEARCH_ENABLED, SearchEntry, type ShellSearch } from './palette';
 import { HOME, type ResolvedNavigation, type ResolvedZone, type ShellRoute } from './registry';
 
 /** A problem with the last business switch, shown once above the content. */
@@ -28,6 +29,8 @@ export interface AppShellProps {
   notice?: ShellNotice | null;
   onDismissNotice?: () => void;
   onNavigate: (route: ShellRoute) => void;
+  /** Global search (GS-UI). Used only while `RECORD_SEARCH_ENABLED` is true; otherwise the disabled button stays. */
+  search?: ShellSearch;
   /** Switch straight to another listed business. Omitted where the shell cannot (a Zone on its own). */
   onSelectBusiness?: (slug: string) => void;
   /** The full business chooser. */
@@ -127,7 +130,7 @@ export function AppShell(props: AppShellProps) {
     <ShellContext.Provider value={context}>
       <div data-shell="" className="bos-atmosphere flex h-dvh overflow-hidden text-foreground" data-atmosphere="calm">
         <a href="#bos-content" className={cn('sr-only z-50 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground focus:not-sr-only focus:absolute focus:top-3 focus:left-3', focusRing)}>Skip to content</a>
-        {narrow ? null : <Sidebar {...shared} onToggle={layout === 'wide' ? () => setPreference(mode === 'expanded' ? 'compact' : 'expanded') : undefined} />}
+        {narrow ? null : <Rail {...shared} onToggle={layout === 'wide' ? () => setPreference(mode === 'expanded' ? 'compact' : 'expanded') : undefined} />}
         <div className="flex min-w-0 flex-1 flex-col" inert={drawerShown || undefined}>
           <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-background/70 px-3 sm:px-6">
             {narrow ? (
@@ -137,7 +140,11 @@ export function AppShell(props: AppShellProps) {
             ) : null}
             {narrow ? <BusinessSwitcher {...shared} variant="bar" /> : <Breadcrumbs {...shared} pageLabel={pageLabel} />}
             <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-              <Unavailable icon="search" label="Search" compact={layout !== 'wide'} />
+              {RECORD_SEARCH_ENABLED && props.search ? (
+                <SearchEntry search={props.search} slug={business.slug} navigation={navigation} route={route} guarded={guarded} onNavigate={props.onNavigate} compact={layout !== 'wide'} />
+              ) : (
+                <Unavailable icon="search" label="Search" compact={layout !== 'wide'} />
+              )}
               <Unavailable icon="bell" label="Notifications" compact />
               <AccountMenu {...shared} showName={layout === 'wide'} />
             </div>
@@ -180,8 +187,57 @@ interface NavProps extends AppShellProps {
  * §4 rule 4: rectangular controls, 8 px controls, 6 px small squares, 4 px labels, square markers,
  * no pills.
  */
-function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; onClose?: () => void; closeRef?: Ref<HTMLButtonElement> }) {
-  const { mode, onToggle, inDrawer, onClose, closeRef } = props;
+/** Delay before a hovered compact rail opens, and before it closes after the pointer leaves (ms). */
+const PEEK_OPEN_MS = 120;
+const PEEK_CLOSE_MS = 200;
+
+/**
+ * The rail beside the content. Expanded, it is the sidebar itself. Compact, while a mouse rests on it
+ * it "peeks": the rail widens to its expanded width in the layout, so the content area beside it
+ * narrows and nothing is covered, and it gives the space back when the pointer leaves. Peeking is mouse-only (touch
+ * and pen tap the icons as before) and changes nothing for keyboard or screen-reader users: names,
+ * roles and focus order are the same in both states. Right after the person collapses the rail, a
+ * peek waits until the pointer has left it once, so "Collapse" visibly collapses.
+ */
+function Rail(props: NavProps & { onToggle?: () => void }) {
+  const { mode, onToggle } = props;
+  const compact = mode === 'compact';
+  const [peek, setPeek] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const suppressed = useRef(false);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const schedule = (next: boolean, ms: number) => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setPeek(next), ms);
+  };
+  const toggle = onToggle ? () => {
+    clearTimeout(timer.current);
+    if (!compact) suppressed.current = true;
+    setPeek(false);
+    onToggle();
+  } : undefined;
+  if (!compact) return <Sidebar {...props} onToggle={toggle} />;
+  return (
+    <div
+      data-rail-slot=""
+      data-peek={peek ? '' : undefined}
+      className="flex h-full shrink-0"
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse' && !suppressed.current) schedule(true, PEEK_OPEN_MS);
+      }}
+      onPointerLeave={(e) => {
+        suppressed.current = false;
+        if (e.pointerType === 'mouse') schedule(false, PEEK_CLOSE_MS);
+        else clearTimeout(timer.current);
+      }}
+    >
+      <Sidebar {...props} mode={peek ? 'expanded' : 'compact'} peeking={peek} onToggle={toggle} />
+    </div>
+  );
+}
+
+function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; peeking?: boolean; onClose?: () => void; closeRef?: Ref<HTMLButtonElement> }) {
+  const { mode, onToggle, inDrawer, peeking, onClose, closeRef } = props;
   const compact = mode === 'compact';
   return (
     <div
@@ -211,9 +267,9 @@ function Sidebar(props: NavProps & { onToggle?: () => void; inDrawer?: boolean; 
       <ZoneNav {...props} />
       {onToggle ? (
         <div className={cn('shrink-0 border-t border-line p-2', compact ? 'flex justify-center' : 'px-3')}>
-          <button type="button" onClick={onToggle} aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'} title={compact ? 'Expand sidebar' : 'Collapse sidebar'} className={cn('focus-ring state-interactive flex h-10 items-center gap-3 rounded-control px-3 text-small text-fg-muted hover:text-fg', compact ? 'w-10 justify-center px-0' : 'w-full')}>
-            <Icon name={compact ? 'expand' : 'collapse'} className="size-5 shrink-0" />
-            {compact ? null : <span>Collapse</span>}
+          <button type="button" onClick={onToggle} aria-label={compact || peeking ? 'Expand sidebar' : 'Collapse sidebar'} title={compact ? 'Expand sidebar' : peeking ? 'Keep the sidebar expanded' : 'Collapse sidebar'} className={cn('focus-ring state-interactive flex h-10 items-center gap-3 rounded-control px-3 text-small text-fg-muted hover:text-fg', compact ? 'w-10 justify-center px-0' : 'w-full')}>
+            <Icon name={compact || peeking ? 'expand' : 'collapse'} className="size-5 shrink-0" />
+            {compact ? null : <span>{peeking ? 'Keep expanded' : 'Collapse'}</span>}
           </button>
         </div>
       ) : null}

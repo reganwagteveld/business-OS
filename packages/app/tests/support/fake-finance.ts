@@ -5,10 +5,10 @@
  * and each business's records are kept apart. Amounts are exact (integer cents), as on the server.
  */
 import {
-  AllocatePaymentRequest, ApplyCreditRequest, ConvertQuoteRequest, CreateCreditNoteRequest, CreateInvoiceRequest, CreateQuoteRequest, CreateTaxRateRequest,
+  AllocatePaymentRequest, ApplyCreditRequest, ConvertQuoteRequest, CreateCreditNoteRequest, CreateExpenseRequest, CreateInvoiceRequest, CreateQuoteRequest, CreateTaxRateRequest,
   DiscardDraftRequest, IssueDocumentRequest, QuoteTransitionRequest, RecordExpensePaymentRequest, RecordPaymentRequest, ReverseAllocationRequest, ReversePaymentRequest, UpdateCreditNoteRequest,
-  UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdatePaymentRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
-  type CatalogItem, type CreditApplication, type Customer, type ExpensePayment, type FinanceExpense, type FinanceDocument, type FinanceDocumentKind, type FinancePayment, type PaymentAllocation,
+  UpdateExpenseRequest, UpdateFinanceSettingsRequest, UpdateInvoiceRequest, UpdateNumberSeriesRequest, UpdatePaymentRequest, UpdateQuoteRequest, UpdateTaxRateRequest, VoidDocumentRequest,
+  type CatalogItem, type CreditApplication, type Customer, type ExpenseCategory, type ExpensePayment, type FinanceExpense, type FinanceDocument, type FinanceDocumentKind, type FinancePayment, type PaymentAllocation,
 } from '@business-os/contracts';
 import { randomUUID } from 'node:crypto';
 import { fromUnits, toUnits } from '../../src/zones/finance/decimal';
@@ -34,6 +34,9 @@ export interface FinanceData {
   payables: { currencyCode: string; currencyScale: number; outstanding: string; overdue: string; openCount: number; overdueCount: number }[];
   /** F7-B: the products and services catalog, for the line picker (optional; empty when absent). */
   catalog?: CatalogItem[];
+  /** LC-2: the Sales and Projects records a document or expense may link to. When present the fake enforces the server's customer rules. */
+  links?: { opportunities: { id: string; customerId: string | null }[]; projects: { id: string; customerId: string | null }[] };
+  categories?: ExpenseCategory[];
 }
 export interface FinanceCall { method: string; slug: string; path: string; query: Record<string, string>; body: unknown; headers: Record<string, string> }
 
@@ -131,6 +134,31 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
     return out;
   };
 
+  /** The server's rules (documents.ts checkLinks, expenses.ts checkProject), as 400s with the same codes. */
+  const linkRules = (b: FinanceData, next: { customerId: string | null; opportunityId?: string | null; projectId?: string | null }, nullProjectFits = false): Response | null => {
+    if (!b.links) return null;
+    if (next.opportunityId) {
+      const o = b.links.opportunities.find((x) => x.id === next.opportunityId);
+      if (!o) return json(400, { error: 'invalid_opportunity', message: 'Choose an opportunity of this business.' });
+      if (o.customerId !== null && o.customerId !== next.customerId) return json(400, { error: 'opportunity_customer_mismatch', message: 'This opportunity is for a different customer.' });
+    }
+    if (next.projectId) {
+      const pr = b.links.projects.find((x) => x.id === next.projectId);
+      if (!pr) return json(400, { error: 'invalid_project', message: 'Choose a project of this business.' });
+      if (next.customerId !== null && pr.customerId !== next.customerId && !(nullProjectFits && pr.customerId === null)) {
+        return json(400, { error: 'project_customer_mismatch', message: "This project is for a different customer. Choose one of this customer's projects or clear the project." });
+      }
+    }
+    return null;
+  };
+  const expenseOut = (over: Partial<FinanceExpense>): FinanceExpense => ({
+    id: randomUUID(), status: 'DRAFT', categoryId: randomUUID(), categoryName: null, projectId: null, customerId: null, description: 'Expense', supplierName: null,
+    referenceNumber: null, notes: null, incurredOn: '2026-11-02', dueDate: null, currencyCode: 'AUD', currencyScale: 2, subtotal: '0.00', taxAmount: '0.00',
+    total: '0.00', taxTreatment: 'NO_TAX', taxRateId: null, taxName: null, taxRatePercent: '0', paidTotal: '0.00', outstanding: '0.00', paymentState: null,
+    overdue: false, recordedAt: null, voidedAt: null, voidReason: null, version: 1, createdById: null, updatedById: null, recordedById: null, voidedById: null,
+    createdAt: NOW, updatedAt: NOW, allocations: [], ...over,
+  });
+
   function handle(b: FinanceData, call: FinanceCall): Response {
     const { method, path, body, query } = call;
     let m: RegExpExecArray | null;
@@ -227,7 +255,27 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
       const x = b.expensePayments.find((y) => y.id === m![1]);
       return x ? json(200, { payment: x }) : json(404, { error: 'not_found' });
     }
-    if (p === '/expense-categories') return json(200, { categories: [] });
+    if (p === '/expense-categories') return json(200, { categories: b.categories ?? [] });
+    if (p === '/expenses' && method === 'POST') {
+      const input = CreateExpenseRequest.parse(body);
+      const bad = linkRules(b, { customerId: input.customerId ?? null, projectId: input.projectId ?? null }, true);
+      if (bad) return bad;
+      const e = expenseOut({ categoryId: input.categoryId, description: input.description, incurredOn: input.incurredOn, customerId: input.customerId ?? null,
+        projectId: input.projectId ?? null, subtotal: input.amount, total: input.amount, currencyCode: input.currencyCode ?? 'AUD' });
+      b.expenses.unshift(e);
+      return json(201, { expense: e });
+    }
+    if ((m = /^\/expenses\/([^/]+)$/.exec(p)) && method === 'PATCH') {
+      const input = UpdateExpenseRequest.parse(body);
+      const e = b.expenses.find((x) => x.id === m![1]);
+      if (!e) return json(404, { error: 'not_found' });
+      if (input.version !== e.version) return json(409, { error: 'stale' });
+      const next = { customerId: input.customerId !== undefined ? input.customerId : e.customerId, projectId: input.projectId !== undefined ? input.projectId : e.projectId };
+      const bad = linkRules(b, next, true);
+      if (bad) return bad;
+      Object.assign(e, next, { description: input.description ?? e.description, version: e.version + 1 });
+      return json(200, { expense: e });
+    }
     if (p === '/settings' && method === 'GET') return json(200, { settings: b.settings });
     if (p === '/settings' && method === 'PATCH') {
       const input = UpdateFinanceSettingsRequest.parse(body);
@@ -268,6 +316,8 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
         let list = b.documents.filter((d) => d.kind === kind);
         if (query.status && query.status !== 'all') list = list.filter((d) => d.status === query.status!.toUpperCase());
         if (query.customerId) list = list.filter((d) => d.customerId === query.customerId);
+        if (query.opportunityId) list = list.filter((d) => d.opportunityId === query.opportunityId);
+        if (query.projectId) list = list.filter((d) => d.projectId === query.projectId);
         if (query.invoiceId) list = list.filter((d) => d.creditedInvoiceId === query.invoiceId);
         if (query.settlement) {
           list = list.filter((d) => d.status === 'ISSUED');
@@ -285,10 +335,13 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
       const input = schema.parse(body);
       const key = call.headers['idempotency-key'];
       if (key && keys.has(key)) return keys.get(key)!.body === JSON.stringify(input) ? json(200, keys.get(key)!.result) : json(409, { error: 'idempotency_conflict' });
+      const badLink = linkRules(b, { customerId: input.customerId, opportunityId: input.opportunityId, projectId: input.projectId });
+      if (badLink) return badLink;
       const resolved = resolveLines(input.lines ?? [], b, input.currencyCode ?? 'AUD');
       if (resolved instanceof Response) return resolved;
       const t = totals(resolved, b);
-      const d = doc(kind, { customerId: input.customerId, currencyCode: input.currencyCode ?? 'AUD', notes: input.notes ?? null, ...t,
+      const d = doc(kind, { customerId: input.customerId, contactId: input.contactId ?? null, opportunityId: input.opportunityId ?? null, projectId: input.projectId ?? null,
+        currencyCode: input.currencyCode ?? 'AUD', notes: input.notes ?? null, ...t,
         validUntil: 'validUntil' in input ? input.validUntil ?? null : null, dueDate: 'dueDate' in input ? input.dueDate ?? null : null });
       b.documents.unshift(d);
       if (key) keys.set(key, { body: JSON.stringify(input), result: { document: d } });
@@ -331,12 +384,18 @@ export function createFakeFinance(businesses: Record<string, FinanceData>) {
       }
       if (!action && method === 'PATCH') {
         const schema = { QUOTE: UpdateQuoteRequest, INVOICE: UpdateInvoiceRequest, CREDIT_NOTE: UpdateCreditNoteRequest }[kind];
-        const input = schema.parse(body) as { version: number; lines?: DraftLine[]; notes?: string | null };
+        const input = schema.parse(body) as { version: number; lines?: DraftLine[]; notes?: string | null; customerId?: string; contactId?: string | null; opportunityId?: string | null; projectId?: string | null };
         if (d.status !== 'DRAFT') return json(409, { error: 'immutable' });
         if (input.version !== d.version) return json(409, { error: 'stale' });
         const resolved = input.lines ? resolveLines(input.lines, b, d.currencyCode) : null;
         if (resolved instanceof Response) return resolved;
-        Object.assign(d, resolved ? totals(resolved, b) : {}, { notes: input.notes ?? d.notes, version: d.version + 1 });
+        const next = {
+          customerId: input.customerId ?? d.customerId, contactId: input.contactId !== undefined ? input.contactId : d.contactId,
+          opportunityId: input.opportunityId !== undefined ? input.opportunityId : d.opportunityId, projectId: input.projectId !== undefined ? input.projectId : d.projectId,
+        };
+        const badLink = linkRules(b, next);
+        if (badLink) return badLink;
+        Object.assign(d, resolved ? totals(resolved, b) : {}, next, { notes: input.notes ?? d.notes, version: d.version + 1 });
         return json(200, { document: d });
       }
       if (action === 'issue') {

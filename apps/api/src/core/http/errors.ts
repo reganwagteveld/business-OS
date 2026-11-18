@@ -52,7 +52,11 @@ export type StateConflictCode =
   | 'invitation_exists' | 'already_member' | 'invitation_closed' | 'last_owner' | 'already_owner' | 'member_not_active'
   // WF-1 (docs/cross-zone-workflows-wf1.md §6.9): cross-Zone links.
   | 'project_customer_locked' | 'quote_not_accepted' | 'quote_has_project' | 'project_has_quote' | 'opportunity_set_by_quote'
-  | 'opportunity_mismatch' | 'opportunity_lost' | 'opportunity_projects_changed';
+  | 'opportunity_mismatch' | 'opportunity_lost' | 'opportunity_projects_changed'
+  // Sales S-CFG-1A (docs/sales-pipeline-configuration-scfg.md §6): pipeline and stage configuration.
+  | 'name_taken' | 'stage_limit' | 'pipeline_limit' | 'last_stage' | 'has_open_opportunities' | 'busy'
+  // Account management A3-A (docs/settings-a3-architecture.md §15.3): sign out ends the current session; no password to change.
+  | 'use_sign_out' | 'no_password';
 
 /** The request is well-formed but not allowed in the record's current state (e.g. editing an archived customer): 409. */
 export class StateConflictError extends Error {
@@ -72,6 +76,18 @@ export class ServiceFailureError extends Error {
   constructor(readonly status: 500 | 503, readonly code: 'generation_failed' | 'integrity_error') {
     super(code);
     this.name = 'ServiceFailureError';
+  }
+}
+
+/**
+ * The session that made the request ended before its unit of work ran (account management, Settings A3-A:
+ * another device signed it out or changed the password a moment earlier). 401, nothing was written.
+ */
+export class SessionEndedError extends Error {
+  readonly status = 401;
+  constructor() {
+    super('unauthenticated');
+    this.name = 'SessionEndedError';
   }
 }
 

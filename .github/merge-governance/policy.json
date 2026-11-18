@@ -1,0 +1,60 @@
+{
+  "schema": "ciq-a6/policy/v1",
+  "comment": "CIQ-A6A approval-continuity policy (docs/ciq-a6-autonomous-merge-governance.md §4, §6). Critical file: changes need a ChatGPT audit and Regan's own approval. The verifier reads this file only from the trusted checkout of main it runs from, never from a pull request. Patterns are Python regular expressions matched case-insensitively against repository-relative paths with re.search. continuity_mode: 'off' (do nothing) or 'shadow' (report only). 'enforce' is not implemented by A6A and is refused.",
+  "continuity_mode": "shadow",
+  "connector_app_slug": "chatgpt-codex-connector",
+  "limits": {
+    "max_composed_regions": 6,
+    "max_composition_alternatives": 64,
+    "max_conflicted_file_bytes": 1048576,
+    "max_conflicted_file_tokens": 200000,
+    "max_packet_bytes": 65536
+  },
+  "overlap": {
+    "comment": "D-A6-2 is pending, so the stricter option applies: main changing ANY file the PR also changes (documentation included) needs integration validation.",
+    "ignore_ordinary_docs": false
+  },
+  "governance_docs": [
+    "^docs/agent-", "^docs/agents/", "^docs/merge-queue", "^docs/active-workstreams",
+    "^docs/ci", "^docs/[^/]*-ci-", "^docs/[^/]*release",
+    "^docs/[^/]*migration", "^docs/deployment", "^docs/vercel", "^docs/[^/]*neon", "^docs/operations/", "^docs/ops/",
+    "^docs/private-beta", "^docs/[^/]*security", "^docs/[^/]*lockdown", "^docs/[^/]*admission",
+    "^docs/adr/",
+    "(^|/)(claude|agents|security)\\.md$", "(^|/)codeowners$"
+  ],
+  "ordinary_docs": [
+    "^docs/.*\\.(md|png|jpe?g|gif|svg|webp)$"
+  ],
+  "critical": [
+    "^\\.github/",
+    "^scripts/merge-queue/", "^scripts/merge-governance/",
+    "^ops/", "^scripts/neon-branches/", "^scripts/vercel/",
+    "^apps/api/prisma/",
+    "\\.prisma$",
+    "(^|/)vercel\\.json$", "(^|/)next\\.config\\.", "(^|/)tauri\\.conf", "(^|/)capabilities/", "(^|/)middleware\\.ts$",
+    "(^|/)package\\.json$", "(^|/)pnpm-lock\\.yaml$", "(^|/)pnpm-workspace\\.yaml$", "(^|/)\\.npmrc$", "(^|/)Cargo\\.(toml|lock)$",
+    "(^|/)\\.env", "(^|/)\\.nvmrc$",
+    "auth", "session", "admission", "invit", "member", "ownership", "owner-lock",
+    "permission", "rbac", "(^|[^a-z])roles?([^a-z]|$)", "tenan", "(^|[^a-z])rls([^a-z]|$)", "csrf", "csp",
+    "token", "secret", "credential", "privileg", "crypt", "password",
+    "(^|/)cron", "worker", "billing", "stripe", "resend", "(^|/)email", "mailer", "outbound",
+    "(^|/)providers?/"
+  ],
+  "elevated": [
+    "^packages/app/src/app\\.tsx$", "^packages/app/src/index\\.ts$", "^packages/app/src/shell/",
+    "^packages/app/src/api/http\\.ts$", "^packages/app/src/api/client\\.ts$", "^packages/app/src/config\\.ts$",
+    "^apps/api/", "^packages/contracts/",
+    "(^|/)modules/finance/", "(^|/)modules/workflows/", "search",
+    "cors", "(^|/)routes?\\.ts$", "registry",
+    "^tests/", "^tooling/"
+  ],
+  "routine_client": [
+    "^packages/app/src/.*\\.(ts|tsx|css)$", "^packages/app/tests/.*\\.(ts|tsx|css)$",
+    "^packages/ui/src/.*\\.(ts|tsx|css)$", "^packages/ui/tests/.*\\.(ts|tsx|css)$",
+    "^apps/web/src/.*\\.(ts|tsx|css)$"
+  ],
+  "overlays": {
+    "migration": ["^apps/api/prisma/migrations/", "^apps/api/prisma/privileged/"],
+    "contracts": ["^packages/contracts/"]
+  }
+}

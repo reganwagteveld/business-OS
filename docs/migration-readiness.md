@@ -290,4 +290,41 @@ Approved by Regan in the GS1-A project thread at 07:08 UTC: the recovery branch 
 | Health and search | `GET /api/v1/health` 200 on app.pixakova.com and the Vercel production URL; POST to `b/[slug]/search` and `b/[slug]/search/resolve` 404 `not_found`; `SEARCH_API_ENABLED = false` |
 | Merge | PR #97 synced with main as `0f37d7e` (same patch as `db3c092`), CI gate green, squash-merged as `06405a5` |
 
-Also kept, pending a separate decision: the temporary branches `rehearsal-search-indexes-20261117-prod` and `rehearsal-search-indexes-20261117-seed`, which already have the migration applied. Keep `pre-search-indexes-migration` until the next migration is verified.
+Also kept, pending a separate decision: the temporary branches `rehearsal-search-indexes-20261117-prod` and `rehearsal-search-indexes-20261117-seed`, which already have the migration applied. Keep `pre-search-indexes-migration` until the next migration is verified. Both were deleted later, at 10:15 UTC on Regan's decision, after the checks recorded in `ops/neon/recovery-points.json` (`deleted`).
+
+### WF-1B-1 workflow links (2026-11-17)
+
+Delegated operation under ChatGPT's `APPROVED — EXECUTE: MIGRATION` ([verdict](https://github.com/reganwagteveld/business-OS/pull/110#issuecomment-6947713118); connector-origin and unedited), and approved by Regan in the Mac thread at 12:13 UTC for one production execution. Applied from PR #110's head `f5829a0` **before** the merge. Delegated operation record: [PR #110 comment](https://github.com/reganwagteveld/business-OS/pull/110#issuecomment-6947773614).
+
+| Step | Result (UTC) |
+|---|---|
+| Preflight (read-only, `scripts/workflow-links-preflight.sql`), before the rehearsal and again at 12:14 | `PREFLIGHT PASS`. 24 applied, newest `20261206000000_search_indexes`, none failed or rolled back, all checksums match, fingerprint matches. `20261207000000_workflow_links` the only pending migration. I1 violations 0, A6 0, no open transactions. Rows: businesses 2, projects 1, opportunities 1, documents 3, expenses 0, templates 0 |
+| Rehearsal | Branch `rehearsal-workflow-links-20261117`: deploy 11.2 s, migration window 1.52 s, longest concurrent `bos_app` read 328 ms. GO against 2 s |
+| Recovery branch | `pre-workflow-links-migration`, from production at 10:22:50 (LSN `0/333EF50`), read-only compute. Ledger identical to production; re-verified reachable at 12:14 |
+| `prisma migrate deploy` | Applied only `20261207000000_workflow_links` (one transaction): 12:14:58–12:15:09 wall time, migration window 1.60 s, 1 step, no rollback. 25 applied, up to date. Longest concurrent `bos_app` read 363 ms |
+| Constraints | 7/7 link constraints; the three `*_project_customer_fkey` validated |
+| RLS | `relrowsecurity` and `relforcerowsecurity` true on `projects`, `finance_documents`, `finance_expenses`, `finance_recurring_templates`, `workflow_requests` |
+| Schema | 3 new `projects` columns; 4 new indexes, all valid; trigger `projects_guard_links` (SECURITY INVOKER function) |
+| Grants | `workflow_requests`: `bos_app` SELECT and INSERT only; policies `tenant_isolation` and restrictive `actor_is_session_user` |
+| Data | Row totals and A6 unchanged; `workflow_requests` empty |
+| Health | `GET /api/v1/health` 200 (12:15 and again 14:50). Signed-in smoke: Regan signed in and opened Projects and Finance, reported OK in the project thread at 14:50 UTC |
+| Merge | Under a separate `APPROVED — EXECUTE: MERGE` (connector-origin), PR #110 was squash-merged as `7df2a83` at 12:31 UTC; `main` CI gate green on it. [Merge record](https://github.com/reganwagteveld/business-OS/pull/110#issuecomment-6948362125) |
+
+The temporary branch `rehearsal-workflow-links-20261117` was deleted at 14:50:46 UTC on Regan's instruction, after the merge; see `ops/neon/recovery-points.json` `deleted`. Keep `pre-workflow-links-migration` until the next migration is verified.
+
+### S-CFG-1A sales configuration (2026-11-17)
+
+Delegated operation under ChatGPT's `APPROVED — EXECUTE: MIGRATION` ([verdict](https://github.com/reganwagteveld/business-OS/pull/135#issuecomment-6955291630); connector-origin and unedited; bound to head `8a64b13` and migration checksum prefix `80926829`), with Regan's §10 go message in the Mac thread at 17:15 UTC. Applied from PR #135's head `8a64b13` **before** the merge. Delegated operation record: [PR #135 comment](https://github.com/reganwagteveld/business-OS/pull/135#issuecomment-6955425207).
+
+| Step | Result (UTC) |
+|---|---|
+| Preflight (read-only, `scripts/sales-configuration-preflight.sql`), 16:31, 16:50, 17:07, 17:15 and immediately before the apply at 17:16:38 | `PREFLIGHT PASS`, identical each time. 25 applied, newest `20261207000000_workflow_links`, fingerprint matches, 0 resolved attempts, only `20261210000000_sales_configuration` pending. A5 invalid-state counts all 0, no open transactions. Rows: businesses 2, pipelines 1, stages 4, opportunities 1, outcomes 0 |
+| Rehearsal | On `rehearsal-sales-configuration-20261118b`, after a Neon-native reset authorised by Regan. Lock drill failed closed and resolved. Deploy window 1.43 s. Persistent-connection probe: longest minus median 134 ms for reads, 107 ms for stage writes. Rehearsal and verify checks pass. GO against 2 s ([evidence](https://github.com/reganwagteveld/business-OS/pull/135#issuecomment-6955233536)). Earlier runs on the previous migration file measured about 2.9 s; Regan's 3 s acceptance was not needed |
+| Recovery branch | `pre-sales-configuration-migration`, from production at 17:16:10 (LSN `0/35B12F0`), read-only compute. Ready, connectable, ledger identical to production |
+| `prisma migrate deploy` | Applied only `20261210000000_sales_configuration` (one transaction): 17:16:48–17:16:59 wall time, migration window 1.41 s, exit 0. 26 applied, up to date |
+| Schema | `VERIFY PASS`: `config_version` column and CHECK, 2 valid partial unique indexes, 2 SECURITY INVOKER functions with a pinned `search_path`, 3 enabled triggers |
+| RLS and grants | Forced RLS on the four Sales tables; no `bos_app` DELETE grant. §5 checks: 26/26 finished, only `_prisma_migrations` without RLS, 0 privileged `bos_` roles, 0 unvalidated constraints |
+| Data | `config_version = 1` on 1/1 pipelines; row totals unchanged |
+| Health | `GET /api/v1/health` 200 `ok` on app.pixakova.com and the Vercel production URL. Signed-in check: the board first showed "That request was not accepted", caused by a pre-existing board bug (it requested 200 rows against the API limit of 100), not by this migration; fixed by PR #155 (`f66fa17`, merged 18:51). Regan at 19:22 UTC: "Yes the sales board is working now." (no card move reported) |
+
+Not done, by instruction: PR #135 not merged (a separate merge verdict is needed), nothing activated. Keep `pre-sales-configuration-migration` until the next migration is verified.

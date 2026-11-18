@@ -1,13 +1,12 @@
-import type { Activity } from '@business-os/contracts';
 import { useId, useState } from 'react';
 import type { ActivityPage } from '../../api/customers';
 import type { Outcome } from '../../api/tenancy';
 import { secondaryClass } from '../../shell/frame';
 import { Problem, Skeleton } from '../problem';
 import { useLoad } from '../use-load';
-import { activityTitle, formatWhen, isSystemActivity } from '../customers/format';
-import { ActivityTypeBadge, ActivityTypeIcon } from './activity-badge';
-import { messageEntryTitle, TIMELINE_FILTERS } from './labels';
+import { TIMELINE_FILTERS } from './labels';
+import { ActivityTimelineItem } from './timeline-item';
+import { ManagedEntry, type EntryManage } from './entry-actions';
 
 /**
  * The unified activity timeline (docs/communications-c1.md): notes, logged interactions, recorded
@@ -15,7 +14,7 @@ import { messageEntryTitle, TIMELINE_FILTERS } from './labels';
  * server decides what the viewer may see (restricted notes, message entries); nothing is invented
  * here, and an empty timeline says how entries appear. Loading, empty and error states are built in.
  */
-export function ActivityTimeline({ load, loadKey, refreshKey = 0, names, locale, timeZone, onSessionEnded, emptyText = 'No activity yet.', emptyHint }: {
+export function ActivityTimeline({ load, loadKey, refreshKey = 0, names, locale, timeZone, onSessionEnded, emptyText = 'No activity yet.', emptyHint, manage }: {
   /** Fetches one page; the component owns paging and the type filter. */
   load: (cursor: string | undefined, types: string[] | undefined, signal: AbortSignal) => Promise<Outcome<ActivityPage>>;
   /** Identifies the record (for example `slug|customerId`), so switching records starts again. */
@@ -27,6 +26,8 @@ export function ActivityTimeline({ load, loadKey, refreshKey = 0, names, locale,
   locale?: string; timeZone: string; onSessionEnded: () => void; emptyText?: string;
   /** How entries appear, shown under the empty state (never sample data). */
   emptyHint?: string;
+  /** Lets the author edit or remove their own entries. Omit it for a read-only timeline. */
+  manage?: EntryManage;
 }) {
   const uid = useId();
   const [filter, setFilter] = useState('all');
@@ -60,7 +61,9 @@ export function ActivityTimeline({ load, loadKey, refreshKey = 0, names, locale,
           ) : (
             <ol className="space-y-3.5">
               {state.outcome.data.activities.map((a) => (
-                <ActivityTimelineItem key={a.id} a={a} locale={locale} timeZone={timeZone} who={a.actorUserId ? (names ? names.get(a.actorUserId) ?? 'A team member' : null) : 'System'} />
+                manage
+                  ? <ManagedEntry key={a.id} a={a} locale={locale} timeZone={timeZone} manage={manage} who={a.actorUserId ? (names ? names.get(a.actorUserId) ?? 'A team member' : null) : 'System'} />
+                  : <ActivityTimelineItem key={a.id} a={a} locale={locale} timeZone={timeZone} who={a.actorUserId ? (names ? names.get(a.actorUserId) ?? 'A team member' : null) : 'System'} />
               ))}
             </ol>
           )}
@@ -77,38 +80,4 @@ export function ActivityTimeline({ load, loadKey, refreshKey = 0, names, locale,
   );
 }
 
-/**
- * One entry. Things people logged or recorded get an icon, a kind badge and normal weight; automated
- * changes are smaller and quieter, so the human history reads first. Every entry keeps who and when;
- * an edited note says so.
- */
-export function ActivityTimelineItem({ a, who, locale, timeZone }: { a: Activity; who: string | null; locale?: string; timeZone: string }) {
-  const meta = (
-    <p className="mt-0.5 text-xs text-muted-foreground">
-      {who ? `${who} · ` : ''}<time dateTime={a.occurredAt}>{formatWhen(a.occurredAt, timeZone, locale)}</time>{a.editedAt ? ' · edited' : ''}
-    </p>
-  );
-  if (isSystemActivity(a) && a.type !== 'message.recorded') {
-    return (
-      <li data-kind="system" className="flex gap-3 pl-1.5">
-        <ActivityTypeIcon activity={a} />
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{activityTitle(a)}</p>
-          {meta}
-        </div>
-      </li>
-    );
-  }
-  const title = a.type === 'message.recorded' ? messageEntryTitle(a) : activityTitle(a);
-  return (
-    <li data-kind={a.type === 'message.recorded' ? 'message' : 'user'} className="flex gap-3">
-      <ActivityTypeIcon activity={a} />
-      <div className="min-w-0">
-        <p className="text-sm font-medium [overflow-wrap:anywhere]">{title}</p>
-        <div className="mt-1"><ActivityTypeBadge activity={a} /></div>
-        {a.body ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground [overflow-wrap:anywhere]">{a.body}</p> : null}
-        {meta}
-      </div>
-    </li>
-  );
-}
+export { ActivityTimelineItem };
