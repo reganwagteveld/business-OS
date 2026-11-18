@@ -4,6 +4,7 @@ import {
 } from '@business-os/ui';
 import { useRef, useState, type ReactNode } from 'react';
 import type { Outcome } from '../../api/tenancy';
+import { linkErrorMessage } from '../link-errors';
 
 // Pieces shared by the F4 Finance screens: words for states and server errors, confirmation dialogs,
 // submit handling (one request at a time, every failure in words) and idempotency keys.
@@ -78,7 +79,7 @@ export function financeMessage(code: string | undefined): string {
     case 'version_limit': return 'This document already has the maximum number of PDF versions.';
     case 'document_too_large': return 'This document is too large to make into a PDF. Shorten its notes or lines.';
     case 'branding_logo_invalid': return 'The logo could not be used. Upload it again in Finance settings, Documents.';
-    default: return 'That change could not be made. Reload and try again.';
+    default: return linkErrorMessage(code) ?? 'That change could not be made. Reload and try again.';
   }
 }
 
@@ -139,7 +140,7 @@ export function describeFailure(out: SubmitResult, uncertainty: Uncertainty = 'v
   switch (out.kind) {
     case 'unauthenticated': return 'Your session has ended. Please sign in again.';
     case 'conflict': return financeMessage(out.code);
-    case 'invalid_input': return out.message ?? 'Please check the details.';
+    case 'invalid_input': return linkErrorMessage(out.code) ?? out.message ?? 'Please check the details.';
     case 'forbidden': return 'Your role in this business does not allow this.';
     case 'not_found': return 'That record could not be found in this business. It may have been removed.';
     case 'unreachable': return uncertainMessage(uncertainty);

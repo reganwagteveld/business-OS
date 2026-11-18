@@ -7,6 +7,7 @@ import { useDraftGuard } from '../drafts';
 import { Problem, Skeleton } from '../problem';
 import { useLoad } from '../use-load';
 import { ZoneFrame } from '../zone-frame';
+import type { SalesFinanceLinks } from '../finance/opportunity-documents';
 import { OpportunityDetail } from './opportunity-detail';
 import { OpportunityForm } from './opportunity-form';
 import { OpportunityList, type ListQuery } from './opportunity-list';
@@ -23,8 +24,10 @@ type View = { name: 'list' } | { name: 'board' } | { name: 'detail'; id: string 
  * `key={slug}` so switching business discards every bit of this state (records, names, filters);
  * nothing is persisted or cached outside the component.
  */
-export function SalesZone({ sales, customers, context, userLabel, initialOpportunityId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function SalesZone({ sales, customers, finance, context, userLabel, initialOpportunityId, initialAction, onHome, onSwitch, onSignOut, onSessionEnded }: {
   sales: SalesClient; customers: CustomersClient; context: BusinessContext; userLabel: string;
+  /** LC-2: the Finance link for the opportunity's Quotes and invoices panel and "Create quote". Used only when the person also holds finance:read. */
+  finance?: SalesFinanceLinks;
   /**
    * Opens this opportunity's detail (a shell route target, e.g. a search result, GS1 §10.6). The detail
    * loads it through the Sales API, which enforces permission and tenant again; an id that is not in
@@ -38,6 +41,10 @@ export function SalesZone({ sales, customers, context, userLabel, initialOpportu
 }) {
   const { slug, name, timeZone, locale, currency } = context.business;
   const canWrite = context.membership.permissions.includes('sales:write');
+  const perms = context.membership.permissions;
+  // Both keys, not the Zone: a person without finance:read gets no Finance panel at all (not an empty one).
+  const financeLinks = finance && perms.includes('finance:read') && perms.includes('sales:read') ? finance : undefined;
+  const canQuote = Boolean(financeLinks) && perms.includes('finance:write');
   const [listMode, setListMode] = useState<ListMode>('list');
   const [view, setView] = useState<View>(initialOpportunityId ? { name: 'detail', id: initialOpportunityId } : { name: 'list' });
   const [query, setQuery] = useState<ListQuery>({ q: '', status: 'open', archived: 'active', pipelineId: '', stageId: '' });
@@ -183,6 +190,7 @@ export function SalesZone({ sales, customers, context, userLabel, initialOpportu
         {refData && view.name === 'detail' ? (
           <OpportunityDetail
             sales={sales} slug={slug} id={view.id} locale={locale} timeZone={timeZone} refData={refData} names={names} canWrite={canWrite}
+            finance={financeLinks} canQuote={canQuote}
             onBack={() => guard.leave(() => go(mainView))} onEdit={(opportunity) => guard.leave(() => go({ name: 'edit', opportunity }))}
             confirmLeave={guard.leave} onDraftChange={guard.markDraft} onSessionEnded={onSessionEnded}
           />

@@ -2,13 +2,16 @@ import type { FinanceDocumentKind } from '@business-os/contracts';
 import { createContext, useContext, useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { CustomersClient } from '../../api/customers';
 import type { DocumentPath, FinanceClient } from '../../api/finance';
+import type { ProjectsClient } from '../../api/projects';
+import type { SalesClient } from '../../api/sales';
 
 /** Every screen of the Finance Zone, held in memory (no URL routing). */
 export type FinanceView =
   | { name: 'overview' }
   | { name: 'documents'; path: DocumentPath }
   | { name: 'document'; path: DocumentPath; id: string }
-  | { name: 'document-new'; path: 'quotes' | 'invoices'; customerId?: string }
+  // `opportunityId` (LC-2): a quote started from an opportunity, prefilled from it.
+  | { name: 'document-new'; path: 'quotes' | 'invoices'; customerId?: string; opportunityId?: string }
   | { name: 'document-edit'; path: DocumentPath; id: string }
   | { name: 'payments' }
   | { name: 'payment'; id: string }
@@ -85,6 +88,9 @@ export interface FinanceCan {
   catalog?: boolean;
   /** customers:read: search and name customers (held separately from any finance key). */
   readCustomers: boolean;
+  /** LC-2: sales:read / projects:read, with the Zone's client: the Opportunity and Project pickers and chips exist only with them. */
+  readSales?: boolean;
+  readProjects?: boolean;
   /** F5 finance:documents_preview: preview a PDF (a draft's watermarked preview, or a stored version). */
   pdfPreview?: boolean;
   /** F5 finance:documents_generate: create the original PDF or a new version. */
@@ -110,6 +116,12 @@ export interface FinanceEnv {
   onOpenCustomer?: (customerId: string) => void;
   /** Live customer names for this business, fetched once per id (customers:read only). */
   names: CustomerNames;
+  /** LC-2: present only with sales:read / projects:read. Finance never reads another Zone without its key. */
+  sales: SalesClient | null;
+  projects: ProjectsClient | null;
+  /** Opens an opportunity / project in its own Zone (only with that Zone's read key). */
+  onOpenOpportunity?: (opportunityId: string) => void;
+  onOpenProject?: (projectId: string) => void;
 }
 
 const Ctx = createContext<FinanceEnv | null>(null);

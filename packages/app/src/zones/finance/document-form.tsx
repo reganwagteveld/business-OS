@@ -1,29 +1,47 @@
-import type { CatalogItem, FinanceDocument } from '@business-os/contracts';
+import type { CatalogItem, Customer, FinanceDocument, Opportunity } from '@business-os/contracts';
 import { Alert, AlertDescription, Button, Field, FormSection, Input, Select, Textarea } from '@business-os/ui';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { DocumentPath, TaxRateOption } from '../../api/finance';
 import { ZonePage } from '../../shell/zone-page';
 import { CustomerPicker } from '../customer-picker';
+import { useLoad } from '../use-load';
+import { Problem } from '../problem';
 import { currencyOptions } from '../sales/format';
 import { CatalogLinePicker, catalogLineStart, catalogPriceNote } from './catalog-picker';
-import { PATH_KIND, useFinance } from './env';
+import { PATH_KIND, useFinance, useRequestNames } from './env';
 import { formatMoney } from './format';
-import { KIND_LABEL, Row, useIdempotencyKey, useSubmit } from './shared';
+import { fitsCustomer, OpportunityField, ProjectField, type LinkRef } from './link-fields';
+import { KIND_LABEL, LoadingRows, Row, useIdempotencyKey, useSubmit } from './shared';
 
 type Line = {
   key: string; description: string; quantity: string; unitPrice: string; discountAmount: string; taxRateId: string;
   /** F7-B: the catalog item this unsaved line was started from. Sent once with the line, never stored. */
   catalog?: { item: CatalogItem; priceFilled: boolean; taxNote: string | null };
 };
-type Values = { customerId: string; customerName: string | null; currencyCode: string; date: string; notes: string; lines: Line[] };
+type Values = {
+  customerId: string; customerName: string | null; currencyCode: string; date: string; notes: string; lines: Line[];
+  /** LC-2: the customer's contact (only ever from a prefill or the saved draft) and the optional links. */
+  contactId: string | null; opportunity: LinkRef | null; project: LinkRef | null;
+};
+/** LC-2: a new quote started from an opportunity. Customer, contact, currency and the opportunity come from it. */
+export interface DocumentPrefill { customerId: string; customerName: string | null; contactId: string | null; currencyCode: string; opportunity: LinkRef }
 
 let seq = 0;
 const lineKey = () => `l${++seq}`;
 const blankLine = (taxRateId: string): Line => ({ key: lineKey(), description: '', quantity: '1', unitPrice: '', discountAmount: '', taxRateId });
 
-function initial(doc: FinanceDocument | undefined, currency: string, defaultTax: string, customerId?: string, customerName?: string | null): Values {
-  if (!doc) return { customerId: customerId ?? '', customerName: customerName ?? null, currencyCode: currency, date: '', notes: '', lines: [blankLine(defaultTax)] };
+function initial(doc: FinanceDocument | undefined, currency: string, defaultTax: string, customerId?: string, customerName?: string | null, prefill?: DocumentPrefill): Values {
+  if (prefill) {
+    return {
+      customerId: prefill.customerId, customerName: prefill.customerName, currencyCode: prefill.currencyCode, date: '', notes: '', lines: [blankLine(defaultTax)],
+      contactId: prefill.contactId, opportunity: prefill.opportunity, project: null,
+    };
+  }
+  if (!doc) return { customerId: customerId ?? '', customerName: customerName ?? null, currencyCode: currency, date: '', notes: '', lines: [blankLine(defaultTax)], contactId: null, opportunity: null, project: null };
   return {
+    contactId: doc.contactId,
+    opportunity: doc.opportunityId ? { id: doc.opportunityId, label: null, customerId: doc.customerId } : null,
+    project: doc.projectId ? { id: doc.projectId, label: null, customerId: doc.customerId } : null,
     customerId: doc.customerId, customerName: doc.billToSnapshot?.name ?? null, currencyCode: doc.currencyCode,
     date: (doc.kind === 'QUOTE' ? doc.validUntil : doc.kind === 'INVOICE' ? doc.dueDate : null) ?? '', notes: doc.notes ?? '',
     lines: doc.lines.map((l) => ({
@@ -39,18 +57,18 @@ function initial(doc: FinanceDocument | undefined, currency: string, defaultTax:
  * (and the database checks them again at issue), and the saved figures are shown after each save.
  * Numbers are assigned only when a document is issued.
  */
-export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId, onSaved, onCancel }: {
+export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId, prefill, onSaved, onCancel }: {
   path: DocumentPath; doc?: FinanceDocument; taxRates: TaxRateOption[]; defaultTaxRateId: string | null;
-  customerId?: string; onSaved: (saved: FinanceDocument, created: boolean) => void; onCancel: () => void;
+  customerId?: string; prefill?: DocumentPrefill; onSaved: (saved: FinanceDocument, created: boolean) => void; onCancel: () => void;
 }) {
   const env = useFinance();
   const { client, slug, locale, currency, markDirty } = env;
   const kind = PATH_KIND[path];
   const live = (id: string) => taxRates.some((r) => r.id === id && !r.archivedAt);
   const defaultTax = defaultTaxRateId && live(defaultTaxRateId) ? defaultTaxRateId : '';
-  const start = useMemo(() => initial(doc, currency, defaultTax, customerId, customerId ? env.names.get(customerId) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const start = useMemo(() => initial(doc, currency, defaultTax, customerId, customerId ? env.names.get(customerId) : null, prefill), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [values, setValues] = useState<Values>(start);
-  const strip = (v: Values) => JSON.stringify({ ...v, customerName: null, lines: v.lines.map((l) => [l.description, l.quantity, l.unitPrice, l.discountAmount, l.taxRateId, l.catalog?.item.id ?? null]) });
+  const strip = (v: Values) => JSON.stringify({ ...v, customerName: null, opportunity: v.opportunity?.id ?? null, project: v.project?.id ?? null, lines: v.lines.map((l) => [l.description, l.quantity, l.unitPrice, l.discountAmount, l.taxRateId, l.catalog?.item.id ?? null]) });
   const dirty = strip(values) !== strip(start);
   useEffect(() => markDirty('form', dirty), [dirty, markDirty]);
   useEffect(() => () => markDirty('form', false), [markDirty]);
@@ -58,6 +76,22 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
   const keyFor = useIdempotencyKey();
   const [lineErrors, setLineErrors] = useState<string | null>(null);
   const set = (patch: Partial<Values>) => setValues((v) => ({ ...v, ...patch }));
+  // LC-2: choosing a different customer clears a project or opportunity that belongs to another one, and the
+  // contact (a customer's own), before saving, and says so. Choosing the same customer again keeps them.
+  const [cleared, setCleared] = useState<string | null>(null);
+  function pickCustomer(c: Customer | null) {
+    if (!c) return set({ customerId: '', customerName: null });
+    const dropProject = !fitsCustomer(values.project, c.id, false);
+    const dropOpportunity = !fitsCustomer(values.opportunity, c.id, true);
+    const names = [dropProject ? 'project' : null, dropOpportunity ? 'opportunity' : null].filter(Boolean);
+    setCleared(names.length ? `The ${names.join(' and ')} you had chosen belonged to a different customer, so ${names.length > 1 ? 'they were' : 'it was'} cleared. Choose again if you still want to link ${names.length > 1 ? 'them' : 'it'}.` : null);
+    setValues((v) => ({
+      ...v, customerId: c.id, customerName: c.displayName, contactId: c.id === v.customerId ? v.contactId : null,
+      project: dropProject ? null : v.project, opportunity: dropOpportunity ? null : v.opportunity,
+    }));
+  }
+  /** A name read for a linked record: fills the label without counting as a change. */
+  const resolved = (key: 'opportunity' | 'project') => (ref: LinkRef) => setValues((v) => (v[key]?.id === ref.id ? { ...v, [key]: ref } : v));
   const setLine = (key: string, patch: Partial<Line>) => setValues((v) => ({ ...v, lines: v.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) }));
   // F7-B: start a new line from a catalog item (quotes and invoices only).
   const [picking, setPicking] = useState(false);
@@ -107,7 +141,13 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
     }));
     const date = values.date || null;
     const common = kind === 'CREDIT_NOTE' ? { notes: values.notes, lines }
-      : { customerId: values.customerId, notes: values.notes, lines, ...(kind === 'QUOTE' ? { validUntil: date } : { dueDate: date }) };
+      : {
+        customerId: values.customerId, notes: values.notes, lines, ...(kind === 'QUOTE' ? { validUntil: date } : { dueDate: date }),
+        // A link is sent only when this person can read that Zone: otherwise it is left exactly as it was.
+        ...(values.contactId !== (doc?.contactId ?? null) ? { contactId: values.contactId } : {}),
+        ...(env.sales ? { opportunityId: values.opportunity?.id ?? null } : {}),
+        ...(env.projects ? { projectId: values.project?.id ?? null } : {}),
+      };
     await submit.run(async () => {
       if (doc) return client.updateDocument(slug, path, doc.id, { version: doc.version, ...common });
       const body = { ...common, currencyCode: values.currencyCode };
@@ -137,7 +177,7 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
                 <CustomerPicker
                   id="doc-customer" customers={env.customers} slug={slug} selectedId={values.customerId} selectedName={values.customerName ?? env.names.get(values.customerId) ?? null}
                   error={submit.fields.customerId} hint="Required. Choose an active customer from the Customers Zone."
-                  onPick={(c) => set({ customerId: c?.id ?? '', customerName: c?.displayName ?? null })} onSessionEnded={env.onSessionEnded}
+                  onPick={pickCustomer} onSessionEnded={env.onSessionEnded}
                 />
               ) : (
                 <Alert tone="warning" className="sm:col-span-2">
@@ -160,6 +200,22 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
                 {(c) => <Input {...c} type="date" value={values.date} onChange={(e) => set({ date: e.target.value })} />}
               </Field>
             </div>
+          </FormSection>
+        ) : null}
+
+        {kind !== 'CREDIT_NOTE' && (env.sales || env.projects) ? (
+          <FormSection title="Links" description="Optional. Link this draft to the work it belongs to. Only records of the chosen customer are listed.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {env.sales ? (
+                <OpportunityField sales={env.sales} slug={slug} customerId={values.customerId} value={values.opportunity} onChange={(opportunity) => { setCleared(null); set({ opportunity }); }}
+                  onResolved={resolved('opportunity')} onSessionEnded={env.onSessionEnded} error={submit.fields.opportunityId} />
+              ) : null}
+              {env.projects ? (
+                <ProjectField projects={env.projects} slug={slug} customerId={values.customerId} requireCustomer value={values.project} onChange={(project) => { setCleared(null); set({ project }); }}
+                  onResolved={resolved('project')} onSessionEnded={env.onSessionEnded} error={submit.fields.projectId} />
+              ) : null}
+            </div>
+            {cleared ? <p role="status" className="mt-3 text-sm text-muted-foreground">{cleared}</p> : null}
           </FormSection>
         ) : null}
 
@@ -251,3 +307,26 @@ export function DocumentForm({ path, doc, taxRates, defaultTaxRateId, customerId
   );
 }
 
+
+/**
+ * LC-2: a new quote started from an opportunity (the Sales Zone's "Create quote"). The opportunity is read
+ * through the Sales API (which checks sales:read and the business again); customer, contact, currency and the
+ * link come from it, and everything stays editable. An opportunity without a customer asks for one.
+ */
+export function DocumentFromOpportunity({ path, opportunityId, taxRates, defaultTaxRateId, onSaved, onCancel }: {
+  path: DocumentPath; opportunityId: string; taxRates: TaxRateOption[]; defaultTaxRateId: string | null;
+  onSaved: (saved: FinanceDocument, created: boolean) => void; onCancel: () => void;
+}) {
+  const env = useFinance();
+  const { state, reload } = useLoad(`doc-from-opp|${env.slug}|${opportunityId}`, (signal) => (env.sales ? env.sales.get(env.slug, opportunityId, signal) : Promise.resolve({ kind: 'forbidden' as const })));
+  const known = state.status === 'done' && state.outcome.kind === 'ok' ? state.outcome.data : null;
+  useRequestNames(known?.customerId ? [known.customerId] : []);
+  if (state.status === 'loading') return <LoadingRows label="Loading the opportunity…" />;
+  if (state.outcome.kind !== 'ok') return <Problem outcome={state.outcome} what="This opportunity" onRetry={reload} onSessionEnded={env.onSessionEnded} />;
+  const o: Opportunity = state.outcome.data;
+  const prefill: DocumentPrefill = {
+    customerId: o.customerId ?? '', customerName: o.customerId ? env.names.get(o.customerId) ?? null : null, contactId: o.customerId ? o.contactId : null,
+    currencyCode: o.currencyCode, opportunity: { id: o.id, label: o.title, customerId: o.customerId },
+  };
+  return <DocumentForm path={path} taxRates={taxRates} defaultTaxRateId={defaultTaxRateId} prefill={prefill} onSaved={onSaved} onCancel={onCancel} />;
+}

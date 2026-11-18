@@ -11,6 +11,7 @@ import { ApplyCreditDialog } from './credit';
 import { isPositive } from './decimal';
 import { DocumentPdfCard } from './document-pdf';
 import { PATH_KIND, useFinance } from './env';
+import { RelatedChip } from './link-fields';
 import { formatDate, formatMoney, formatWhen } from './format';
 import { ConfirmDialog, DocumentBadges, isOverdue, Item, KIND_LABEL, LoadingRows, okData, Row, useIdempotencyKey, useSubmit, WRAP } from './shared';
 
@@ -95,6 +96,12 @@ export function DocumentDetail({ path, id }: { path: DocumentPath; id: string })
                   <button type="button" className="font-medium underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => env.leave(() => env.onOpenCustomer!(d.customerId))}>{customerName}</button>
                 ) : customerName}
               </Item>
+              {d.opportunityId && env.sales ? (
+                <Item label="Opportunity"><RelatedChip kind="opportunity" slug={slug} id={d.opportunityId} sales={env.sales} projects={null} onOpen={env.onOpenOpportunity ? (oid) => env.leave(() => env.onOpenOpportunity!(oid)) : undefined} /></Item>
+              ) : null}
+              {d.projectId && env.projects ? (
+                <Item label="Project"><RelatedChip kind="project" slug={slug} id={d.projectId} sales={null} projects={env.projects} onOpen={env.onOpenProject ? (pid) => env.leave(() => env.onOpenProject!(pid)) : undefined} /></Item>
+              ) : null}
               <Item label="Issue date">{formatDate(d.issueDate, locale)}</Item>
               {kind === 'QUOTE' ? <Item label="Valid until">{formatDate(d.validUntil, locale)}</Item> : null}
               {kind === 'INVOICE' ? <Item label="Due date">{formatDate(d.dueDate, locale)}</Item> : null}

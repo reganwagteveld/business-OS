@@ -293,6 +293,11 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       <SalesZone
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
         sales={sales} customers={customers} context={active} userLabel={userLabel} initialOpportunityId={target} initialAction={intent}
+        finance={canReadFinance ? {
+          client: finance,
+          onOpen: (path, id) => open({ zone: 'finance', child: path === 'quotes' ? 'quotes' : path === 'invoices' ? 'invoices' : 'credit-notes', target: `${path === 'quotes' ? 'quote' : path === 'invoices' ? 'invoice' : 'credit-note'}:${id}` }),
+          onCreateQuote: (opportunityId) => open({ zone: 'finance', child: 'quotes', intent: 'new', target: `opportunity:${opportunityId}` }),
+        } : undefined}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
@@ -328,6 +333,8 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       <FinanceZone
         key={`${slug}|${target ?? ''}|${intent ?? ''}`}
         client={finance} customers={canReadCustomers ? customers : undefined} context={active} userLabel={userLabel}
+        sales={canReadSales ? sales : undefined} projects={canReadProjects ? projects : undefined}
+        onOpenOpportunity={canReadSales ? (id) => open({ zone: 'sales', target: id }) : undefined} onOpenProject={canReadProjects ? (id) => open({ zone: 'projects', target: id }) : undefined}
         section={current.child} navigation={current} initialTarget={target} initialAction={intent}
         // Inside the Zone, moving between sections keeps the target and intent the Zone was opened with,
         // so the shell's highlight follows without remounting the Zone (and losing its screen).

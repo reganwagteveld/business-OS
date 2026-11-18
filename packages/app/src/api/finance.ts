@@ -52,6 +52,8 @@ export const KIND_PATH: Record<FinanceDocumentKind, DocumentPath> = { QUOTE: 'qu
 export interface DocumentQuery {
   status: 'draft' | 'issued' | 'accepted' | 'declined' | 'expired' | 'void' | 'all';
   customerId?: string; from?: string; to?: string; cursor?: string; limit?: number;
+  /** LC-2: documents linked to this opportunity (also needs sales:read) or project. Quotes and invoices. */
+  opportunityId?: string; projectId?: string;
   /** Invoices only. */
   overdue?: boolean; settlement?: 'unpaid' | 'partially_paid' | 'paid' | 'open';
   /** Invoices only. Omitted: newest created first. due_asc: oldest due date first, undated last. */
@@ -212,7 +214,7 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
     if (raw.kind === 'network') return { kind: 'unreachable' };
     if (raw.status === 400) {
       const body = raw.json as { error?: string; message?: string } | undefined;
-      return { kind: 'invalid_input', message: body?.message ?? (body?.error === 'invalid_cursor' ? 'That page is no longer valid. Start again from the first page.' : 'Please check the details and try again.') };
+      return { kind: 'invalid_input', message: body?.message ?? (body?.error === 'invalid_cursor' ? 'That page is no longer valid. Start again from the first page.' : 'Please check the details and try again.'), ...(typeof body?.error === 'string' ? { code: body.error } : {}) };
     }
     const bad = classify(raw.status, raw.json);
     if (bad) return bad;
@@ -320,7 +322,7 @@ export function createFinanceClient(baseUrl: string, transport: AuthTransport, f
 
     async documents(slug, path, query, signal) {
       return get(`${base(slug)}/${path}` + qs({
-        status: query.status, customerId: query.customerId, from: query.from, to: query.to, cursor: query.cursor, limit: query.limit,
+        status: query.status, customerId: query.customerId, opportunityId: path === 'credit-notes' ? undefined : query.opportunityId, projectId: path === 'credit-notes' ? undefined : query.projectId, from: query.from, to: query.to, cursor: query.cursor, limit: query.limit,
         overdue: path === 'invoices' ? bool(query.overdue) : undefined, settlement: path === 'invoices' ? query.settlement : undefined,
         sort: path === 'invoices' ? query.sort : undefined,
         invoiceId: path === 'credit-notes' ? query.invoiceId : undefined,
