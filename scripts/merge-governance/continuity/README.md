@@ -30,7 +30,7 @@ package.
 | `shadow.py` | Evaluates PRs for the shadow workflow; aggregates the §14.3 shadow report. |
 | `record.py` | Result records with an `inputs_sha256` and a hash of the verifier sources. |
 | `verify.py` | Command line: `evaluate` (offline), `shadow`, `report`. |
-| `tests/` | 88 tests: engine scenarios and adversarial cases, verdict parsing, replay of PRs 119/120/122/124, shadow report, read-only guards. |
+| `tests/` | 89 tests: engine scenarios and adversarial cases, verdict parsing, replay of PRs 119/120/122/124, shadow report, read-only guards. |
 | `.github/workflows/approval-continuity.yml` | Shadow workflow: `workflow_run` after CI and `workflow_dispatch`, from `main` only, read permissions only. |
 | `.github/workflows/merge-governance-selftest.yml` | Runs the tests on PRs and pushes that touch these files. Read-only, not required. |
 

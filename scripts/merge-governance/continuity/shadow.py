@@ -226,7 +226,8 @@ def report(records, annotations=None, now=None):
         "1_two_weeks_and_40_decisions": days >= MIN_DAYS and len(window) >= MIN_DECISIONS,
         "2_representative_categories": all(cat_counts[c] >= m for c, m in CATEGORY_MINIMUMS.items()),
         "3_zero_false_approvals_and_all_carried_reviewed":
-            not false_approvals and not [d for d in unreviewed if d["inputs_sha256"] in window_keys],
+            not [d for d in false_approvals if d["inputs_sha256"] in window_keys]
+            and not [d for d in unreviewed if d["inputs_sha256"] in window_keys],
         "4_every_stricter_result_explained": not [d for d in unexplained_stricter if d["inputs_sha256"] in window_keys],
         "5_zero_unexplained_verifier_errors": not [d for d in unexplained_errors if d["inputs_sha256"] in window_keys],
     }
@@ -239,7 +240,10 @@ def report(records, annotations=None, now=None):
         "window_days": round(days, 2),
         "category_counts": cat_counts,
         "category_minimums": CATEGORY_MINIMUMS,
+        # Every false approval ever seen stays in the report (history); only decisions after the
+        # latest one count towards the exit criteria (the window).
         "false_approvals": [d["inputs_sha256"] for d in false_approvals],
+        "window_starts_after": max((_ts(d) for d in false_approvals), default=None),
         "carried_without_audit_comparison": [d["inputs_sha256"] for d in unreviewed],
         "stricter_without_explanation": [d["inputs_sha256"] for d in unexplained_stricter],
         "verifier_errors_without_explanation": [d["inputs_sha256"] for d in unexplained_errors],

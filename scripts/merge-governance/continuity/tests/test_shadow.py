@@ -197,6 +197,19 @@ class Report(unittest.TestCase):
         self.assertLess(rep["window_decisions"], 5)
         self.assertFalse(rep["all_checked_criteria_met"])
 
+    def test_clean_window_after_an_earlier_false_approval_can_pass(self):
+        # One false approval at day 0, then a complete, clean, representative window afterwards.
+        recs, ann = full_set(start_day=1)
+        bad = decision(500, ts(0))
+        recs.append(bad)
+        ann["h500"] = {"audit": "substantive-change"}
+        rep = shadow.report(recs, ann, now=ts(16, 1))
+        self.assertEqual(rep["false_approvals"], ["h500"])  # history is kept
+        self.assertEqual(rep["window_starts_after"], ts(0))
+        self.assertEqual(rep["window_decisions"], 45)
+        self.assertTrue(rep["criteria_checked_here"]["3_zero_false_approvals_and_all_carried_reviewed"])
+        self.assertTrue(rep["all_checked_criteria_met"], rep["criteria_checked_here"])
+
     def test_carried_decision_without_audit_comparison_blocks_exit(self):
         recs, ann = full_set()
         del ann["h20"]
