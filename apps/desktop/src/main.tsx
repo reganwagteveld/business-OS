@@ -1,4 +1,4 @@
-import { App, applyStoredTheme, createDesktopTransport, parseClientConfig } from '@business-os/app';
+import { App, applyStoredTheme, createDesktopTransport, createHashHistory, parseClientConfig } from '@business-os/app';
 import { invoke } from '@tauri-apps/api/core';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -21,6 +21,6 @@ applyStoredTheme();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App platform="desktop" apiBaseUrl={apiBaseUrl} transport={transport} />
+    <App platform="desktop" apiBaseUrl={apiBaseUrl} transport={transport} history={createHashHistory()} />
   </StrictMode>,
 );
