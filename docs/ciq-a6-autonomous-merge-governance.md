@@ -4,6 +4,8 @@
 
 **Builds on, does not rewrite:** CIQ-1 (`docs/ciq-1-merge-queue-throughput.md`, D-CIQ-1..6), CIQ-A1 gate tiers (#143), CIQ-A2 database shards (#150), CIQ-A3 queue procedure and verdict detection (#152, #158), CIQ-A4 selective macOS and bounded runner retry (#156), CIQ-A5 draft/final validation split (#157, D-A5-1..5). All of them are merged. This document names the seams where A6 touches them (§13).
 
+**Revision 2 (2026-11-18, Regan's design review, conditional architecture approval for further development only, not merge or activation authority):** shadow mode now needs at least two weeks **and** at least 40 representative decisions with zero unexplained false approvals (§14.3); unattended merges are gated on a measured proof that the ledger compare-and-swap really gives the concurrency protection assumed in §7.3 (§7.3a, new package A6P); and §4.6, §11 and §18 state plainly that the prototype results do not show the real verifier, lease or controller is safe. Next step: build the read-only verifier and run it in shadow mode only.
+
 **Principle:** audit once, carry the approval forward when the code is provably the same, and send only the part that really changed back to an auditor.
 
 ---
@@ -19,7 +21,7 @@
 
 **Recommendation.** Build three trusted pieces, all owned by code on `main`, none of which a PR or a Claude thread can change for itself:
 
-1. **A6A, the approval continuity verifier.** A read-only, deterministic check that runs from `main` in GitHub Actions. It compares a synced candidate with the audited content by *reproducing* the sync: it replays the approved delta onto current `main` with `git merge-tree` and requires the candidate to be exactly that result (**L0**). Where git reports a conflict, it accepts only a resolution that equals a token-level three-way composition of both sides (**L2**), outside critical paths. It returns `APPROVAL_CONTINUES`, `INTEGRATION_VALIDATION_REQUIRED`, `FOCUSED_REAUDIT_REQUIRED` or `BLOCKED`, and for a re-audit it hands the auditor only the residual delta. The first two keep the original approval with no ChatGPT conversation. A prototype (`docs/evidence/ciq-a6/`) classifies all 9 real sync steps of #119, #120, #122 and #124 as approval-retaining, flags #123's genuine post-verdict edits for re-audit, agrees with today's rule on all 29 PRs where the patch-id matched, and passes 10 of 10 synthetic attack and composition scenarios.
+1. **A6A, the approval continuity verifier.** A read-only, deterministic check that runs from `main` in GitHub Actions. It compares a synced candidate with the audited content by *reproducing* the sync: it replays the approved delta onto current `main` with `git merge-tree` and requires the candidate to be exactly that result (**L0**). Where git reports a conflict, it accepts only a resolution that equals a token-level three-way composition of both sides (**L2**), outside critical paths. It returns `APPROVAL_CONTINUES`, `INTEGRATION_VALIDATION_REQUIRED`, `FOCUSED_REAUDIT_REQUIRED` or `BLOCKED`, and for a re-audit it hands the auditor only the residual delta. The first two keep the original approval with no ChatGPT conversation. A prototype (`docs/evidence/ciq-a6/`) classifies all 9 real sync steps of #119, #120, #122 and #124 as approval-retaining, flags #123's genuine post-verdict edits for re-audit, agrees with today's rule on all 29 PRs where the patch-id matched, and passes 10 of 10 synthetic attack and composition scenarios. That is evidence for the algorithm, not proof that the real verifier, lease or controller is safe (§4.6).
 2. **A6B, a single queue controller.** A level-triggered reconciler with persistent, hash-chained state, a compare-and-swap lease with a fencing token, idempotent operation IDs, bounded retries and SHA-pinned merges. It discovers approved PRs, respects holds and dependencies, syncs at the front, calls the verifier, triggers final CI through the CIQ-A5 ready-for-review path, merges, verifies `main` CI, deploy and health, and moves to the next eligible PR. It runs in two phases: first as deterministic scripts driven by the existing merge-queue thread, then (owner decision D-A6-4) as an Actions workflow using a dedicated GitHub App, with a required `Merge authority` check that only that App can write.
 3. **A6C, risk classes in a policy file on `main`.** Routine, Elevated and Critical, computed from the changed paths and never lowered by the PR or by an auditor. Each class sets minimum evidence that the controller verifies from the job results, not from the PR's own tier output. Critical changes never inherit an approval across anything but an exact reproducible merge with no overlapping files.
 
@@ -261,6 +263,8 @@ An approval for a child PR names `base:` = the parent's audited head. After the 
 
 `docs/evidence/ciq-a6/continuity-prototype.py` implements steps 1 to 3 with a prototype critical-path list (no provenance, policy file or overlays). `continuity-prototype.test.sh` builds a throwaway repository and checks 10 scenarios: clean sync (continues), an unchanged PR with a new head (continues), Settings/Scheduling composition (integration), a resolution that drops Scheduling (re-audit), a permission change hidden in a sync (re-audit), a migration added after approval (re-audit), a stale candidate (blocked), overlapping permission edits (re-audit), a stacked child after its parent's squash (continues), and a stacked child that drops `main` content (re-audit). All 10 pass. The real-history results are in §11.
 
+**What the prototype does not show.** These results (9 historical sync steps, 35 replayed PRs, 10 synthetic scenarios) are encouraging evidence for the algorithm's shape. They do **not** show that the real verifier, the lease mechanism or the controller is safe. The prototype has no provenance check, policy file, overlays, result signing or run-provenance check; the synthetic cases were written by the same author as the classifier; and the lease and controller do not exist yet. Each needs its own implementation, adversarial testing (§14) and independent audit before it is relied on, and nothing in this document treats the prototype as evidence for merge authority.
+
 ---
 
 ## 5. Trust model and approval laundering
@@ -377,10 +381,22 @@ At each step the controller takes the first eligible PR by: security fixes, then
 ### 7.3 Persistent state, lease and idempotency
 
 - **Ledger.** An append-only, hash-chained JSON log on a dedicated branch `merge-queue-ledger` (each commit adds `events/<seq>.json` with `prev_hash`). It holds approval records, verifier results, operation intents and outcomes, holds, halts and the lease. Issue #95 and the `queue:*` labels are rebuilt from it as a mirror. The branch gets a protection rule with no force pushes and no deletion (a branch-protection change, D-A6-7). In a user-owned repository the rule cannot restrict who pushes, so the hash chain makes tampering evident rather than impossible, and every decision is recomputed from GitHub and git anyway.
-- **Lease.** `lease.json` with holder, run ID and expiry (10 minutes, renewed every step). It is acquired by updating the ledger ref with an expected old SHA (`PATCH /git/refs/heads/merge-queue-ledger`, `force: false`): only one writer can win. The winning ledger commit SHA is the **fencing token**. Before every side effect (push, mark ready, merge) the controller re-reads the ref, and if the token is no longer the tip of its own chain it aborts without acting.
+- **Lease.** `lease.json` with holder, run ID and expiry (10 minutes, renewed every step). It is acquired by updating the ledger ref with an expected old SHA (`PATCH /git/refs/heads/merge-queue-ledger`, `force: false`): only one writer can win. The winning ledger commit SHA is the **fencing token**. Before every side effect (push, mark ready, merge) the controller re-reads the ref, and if the token is no longer the tip of its own chain it aborts without acting. **This compare-and-swap property is an assumption until proven (§7.3a); no unattended merge is allowed before that proof passes.**
 - **Operation IDs.** `op = sha256(pr, approval_id, step, input_head, main_sha)`. The controller writes `intent(op)` before acting and `outcome(op)` after. On restart, an intent without an outcome is reconciled by reading GitHub: for a merge, is the PR merged, and is `merge_commit_sha` a child of the recorded `main`? For a sync, does the branch head have the recorded `main` as a parent? It is never re-executed blindly.
 - **Level-triggered.** Events (`pull_request`, `workflow_run` for CI, `issue_comment`, push to `main`) only wake the controller, and a 5-minute schedule is the fallback. Each wake recomputes the full state from the ledger and GitHub, so a duplicate, missing or reordered event cannot cause a duplicate action.
 - **Bounded retries.** GitHub API 5xx/429: 3 tries with exponential backoff, then `Blocked: infrastructure` for that PR. Verifier job failure: 1 retry, then blocked. CI runner failures: the A4 automatic retry and the A3 single operator re-run, unchanged. Merge refused: back to eligibility, never a retry of the same call. Sync push rejected: re-read and retry once.
+
+### 7.3a Proof required before unattended merges (package A6P)
+
+GitHub documents `PATCH /repos/{o}/{r}/git/refs/{ref}` with `force: false` as refusing a non-fast-forward update, but it does not document behaviour under concurrent writers, and §7.3 depends on exactly that. Before any unattended merge (Phase 1 enforce or Phase 2), a dedicated probe package (A6P) must show, on a throwaway ref in this repository and with the result posted on the PR:
+
+1. **Lost update is impossible.** N concurrent writers (at least 2, 5 and 20, repeated at least 200 rounds each, from separate processes and from two separate Actions runners) each read tip `T` and try `T → own child`. Pass: in every round exactly one update succeeds, every other one gets a rejection (422 or 409), and the final tip's history contains exactly the winners' commits with no gap.
+2. **Stale writers lose.** A writer that read `T`, paused while another advanced the ref, then writes with `T` as parent, is rejected every time.
+3. **Rejections are distinguishable.** Retryable errors (5xx, 429, timeouts) are told apart from "you lost". After a timeout, the writer re-reads the ref before deciding, and the probe shows that a timed-out-but-applied update is detected (no double write and no phantom ownership).
+4. **Fencing works end to end.** A simulated controller holding a lease that has expired, and been taken over, is stopped by the fencing check before a merge call, in every one of at least 100 injected races. Its merge call is also pinned with `sha`, so even a missed fence cannot merge a different head.
+5. **Read-after-write.** After a successful update, a read of the ref (REST and `git ls-remote`) from another client returns the new tip, within a measured bound. That bound sets the fencing re-read wait.
+
+If any criterion fails, the ledger lease is not used for merge authority. The fallbacks are: Actions `concurrency` (one run at a time, measured in the same probe) plus a SHA-pinned merge as the only guard, with merges staying attended; or the Phase 2 required check, where GitHub itself enforces the gate. The probe results and any fallback choice go to independent audit and to Regan before D-A6-1 enforcement.
 
 ### 7.4 Sync and mechanical resolution
 
@@ -481,7 +497,7 @@ Method: GitHub REST (read-only) for timelines, comments and runs, and `git` for 
 | #120 | `74b3788` → `916462e` (original approval, direct) | — | INTEGRATION_VALIDATION_REQUIRED | L2 | — |
 | #122 | `f2309a1` (base `fd35003`) → `972134e` (then `1fb5882` after #120) | no approval for the stacked delta; verdict needed after retarget (merged on Regan's approval at `1fb5882`) | INTEGRATION_VALIDATION_REQUIRED | L0 replay of the stacked delta, shared `app.tsx` | "verify its effective delta before merge" |
 
-Every step classified as approval-retaining, matching ChatGPT's own conclusion each time. Where the two differ, the prototype is the stricter: it asks for integration evidence on the composed or shared files, where today only the ordinary final CI ran.
+Every step classified as approval-retaining (prototype, not the verifier: see §4.6 for what this does not show), matching ChatGPT's own conclusion each time. Where the two differ, the prototype is the stricter: it asks for integration evidence on the composed or shared files, where today only the ordinary final CI ran.
 
 ### 11.2 All 35 PRs merged with a connector verdict (first verdict versus final merged head)
 
@@ -625,7 +641,18 @@ Each is run at every state boundary in §7.1:
 
 ### 14.3 Shadow mode (before enforcement)
 
-A6A-2 runs the verifier on every sync for at least two weeks or 40 decisions, posting results only to the job summary and the ledger, while the current rule still governs. Exit criteria: no case where the verifier said `APPROVAL_CONTINUES` or `INTEGRATION_VALIDATION_REQUIRED` and a later audit found a substantive change; every `FOCUSED_REAUDIT_REQUIRED` explained by a real difference; zero verifier errors left unexplained. Regan sees the comparison before D-A6-1 takes effect.
+A6A-2 runs the read-only verifier on every sync, posting results only to the job summary and the shadow log, while the current rule (exact head or same patch-id, otherwise a fresh verdict) still governs every merge. The verifier has no effect on any merge in shadow mode.
+
+Shadow mode ends only when **all** of these hold:
+
+1. **Duration and volume: at least two weeks and at least 40 decisions.** Both, not either. A short period that happens to contain 40 easy cases is not enough.
+2. **Representative decisions.** The 40 must include at least: 10 syncs where `main` changed files the PR also changes; 5 real textual conflicts (L2 candidates); 5 Elevated or Critical PRs; 2 stacked PRs; 2 PRs with commits added after the verdict (true re-audit cases). If real traffic does not supply a category, the shortfall is filled with recorded probe PRs or historical replays, labelled as such, and shadow mode continues until each category is met.
+3. **Zero unexplained false approvals.** Every `APPROVAL_CONTINUES` and `INTEGRATION_VALIDATION_REQUIRED` is compared with what the independent audit concluded for the same candidate. Any case where the verifier would have carried an approval but the audit found a substantive change is a **false approval**. One unexplained false approval resets the count and blocks enforcement until the cause is fixed, re-audited and shadow mode restarts.
+4. **Every stricter result explained.** Every `FOCUSED_REAUDIT_REQUIRED` and `BLOCKED` traces to a real difference or a documented, accepted conservative rule.
+5. **Zero unexplained verifier errors**, and the adversarial tests in §14.1 (11 and 12 included) pass against the real verifier.
+6. **Independent audit** of the shadow report by ChatGPT, then Regan's own approval of D-A6-1 enforcement.
+
+The shadow report lists every decision with its inputs hash, the verifier result, the audit's conclusion and the category, so the comparison can be re-run.
 
 ---
 
@@ -637,11 +664,12 @@ A6A-2 runs the verifier on every sync for at least two weeks or 40 decisions, po
 | **A6A-2** Verifier workflow, shadow | `approval-continuity.yml` (read-only dispatch on `main`), v2 parsing in `verdict-status.sh`, shadow reporting; probe PRs for tests 11, 12 | Critical (`.github`) | A6A-1 | ChatGPT audit; Regan's own approval |
 | **A6C-1** Classes and evidence | class computation in the policy; evidence checker reading job conclusions; integration-validation dispatch helper | Critical | A6A-1 | ChatGPT audit; Regan's own approval |
 | **A6D-1** Protocol | §13.1–13.3 document changes, enforcement switch `continuity_mode: enforce` | Critical (approval model) | shadow exit criteria met (§14.3) | Regan's own approval |
-| **A6B-1** Controller, Phase 1 | `scripts/merge-queue/controller/` (state machine, ledger, lease, operation IDs, sync and mechanical resolution, A5 ready flow, post-merge checks), simulation tests 6–10 and 13–15, ledger branch and its protection | Critical | A6A-2, A6C-1, A5A/A5B merged | ChatGPT audit; Regan's own approval; branch protection for the ledger branch (Regan) |
+| **A6P** Concurrency proof | throwaway-ref probe of the ledger compare-and-swap, stale-writer, timeout and fencing criteria in §7.3a, plus Actions `concurrency` measurements; results posted on the PR | Critical (merge authority) | A6A-1 | ChatGPT audit of the results; Regan sees them before any unattended merge |
+| **A6B-1** Controller, Phase 1 | `scripts/merge-queue/controller/` (state machine, ledger, lease, operation IDs, sync and mechanical resolution, A5 ready flow, post-merge checks), simulation tests 6–10 and 13–15, ledger branch and its protection | Critical | A6A-2, A6C-1, A6P passed, A5A/A5B merged | ChatGPT audit; Regan's own approval; branch protection for the ledger branch (Regan); attended merges only until A6P passes and D-A6-1 enforcement is approved |
 | **A6B-2** Controller, Phase 2 | `merge-queue-controller.yml`, GitHub App and environments, `Merge authority` required check | Critical (credentials, branch protection) | A6B-1 stable for 2 weeks | Regan alone (D-A6-4) |
 | **A6M** Measurement | per-PR verdict count, verifier outcomes, waits, CI runs, hand-offs, compared with §12 after 2 weeks or 40 merges; rollback drill | report only | A6D-1 live | — |
 
-A6A-1 and A6A-2 can be one PR if the reviewer prefers. A6D-1 must stay separate (approval-model documents). Recommended order: A6A-1 → A6A-2 (shadow) ‖ A6C-1 → shadow exit → A6D-1 + A6B-1 → A6M → A6B-2 (optional).
+A6A-1 and A6A-2 can be one PR if the reviewer prefers. A6D-1 must stay separate (approval-model documents). Recommended order: **A6A-1 → A6A-2 (shadow only) ‖ A6C-1 ‖ A6P** → shadow exit (§14.3) and A6P passed → A6D-1 + A6B-1 → A6M → A6B-2 (optional). The verifier is built and run in shadow mode first; no package before A6D-1 changes how any PR is approved or merged.
 
 ---
 
@@ -649,7 +677,7 @@ A6A-1 and A6A-2 can be one PR if the reviewer prefers. A6D-1 must stay separate 
 
 | ID | Question | Options | Recommendation |
 |---|---|---|---|
-| **D-A6-1** | Replace "same patch-id, conflict-free" with the continuity verifier's result as the rule for carrying an approval forward? | yes, after shadow mode / no | **Yes, after shadow mode** (§14.3). It changes the approval model, so it needs your own approval. |
+| **D-A6-1** | Replace "same patch-id, conflict-free" with the continuity verifier's result as the rule for carrying an approval forward? | yes, after shadow mode / no | **Yes, only after shadow mode meets every §14.3 exit criterion (two weeks and 40 representative decisions, zero unexplained false approvals) and A6P passes** (§7.3a). It changes the approval model, so it needs your own approval. |
 | **D-A6-2** | Accept token-level composition (L2) outside critical paths as mechanical, with integration evidence instead of a re-audit? Integration validation also for clean syncs that touch shared files? | L2 yes, overlap rule as proposed / L2 yes, overlap rule only for code files / L2 no (any conflict → focused re-audit) | **L2 yes; overlap rule for code files only** (docs overlaps keep `APPROVAL_CONTINUES`), with `max_composed = 6`. Even "L2 no" would have cut the replayed re-audits to small packets. |
 | **D-A6-3** | May the controller write mechanical resolution merge commits itself? | yes, when the composition is unique and non-critical / no, always return to the dev thread | **Yes.** The verifier then judges that commit like any other. |
 | **D-A6-4** | Hosting | Phase 1 only / Phase 1 then Phase 2 (dedicated GitHub App, `main`-only environment, required `Merge authority` check) | **Phase 1 now; Phase 2 after two stable weeks.** Phase 2 creates a credential and changes branch protection, so it is yours alone. No paid service is involved. |
@@ -678,10 +706,11 @@ Not decisions (settled and unchanged): `CI gate` remains required; `strict` up-t
 
 ## 18. Limits and unresolved technical questions
 
-- **Prototype, not the verifier.** The prototype omits provenance, the policy file and the overlays. Its critical-path list is a sample. The real tests (§14) must pass before shadow mode.
+- **Prototype, not the verifier.** The prototype omits provenance, the policy file, the overlays and result signing. Its critical-path list is a sample, and its synthetic tests were written by the same author. Its results do not show that the real verifier, the lease or the controller is safe; those need implementation, adversarial testing and independent audit (§4.6, §14).
+- **Concurrency assumption.** The ledger lease relies on compare-and-swap semantics of `PATCH /git/refs` that GitHub does not document under concurrency. Unattended merges wait for the A6P proof (§7.3a).
 - **Composition is syntactic.** L2 proves that the resolution equals a token-level merge of both sides. It does not prove that the result is semantically right. That is why it always requires integration evidence, never applies to critical paths, and stops at 6 composed regions. Semantic conflicts without textual overlap remain covered only by tests, exactly as today.
 - **Same-account identity.** Every agent acts through the owner's account, which is an admin. In a user-owned repository, GitHub cannot stop a misbehaving agent from changing branch protection or merging when `CI gate` is green. Phase 2's App check narrows that only for merges. Full separation needs an organisation (D-A6-11).
-- **GitHub behaviours assumed, to be probed in A6A-2 / A6B-1:** that a ready-for-review and a sync push made with an App installation token start `pull_request` workflows (documented for App tokens, unlike `GITHUB_TOKEN`); that a check run pinned to an App ID in classic protection cannot be satisfied by `github-actions`; that `PATCH /git/refs` with `force: false` gives compare-and-swap semantics under concurrency. The design fails closed if any of them is false (no merge), but Phase 2 would not work as described.
+- **GitHub behaviours assumed, to be probed in A6A-2 / A6B-1:** that a ready-for-review and a sync push made with an App installation token start `pull_request` workflows (documented for App tokens, unlike `GITHUB_TOKEN`); that a check run pinned to an App ID in classic protection cannot be satisfied by `github-actions`; that `PATCH /git/refs` with `force: false` gives compare-and-swap semantics under concurrency (proof required by A6P, §7.3a, before any unattended merge). The design fails closed if any of them is false (no merge), but Phase 2 would not work as described.
 - **Production schema state** cannot be verified from Actions without D-A6-9. Until then the controller relies on the Mac session's apply record and on blob equality of the migration files.
 - **The connector slug proves the integration, not the session** (owner risk acceptance, 2026-11-17). A6 does not change that.
 - **Replay scope:** 35 merged PRs over about 22 hours and four detailed cases. The CI-run projections in §11.3 and §12 are modelled; A6M measures the real effect.
