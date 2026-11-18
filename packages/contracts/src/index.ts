@@ -32,6 +32,7 @@ export * from './auth.ts';
 export * from './account.ts';
 export * from './tenancy.ts';
 export * from './audit.ts';
+export * from './access.ts';
 export * from './customers.ts';
 export * from './sales.ts';
 export * from './projects.ts';
@@ -132,6 +133,7 @@ import {
   ReportingDetailsResponse, ReportingQueryRequest, ReportingQueryResponse, RunSavedViewResponse, SavedViewResponse, UpdateSavedViewRequest,
 } from './reporting.ts';
 import { ListAuditEventsQuery, ListAuditEventsResponse } from './audit.ts';
+import { AccessRolesResponse } from './access.ts';
 import { SearchRequest, SearchResolveRequest, SearchResolveResponse, SearchResponse } from './search.ts';
 
 export const API_VERSION = 'v1' as const;
@@ -154,6 +156,8 @@ export const endpoints = {
   getBusinessProfile: { method: 'GET', path: '/api/v1/b/:slug/business', response: BusinessProfileResponse },
   updateBusinessProfile: { method: 'PATCH', path: '/api/v1/b/:slug/business', request: UpdateBusinessProfileRequest, response: BusinessProfileResponse },
   listMembers: { method: 'GET', path: '/api/v1/b/:slug/members', response: MembersResponse },
+  /** The fixed roles and what each may do (A2-C, business:read: every member). Read-only; no custom roles. */
+  listAccessRoles: { method: 'GET', path: '/api/v1/b/:slug/access/roles', response: AccessRolesResponse },
   /** Recorded changes, newest first (audit:read: OWNER and ADMIN). Follow nextCursor; each request covers at most 92 days. */
   listAuditEvents: { method: 'GET', path: '/api/v1/b/:slug/audit-events', query: ListAuditEventsQuery, response: ListAuditEventsResponse },
   /** Role change ({ role }) or, A2-B, suspend/reactivate ({ status }). */

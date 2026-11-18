@@ -1190,6 +1190,216 @@
         "additionalProperties": false
       }
     },
+    "listAccessRoles": {
+      "method": "GET",
+      "path": "/api/v1/b/:slug/access/roles",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "object",
+            "properties": {
+              "customRoles": {
+                "type": "boolean",
+                "const": false
+              },
+              "editable": {
+                "type": "boolean",
+                "const": false
+              }
+            },
+            "required": [
+              "customRoles",
+              "editable"
+            ],
+            "additionalProperties": false
+          },
+          "roles": {
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "OWNER",
+                    "ADMIN",
+                    "MANAGER",
+                    "MEMBER"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "permissions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z]+:[a-z_]+$"
+                  }
+                },
+                "canInvite": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "ADMIN",
+                      "MANAGER",
+                      "MEMBER"
+                    ]
+                  }
+                },
+                "canAssign": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "OWNER",
+                      "ADMIN",
+                      "MANAGER",
+                      "MEMBER"
+                    ]
+                  }
+                },
+                "canManage": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "OWNER",
+                      "ADMIN",
+                      "MANAGER",
+                      "MEMBER"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "role",
+                "label",
+                "description",
+                "permissions",
+                "canInvite",
+                "canAssign",
+                "canManage"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "zones": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "zone": {
+                  "type": "string",
+                  "pattern": "^[a-z]+$"
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "permissions": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z]+:[a-z_]+$"
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 400
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 400
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "label",
+                      "description"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "zone",
+                "label",
+                "permissions"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "enum": [
+                    "transfer_ownership",
+                    "step_down",
+                    "attest_business_mailbox",
+                    "leave_business"
+                  ]
+                },
+                "roles": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "OWNER",
+                      "ADMIN",
+                      "MANAGER",
+                      "MEMBER"
+                    ]
+                  }
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                }
+              },
+              "required": [
+                "id",
+                "roles",
+                "description"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "model",
+          "roles",
+          "zones",
+          "rules"
+        ],
+        "additionalProperties": false
+      }
+    },
     "listAuditEvents": {
       "method": "GET",
       "path": "/api/v1/b/:slug/audit-events",
