@@ -9,7 +9,7 @@ const SIDEBARS: readonly { value: SidebarMode; label: string }[] = [{ value: 'ex
 
 /**
  * Account › Preferences. The identity is read from the signed-in session (read-only: no name or email
- * change exists on the server yet). Theme and sidebar are per-device preferences that never leave this
+ * change here: the name is edited on Account › Profile). Theme and sidebar are per-device preferences that never leave this
  * device, and apply immediately: there is nothing to save.
  */
 export function AccountPreferences({ user }: { user: CurrentUser }) {

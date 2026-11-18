@@ -1,0 +1,49 @@
+# CIQ-A6A-1: self-test of the approval continuity verifier (scripts/merge-governance/continuity/).
+# Unit, adversarial and replay tests only. Read-only token, no secrets, not a required check, and
+# its result confers nothing: approval and merging are unchanged (docs/merge-queue.md).
+name: Merge governance self-test
+
+on:
+  pull_request:
+    paths:
+      - "scripts/merge-governance/**"
+      - ".github/merge-governance/**"
+      - ".github/workflows/approval-continuity.yml"
+      - ".github/workflows/merge-governance-selftest.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/merge-governance/**"
+      - ".github/merge-governance/**"
+      - ".github/workflows/approval-continuity.yml"
+      - ".github/workflows/merge-governance-selftest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-governance-selftest-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    name: Continuity verifier tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the replayed PR commits (119, 120, 122, 124)
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/pull/119/head:refs/remotes/pr/119 +refs/pull/120/head:refs/remotes/pr/120 \
+            +refs/pull/122/head:refs/remotes/pr/122 +refs/pull/124/head:refs/remotes/pr/124
+      - name: Run the verifier tests
+        env:
+          CIQ_A6A_REQUIRE_REPLAY: "1"
+        run: python3 -I scripts/merge-governance/continuity/run_tests.py
