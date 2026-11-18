@@ -16,7 +16,7 @@ export type MetricId =
 
 export type SourceKey =
   | 'finance.invoices' | 'finance.credit_notes' | 'finance.payments_received' | 'finance.receivables_outstanding' | 'finance.receivables_overdue'
-  | 'sales.won' | 'customers.new';
+  | 'sales.won' | 'customers.new' | 'finance.expenses' | 'projects.tasks_done' | 'scheduling.events';
 
 export interface MetricDefinition {
   id: MetricId;
@@ -150,28 +150,37 @@ export const METRICS: readonly MetricDefinition[] = [
     requires: ['customers:read'], dimensionRequires: {},
     availability: 'available', plannedNote: null, source: 'customers.new', value: 'count', hasDetail: true, defaultChart: 'line', minimumGroupSize: null,
   },
+  {
+    id: 'finance.expenses_recorded', version: 1, compatible: [1], name: 'Expenses recorded', zone: 'finance', valueType: 'money', unit: 'per currency',
+    description: 'Total of the expenses you recorded in the period, per currency.',
+    semantics: 'Sum of the total cost (tax included, as the supplier billed it) of recorded expenses. A cost incurred, not money paid out: payments to suppliers are not counted again. Currencies are never converted or added together. Not a profit figure and not netted against Amount invoiced.',
+    temporal: 'period', dateField: 'Expense date (the day the cost was incurred)', timeZone: BUSINESS_DATE,
+    statusTreatment: 'Recorded expenses only. Drafts are not counted. Voided expenses are removed from every period, including the one they were incurred in.',
+    granularities: PERIODS, dimensions: ['currency', 'customer'], filters: ['currencyCode', 'customerId'],
+    requires: ['finance:read'], dimensionRequires: { customer: ['customers:read'] },
+    availability: 'available', plannedNote: null, source: 'finance.expenses', value: 'amount', hasDetail: true, defaultChart: 'bar', minimumGroupSize: null,
+  },
+  {
+    id: 'projects.tasks_completed', version: 1, compatible: [1], name: 'Tasks completed', zone: 'projects', valueType: 'count', unit: 'tasks',
+    description: 'How many project tasks were completed in the period.',
+    semantics: 'Number of tasks that are currently done, by the time they were completed. Counts work finished, not work planned or due.',
+    temporal: 'period', dateField: 'Time the task was completed', timeZone: BUSINESS_DATE,
+    statusTreatment: 'Done tasks only. A task that is reopened leaves every period until it is completed again. Archived tasks are not counted. Tasks of an archived project still count.',
+    granularities: PERIODS, dimensions: [], filters: [],
+    requires: ['projects:read'], dimensionRequires: {},
+    availability: 'available', plannedNote: null, source: 'projects.tasks_done', value: 'count', hasDetail: true, defaultChart: 'bar', minimumGroupSize: null,
+  },
+  {
+    id: 'scheduling.events_scheduled', version: 1, compatible: [1], name: 'Events scheduled', zone: 'scheduling', valueType: 'count', unit: 'events',
+    description: 'How many events take place in the period.',
+    semantics: 'Number of events on the business calendars that start in the period and are still scheduled. Counts events that take place, not when they were booked, and says nothing about whether they went ahead.',
+    temporal: 'period', dateField: 'Event start', timeZone: BUSINESS_DATE,
+    statusTreatment: 'Scheduled events only. Cancelled and archived events are removed from every period, including the one they were due in.',
+    granularities: PERIODS, dimensions: ['customer'], filters: ['customerId'],
+    requires: ['scheduling:read'], dimensionRequires: { customer: ['customers:read'] },
+    availability: 'available', plannedNote: null, source: 'scheduling.events', value: 'count', hasDetail: true, defaultChart: 'bar', minimumGroupSize: null,
+  },
   // ---- planned: registered so saved views and the UI can name them, never executable -------------------
-  {
-    ...PLANNED, id: 'finance.expenses_recorded', version: 1, compatible: [1], name: 'Expenses recorded', zone: 'finance', valueType: 'money', unit: 'per currency',
-    description: 'Total of expenses recorded in the period, per currency.', semantics: 'Planned.', temporal: 'period', dateField: 'Expense date', timeZone: BUSINESS_DATE,
-    statusTreatment: 'Planned: recorded expenses only; drafts and voided expenses excluded.', requires: ['finance:read'],
-    plannedNote: 'Needs a Finance-owned expense read model (finance/server/reporting.ts) with the F3 tax treatment rules. Not built in R1.',
-    value: 'amount', defaultChart: 'bar', minimumGroupSize: null,
-  },
-  {
-    ...PLANNED, id: 'projects.tasks_completed', version: 1, compatible: [1], name: 'Tasks completed', zone: 'projects', valueType: 'count', unit: 'tasks',
-    description: 'How many project tasks were completed in the period.', semantics: 'Planned.', temporal: 'period', dateField: 'Task completion date', timeZone: BUSINESS_DATE,
-    statusTreatment: 'Planned.', requires: ['projects:read'],
-    plannedNote: 'Projects has no completion timestamp on tasks yet (only the current column). Needs a Projects change first.',
-    value: 'count', defaultChart: 'bar', minimumGroupSize: null,
-  },
-  {
-    ...PLANNED, id: 'scheduling.events_scheduled', version: 1, compatible: [1], name: 'Events scheduled', zone: 'scheduling', valueType: 'count', unit: 'events',
-    description: 'How many events take place in the period.', semantics: 'Planned.', temporal: 'period', dateField: 'Event start', timeZone: BUSINESS_DATE,
-    statusTreatment: 'Planned: cancelled and archived events excluded.', requires: ['scheduling:read'],
-    plannedNote: 'Needs a Scheduling-owned read model that respects ADR 0006 privacy (busy-only details).',
-    value: 'count', defaultChart: 'bar', minimumGroupSize: null,
-  },
   {
     ...PLANNED, id: 'people.headcount', version: 1, compatible: [1], name: 'Headcount', zone: 'people', valueType: 'count', unit: 'employees',
     description: 'Active employees on a date.', semantics: 'Planned.', temporal: 'snapshot', dateField: 'Employment status history', timeZone: BUSINESS_DATE,

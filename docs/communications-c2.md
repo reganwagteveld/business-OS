@@ -408,7 +408,9 @@ C2-B strategy (proposed): Vercel Cron every minute calls `POST /api/internal/job
 process within the function time budget, checkpointing the cursor after each page so a timeout loses
 nothing. Idempotency: provider message id unique per connection; re-processing a page is a no-op.
 Initial backfill is bounded (D-C2-7). Only mail with at least one participant matching a known contact
-is stored (D-C2-6). Cursor expiry → `FULL_RESYNC`. Provider push (Gmail Pub/Sub watch, Graph
+is stored (D-C2-6). *Superseded in part:* D-UI-4 (Regan, 2026-11-17, PR #114) amends D-C2-6 so unmatched
+mail may be kept in segregated mailbox-scoped storage when a mailbox opts in, and synced mail goes into
+separate `mail_*` tables rather than C1 rows; see `communications-c2-b2.md`. Cursor expiry → `FULL_RESYNC`. Provider push (Gmail Pub/Sub watch, Graph
 subscriptions) is a later optimisation, not needed for correctness.
 
 ## 10. API (C2-A)
@@ -440,6 +442,7 @@ Environment (all optional; feature off when absent; validated at boot):
 | `COMMUNICATIONS_CREDENTIAL_KEYS` | `keyId:base64(32 bytes)[,…]`; required if any provider is configured |
 | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Both or neither |
 | `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_TENANT` | Both or neither; tenant defaults to `common` |
+| `COMMUNICATIONS_CONNECT_ENABLED` | C2-UI-C release gate, default `false`: while not exactly `true`, every provider reports `configured: false` and the connect flow (consent start and callback) is refused, even with OAuth clients set. Switching it on is an owner decision (approved test accounts, Gate C). |
 
 The redirect URI is derived: `${APP_BASE_URL}/api/v1/communications/oauth/callback`.
 
@@ -864,6 +867,11 @@ continued access.
 ---
 
 ## 17. Roadmap after E1 (updated 2026-11-16)
+
+> **Updated 2026-11-17:** after D-UI-1 to D-UI-10 (PR #114), the C2-B2 to C2-B4 split and storage model
+> are redesigned in `communications-c2-b2.md` (provider mail in its own mailbox-scoped tables; packages
+> B2-1 mail store, B2-2 mail actions, B3 sync, B4 sync operations). Where the table below differs, that
+> document is the proposal under review.
 
 Each stage is a separate PR with its own thread, audit and owner approval. Nothing connects a real
 customer mailbox until Gates A, B and C (§14) have passed and the E1 prerequisites below are met.

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // UI Phase 2: the application shell (registry, navigation, business switching, responsive drawer, theme).
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, createCustomersClient, createDashboardClient, createProjectsClient, createSalesClient, memoryStorage, type AuthClient, type BusinessContext, type Outcome, type TenancyClient } from '../src';
@@ -116,7 +116,7 @@ describe('Zone registry', () => {
   it('filters by the server\'s permissions: unauthorised Zones are omitted, planned ones never openable, nothing listed while loading or failed', () => {
     const nav = resolveNavigation({ state: 'ready', permissions: ['customers:read', 'projects:read'] });
     expect(nav.available.map((z) => z.id)).toEqual(['customers', 'projects']);
-    expect(nav.planned.map((z) => z.id)).toEqual(['operations', 'settings']);
+    expect(nav.planned.map((z) => z.id)).toEqual(['operations']);
     // People P2: built, opened by people:read only.
     expect(canOpen({ zone: 'people' }, nav)).toBe(false);
     expect(canOpen({ zone: 'people' }, resolveNavigation({ state: 'ready', permissions: ['people:read'] }))).toBe(true);
@@ -183,13 +183,13 @@ describe('navigation in the app', () => {
   it('a role without a Zone\'s permission never sees it in the sidebar or on Home', async () => {
     mountApp({ permissions: () => ['business:read', 'customers:read'] });
     await h1('Welcome to Alpha Plumbing.');
-    expect(within(zonesNav()).getAllByRole('button').map((b) => b.textContent)).toEqual(['Home', 'Customers']);
+    expect(within(zonesNav()).getAllByRole('button').map((b) => b.textContent)).toEqual(['Home', 'Customers', 'Settings']);
     expect(screen.queryByRole('button', { name: 'Open the Sales Zone' })).toBeNull();
     expect(screen.queryByText(/Sales Zone — coming soon/)).toBeNull();
   });
 
   it('a role with no Zones gets a plain explanation instead of an empty sidebar', async () => {
-    mountApp({ permissions: () => ['business:read'] });
+    mountApp({ permissions: () => [] });
     await h1('Welcome to Alpha Plumbing.');
     expect(within(zonesNav()).getByText('No Zones are open to your role in this business.')).toBeTruthy();
   });
@@ -460,6 +460,38 @@ describe('responsive', () => {
     expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
   });
 
+  it('desktop: hovering the collapsed rail with a mouse expands it over the content; leaving collapses it; touch does not', async () => {
+    setWidth(1280);
+    const { user } = mountApp();
+    await h1('Welcome to Alpha Plumbing.');
+    await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    const slot = document.querySelector('[data-rail-slot]')!;
+    // Right after collapsing, the pointer is still on the rail: no peek until it has left once.
+    fireEvent.pointerOver(slot, { pointerType: 'mouse' });
+    await new Promise((r) => setTimeout(r, 250));
+    expect(document.querySelector('[data-peek]')).toBeNull();
+    fireEvent.pointerOut(slot, { pointerType: 'mouse', relatedTarget: document.body });
+    fireEvent.pointerOver(slot, { pointerType: 'touch' });
+    await new Promise((r) => setTimeout(r, 250));
+    expect(document.querySelector('[data-peek]')).toBeNull();
+    fireEvent.pointerOut(slot, { pointerType: 'touch', relatedTarget: document.body });
+
+    fireEvent.pointerOver(slot, { pointerType: 'mouse' });
+    await waitFor(() => expect(document.querySelector('[data-peek]')).not.toBeNull());
+    expect(sidebarItem('Customers').getAttribute('title')).toBeNull();
+    expect(localStorage.getItem('bos.sidebar')).toBe('compact');
+    fireEvent.pointerOut(slot, { pointerType: 'mouse', relatedTarget: document.body });
+    await waitFor(() => expect(document.querySelector('[data-peek]')).toBeNull());
+    expect(sidebarItem('Customers').getAttribute('title')).toBe('Customers');
+
+    // "Keep expanded" while peeking pins the rail open.
+    fireEvent.pointerOver(slot, { pointerType: 'mouse' });
+    await waitFor(() => expect(document.querySelector('[data-peek]')).not.toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+    expect(localStorage.getItem('bos.sidebar')).toBe('expanded');
+    expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeTruthy();
+  });
+
   it('tablet: a compact rail with every Zone reachable and no collapse toggle', async () => {
     setWidth(800);
     mountApp();
@@ -627,7 +659,7 @@ describe('private beta: business creation is offered only with the platform gran
   it('hides "Create another business" in the switcher and the chooser without the grant', async () => {
     const { user, tenancy } = mountApp({ canCreateBusiness: false });
     await h1('Welcome to Alpha Plumbing.');
-    expect(tenancy.platformAccess).toHaveBeenCalled();
+    await waitFor(() => expect(tenancy.platformAccess).toHaveBeenCalled());
     switcher().focus();
     await user.keyboard('{ArrowDown}');
     const menu = screen.getByRole('menu', { name: 'Businesses' });

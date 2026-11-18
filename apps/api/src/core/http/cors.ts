@@ -2,7 +2,7 @@
 // answers cross-origin requests only for an exact allowlist from validated configuration. CORS is a
 // browser courtesy, not access control: every endpoint still authenticates and authorises itself.
 
-const ALLOWED_METHODS = 'GET, POST, PATCH, DELETE, OPTIONS';
+const ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 const ALLOWED_HEADERS = 'Accept, Authorization, Content-Type';
 
 /** Headers to add to a response for a request from `origin`. Unknown origins get no CORS grant. */

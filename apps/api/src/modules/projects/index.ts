@@ -6,3 +6,6 @@ export type { Viewer } from './server/projects';
 export { archiveTask, createTask, listTasks, moveTask, restoreTask, updateTask } from './server/tasks';
 // Global search GS1-A (docs/global-search-gs1.md §6.2).
 export { projectSearchProvider, PROJECTS_SEARCH_INDEXES, taskSearchProvider } from './server/search';
+// Reporting WP-R1 (docs/reporting-operational-r1.md): the Projects Zone's own reporting read model.
+export { completedTaskCounts, completedTaskDetails } from './server/reporting';
+export type { CompletedTaskDetail, TaskPeriodQuery, TaskPeriodRow } from './server/reporting';

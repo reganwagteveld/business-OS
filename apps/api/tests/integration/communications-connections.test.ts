@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 // Provider configuration for this suite only (test doubles, never real values). Set before any
 // module reads the environment.
 process.env.COMMUNICATIONS_CREDENTIAL_KEYS = `test-k2:${randomBytes(32).toString('base64')},test-k1:${randomBytes(32).toString('base64')}`;
+process.env.COMMUNICATIONS_CONNECT_ENABLED = 'true';
 process.env.GOOGLE_OAUTH_CLIENT_ID = 'fake-google-client';
 process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'fake-google-secret';
 process.env.MICROSOFT_OAUTH_CLIENT_ID = 'fake-microsoft-client';
@@ -291,6 +292,8 @@ describe('providers and the connect flow', () => {
     const done = await callback(consent(authorizationUrl, acct), manager);
     expect(done.status).toBe(200);
     expect(done.html).toContain('Mailbox connected');
+    // D-UI-10: the page offers one fixed-word link back into the app, never a token, id or provider text.
+    expect(done.html).toContain('?mailbox=connected');
     expect(done.headers.get('content-security-policy')).toContain("default-src 'none'");
     expect(done.headers.get('cache-control')).toBe('no-store');
     expect(done.html).not.toContain(nonce);
@@ -360,6 +363,7 @@ describe('OAuth state and callback protections', () => {
     const again = await callback(path, who);
     expect(again.status).toBe(400);
     expect(again.html).toContain('(invalid_state)');
+    expect(again.html).toContain('?mailbox=invalid_state');
   });
 
   it('requires the signed-in user who started it, in a business they belong to', async () => {

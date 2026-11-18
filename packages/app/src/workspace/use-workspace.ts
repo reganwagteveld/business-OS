@@ -28,6 +28,12 @@ export interface WorkspaceController {
   /** Clears the notice from the last switch. */
   dismissNotice(): void;
   /**
+   * Re-reads the open business (its name, formats and this person's role and permissions) without leaving
+   * the screen, for example after Settings changed the business profile. Only acts while a business is open;
+   * anything unexpected is left to the next request, which the server answers authoritatively.
+   */
+  refresh(): void;
+  /**
    * Creates a business and opens it. After a network failure the server may still have created it,
    * so memberships are read again before anything is retried (no duplicate businesses).
    */
@@ -137,8 +143,24 @@ export function useWorkspace(deps: { auth: AuthClient; tenancy: TenancyClient; s
     );
   };
 
+  const refresh = () => {
+    if (phase.kind !== 'ready') return;
+    const from = phase;
+    controller.current?.abort();
+    const abort = new AbortController();
+    controller.current = abort;
+    const mine = ++run.current;
+    void resolveWorkspace({ auth, tenancy, storage, preferredSlug: from.context.business.slug, signal: abort.signal }).then(
+      (resolved) => {
+        if (mine === run.current && resolved.kind === 'ready' && resolved.context.business.slug === from.context.business.slug) setPhase(resolved);
+      },
+      () => undefined,
+    );
+  };
+
   return {
     phase,
+    refresh,
     retry: () => start(STARTING),
     select: (slug) => start(OPENING, slug),
     switchTo,

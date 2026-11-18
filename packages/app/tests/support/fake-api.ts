@@ -4,7 +4,7 @@
  * client and contract schemas sit in front of it, so a response that breaks the contract fails the test.
  */
 import {
-  CreateActivityRequest, CreateContactRequest, UpdateContactRequest, CreateCustomerRequest, UpdateCustomerRequest, type Activity, type Contact, type Conversation, type Customer,
+  CreateActivityRequest, CreateContactRequest, UpdateContactRequest, UpdateNoteRequest, CreateCustomerRequest, UpdateCustomerRequest, type Activity, type Contact, type Conversation, type Customer,
   type Message,
 } from '@business-os/contracts';
 import { randomUUID } from 'node:crypto';
@@ -85,7 +85,7 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
     },
     fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
-      const match = /^\/api\/v1\/b\/([^/]+)\/(customers|contacts|activities|members)(?:\/([^/]+))?(?:\/(archive|restore))?$/.exec(url.pathname);
+      const match = /^\/api\/v1\/b\/([^/]+)\/(customers|contacts|activities|members)(?:\/([^/]+))?(?:\/(archive|restore|remove))?$/.exec(url.pathname);
       const method = init?.method ?? 'GET';
       const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>));
       const call: Call = {
@@ -200,6 +200,20 @@ export function createFakeApi(businesses: Record<string, FakeBusiness>) {
           found.archivedAt = null;
           return json(200, { contact: found });
         }
+      }
+      if (resource === 'activities' && id && method === 'PATCH') {
+        const row = biz.activities.find((x) => x.id === id);
+        if (!row) return json(404, { error: 'not_found' });
+        if (row.type !== 'note') return json(409, { error: 'immutable' });
+        const parsed = UpdateNoteRequest.safeParse(call.body);
+        if (!parsed.success) return json(400, { error: 'invalid_input' });
+        Object.assign(row, parsed.data, { editedAt: now });
+        return json(200, { activity: row });
+      }
+      if (resource === 'activities' && id && action === 'remove' && method === 'POST') {
+        const at = biz.activities.findIndex((x) => x.id === id);
+        if (at < 0) return json(404, { error: 'not_found' });
+        return json(200, { activity: biz.activities.splice(at, 1)[0] });
       }
       if (resource === 'activities' && method === 'POST') {
         const parsed = CreateActivityRequest.safeParse(call.body);

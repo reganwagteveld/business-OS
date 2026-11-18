@@ -65,6 +65,20 @@ connect and read `_prisma_migrations` is not enough. Record it as
 `restoreDrill: { "status": "verified", "at": "...", "dataIntegrityChecked": true, "evidence": "..." }`.
 A drill creates Neon resources, so each one needs Regan's OK.
 
+### Restore drill gap (status 2026-11-17)
+
+No recovery point has an evidenced restore drill yet: `restoreDrill.status` is `not-run` on every entry. Being reachable, healthy and matching production's `_prisma_migrations` at cut time does **not** prove a restore. Until at least two drills are recorded:
+
+- the audit keeps the newest usable recovery points and warns on every run;
+- no recovery point may be described as restore-verified;
+- every recovery branch stays protected unless Regan approves its deletion by name after a fresh eligibility check. This holds even when the policy marks it eligible (as for `pre-c2b1-migration` and `pre-f6-migration` on 2026-11-17).
+
+Plan, not yet run (each drill creates Neon resources and needs Regan's OK). Drill the two newest verified points, `pre-workflow-links-migration` and `pre-search-indexes-migration`:
+1. Restore each to a temporary branch with compute.
+2. Check the expected last migration and per-table row counts against the values recorded at the branch's LSN.
+3. Delete the temporary resources.
+4. Record `restoreDrill` with `dataIntegrityChecked: true`.
+
 ## Phase 2: controlled cleanup (not built yet)
 
 Phase 1 ships no deletion code. Phase 2 is a separate, audited change that must add:

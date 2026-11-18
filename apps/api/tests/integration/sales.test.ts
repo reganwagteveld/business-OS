@@ -670,9 +670,14 @@ describe('R2 dashboard: open pipeline summary', () => {
     const old = (await owner.createPipeline({ name: 'Old', stages: [{ name: 'Held' }, { name: 'Empty' }] })).body;
     await make({ title: 'Old KWD', amount: '3.333', currencyCode: 'KWD', pipelineId: old.pipeline.id, stageId: old.stages[0].id });
     await make({ title: 'Old unpriced', pipelineId: old.pipeline.id, stageId: old.stages[0].id });
-    // Archive a stage holding open work, an empty stage, and a whole pipeline (no API for these yet; set directly).
+    // Archive a stage holding open work, an empty stage, and a whole pipeline, set directly. Since S-CFG-1 (migration
+    // 20261210000000) trigger G1 refuses an archived stage holding open work, so this legacy state (data from before
+    // the migration, which the §8.1 preflight counts) is written with triggers bypassed, as superuser only.
+    await admin.query('BEGIN');
+    await admin.query("SET LOCAL session_replication_role = replica");
     await admin.query('UPDATE sales_stages SET archived_at = now() WHERE id = ANY($1::uuid[])', [[stages[3]!.id, stages[2]!.id]]);
     await admin.query('UPDATE sales_pipelines SET archived_at = now() WHERE id = $1', [old.pipeline.id]);
+    await admin.query('COMMIT');
 
     const { body } = await owner.summary();
     const [main, archived] = body.summary.pipelines;

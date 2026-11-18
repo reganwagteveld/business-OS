@@ -1,0 +1,32 @@
+import './buffer-shim';
+import { App, createSettingsClient, memoryStorage, type AuthClient, type BusinessContext, type TenancyClient } from '@business-os/app';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { createFakeSettings } from '../../../packages/app/tests/support/fake-settings';
+import './index.css';
+
+const BASE = 'https://api.test';
+const role = new URLSearchParams(window.location.search).get('role') === 'member' ? 'MEMBER' : 'OWNER';
+const fake = createFakeSettings(['harbour-studio']);
+fake.profiles['harbour-studio'] = {
+  ...fake.profiles['harbour-studio']!, name: 'Harbour Design Studio', legalName: 'Harbour Design Studio Pty Ltd', tradingName: 'Harbour Studio', contactEmail: 'hello@harbour.example', contactPhone: '08 9430 1122',
+  website: 'https://harbour.example', address: { line1: '12 Mouat Street', line2: null, city: 'Fremantle', region: 'WA', postalCode: '6160', countryCode: 'AU' },
+};
+const PERMS = role === 'OWNER' ? ['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read'] : ['business:read', 'members:read'];
+const USER = { id: crypto.randomUUID(), email: 'morgan@harbour.example', name: 'Morgan Lee', emailVerified: true };
+const context = (): BusinessContext => ({
+  business: { slug: 'harbour-studio', name: fake.profiles['harbour-studio']!.name, countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' },
+  membership: { id: crypto.randomUUID(), role, permissions: PERMS },
+});
+const auth = { session: async () => ({ kind: 'signed-in', user: USER }), signOut: async () => undefined } as unknown as AuthClient;
+const tenancy: TenancyClient = {
+  listBusinesses: async () => ({ kind: 'ok', data: [{ slug: 'harbour-studio', name: fake.profiles['harbour-studio']!.name, role }] }),
+  businessContext: async () => ({ kind: 'ok', data: context() }),
+  createBusiness: async () => ({ kind: 'failed', status: 500 }),
+  platformAccess: async () => ({ kind: 'ok', data: { canCreateBusiness: false } }),
+};
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App platform="web" apiBaseUrl={BASE} auth={auth} tenancy={tenancy} storage={memoryStorage({ slug: 'harbour-studio' })} settings={createSettingsClient(BASE, { kind: 'cookie' }, fake.fetch)} />
+  </StrictMode>,
+);
