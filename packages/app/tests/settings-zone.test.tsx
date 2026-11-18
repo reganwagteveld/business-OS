@@ -57,8 +57,8 @@ async function openSettings(user: ReturnType<typeof userEvent.setup>) {
 
 describe('Settings pages and permissions', () => {
   it('lists only pages whose backend exists, filtered by the server\'s permission keys', () => {
-    expect(SETTINGS_PAGES.map((p) => `${p.scope}/${p.id}`)).toEqual(['account/preferences', 'business/profile', 'business/regional']);
-    expect(pagesFor('business', MEMBER).map((p) => p.id)).toEqual(['profile', 'regional']);
+    expect(SETTINGS_PAGES.map((p) => `${p.scope}/${p.id}`)).toEqual(['account/preferences', 'business/profile', 'business/regional', 'business/members', 'business/invitations', 'business/ownership', 'business/zones']);
+    expect(pagesFor('business', MEMBER).map((p) => p.id)).toEqual(['profile', 'regional', 'members', 'ownership']);
     expect(pagesFor('business', []).map((p) => p.id)).toEqual([]); // no business:read: no Business pages
     expect(pagesFor('account', []).map((p) => p.id)).toEqual(['preferences']); // account pages need no business key
     expect(resolvePage('business', 'roles', MEMBER)?.id).toBe('profile'); // an unknown page never opens
@@ -73,9 +73,9 @@ describe('Settings pages and permissions', () => {
     expect(within(scopes).getAllByRole('button').map((b) => b.textContent)).toEqual(['Business', 'Account']);
     expect(within(scopes).getByRole('button', { name: 'Business' }).getAttribute('aria-current')).toBe('page');
     const pages = screen.getByRole('navigation', { name: 'Business settings' });
-    expect(within(pages).getAllByRole('button').map((b) => b.textContent)).toEqual(['Business profile', 'Regional settings']);
-    // Nothing is listed for features that do not exist yet.
-    for (const name of [/Members/, /Roles/, /Invitations/, /Billing/, /Integrations/]) expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(within(pages).getAllByRole('button').map((b) => b.textContent)).toEqual(['Business profile', 'Regional settings', 'Members', 'Ownership and leaving']);
+    // Nothing is listed for features that do not exist yet (or that this role may not use).
+    for (const name of [/Roles/, /Invitations/, /Billing/, /Integrations/]) expect(screen.queryByRole('button', { name })).toBeNull();
     expect(screen.queryByText(/coming soon/i)).toBeNull();
   });
 
