@@ -6,12 +6,17 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AccountSessionsResponse } from '@business-os/contracts';
+import { SessionEndedError } from '@/core/http/errors';
 import { ACCOUNT_RATE_LIMITS } from '@/modules/identity/server/account-support';
+import { listSessions } from '@/modules/identity/server/sessions';
+import { backendPid, waitUntilBlocked } from './support/locks';
 import { account, desktopSession, identityEvents, PASSWORD, person, sessionIdOf, sha256, signIn, stillSignedIn } from './support/account';
 
 const admin = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
 beforeAll(() => admin.connect());
 afterAll(() => admin.end());
+
+const tokenOf = (cookie: string) => decodeURIComponent(cookie.split('=')[1]!).split('.')[0]!;
 
 const list = async (credential: { cookie?: string; bearer?: string }) => {
   const res = await account('GET', '/api/v1/me/sessions', credential);
@@ -58,6 +63,21 @@ describe('GET /api/v1/me/sessions', () => {
     expect(truncated).toBe(true);
     expect(sessions).toHaveLength(50);
     expect(sessions[0]!.current).toBe(true);
+  });
+
+  it('answers 401, never a list, when the session ended after the request authenticated', async () => {
+    // The route has already verified the session; it is then revoked (here: by another device) before the
+    // list is read. The service must refuse rather than list the account's other devices.
+    const me = await person(admin);
+    await signIn(me.email);
+    const token = tokenOf(me.cookie);
+    expect((await listSessions({ userId: me.id, sessionToken: token })).sessions.length).toBe(2);
+    await admin.query('DELETE FROM sessions WHERE token_hash = $1', [sha256(token)]);
+    await expect(listSessions({ userId: me.id, sessionToken: token })).rejects.toBeInstanceOf(SessionEndedError);
+    // An expired session is refused the same way.
+    const other = (await signIn(me.email))!;
+    await admin.query(`UPDATE sessions SET expires_at = now() - interval '1 second' WHERE token_hash = $1`, [sha256(tokenOf(other))]);
+    await expect(listSessions({ userId: me.id, sessionToken: tokenOf(other) })).rejects.toBeInstanceOf(SessionEndedError);
   });
 
   it('needs a signed-in, admitted session', async () => {
@@ -163,6 +183,32 @@ describe('POST /api/v1/me/sessions/revoke-others', () => {
     ]);
     expect([a.status, b.status].sort()).toEqual([200, 401]);
     expect([await stillSignedIn({ cookie: me.cookie }), await stillSignedIn({ cookie: second })].filter(Boolean)).toHaveLength(1);
+  });
+
+  it('a password changed between the check and the lock makes the proof stale: nothing ended, nothing recorded', async () => {
+    const me = await person(admin);
+    const second = (await signIn(me.email))!;
+    const holder = new pg.Client({ connectionString: process.env.TEST_ADMIN_URL });
+    await holder.connect();
+    try {
+      // Hold the account lock that revoke-others takes after verifying the password.
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [me.id]);
+      const pending = account('POST', '/api/v1/me/sessions/revoke-others', { cookie: me.cookie, body: { password: PASSWORD } });
+      // The request has verified the (old) password and now waits on the lock.
+      await waitUntilBlocked(admin, await backendPid(holder));
+      // Meanwhile the password changes (as a password change from this same session would do).
+      await holder.query(`UPDATE accounts SET password = 'a-different-hash' WHERE user_id = $1 AND provider_id = 'credential'`, [me.id]);
+      await holder.query('COMMIT');
+      const res = await pending;
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe('stale');
+    } finally {
+      await holder.end();
+    }
+    expect(await stillSignedIn({ cookie: second })).toBe(true);
+    expect(await stillSignedIn({ cookie: me.cookie })).toBe(true);
+    expect((await identityEvents(admin, me.id)).map((e) => e.action)).not.toContain('identity.sessions.revoked_others');
   });
 
   it('shares one per-account limit with single revocations, and refuses extra fields', async () => {
