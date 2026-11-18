@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { CustomersClient } from '../../api/customers';
 import type { ExpenseCategory } from '@business-os/contracts';
 import type { FinanceClient, TaxRateOption } from '../../api/finance';
+import type { ProjectsClient } from '../../api/projects';
+import type { SalesClient } from '../../api/sales';
 import type { BusinessContext } from '../../api/tenancy';
 import { useDraftGuard } from '../drafts';
 import { Problem } from '../problem';
@@ -10,7 +12,7 @@ import { useLoad } from '../use-load';
 import { ZoneFrame } from '../zone-frame';
 import { CatalogItemPage, CatalogList, CatalogNew } from './catalog';
 import { DocumentDetail } from './document-detail';
-import { DocumentForm } from './document-form';
+import { DocumentForm, DocumentFromOpportunity } from './document-form';
 import { DocumentList } from './document-list';
 import { FinanceEnvProvider, sectionOf, useCustomerNames, viewOfSection, type FinanceEnv, type FinanceSection, type FinanceView } from './env';
 import { ExpenseDetail } from './expense-detail';
@@ -32,7 +34,12 @@ const EXPENSE_TABS = [{ id: 'expenses', label: 'Expenses' }, { id: 'payments-mad
  * `catalog:<id>` (GS2-A, GS1 §10.6) opens one catalog item; any finance:read member may view it, and
  * the item page itself shows archived items read-only and the API's not-found state for a missing one.
  */
-export function initialView(section: string | undefined, target: string | undefined, intent: 'new' | undefined, can: FinanceEnv['can']): FinanceView {
+export function initialView(section: string | undefined, rawTarget: string | undefined, intent: 'new' | undefined, can: FinanceEnv['can']): FinanceView {
+  const target = rawTarget?.startsWith('opportunity:') ? undefined : rawTarget;
+  // LC-2: `opportunity:<id>` with the create intent starts a quote from that opportunity (it needs sales:read to read it).
+  if (rawTarget?.startsWith('opportunity:') && intent === 'new' && section === 'quotes' && can.write && can.readSales) {
+    return { name: 'document-new', path: 'quotes', opportunityId: rawTarget.slice('opportunity:'.length) };
+  }
   if (target) {
     // F6-2: `statement:<customerId>` or `statement:<customerId>:<currency>` from a customer's page.
     if (target.startsWith('statement:')) {
@@ -63,10 +70,13 @@ export function initialView(section: string | undefined, target: string | undefi
  * through the URL. Sections follow the shell's secondary navigation (`section`, `onSection`). Write
  * controls follow the server's permission keys for presentation only; the API enforces every rule again.
  */
-export function FinanceZone({ client, customers, context, userLabel, section, navigation, initialTarget, initialExpenseId, initialAction, onSection, onOpenCustomer, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function FinanceZone({ client, customers, sales, projects, context, userLabel, section, navigation, initialTarget, initialExpenseId, initialAction, onSection, onOpenCustomer, onOpenOpportunity, onOpenProject, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: FinanceClient;
   /** Only with customers:read: the customer picker and live names use it. */
   customers?: CustomersClient;
+  /** LC-2: only with sales:read / projects:read: the Opportunity and Project pickers and chips use them. */
+  sales?: SalesClient;
+  projects?: ProjectsClient;
   context: BusinessContext; userLabel: string;
   /** The shell's secondary-navigation child (overview, quotes, invoices, …). */
   section?: string;
@@ -78,6 +88,8 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
   initialAction?: 'new';
   onSection?: (section: FinanceSection) => void;
   onOpenCustomer?: (customerId: string) => void;
+  onOpenOpportunity?: (opportunityId: string) => void;
+  onOpenProject?: (projectId: string) => void;
   onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
 }) {
   const { slug, name, timeZone, locale, currency } = context.business;
@@ -88,9 +100,9 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
       write: has('finance:write'), issue: has('finance:issue'), payments: has('finance:payments'), expenses: has('finance:expenses'),
       manage: has('finance:manage'), billing: has('finance:billing'), catalog: has('finance:catalog'), readCustomers: has('customers:read') && Boolean(customers),
       pdfPreview: has('finance:documents_preview'), pdfGenerate: has('finance:documents_generate'), pdfDownload: has('finance:documents_download'),
-      branding: has('finance:documents_branding'),
+      branding: has('finance:documents_branding'), readSales: has('sales:read') && Boolean(sales), readProjects: has('projects:read') && Boolean(projects),
     };
-  }, [perms, customers]);
+  }, [perms, customers, sales, projects]);
   const [view, setView] = useState<FinanceView>(() => initialView(section, initialTarget ?? initialExpenseId, initialAction, can));
   const [notice, setNotice] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
@@ -147,6 +159,8 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
   const env: FinanceEnv = {
     client, customers: can.readCustomers ? customers ?? null : null, slug, locale, timeZone, currency, today, can, go, leave,
     markDirty: markDraft, onSessionEnded, onOpenCustomer: can.readCustomers ? onOpenCustomer : undefined, names,
+    sales: can.readSales ? sales ?? null : null, projects: can.readProjects ? projects ?? null : null,
+    onOpenOpportunity: can.readSales ? onOpenOpportunity : undefined, onOpenProject: can.readProjects ? onOpenProject : undefined,
   };
   const markForm = useCallback((dirty: boolean) => markDraft('form', dirty), [markDraft]);
   const back = (to: FinanceView) => () => leave(() => go(to));
@@ -162,11 +176,15 @@ export function FinanceZone({ client, customers, context, userLabel, section, na
     case 'documents': screen = <DocumentList key={view.path} path={view.path} />; break;
     case 'document': screen = <DocumentDetail key={`${view.path}:${view.id}`} path={view.path} id={view.id} />; break;
     case 'document-new':
-      screen = needsLookups(taxRates !== null) ?? (
+      screen = needsLookups(taxRates !== null) ?? (view.opportunityId ? (
+        <DocumentFromOpportunity key={view.opportunityId} path={view.path} opportunityId={view.opportunityId} taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null}
+          onCancel={back({ name: 'documents', path: view.path })}
+          onSaved={(d) => go({ name: 'document', path: view.path, id: d.id }, 'Draft saved. Issue it when it is final.')} />
+      ) : (
         <DocumentForm path={view.path} taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null} customerId={view.customerId}
           onCancel={back({ name: 'documents', path: view.path })}
           onSaved={(d) => go({ name: 'document', path: view.path, id: d.id }, 'Draft saved. Issue it when it is final.')} />
-      );
+      ));
       break;
     case 'document-edit':
       screen = needsLookups(taxRates !== null) ?? <EditDocument key={view.id} view={view} env={env} taxRates={taxRates!} defaultTaxRateId={okData(settings.state)?.defaultTaxRateId ?? null} />;

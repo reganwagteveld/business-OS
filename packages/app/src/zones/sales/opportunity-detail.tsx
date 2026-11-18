@@ -6,6 +6,7 @@ import { actionClass, inputClass, secondaryClass } from '../../shell/frame';
 import { useDialog } from '../dialog';
 import { Problem, Skeleton } from '../problem';
 import { useLoad } from '../use-load';
+import { OpportunityDocuments, type SalesFinanceLinks } from '../finance/opportunity-documents';
 import { formatDate, formatMoney, formatWhen } from './format';
 import { OutcomeBadge, ownerName, stageLabel } from './opportunity-list';
 import type { Names, SalesRef } from './types';
@@ -57,8 +58,12 @@ type Dialog = { kind: 'win' } | { kind: 'lose' } | { kind: 'reopen' } | { kind: 
  * sales:write may take. Status only changes through the win, lose and reopen endpoints; a stage move
  * is an edit that names the version it was based on.
  */
-export function OpportunityDetail({ sales, slug, id, locale, timeZone, refData, names, canWrite, onBack, onEdit, confirmLeave, onDraftChange, onSessionEnded }: {
+export function OpportunityDetail({ sales, slug, id, locale, timeZone, refData, names, canWrite, finance, canQuote, onBack, onEdit, confirmLeave, onDraftChange, onSessionEnded }: {
   sales: SalesClient; slug: string; id: string; locale?: string; timeZone: string; refData: SalesRef; names: Names; canWrite: boolean;
+  /** LC-2: only for a person with sales:read and finance:read; without it the quotes and invoices panel does not exist. */
+  finance?: SalesFinanceLinks;
+  /** finance:write as well: the "Create quote" action. */
+  canQuote?: boolean;
   onBack: () => void; onEdit: (o: Opportunity) => void; confirmLeave: (action: () => void) => void;
   onDraftChange: (key: string, dirty: boolean) => void; onSessionEnded: () => void;
 }) {
@@ -159,15 +164,16 @@ export function OpportunityDetail({ sales, slug, id, locale, timeZone, refData, 
             <span className="font-medium text-foreground tabular-nums">{formatMoney(o.amount, o.currencyCode, locale)}</span>
           </div>
         </div>
-        {canWrite ? (
+        {canWrite || (canQuote && finance?.onCreateQuote && !archived) ? (
           <div className="flex flex-wrap gap-2">
+            {canQuote && finance?.onCreateQuote && !archived ? <button type="button" className={secondaryClass} disabled={busy} onClick={() => confirmLeave(() => finance.onCreateQuote!(o.id))}>Create quote</button> : null}
             {editable ? <button type="button" className={secondaryClass} onClick={() => onEdit(o)}>Edit</button> : null}
             {editable && isOpen ? <button type="button" className={actionClass} disabled={busy} onClick={() => setDialog({ kind: 'win' })}>Mark won</button> : null}
             {editable && isOpen ? <button type="button" className={secondaryClass} disabled={busy} onClick={() => setDialog({ kind: 'lose' })}>Mark lost</button> : null}
             {editable && !isOpen ? <button type="button" className={secondaryClass} disabled={busy} onClick={() => { setReopenStage(o.stageId); setDialog({ kind: 'reopen' }); }}>Reopen</button> : null}
-            {archived
+            {canWrite ? (archived
               ? <button type="button" className={actionClass} disabled={busy} onClick={() => void act('Opportunity restored.', () => sales.restore(slug, o.id))}>{busy ? 'Restoring…' : 'Restore'}</button>
-              : <button type="button" className={secondaryClass} disabled={busy} onClick={() => setDialog({ kind: 'archive' })}>Archive</button>}
+              : <button type="button" className={secondaryClass} disabled={busy} onClick={() => setDialog({ kind: 'archive' })}>Archive</button>) : null}
           </div>
         ) : null}
       </header>
@@ -263,6 +269,7 @@ export function OpportunityDetail({ sales, slug, id, locale, timeZone, refData, 
               </button>
             </Panel>
           ) : null}
+          {finance ? <OpportunityDocuments finance={finance} slug={slug} opportunityId={o.id} locale={locale} timeZone={timeZone} onSessionEnded={onSessionEnded} /> : null}
           <Panel title="Outcome history">
             {history.state.status === 'loading' && history.previous === null ? <Skeleton rows={2} label="Loading history…" /> : null}
             {history.state.status === 'done' && history.state.outcome.kind !== 'ok' ? <Problem outcome={history.state.outcome} what="History" onRetry={history.reload} onSessionEnded={onSessionEnded} /> : null}

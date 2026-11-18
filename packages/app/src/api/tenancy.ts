@@ -15,7 +15,8 @@ export type Outcome<T> =
   /** `code` is the server's reason when it gives one (archived, stale, not_open, …). */
   | { kind: 'conflict'; code?: string }
   | { kind: 'rate_limited' }
-  | { kind: 'invalid_input'; message: string; fields?: Record<string, string> }
+  /** `code` is the server's rule name when it gives one (project_customer_mismatch, …), so a screen can word it. */
+  | { kind: 'invalid_input'; message: string; fields?: Record<string, string>; code?: string }
   | { kind: 'unreachable' }
   | { kind: 'failed'; status: number }
   | { kind: 'invalid' }

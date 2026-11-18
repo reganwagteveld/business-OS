@@ -5,6 +5,7 @@ import type { ProjectsClient } from '../../api/projects';
 import type { Outcome } from '../../api/tenancy';
 import { actionClass, inputClass, secondaryClass } from '../../shell/frame';
 import { CustomerPicker } from '../customer-picker';
+import { linkErrorMessage } from '../link-errors';
 import { isDay, PRIORITIES, PROJECT_STATUSES } from './format';
 import { customerLabel } from './project-list';
 
@@ -132,11 +133,11 @@ export function ProjectForm({ client, customers, slug, members, canReadCustomers
       return fail('Someone else changed this project while you were editing. Nothing was saved. Reload it before trying again.');
     }
     switch (outcome.kind) {
-      case 'invalid_input': return fail(outcome.message, outcome.fields as Partial<Record<Field, string>>);
+      case 'invalid_input': return fail(linkErrorMessage(outcome.code) ?? outcome.message, outcome.fields as Partial<Record<Field, string>>);
       case 'conflict':
         return fail(outcome.code === 'archived' ? 'This project is archived. Restore it before editing.'
           : outcome.code === 'archived_reference' ? 'The chosen customer has been archived. Choose another customer or none.'
-          : 'This project changed in a way that prevents saving. Reload it and try again.');
+          : linkErrorMessage(outcome.code) ?? 'This project changed in a way that prevents saving. Reload it and try again.');
       case 'not_found': return fail('The chosen customer no longer exists in this business, or this project was removed.');
       case 'forbidden': return fail(values.customerId !== baseValues.customerId
         ? 'Your role does not allow linking customers to projects in this business.'

@@ -3,12 +3,18 @@ import { Alert, AlertDescription, Button, Field, FormSection, Input, Select, Tex
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { FinanceClient, TaxRateOption } from '../../api/finance';
 import { ZonePage } from '../../shell/zone-page';
+import { CustomerPicker } from '../customer-picker';
+import { useFinance } from './env';
+import { fitsCustomer, ProjectField, type LinkRef } from './link-fields';
+import { linkErrorMessage } from '../link-errors';
 import { conflictMessage, TREATMENT_LABEL } from './format';
 import { uncertainMessage } from './shared';
 
 type Values = {
   description: string; supplierName: string; referenceNumber: string; categoryId: string; incurredOn: string; dueDate: string; currencyCode: string;
   taxTreatment: ExpenseTaxTreatment; taxRateId: string; amount: string; notes: string;
+  /** LC-2: the optional customer and project this cost belongs to. */
+  customerId: string; customerName: string | null; project: LinkRef | null;
 };
 
 const enteredOf = (e: FinanceExpense) => (e.taxTreatment === 'TAX_EXCLUSIVE' ? e.subtotal : e.total);
@@ -17,13 +23,15 @@ function initial(expense: FinanceExpense | undefined, today: string, currency: s
   if (!expense) {
     return {
       description: '', supplierName: '', referenceNumber: '', categoryId: defaultCategory, incurredOn: today, dueDate: '', currencyCode: currency,
-      taxTreatment: 'NO_TAX', taxRateId: '', amount: '', notes: '',
+      taxTreatment: 'NO_TAX', taxRateId: '', amount: '', notes: '', customerId: '', customerName: null, project: null,
     };
   }
   return {
     description: expense.description, supplierName: expense.supplierName ?? '', referenceNumber: expense.referenceNumber ?? '', categoryId: expense.categoryId,
     incurredOn: expense.incurredOn, dueDate: expense.dueDate ?? '', currencyCode: expense.currencyCode, taxTreatment: expense.taxTreatment,
     taxRateId: expense.taxRateId ?? '', amount: enteredOf(expense), notes: expense.notes ?? '',
+    customerId: expense.customerId ?? '', customerName: null,
+    project: expense.projectId ? { id: expense.projectId, label: null, customerId: undefined } : null,
   };
 }
 
@@ -37,15 +45,25 @@ export function ExpenseForm({ client, slug, today, currency, categories, taxRate
   client: FinanceClient; slug: string; today: string; currency: string; categories: ExpenseCategory[]; taxRates: TaxRateOption[];
   expense?: FinanceExpense; onDirtyChange: (dirty: boolean) => void; onCancel: () => void; onSaved: (saved: FinanceExpense) => void; onSessionEnded: () => void;
 }) {
+  const env = useFinance();
   const active = categories.filter((c) => !c.archivedAt || c.id === expense?.categoryId);
   const start = useMemo(() => initial(expense, today, currency, active[0]?.id ?? ''), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [values, setValues] = useState<Values>(start);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const dirty = JSON.stringify(values) !== JSON.stringify(start);
+  const strip = (v: Values) => JSON.stringify({ ...v, customerName: null, project: v.project?.id ?? null });
+  const dirty = strip(values) !== strip(start);
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   const set = (patch: Partial<Values>) => setValues((v) => ({ ...v, ...patch }));
+  const [cleared, setCleared] = useState<string | null>(null);
+  // LC-2: a different customer clears a project of another customer before saving (the server refuses the pair).
+  function pickCustomer(c: { id: string; displayName: string } | null) {
+    if (!c) return set({ customerId: '', customerName: null });
+    const drop = !fitsCustomer(values.project, c.id, false);
+    setCleared(drop ? 'The project you had chosen belongs to a different customer, so it was cleared. Choose again if you still want to link one.' : null);
+    setValues((v) => ({ ...v, customerId: c.id, customerName: c.displayName, project: drop ? null : v.project }));
+  }
   const rates = taxRates.filter((r) => !r.archivedAt || r.id === expense?.taxRateId);
   const taxed = values.taxTreatment !== 'NO_TAX';
 
@@ -59,6 +77,9 @@ export function ExpenseForm({ client, slug, today, currency, categories, taxRate
       categoryId: values.categoryId, description: values.description, supplierName: values.supplierName, referenceNumber: values.referenceNumber,
       notes: values.notes, incurredOn: values.incurredOn, dueDate: values.dueDate || null, taxTreatment: values.taxTreatment,
       taxRateId: taxed ? values.taxRateId || null : null, amount: values.amount.trim(),
+      // A link is sent only when this person can read that Zone: otherwise it is left exactly as it was.
+      ...(env.customers ? { customerId: values.customerId || null } : {}),
+      ...(env.projects ? { projectId: values.project?.id ?? null } : {}),
     };
     let out: Awaited<ReturnType<typeof client.createExpense>>;
     try {
@@ -77,8 +98,8 @@ export function ExpenseForm({ client, slug, today, currency, categories, taxRate
     if (out.kind === 'unauthenticated') onSessionEnded();
     else if (out.kind === 'invalid_input') {
       setErrors(out.fields ?? {});
-      setMessage(out.message);
-    } else if (out.kind === 'conflict') setMessage(conflictMessage(out.code));
+      setMessage(linkErrorMessage(out.code) ?? out.message);
+    } else if (out.kind === 'conflict') setMessage(linkErrorMessage(out.code) ?? conflictMessage(out.code));
     else if (out.kind === 'forbidden') setMessage('Your role does not allow entering expenses.');
     else if (out.kind === 'unreachable') {
       setMessage(expense
@@ -119,6 +140,24 @@ export function ExpenseForm({ client, slug, today, currency, categories, taxRate
             </div>
           </div>
         </FormSection>
+        {env.customers || env.projects ? (
+          <FormSection title="Customer and project" description="Optional. Link this cost to a customer or a project, for example a cost you pass on.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {env.customers ? (
+                <CustomerPicker
+                  id="expense-customer" customers={env.customers} slug={slug} selectedId={values.customerId} selectedName={values.customerName ?? env.names.get(values.customerId) ?? null}
+                  error={errors.customerId} hint="Optional. Choose an active customer from the Customers Zone." onPick={pickCustomer} onSessionEnded={onSessionEnded}
+                />
+              ) : null}
+              {env.projects ? (
+                <ProjectField projects={env.projects} slug={slug} customerId={values.customerId} requireCustomer={false} value={values.project} id="expense-project"
+                  onChange={(project) => { setCleared(null); set({ project }); }} onResolved={(ref) => setValues((v) => (v.project?.id === ref.id ? { ...v, project: ref } : v))}
+                  onSessionEnded={onSessionEnded} error={errors.projectId} />
+              ) : null}
+            </div>
+            {cleared ? <p role="status" className="mt-3 text-sm text-muted-foreground">{cleared}</p> : null}
+          </FormSection>
+        ) : null}
         <FormSection title="Amount and tax" description="Enter the figure on the receipt. Business OS works out the tax split when you save.">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Tax" error={errors.taxTreatment}>
