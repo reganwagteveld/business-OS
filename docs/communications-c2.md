@@ -442,6 +442,7 @@ Environment (all optional; feature off when absent; validated at boot):
 | `COMMUNICATIONS_CREDENTIAL_KEYS` | `keyId:base64(32 bytes)[,…]`; required if any provider is configured |
 | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Both or neither |
 | `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_TENANT` | Both or neither; tenant defaults to `common` |
+| `COMMUNICATIONS_CONNECT_ENABLED` | C2-UI-C release gate, default `false`: while not exactly `true`, every provider reports `configured: false` and the connect flow (consent start and callback) is refused, even with OAuth clients set. Switching it on is an owner decision (approved test accounts, Gate C). |
 
 The redirect URI is derived: `${APP_BASE_URL}/api/v1/communications/oauth/callback`.
 

@@ -84,6 +84,10 @@ describe('communications environment', () => {
     expect(() => parseEnv({ ...valid, GOOGLE_OAUTH_CLIENT_ID: 'id' })).toThrow(/both GOOGLE_OAUTH_CLIENT_ID/);
     expect(() => parseEnv({ ...valid, MICROSOFT_OAUTH_CLIENT_ID: 'id', MICROSOFT_OAUTH_CLIENT_SECRET: 's' })).toThrow(/COMMUNICATIONS_CREDENTIAL_KEYS is required/);
     expect(parseEnv({ ...valid, GOOGLE_OAUTH_CLIENT_ID: 'id', GOOGLE_OAUTH_CLIENT_SECRET: 's', COMMUNICATIONS_CREDENTIAL_KEYS: `k:${keyValue}` }).GOOGLE_OAUTH_CLIENT_ID).toBe('id');
+    // The connect flow is dormant unless the owner switches it on explicitly.
+    expect(parseEnv(valid).COMMUNICATIONS_CONNECT_ENABLED).toBe('false');
+    expect(parseEnv({ ...valid, COMMUNICATIONS_CONNECT_ENABLED: 'true' }).COMMUNICATIONS_CONNECT_ENABLED).toBe('true');
+    expect(() => parseEnv({ ...valid, COMMUNICATIONS_CONNECT_ENABLED: 'yes' })).toThrow();
     expect(() => parseEnv({ ...valid, MICROSOFT_OAUTH_TENANT: 'https://evil.example' })).toThrow();
   });
 });
