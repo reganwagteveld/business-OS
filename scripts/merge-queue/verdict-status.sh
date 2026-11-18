@@ -14,7 +14,9 @@
 #   - updated_at == created_at (never edited)
 #   - its first non-empty line, ignoring leading heading and emphasis markers (#, *, _, spaces; a quoted ">" line never counts), is exactly
 #     "APPROVED — EXECUTE: MERGE" (em dash) and nothing else
-#   - it names exactly one reviewed head SHA (40 hex) on a line that mentions "head"
+#   - it labels exactly one distinct SHA as the head: a full 40-hex SHA directly after the word "head"
+#     (optionally "head SHA"/"head commit", then only spaces, ":", "*", "`" or "="). Other full SHAs
+#     in the body (an earlier reviewed head, a base) are ignored; two different labelled heads fail
 #   - it names this PR ("#<n>" or "PR <n>"); a verdict naming no PR is not covered (--parse without
 #     a PR number skips only this check, for offline listing)
 # ready=true (the verdict authorises marking a draft ready) only if BOTH hold:
@@ -40,7 +42,7 @@ parse_verdicts() {
     | ($c.body | split("\n") | map(gsub("\r"; "")) ) as $lines
     | ($lines | map(select(test("\\S"))) | .[0] // "" | gsub("^[\\s#*_]+|[\\s*_]+$"; "")) as $first
     | select($first == "APPROVED — EXECUTE: MERGE")
-    | ([ $lines[] | select(test("head"; "i")) | scan("\\b[0-9a-f]{40}\\b") ] | unique) as $shas
+    | ([ $c.body | scan("\\bhead\\b(?:[ \\t]*(?:sha|commit))?[\\s:*`=]*\\b([0-9a-f]{40})\\b"; "i") | .[0] | ascii_downcase ] | unique) as $shas
     | select($shas | length == 1)
     | ([ $c.body | scan("(?:\\bPR\\s*#?|#)([0-9]{1,5})\\b"; "i") | .[0] ] | unique) as $prs
     | select($pr == "" or ($prs | index($pr)) != null)
