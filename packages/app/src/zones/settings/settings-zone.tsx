@@ -14,6 +14,7 @@ import { MembersPage } from './members';
 import { OwnershipPage } from './ownership';
 import { ZoneConfigurationPage } from './zones';
 import { RegionalSettingsPage } from './regional-settings';
+import { RolesAccessPage } from './roles-access';
 
 const focusRing = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
 
@@ -96,6 +97,7 @@ export function SettingsZone({ client, user, context, scope: scopeId, page: page
           {page?.id === 'regional' ? <RegionalSettingsPage key={`${pageKey}|${slug}`} env={env} /> : null}
           {page?.id === 'members' ? <MembersPage key={`${pageKey}|${slug}`} env={env} /> : null}
           {page?.id === 'invitations' ? <InvitationsPage key={`${pageKey}|${slug}`} env={env} /> : null}
+          {page?.id === 'access' ? <RolesAccessPage key={`${pageKey}|${slug}`} env={env} /> : null}
           {page?.id === 'zones' ? <ZoneConfigurationPage key={`${pageKey}|${slug}`} env={{ ...env, open: (route) => leave(() => onNavigate(route)) }} /> : null}
           {page?.id === 'ownership' ? <OwnershipPage key={`${pageKey}|${slug}`} env={env} /> : null}
         </div>

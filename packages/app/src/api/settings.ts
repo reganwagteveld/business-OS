@@ -1,5 +1,5 @@
 import {
-  BusinessProfile, BusinessProfileResponse, ConfirmRequest, CreateInvitationRequest, endpointPath, endpoints, Invitation, InvitationResponse, InvitationsResponse, Member, MemberResponse,
+  AccessRolesResponse, BusinessProfile, BusinessProfileResponse, ConfirmRequest, CreateInvitationRequest, endpointPath, endpoints, Invitation, InvitationResponse, InvitationsResponse, Member, MemberResponse,
   MembersResponse, OkResponse, TransferOwnershipRequest, UpdateBusinessProfileRequest, UpdateMemberRequest, type Role,
 } from '@business-os/contracts';
 import type { z } from 'zod';
@@ -10,6 +10,8 @@ import { classify, type Outcome } from './tenancy';
 export type BusinessProfileData = z.infer<typeof BusinessProfile>;
 export type MemberData = z.infer<typeof Member>;
 export type InvitationData = z.infer<typeof Invitation>;
+/** The fixed roles and what each may do (A2-C). Read-only: the same for every business and every caller. */
+export type AccessModelData = z.infer<typeof AccessRolesResponse>;
 /** `delivery` says whether the invitation email went out; the invitation exists either way. */
 export type IssuedInvitation = { invitation: InvitationData; delivery: 'sent' | 'failed' };
 
@@ -41,6 +43,9 @@ export interface SettingsClient {
   transferOwnership(slug: string, membershipId: string, stepDown: boolean, signal?: AbortSignal): Promise<Outcome<MemberData>>;
   stepDown(slug: string, signal?: AbortSignal): Promise<Outcome<MemberData>>;
   leave(slug: string, signal?: AbortSignal): Promise<Outcome<true>>;
+
+  // ---- Roles and access (A2-C). Read-only description; there is no write route and no custom roles. ----
+  accessRoles(slug: string, signal?: AbortSignal): Promise<Outcome<AccessModelData>>;
 }
 
 function fieldErrors(error: z.ZodError): Record<string, string> {
@@ -127,6 +132,9 @@ export function createSettingsClient(baseUrl: string, transport: AuthTransport, 
     },
     async leave(slug, signal) {
       return mutate('POST', p(endpoints.leaveBusiness.path, { slug }), ConfirmRequest, { confirm: true }, OkResponse, () => true as const, signal);
+    },
+    async accessRoles(slug, signal) {
+      return settle(await http.request('GET', p(endpoints.listAccessRoles.path, { slug }), undefined, signal), AccessRolesResponse, (d) => d);
     },
   };
 }

@@ -1,4 +1,5 @@
-import type { BusinessProfileData, InvitationData, MemberData } from '../../src/api/settings';
+import type { AccessModelData, BusinessProfileData, InvitationData, MemberData } from '../../src/api/settings';
+import { ACCESS_MODEL } from './access-model';
 
 /** A stand-in for the business profile API (A2-A): strict versioned PATCH, 409 stale, per-business records, call log. */
 export interface FakeSettings {
@@ -18,6 +19,8 @@ export interface FakeSettings {
   /** The signed-in person's membership id (the fake needs it for step-down, leave and hand-over). */
   setMe: (id: string) => void;
   options: { deliveryFails: boolean; resendTooSoon: boolean; showEmails: boolean };
+  /** What `GET /access/roles` answers (A2-C): the real description by default; replace it to simulate drift. */
+  access: { model: AccessModelData };
 }
 
 export function member(over: Partial<MemberData> & { id: string }): MemberData {
@@ -38,6 +41,7 @@ export function createFakeSettings(slugs: string[] = ['alpha', 'beta'], seed: Re
   const members: Record<string, MemberData[]> = Object.fromEntries(slugs.map((s) => [s, seed[s] ?? []]));
   const invitations: Record<string, InvitationData[]> = Object.fromEntries(slugs.map((s) => [s, []]));
   const options = { deliveryFails: false, resendTooSoon: false, showEmails: true };
+  const access = { model: structuredClone(ACCESS_MODEL) };
   const conflict = (code: string) => json(409, { error: code });
   const activeOwners = (slug: string, except?: string) => members[slug]!.filter((m) => m.role === 'OWNER' && m.status === 'ACTIVE' && m.id !== except).length;
   let failures: ('network' | number)[] = [];
@@ -114,6 +118,8 @@ export function createFakeSettings(slugs: string[] = ['alpha', 'beta'], seed: Re
     const failure = failures.shift();
     if (failure === 'network') throw new TypeError('network down');
     if (typeof failure === 'number') return json(failure, { error: failure === 403 ? 'forbidden' : 'server_error' });
+    const roles = /^\/api\/v1\/b\/([^/]+)\/access\/roles$/.exec(url.pathname);
+    if (roles) return members[roles[1]!] && method === 'GET' ? json(200, access.model) : json(members[roles[1]!] ? 405 : 404, { error: 'not_found' });
     const team = /^\/api\/v1\/b\/([^/]+)\/(members|invitations|membership)(?:\/([^/]+))?(?:\/([^/]+))?$/.exec(url.pathname);
     if (team) return teamRoute(team[1]!, team[2]!, team[3], team[4], method, body);
     const match = /^\/api\/v1\/b\/([^/]+)\/business$/.exec(url.pathname);
@@ -134,7 +140,7 @@ export function createFakeSettings(slugs: string[] = ['alpha', 'beta'], seed: Re
   }) as typeof fetch;
 
   return {
-    fetch: fakeFetch, profiles, calls, members, invitations, options,
+    fetch: fakeFetch, profiles, calls, members, invitations, options, access,
     setMe: (id: string) => { me_id = id; },
     failNext: (answers) => { failures = [...answers]; },
     editElsewhere: (slug, change) => { const p = profiles[slug]!; profiles[slug] = { ...p, ...change, version: p.version + 1 }; },
