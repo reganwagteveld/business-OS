@@ -174,7 +174,7 @@ export function OperationalDashboard({ context, clients, customers, onOpen, onSe
               case 'panel.pipeline':
                 return <Pipeline key={id} load={sales} locale={locale} currency={currency} onOpen={() => onOpen({ zone: 'sales' })} onSessionEnded={onSessionEnded} />;
               case 'panel.schedule':
-                return <Schedule key={id} load={events} today={today} lastDay={window.lastDay} timeZone={timeZone} locale={locale} onSessionEnded={onSessionEnded} />;
+                return <Schedule key={id} load={events} today={today} lastDay={window.lastDay} timeZone={timeZone} locale={locale} onAll={() => onOpen({ zone: 'scheduling' })} onSessionEnded={onSessionEnded} />;
               case 'panel.activity':
                 return <RecentActivity key={id} load={activity} timeZone={timeZone} locale={locale}
                   onOpenCustomer={can('customers:read') ? (cid) => onOpen({ zone: 'customers', target: cid }) : undefined} onSessionEnded={onSessionEnded} />;
@@ -378,9 +378,9 @@ function Pipeline({ load, locale, currency, onOpen, onSessionEnded }: { load: Lo
   );
 }
 
-/** Scheduled events from now to the end of the horizon, grouped by business day. Read-only: Scheduling has no navigation entry yet. */
-function Schedule({ load, today, lastDay, timeZone, locale, onSessionEnded }: {
-  load: Load<BoundedPage<SchedulingEvent>>; today: string; lastDay: string; timeZone: string; locale: string; onSessionEnded: () => void;
+/** Scheduled events from now to the end of the horizon, grouped by business day. Read-only here; "Open Scheduling" opens the Zone. */
+function Schedule({ load, today, lastDay, timeZone, locale, onAll, onSessionEnded }: {
+  load: Load<BoundedPage<SchedulingEvent>>; today: string; lastDay: string; timeZone: string; locale: string; onAll: () => void; onSessionEnded: () => void;
 }) {
   const data = done(load);
   const problem = failed(load);
@@ -390,7 +390,8 @@ function Schedule({ load, today, lastDay, timeZone, locale, onSessionEnded }: {
   const dayOf = (e: SchedulingEvent) => maxDay(businessDay(e.startAt, timeZone), today);
   const days = [...new Set(rows.map(dayOf))];
   return (
-    <Panel id="dash-schedule" title="Upcoming schedule" description={`From now to the end of ${formatDate(lastDay, locale)}, in ${timeZone}.`}>
+    <Panel id="dash-schedule" title="Upcoming schedule" description={`From now to the end of ${formatDate(lastDay, locale)}, in ${timeZone}.`}
+      actions={<Button size="sm" variant="outline" onClick={onAll}>Open Scheduling</Button>}>
       {problem ? <Problem outcome={problem} what="The schedule" onRetry={load.reload} onSessionEnded={onSessionEnded} />
         : !data ? <PanelLoading label="Loading the schedule" />
         : rows.length === 0 ? <EmptyState title="Nothing scheduled" description="No scheduled events in the next 7 days." />
