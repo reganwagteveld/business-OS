@@ -4,6 +4,8 @@
 
 **Builds on, does not rewrite:** CIQ-1 (`docs/ciq-1-merge-queue-throughput.md`, D-CIQ-1..6), CIQ-A1 gate tiers (#143), CIQ-A2 database shards (#150), CIQ-A3 queue procedure and verdict detection (#152, #158), CIQ-A4 selective macOS and bounded runner retry (#156), CIQ-A5 draft/final validation split (#157, D-A5-1..5). All of them are merged. This document names the seams where A6 touches them (§13).
 
+**Owner decisions (2026-11-18 15:46 UTC):** D-A6-1 to D-A6-12 accepted as written (§16), under the revision 2 safeguards. Enforcement stays off; credentials and branch protection still need Regan's own action when the time comes.
+
 **Revision 2 (2026-11-18, Regan's design review, conditional architecture approval for further development only, not merge or activation authority):** shadow mode now needs at least two weeks **and** at least 40 representative decisions with zero unexplained false approvals (§14.3); unattended merges are gated on a measured proof that the ledger compare-and-swap really gives the concurrency protection assumed in §7.3 (§7.3a, new package A6P); and §4.6, §11 and §18 state plainly that the prototype results do not show the real verifier, lease or controller is safe. Next step: build the read-only verifier and run it in shadow mode only.
 
 **Principle:** audit once, carry the approval forward when the code is provably the same, and send only the part that really changed back to an auditor.
@@ -675,7 +677,14 @@ A6A-1 and A6A-2 can be one PR if the reviewer prefers. A6D-1 must stay separate 
 
 ## 16. Owner decisions
 
-| ID | Question | Options | Recommendation |
+**Recorded 2026-11-18 15:46 UTC: Regan accepted D-A6-1 to D-A6-12 as written below** ("Accept all as written", his own message in the Claude project thread for this work). The acceptance is bound by his earlier safeguards in revision 2, which stay in force:
+- enforcement (D-A6-1) only after shadow mode meets every §14.3 exit criterion: at least two weeks **and** 40 representative decisions, with zero unexplained false approvals;
+- no unattended merge before the A6P concurrency proof passes (§7.3a);
+- the prototype is not safety evidence (§4.6).
+
+**What the acceptance does not do.** It accepts the plan; it executes nothing. Continuity enforcement stays **off** (no package is built yet, and the policy mode starts as `shadow`). D-A6-4 accepts the Phase 2 plan only: creating the GitHub App, any new credential, environment protection and every branch-protection change (including D-A6-7's ledger rule) each still need Regan's own typed action at that time. D-A6-9 (health schema version) and every package in §15 still need their own audit and merge verdict. Approval-model packages still need Regan's own approval of the actual diff.
+
+| ID | Question | Options | Recommendation (accepted 2026-11-18) |
 |---|---|---|---|
 | **D-A6-1** | Replace "same patch-id, conflict-free" with the continuity verifier's result as the rule for carrying an approval forward? | yes, after shadow mode / no | **Yes, only after shadow mode meets every §14.3 exit criterion (two weeks and 40 representative decisions, zero unexplained false approvals) and A6P passes** (§7.3a). It changes the approval model, so it needs your own approval. |
 | **D-A6-2** | Accept token-level composition (L2) outside critical paths as mechanical, with integration evidence instead of a re-audit? Integration validation also for clean syncs that touch shared files? | L2 yes, overlap rule as proposed / L2 yes, overlap rule only for code files / L2 no (any conflict → focused re-audit) | **L2 yes; overlap rule for code files only** (docs overlaps keep `APPROVAL_CONTINUES`), with `max_composed = 6`. Even "L2 no" would have cut the replayed re-audits to small packets. |
