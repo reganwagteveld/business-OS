@@ -22,15 +22,21 @@ import {
 import {
   DesktopTokenRequest, DesktopTokenResponse, MeResponse, RequestPasswordResetRequest, ResetPasswordRequest, SignInRequest, SignUpRequest,
 } from './auth.ts';
+import {
+  AccountSessionsResponse, ChangePasswordRequest, ChangePasswordResponse, RevokeOtherSessionsRequest, RevokeOtherSessionsResponse, RevokeSessionResponse,
+  UpdateProfileRequest, UpdateProfileResponse,
+} from './account.ts';
 
 export { HealthResponse } from './health.ts';
 export * from './auth.ts';
+export * from './account.ts';
 export * from './tenancy.ts';
 export * from './audit.ts';
 export * from './access.ts';
 export * from './customers.ts';
 export * from './sales.ts';
 export * from './projects.ts';
+export * from './workflows.ts';
 export * from './finance.ts';
 export * from './finance-expenses.ts';
 export * from './finance-documents.ts';
@@ -67,6 +73,7 @@ import {
   CreateProjectRequest, CreateTaskRequest, ListProjectsQuery, ListProjectsResponse, ListTasksQuery, ListTasksResponse, ProjectResponse, ProjectSummaryResponse,
   MoveTaskRequest, TaskResponse, UpdateProjectRequest, UpdateTaskRequest,
 } from './projects.ts';
+import { LinkProjectOpportunityRequest, LinkProjectQuoteRequest, ProjectFromOpportunityRequest, ProjectFromQuoteRequest } from './workflows.ts';
 import {
   CreateDocumentPdfVersionRequest, DocumentBrandingResponse, DocumentPdfVersionResponse, ListDocumentPdfVersionsResponse, UpdateDocumentBrandingRequest,
   UploadBrandingLogoRequest,
@@ -136,6 +143,12 @@ export const API_VERSION = 'v1' as const;
 export const endpoints = {
   health: { method: 'GET', path: '/api/v1/health', response: HealthResponse },
   me: { method: 'GET', path: '/api/v1/me', response: MeResponse },
+  // Account management (Settings A3-A): the signed-in person only, no slug, admission required.
+  updateMe: { method: 'PATCH', path: '/api/v1/me', request: UpdateProfileRequest, response: UpdateProfileResponse },
+  changePassword: { method: 'POST', path: '/api/v1/me/password', request: ChangePasswordRequest, response: ChangePasswordResponse },
+  listMySessions: { method: 'GET', path: '/api/v1/me/sessions', response: AccountSessionsResponse },
+  revokeMySession: { method: 'DELETE', path: '/api/v1/me/sessions/:sessionId', response: RevokeSessionResponse },
+  revokeMyOtherSessions: { method: 'POST', path: '/api/v1/me/sessions/revoke-others', request: RevokeOtherSessionsRequest, response: RevokeOtherSessionsResponse },
   desktopToken: { method: 'POST', path: '/api/v1/auth/desktop/token', request: DesktopTokenRequest, response: DesktopTokenResponse },
   listBusinesses: { method: 'GET', path: '/api/v1/businesses', response: ListBusinessesResponse },
   createBusiness: { method: 'POST', path: '/api/v1/businesses', request: CreateBusinessRequest, response: CreateBusinessResponse },
@@ -306,6 +319,19 @@ export const endpoints = {
   restoreTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/restore', response: TaskResponse },
   /** Board move: status and order in one server-authoritative change (docs/projects-data-model.md §4). */
   moveTask: { method: 'POST', path: '/api/v1/b/:slug/projects/:projectId/tasks/:taskId/move', request: MoveTaskRequest, response: TaskResponse },
+  // Cross-Zone workflows LC-1 (docs/cross-zone-workflows-wf1.md §6.2–6.4). The two creates need an Idempotency-Key header.
+  /** 201 with the new project; 200 with the same project when the key and body are repeated. */
+  createProjectFromOpportunity: {
+    method: 'POST', path: '/api/v1/b/:slug/workflows/projects/from-opportunity', request: ProjectFromOpportunityRequest, response: ProjectResponse,
+  },
+  /** 201 with the new project; 200 on replay. The quote must be ACCEPTED and not yet a project's. */
+  createProjectFromQuote: { method: 'POST', path: '/api/v1/b/:slug/workflows/projects/from-quote', request: ProjectFromQuoteRequest, response: ProjectResponse },
+  linkProjectOpportunity: {
+    method: 'POST', path: '/api/v1/b/:slug/workflows/projects/:projectId/link-opportunity', request: LinkProjectOpportunityRequest, response: ProjectResponse,
+  },
+  linkProjectQuote: {
+    method: 'POST', path: '/api/v1/b/:slug/workflows/projects/:projectId/link-quote', request: LinkProjectQuoteRequest, response: ProjectResponse,
+  },
   // Finance Zone F1 (docs/finance-data-model.md). No DELETE endpoints: drafts are discarded, issued documents voided.
   listQuotes: { method: 'GET', path: '/api/v1/b/:slug/finance/quotes', query: ListQuotesQuery, response: ListFinanceDocumentsResponse },
   /** WF-1 §6.6.1: a project's figures per currency, derived from the ledger. finance:read + projects:read. */

@@ -5,3 +5,7 @@ export type { CurrentUser } from './server/session';
 export { classifyAuthRequest, handleAuthRequest } from './server/handler';
 export type { AuthRequestMode } from './server/handler';
 export { authorizeDesktop, confirmDesktop, exchangeDesktopCode } from './server/desktop';
+// Account management (Settings A3-A). Each component is independent; all act on the verified session's user only.
+export { updateDisplayName } from './server/profile';
+export { changePassword } from './server/password';
+export { listSessions, revokeOtherSessions, revokeSession } from './server/sessions';
