@@ -116,7 +116,7 @@ describe('Zone registry', () => {
   it('filters by the server\'s permissions: unauthorised Zones are omitted, planned ones never openable, nothing listed while loading or failed', () => {
     const nav = resolveNavigation({ state: 'ready', permissions: ['customers:read', 'projects:read'] });
     expect(nav.available.map((z) => z.id)).toEqual(['customers', 'projects']);
-    expect(nav.planned.map((z) => z.id)).toEqual(['operations', 'settings']);
+    expect(nav.planned.map((z) => z.id)).toEqual(['operations']);
     // People P2: built, opened by people:read only.
     expect(canOpen({ zone: 'people' }, nav)).toBe(false);
     expect(canOpen({ zone: 'people' }, resolveNavigation({ state: 'ready', permissions: ['people:read'] }))).toBe(true);
@@ -183,13 +183,13 @@ describe('navigation in the app', () => {
   it('a role without a Zone\'s permission never sees it in the sidebar or on Home', async () => {
     mountApp({ permissions: () => ['business:read', 'customers:read'] });
     await h1('Welcome to Alpha Plumbing.');
-    expect(within(zonesNav()).getAllByRole('button').map((b) => b.textContent)).toEqual(['Home', 'Customers']);
+    expect(within(zonesNav()).getAllByRole('button').map((b) => b.textContent)).toEqual(['Home', 'Customers', 'Settings']);
     expect(screen.queryByRole('button', { name: 'Open the Sales Zone' })).toBeNull();
     expect(screen.queryByText(/Sales Zone — coming soon/)).toBeNull();
   });
 
   it('a role with no Zones gets a plain explanation instead of an empty sidebar', async () => {
-    mountApp({ permissions: () => ['business:read'] });
+    mountApp({ permissions: () => [] });
     await h1('Welcome to Alpha Plumbing.');
     expect(within(zonesNav()).getByText('No Zones are open to your role in this business.')).toBeTruthy();
   });
@@ -659,7 +659,7 @@ describe('private beta: business creation is offered only with the platform gran
   it('hides "Create another business" in the switcher and the chooser without the grant', async () => {
     const { user, tenancy } = mountApp({ canCreateBusiness: false });
     await h1('Welcome to Alpha Plumbing.');
-    expect(tenancy.platformAccess).toHaveBeenCalled();
+    await waitFor(() => expect(tenancy.platformAccess).toHaveBeenCalled());
     switcher().focus();
     await user.keyboard('{ArrowDown}');
     const menu = screen.getByRole('menu', { name: 'Businesses' });

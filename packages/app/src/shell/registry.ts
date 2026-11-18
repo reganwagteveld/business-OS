@@ -11,7 +11,7 @@ import type { IconName } from './icons';
  * because its entry exists, and the API still checks every request.
  */
 
-export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'people' | 'operations' | 'reporting' | 'communications' | 'settings';
+export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'scheduling' | 'people' | 'operations' | 'reporting' | 'communications' | 'settings';
 
 export interface ZoneChild {
   /** Stable within its Zone. */
@@ -65,6 +65,17 @@ export const ZONES: readonly ZoneDefinition[] = [
       { id: 'settings', label: 'Settings', route: '/finance/settings' },
     ],
   },
+  // S3: Scheduling, after Finance and before People. `scheduling:read` opens the Zone; every write inside it checks its own
+  // key (create, update, cancel, manage_calendars, manage_resources) and the API enforces all of them again.
+  // "Resource schedule" is the existing S2 timeline of resource bookings: there is no separate bookings API.
+  {
+    id: 'scheduling', name: 'Scheduling', description: 'Calendars, events and resources', icon: 'calendar', route: '/scheduling', order: 45, requires: ['scheduling:read'], availability: 'built',
+    children: [
+      { id: 'calendar', label: 'Calendar', route: '/scheduling' },
+      { id: 'timeline', label: 'Resource schedule', route: '/scheduling/resource-schedule' },
+      { id: 'resources', label: 'Resources', route: '/scheduling/resources' },
+    ],
+  },
   { id: 'people', name: 'People', description: 'Your team and their work', icon: 'people', route: '/people', order: 50, requires: ['people:read'], availability: 'built' },
   { id: 'operations', name: 'Operations', description: 'Keep everything moving', icon: 'operations', route: '/operations', order: 60, requires: [], availability: 'planned' },
   // Reporting R1 (docs/reporting-r1.md): takes the place of the planned "Insights" entry. reporting:read opens the
@@ -84,7 +95,15 @@ export const ZONES: readonly ZoneDefinition[] = [
     id: 'communications', name: 'Communications', description: 'Connected mailboxes and their settings', icon: 'mail', route: '/communications', order: 75, requires: ['communications:read'], availability: 'built',
     children: [{ id: 'mailboxes', label: 'Mailboxes', route: '/communications' }],
   },
-  { id: 'settings', name: 'Settings', description: 'Workspace preferences', icon: 'settings', route: '/settings', order: 80, requires: [], availability: 'planned' },
+  // A3 / A2-D stage 1: two scopes (the signed-in person, the active business). Pages inside a scope come from
+  // zones/settings/pages.ts and are only listed when the backend behind them exists. Every member holds business:read.
+  {
+    id: 'settings', name: 'Settings', description: 'Your account and your business', icon: 'settings', route: '/settings', order: 80, requires: ['business:read'], availability: 'built',
+    children: [
+      { id: 'business', label: 'Business', route: '/settings/business' },
+      { id: 'account', label: 'Account', route: '/settings/account' },
+    ],
+  },
 ];
 
 /** Where the person is inside the shell. `target` opens one record; `intent` opens a create form. */

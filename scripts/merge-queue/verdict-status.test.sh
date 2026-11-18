@@ -64,6 +64,27 @@ check "base SHA on a non-head line"   1 1 $C $T $T "APPROVED — EXECUTE: MERGE
 PR #1
 Exact reviewed head SHA: $H
 Reviewed base SHA: $H2"
+check "earlier reviewed SHA in the body is ignored" 1 156 $C $T $T "APPROVED — EXECUTE: MERGE
+
+PR #156, exact reviewed head $H
+
+Ready and merge PR #156.
+
+The audit reviewed \`$H2\`; comparison against previously reviewed \`$H2\` shows no differences. Exact-head CI run #44149863944 passed."
+check "head SHA with label and bold"  1 1 $C $T $T "APPROVED — EXECUTE: MERGE
+PR #1
+**Exact reviewed head SHA:** \`$H\`"
+check "head commit label"             1 1 $C $T $T "APPROVED — EXECUTE: MERGE
+PR #1 at head commit $H"
+check "same head named twice"         1 1 $C $T $T "APPROVED — EXECUTE: MERGE
+PR #1, exact reviewed head $H
+Merge on exact head \`$H\` only."
+check "SHA not labelled as head"      0 1 $C $T $T "APPROVED — EXECUTE: MERGE
+PR #1 reviewed at $H"
+check "head word far from SHA"        0 1 $C $T $T "APPROVED — EXECUTE: MERGE
+PR #1, the head was reviewed as commit $H"
+check "uppercase SHA is normalised"   1 1 $C $T $T "APPROVED — EXECUTE: MERGE
+PR #1 head ${H^^}"
 check "names another PR"              0 120 $C $T $T "APPROVED — EXECUTE: MERGE
 PR #119
 head $H"
