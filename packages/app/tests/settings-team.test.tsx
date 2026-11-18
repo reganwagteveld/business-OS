@@ -76,10 +76,10 @@ describe('rank rules (presentation mirror)', () => {
 
 describe('Settings navigation by role', () => {
   it.each([
-    ['OWNER', ['Business profile', 'Regional settings', 'Members', 'Invitations', 'Ownership and leaving']],
-    ['ADMIN', ['Business profile', 'Regional settings', 'Members', 'Invitations', 'Ownership and leaving']],
-    ['MANAGER', ['Business profile', 'Regional settings', 'Members', 'Ownership and leaving']],
-    ['MEMBER', ['Business profile', 'Regional settings', 'Ownership and leaving']],
+    ['OWNER', ['Business profile', 'Regional settings', 'Members', 'Invitations', 'Roles and access', 'Ownership and leaving']],
+    ['ADMIN', ['Business profile', 'Regional settings', 'Members', 'Invitations', 'Roles and access', 'Ownership and leaving']],
+    ['MANAGER', ['Business profile', 'Regional settings', 'Members', 'Roles and access', 'Ownership and leaving']],
+    ['MEMBER', ['Business profile', 'Regional settings', 'Roles and access', 'Ownership and leaving']],
   ] as [Role, string[]][])('%s sees only the pages their permission keys allow', async (role, pages) => {
     const { user } = mount(role);
     await screen.findByRole('heading', { level: 1, name: /Welcome to/ });

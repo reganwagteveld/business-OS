@@ -1,12 +1,13 @@
 import type { Role } from '@business-os/contracts';
 import { Alert, AlertDescription, Button, PixelMarker, Select, SectionHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@business-os/ui';
 import { useState } from 'react';
-import type { MemberData } from '../../api/settings';
+import type { AccessModelData, MemberData } from '../../api/settings';
 import type { Outcome } from '../../api/tenancy';
 import { ZonePage } from '../../shell/zone-page';
 import { Problem } from '../problem';
 import { useLoad } from '../use-load';
 import type { SettingsPageEnv } from './business-profile';
+import { mailboxCutoff, mailboxCutoffSentence } from './access-model';
 import { ConfirmDialog } from './confirm';
 import { useSave } from './save';
 import { assignableRoles, canManageMember, ROLE_LABEL, ROLE_ORDER } from './team-rules';
@@ -33,6 +34,10 @@ export function MembersPage({ env }: { env: SettingsPageEnv }) {
   const [notice, setNotice] = useState<string | null>(null);
   const save = useSave(env.onSessionEnded);
   const load = useLoad(`settings-members|${env.slug}|${generation}`, (signal) => env.client.members(env.slug, signal));
+  // The roles description only sharpens the mailbox wording in a role-change confirmation. If it cannot be
+  // read, the page still works and the confirmation falls back to the general rule.
+  const roles = useLoad(`settings-members-roles|${env.slug}`, (signal) => env.client.accessRoles(env.slug, signal));
+  const model = roles.state.status === 'done' && roles.state.outcome.kind === 'ok' ? roles.state.outcome.data : null;
   const current = load.state.status === 'done' ? load.state.outcome : load.previous;
   const reload = () => setGeneration((g) => g + 1);
   const title = 'Members';
@@ -107,7 +112,7 @@ export function MembersPage({ env }: { env: SettingsPageEnv }) {
       </section>
       {action ? (
         <ConfirmDialog
-          open title={dialogTitle(action)} description={dialogBody(action)} busy={save.busy} error={save.error}
+          open title={dialogTitle(action)} description={dialogBody(action, model)} busy={save.busy} error={save.error}
           phrase={action.kind === 'remove' ? displayName(action.member) : undefined}
           confirmLabel={action.kind === 'remove' ? 'Remove member' : action.kind === 'suspend' ? 'Suspend' : action.kind === 'reactivate' ? 'Reactivate' : 'Change role'}
           destructive={action.kind === 'remove' || action.kind === 'suspend'} onConfirm={confirm} onCancel={close}
@@ -122,9 +127,16 @@ function dialogTitle(a: Action) {
   return a.kind === 'role' ? `Make ${name} ${ROLE_LABEL[a.role]}?` : a.kind === 'suspend' ? `Suspend ${name}?` : a.kind === 'reactivate' ? `Reactivate ${name}?` : `Remove ${name}?`;
 }
 
-function dialogBody(a: Action) {
+/** What a role change does to the member's mailbox connections (the server revokes them in the same transaction). */
+function roleMailboxText(a: Extract<Action, { kind: 'role' }>, model: AccessModelData | null): string {
+  if (a.member.status !== 'ACTIVE') return 'They stay suspended until someone reactivates them.';
+  if (!model) return 'If the new role cannot connect mailboxes, mailboxes they connected are disconnected now.';
+  return mailboxCutoffSentence(mailboxCutoff(model, a.member.role, a.role)) ?? 'Mailboxes they connected stay connected.';
+}
+
+function dialogBody(a: Action, model: AccessModelData | null) {
   switch (a.kind) {
-    case 'role': return <p>{displayName(a.member)} changes from {ROLE_LABEL[a.member.role]} to {ROLE_LABEL[a.role]}. Their access changes on their next request. If the new role cannot connect mailboxes, mailboxes they connected are disconnected now.</p>;
+    case 'role': return <p>{displayName(a.member)} changes from {ROLE_LABEL[a.member.role]} to {ROLE_LABEL[a.role]}. Their access changes on their next request. {roleMailboxText(a, model)}</p>;
     case 'suspend': return <p>They lose access at their next request. Their assignments and history are kept, and mailboxes they connected are disconnected now. Reactivating restores access but not mailbox connections.</p>;
     case 'reactivate': return <p>They can sign in and use this business again with their current role. Mailboxes they connected stay disconnected until they reconnect them.</p>;
     case 'remove': return <p>They lose access, their assignments are cleared and mailboxes they connected are disconnected now. Their past work and history are kept. If you may want them back, suspend them instead.</p>;
