@@ -20,7 +20,7 @@ interface BoardProps {
   onSessionEnded: () => void;
 }
 
-const ALL_LIMIT = 200;
+const ALL_LIMIT = 100; // the list API caps limit at 100 (ListOpportunitiesQuery)
 
 interface CurrencyTotal { currency: string; total: number }
 

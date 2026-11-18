@@ -11,16 +11,19 @@ enum OpportunityStatus {
 /// use: `default_slot` is 'default' on that pipeline and NULL on the rest, and (business_id,
 /// default_slot) is unique, so concurrent first requests cannot create two.
 model SalesPipeline {
-  id          String    @id @db.Uuid
-  businessId  String    @map("business_id") @db.Uuid
-  name        String
-  defaultSlot String?   @map("default_slot")
-  position    Int       @default(0)
-  createdById String?   @map("created_by_id") @db.Uuid
-  updatedById String?   @map("updated_by_id") @db.Uuid
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+  id            String    @id @db.Uuid
+  businessId    String    @map("business_id") @db.Uuid
+  name          String
+  defaultSlot   String?   @map("default_slot")
+  position      Int       @default(0)
+  createdById   String?   @map("created_by_id") @db.Uuid
+  updatedById   String?   @map("updated_by_id") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt    DateTime? @map("archived_at") @db.Timestamptz
+  /// S-CFG (docs/sales-pipeline-configuration-scfg.md §6.1): optimistic concurrency for configuration
+  /// edits. 1 on creation; +1 exactly once per committed configuration change; opportunity writes never change it.
+  configVersion Int       @default(1) @map("config_version")
 
   business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade, map: "sales_pipelines_business_fkey")
   stages        SalesStage[]
@@ -91,6 +94,8 @@ model Opportunity {
   owner            Membership?          @relation(fields: [businessId, ownerUserId], references: [businessId, userId], onDelete: NoAction, onUpdate: NoAction, map: "opportunities_owner_fkey")
   outcomes         OpportunityOutcome[]
   financeDocuments FinanceDocument[]
+  /// WF-1 §5.1: projects started from this opportunity (Sales itself never reads them).
+  sourceOfProjects Project[]
 
   @@unique([businessId, id])
   @@index([businessId, status, createdAt(sort: Desc), id])

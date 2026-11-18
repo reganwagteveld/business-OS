@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // UI Phase 2: the application shell (registry, navigation, business switching, responsive drawer, theme).
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, createCustomersClient, createDashboardClient, createProjectsClient, createSalesClient, memoryStorage, type AuthClient, type BusinessContext, type Outcome, type TenancyClient } from '../src';
@@ -460,6 +460,38 @@ describe('responsive', () => {
     expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
   });
 
+  it('desktop: hovering the collapsed rail with a mouse expands it over the content; leaving collapses it; touch does not', async () => {
+    setWidth(1280);
+    const { user } = mountApp();
+    await h1('Welcome to Alpha Plumbing.');
+    await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    const slot = document.querySelector('[data-rail-slot]')!;
+    // Right after collapsing, the pointer is still on the rail: no peek until it has left once.
+    fireEvent.pointerOver(slot, { pointerType: 'mouse' });
+    await new Promise((r) => setTimeout(r, 250));
+    expect(document.querySelector('[data-peek]')).toBeNull();
+    fireEvent.pointerOut(slot, { pointerType: 'mouse', relatedTarget: document.body });
+    fireEvent.pointerOver(slot, { pointerType: 'touch' });
+    await new Promise((r) => setTimeout(r, 250));
+    expect(document.querySelector('[data-peek]')).toBeNull();
+    fireEvent.pointerOut(slot, { pointerType: 'touch', relatedTarget: document.body });
+
+    fireEvent.pointerOver(slot, { pointerType: 'mouse' });
+    await waitFor(() => expect(document.querySelector('[data-peek]')).not.toBeNull());
+    expect(sidebarItem('Customers').getAttribute('title')).toBeNull();
+    expect(localStorage.getItem('bos.sidebar')).toBe('compact');
+    fireEvent.pointerOut(slot, { pointerType: 'mouse', relatedTarget: document.body });
+    await waitFor(() => expect(document.querySelector('[data-peek]')).toBeNull());
+    expect(sidebarItem('Customers').getAttribute('title')).toBe('Customers');
+
+    // "Keep expanded" while peeking pins the rail open.
+    fireEvent.pointerOver(slot, { pointerType: 'mouse' });
+    await waitFor(() => expect(document.querySelector('[data-peek]')).not.toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+    expect(localStorage.getItem('bos.sidebar')).toBe('expanded');
+    expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeTruthy();
+  });
+
   it('tablet: a compact rail with every Zone reachable and no collapse toggle', async () => {
     setWidth(800);
     mountApp();
@@ -627,7 +659,7 @@ describe('private beta: business creation is offered only with the platform gran
   it('hides "Create another business" in the switcher and the chooser without the grant', async () => {
     const { user, tenancy } = mountApp({ canCreateBusiness: false });
     await h1('Welcome to Alpha Plumbing.');
-    expect(tenancy.platformAccess).toHaveBeenCalled();
+    await waitFor(() => expect(tenancy.platformAccess).toHaveBeenCalled());
     switcher().focus();
     await user.keyboard('{ArrowDown}');
     const menu = screen.getByRole('menu', { name: 'Businesses' });

@@ -1,0 +1,82 @@
+# CIQ-A4: re-run a CI run ONCE when its only failures are hosted runners that were never allocated
+# (GitHub's "job was not acquired by Runner", seen on macOS arm64 under capacity pressure).
+#
+# Safeguards (docs/ci.md "macOS runner allocation"):
+# - Only confirmed allocation failures (cancelled, no runner, no step ran, GitHub's annotation) are
+#   retried; a run with any test, build, timeout or other failure is never retried.
+# - At most one retry per run: only attempt 1 is retried, the attempt is re-read just before the
+#   re-run request, and one concurrency group per run prevents duplicate requests. The retry's own
+#   completion (attempt 2) is reported, never retried, so there is no loop.
+# - Nothing here marks a check successful. The re-run repeats the failed jobs and the "CI gate" job,
+#   which still requires every applicable job to succeed; a second allocation failure leaves CI red
+#   and this workflow reports it as an infrastructure failure.
+# - workflow_run always runs this file from the default branch: no pull request code is checked out
+#   or executed. The token can only manage Actions runs of this repository.
+name: CI runner retry
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: write # re-run failed jobs of a CI run
+  checks: read   # read the "not acquired by Runner" annotation
+  contents: read
+
+concurrency:
+  group: ci-runner-retry-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    name: Retry unallocated runners
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Decide and, for a confirmed allocation failure on attempt 1, re-run once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ && "$ATTEMPT" =~ ^[0-9]+$ ]] || { echo "unexpected run id or attempt"; exit 1; }
+          gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/jobs.json"
+          mkdir -p "$RUNNER_TEMP/ann"
+          for id in $(jq -r '.jobs[] | select(.conclusion == "cancelled") | .id' "$RUNNER_TEMP/jobs.json"); do
+            gh api "repos/$REPO/check-runs/$id/annotations" > "$RUNNER_TEMP/ann/$id.json" || echo '[]' > "$RUNNER_TEMP/ann/$id.json"
+          done
+          out="$(.github/scripts/runner-retry-decide.sh "$RUNNER_TEMP/jobs.json" "$RUNNER_TEMP/ann" "$ATTEMPT")"
+          decision="$(sed -n 's/^decision=//p' <<< "$out")"; reason="$(sed -n 's/^reason=//p' <<< "$out")"
+          echo "Run $RUN_ID attempt $ATTEMPT (${HEAD_SHA:0:7}): $decision, $reason"
+          {
+            echo "## CI runner retry"
+            echo
+            echo "Run [$RUN_ID](https://github.com/$REPO/actions/runs/$RUN_ID) attempt $ATTEMPT, head \`${HEAD_SHA:0:7}\`: **$decision**. $reason"
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$decision" in
+            retry)
+              current="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .run_attempt)"
+              if [ "$current" != 1 ]; then
+                echo "Run already has attempt $current (re-run elsewhere); not re-running again."
+                exit 0
+              fi
+              gh api -X POST "repos/$REPO/actions/runs/$RUN_ID/rerun-failed-jobs" > /dev/null
+              echo "Re-run of failed jobs requested once."
+              ;;
+            infra-failure)
+              echo "::error title=Runner never allocated (infrastructure failure)::$reason. Not retried again; CI gate stays red. Re-run by hand later, or escalate if it persists."
+              exit 1
+              ;;
+            *) echo "Not retried." ;;
+          esac

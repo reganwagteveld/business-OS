@@ -157,3 +157,65 @@ export async function receivedPaymentDetails(db: AppTenantDb, q: FinanceDetailQu
     nextCursor: rows.length > q.limit && last ? encodeCursor(list, { d: last.received_on, i: last.id }) : null,
   };
 }
+
+// ---- WP-R1: expenses recorded ----------------------------------------------------------------------------
+//
+//   expenses  = sum of `amount` (gross: net plus tax, as the supplier billed it) of RECORDED expenses, by the
+//               date the cost was incurred (`incurred_on`, a business-local calendar date). DRAFT expenses never
+//               count; a VOID expense is removed from every period, including the one it was incurred in.
+//               Payments to suppliers are not expenses and are not counted again. Nothing is converted
+//               between currencies. Only the expense's own cost fields leave this module (no notes, no
+//               receipt reference).
+
+/** Recorded (never draft, never void) expenses per bucket of `incurred_on`; the customer is optional on an expense. */
+export async function recordedExpenseTotals(db: AppTenantDb, q: FinancePeriodQuery): Promise<FinancePeriodRow[]> {
+  const rows = await db.$queryRaw<Raw[]>`
+    SELECT to_char(date_trunc(${q.unit}::text, e.incurred_on::timestamp), 'YYYY-MM-DD') AS bucket,
+           e.currency_code::text AS currency_code, max(e.currency_scale)::int AS currency_scale,
+           CASE WHEN ${q.byCustomer}::boolean THEN e.customer_id::text END AS customer_id,
+           sum(e.amount) AS amount, count(*)::int AS count
+      FROM finance_expenses e
+     WHERE e.business_id = nullif(current_setting('app.business_id', true), '')::uuid
+       AND e.status = 'RECORDED'
+       AND e.incurred_on >= ${q.from}::date AND e.incurred_on <= ${q.to}::date
+       AND (${q.currencyCode ?? null}::text IS NULL OR e.currency_code = ${q.currencyCode ?? null}::text)
+       AND (${q.customerId ?? null}::uuid IS NULL OR e.customer_id = ${q.customerId ?? null}::uuid)
+     GROUP BY 1, 2, 4
+     ORDER BY 1, 2, 4`;
+  return rowsOf(rows);
+}
+
+export interface RecordedExpenseDetail {
+  id: string; customerId: string | null; incurredOn: string; description: string; supplierName: string | null; categoryName: string | null; currencyCode: string; amount: string;
+}
+
+/** Recorded expenses in the range, newest first, keyset-paginated on (incurred_on, id). */
+export async function recordedExpenseDetails(db: AppTenantDb, q: FinanceDetailQuery) {
+  const list = 'reporting:finance.expenses';
+  const after = decodeCursor(q.cursor, list, ['d', 'i'] as const);
+  if (after && (!DAY.test(after.d) || !UUID.test(after.i))) invalidCursor();
+  const rows = await db.$queryRaw<{
+    id: string; customer_id: string | null; incurred_on: string; description: string; supplier_name: string | null; category_name: string | null;
+    currency_code: string; currency_scale: number; amount: Decimal;
+  }[]>`
+    SELECT e.id::text, e.customer_id::text, to_char(e.incurred_on, 'YYYY-MM-DD') AS incurred_on, e.description, e.supplier_name, e.category_name,
+           e.currency_code::text, e.currency_scale::int, e.amount
+      FROM finance_expenses e
+     WHERE e.business_id = nullif(current_setting('app.business_id', true), '')::uuid
+       AND e.status = 'RECORDED'
+       AND e.incurred_on >= ${q.from}::date AND e.incurred_on <= ${q.to}::date
+       AND (${q.currencyCode ?? null}::text IS NULL OR e.currency_code = ${q.currencyCode ?? null}::text)
+       AND (${q.customerId ?? null}::uuid IS NULL OR e.customer_id = ${q.customerId ?? null}::uuid)
+       AND (${after?.d ?? null}::date IS NULL OR (e.incurred_on, e.id) < (${after?.d ?? null}::date, ${after?.i ?? null}::uuid))
+     ORDER BY e.incurred_on DESC, e.id DESC
+     LIMIT ${q.limit + 1}`;
+  const page = rows.slice(0, q.limit);
+  const last = page[page.length - 1];
+  return {
+    rows: page.map((r): RecordedExpenseDetail => ({
+      id: r.id, customerId: r.customer_id, incurredOn: r.incurred_on, description: r.description, supplierName: r.supplier_name, categoryName: r.category_name,
+      currencyCode: r.currency_code, amount: formatAmount(new Decimal(r.amount), r.currency_scale),
+    })),
+    nextCursor: rows.length > q.limit && last ? encodeCursor(list, { d: last.incurred_on, i: last.id }) : null,
+  };
+}

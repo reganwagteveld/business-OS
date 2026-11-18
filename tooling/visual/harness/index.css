@@ -1,0 +1,4 @@
+@import 'tailwindcss';
+@import '@business-os/ui/styles.css';
+@source '../../../packages/ui/src';
+@source '../../../packages/app/src';

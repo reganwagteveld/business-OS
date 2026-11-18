@@ -15,3 +15,10 @@ apps/api/tests/isolation/generated/
 
 # Local-only overrides (for example a different Postgres port). Never shared.
 docker-compose.override.yml
+
+# Visual harness run output (tooling/visual); goldens live in tooling/visual/goldens and are committed.
+tooling/visual/test-results/
+tooling/visual/playwright-report/
+
+# E2E suite (tooling/e2e) run output.
+tooling/e2e/test-results/
