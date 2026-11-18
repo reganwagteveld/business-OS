@@ -57,10 +57,10 @@ async function openSettings(user: ReturnType<typeof userEvent.setup>) {
 
 describe('Settings pages and permissions', () => {
   it('lists only pages whose backend exists, filtered by the server\'s permission keys', () => {
-    expect(SETTINGS_PAGES.map((p) => `${p.scope}/${p.id}`)).toEqual(['account/preferences', 'business/profile', 'business/regional']);
-    expect(pagesFor('business', MEMBER).map((p) => p.id)).toEqual(['profile', 'regional']);
+    expect(SETTINGS_PAGES.map((p) => `${p.scope}/${p.id}`)).toEqual(['account/account-profile', 'account/password', 'account/devices', 'account/preferences', 'business/profile', 'business/regional', 'business/members', 'business/invitations', 'business/access', 'business/ownership', 'business/zones']);
+    expect(pagesFor('business', MEMBER).map((p) => p.id)).toEqual(['profile', 'regional', 'members', 'access', 'ownership']);
     expect(pagesFor('business', []).map((p) => p.id)).toEqual([]); // no business:read: no Business pages
-    expect(pagesFor('account', []).map((p) => p.id)).toEqual(['preferences']); // account pages need no business key
+    expect(pagesFor('account', []).map((p) => p.id)).toEqual(['account-profile', 'password', 'devices', 'preferences']); // account pages need no business key
     expect(resolvePage('business', 'roles', MEMBER)?.id).toBe('profile'); // an unknown page never opens
     expect(resolvePage('business', undefined, [])).toBeNull();
   });
@@ -73,9 +73,9 @@ describe('Settings pages and permissions', () => {
     expect(within(scopes).getAllByRole('button').map((b) => b.textContent)).toEqual(['Business', 'Account']);
     expect(within(scopes).getByRole('button', { name: 'Business' }).getAttribute('aria-current')).toBe('page');
     const pages = screen.getByRole('navigation', { name: 'Business settings' });
-    expect(within(pages).getAllByRole('button').map((b) => b.textContent)).toEqual(['Business profile', 'Regional settings']);
-    // Nothing is listed for features that do not exist yet.
-    for (const name of [/Members/, /Roles/, /Invitations/, /Billing/, /Integrations/]) expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(within(pages).getAllByRole('button').map((b) => b.textContent)).toEqual(['Business profile', 'Regional settings', 'Members', 'Roles and access', 'Ownership and leaving']);
+    // Nothing is listed for features that do not exist yet (or that this role may not use).
+    for (const name of [/Invitations/, /Billing/, /Integrations/]) expect(screen.queryByRole('button', { name })).toBeNull();
     expect(screen.queryByText(/coming soon/i)).toBeNull();
   });
 
@@ -87,7 +87,7 @@ describe('Settings pages and permissions', () => {
     const heading = await h1('Regional settings');
     await waitFor(() => expect(document.activeElement).toBe(heading));
     await user.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Account' }));
-    expect(await h1('Preferences')).toBeTruthy();
+    expect(await h1('Profile')).toBeTruthy(); // the Account scope opens on its first page
     expect(screen.getByRole('navigation', { name: 'Account settings' })).toBeTruthy();
   });
 });
@@ -97,11 +97,13 @@ describe('Account › Preferences', () => {
     const { user, fake } = mount({ permissions: MEMBER });
     await openSettings(user);
     await user.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Account' }));
+    await h1('Profile');
+    await user.click(within(screen.getByRole('navigation', { name: 'Account settings' })).getByRole('button', { name: 'Preferences' }));
     await h1('Preferences');
     const facts = screen.getByText('Signed in as').closest('section')!;
     expect(facts.textContent).toContain('Ada Lovelace');
     expect(facts.textContent).toContain('ada@example.com');
-    expect(within(facts).queryByRole('textbox')).toBeNull(); // read-only: no name or email change exists yet
+    expect(within(facts).queryByRole('textbox')).toBeNull(); // read-only here: the name is edited on Account › Profile
     await user.click(screen.getByRole('radio', { name: 'Dark' }));
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     expect(localStorage.getItem('bos.theme')).toBe('dark');

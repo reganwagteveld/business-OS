@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAuthClient, type AuthClient, type AuthTransport } from './api/auth';
 import { createCustomersClient, type CustomersClient } from './api/customers';
 import { createDashboardClient, type DashboardClient } from './api/dashboard';
+import { createCommunicationsClient, type CommunicationsClient } from './api/communications';
 import { createSearchClient } from './api/search';
 import { createPeopleClient, type PeopleClient } from './api/people';
 import { createProjectsClient, type ProjectsClient } from './api/projects';
@@ -10,6 +11,7 @@ import { createReportingClient, type ReportingClient } from './api/reporting';
 import { createSchedulingClient, type SchedulingClient } from './api/scheduling';
 import { createSalesClient, type SalesClient } from './api/sales';
 import { createSettingsClient, type SettingsClient } from './api/settings';
+import { createAccountClient, type AccountClient } from './api/account';
 import { createTenancyClient, type TenancyClient } from './api/tenancy';
 import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
 import type { ClientPlatform } from './config';
@@ -22,10 +24,13 @@ import { Home, type CustomerMetrics } from './shell/home';
 import { OperationalDashboard, type DashboardClients } from './shell/dashboard/operational-dashboard';
 import { dashboardIdentity } from './shell/dashboard/sources';
 import { canOpen, HOME, resolveNavigation, type ResolvedNavigation, type ShellRoute } from './shell/registry';
+import type { ShellHistory } from './shell/history';
+import { pathToRoute, routeToPath } from './shell/url-routes';
 import { useLoad } from './zones/use-load';
 import type { BusinessContext } from './api/tenancy';
 import type { CurrentUser } from '@business-os/contracts';
 import { CustomerZone, customerTarget } from './zones/customers/customer-zone';
+import { CommunicationsZone } from './zones/communications/communications-zone';
 import { PeopleZone } from './zones/people/people-zone';
 import { ProjectsZone } from './zones/projects/projects-zone';
 import { FinanceZone } from './zones/finance/finance-zone';
@@ -54,13 +59,21 @@ export interface AppProps {
   sales?: SalesClient;
   projects?: ProjectsClient;
   people?: PeopleClient;
+  communications?: CommunicationsClient;
   finance?: FinanceClient;
   reporting?: ReportingClient;
   settings?: SettingsClient;
+  /** Account management (Settings A3-A): the signed-in person's name, password and sessions. */
+  account?: AccountClient;
   scheduling?: SchedulingClient;
   /** The operational dashboard's own reads (pipeline summary, business activity, upcoming events). */
   dashboard?: DashboardClient;
   storage?: WorkspaceStorage;
+  /**
+   * Where the shell's address lives (web: the path, desktop: the fragment). Omitted in most tests, where the
+   * route stays in memory. Only a Zone and its section are written to it; see shell/url-routes.ts.
+   */
+  history?: ShellHistory;
 }
 
 // After a browser sign-in, only the desktop authorisation page may be resumed (no open redirects).
@@ -75,17 +88,19 @@ type Mode = 'default' | 'choose' | 'new';
  * open the right one. Offline, server errors and an ended session each get their own screen, and
  * the active business is only ever one the server lists for you.
  */
-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, scheduling: schedulingOverride, settings: settingsOverride, dashboard: dashboardOverride, storage: storageOverride }: AppProps) {
+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, communications: communicationsOverride, finance: financeOverride, reporting: reportingOverride, scheduling: schedulingOverride, settings: settingsOverride, account: accountOverride, dashboard: dashboardOverride, storage: storageOverride, history }: AppProps) {
   const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
   const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
   const customers = useMemo(() => customersOverride ?? createCustomersClient(apiBaseUrl, resolvedTransport), [customersOverride, apiBaseUrl, resolvedTransport]);
   const sales = useMemo(() => salesOverride ?? createSalesClient(apiBaseUrl, resolvedTransport), [salesOverride, apiBaseUrl, resolvedTransport]);
+  const communications = useMemo(() => communicationsOverride ?? createCommunicationsClient(apiBaseUrl, resolvedTransport), [communicationsOverride, apiBaseUrl, resolvedTransport]);
   const people = useMemo(() => peopleOverride ?? createPeopleClient(apiBaseUrl, resolvedTransport), [peopleOverride, apiBaseUrl, resolvedTransport]);
   const projects = useMemo(() => projectsOverride ?? createProjectsClient(apiBaseUrl, resolvedTransport), [projectsOverride, apiBaseUrl, resolvedTransport]);
   const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
   const reporting = useMemo(() => reportingOverride ?? createReportingClient(apiBaseUrl, resolvedTransport), [reportingOverride, apiBaseUrl, resolvedTransport]);
   const settings = useMemo(() => settingsOverride ?? createSettingsClient(apiBaseUrl, resolvedTransport), [settingsOverride, apiBaseUrl, resolvedTransport]);
+  const account = useMemo(() => accountOverride ?? createAccountClient(apiBaseUrl, resolvedTransport), [accountOverride, apiBaseUrl, resolvedTransport]);
   const scheduling = useMemo(() => schedulingOverride ?? createSchedulingClient(apiBaseUrl, resolvedTransport), [schedulingOverride, apiBaseUrl, resolvedTransport]);
   const dashboard = useMemo(() => dashboardOverride ?? createDashboardClient(apiBaseUrl, resolvedTransport), [dashboardOverride, apiBaseUrl, resolvedTransport]);
   const searchClient = useMemo(() => createSearchClient(apiBaseUrl, resolvedTransport), [apiBaseUrl, resolvedTransport]);
@@ -96,11 +111,20 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const [mode, setMode] = useState<Mode>('default');
   /**
    * Where the person is in the shell, remembered with the business it belongs to. Leaving a business
-   * (switching, signing out) always lands on Home. Kept in memory only: no URL routing yet.
+   * (switching, signing out) always lands on Home. With a `history` adapter the address mirrors it (Zone and section only).
    */
-  const [route, setRouteState] = useState<{ slug: string | null; route: ShellRoute }>({ slug: null, route: HOME });
+  // `fromUrl` marks a route read from the address (reload, typed link, back/forward): it is a request only,
+  // honoured in whichever business opens (never carrying a business or record), and only if its permissions allow it.
+  const [route, setRouteState] = useState<{ slug: string | null; route: ShellRoute; fromUrl?: boolean }>(
+    () => ({ slug: null, route: history ? pathToRoute(history.read()) : HOME, fromUrl: history !== undefined }));
   const activeSlug = 'context' in phase ? phase.context.business.slug : null;
-  const setRoute = (next: ShellRoute) => setRouteState({ slug: activeSlug, route: next });
+  // Any navigation by the person ends the one-time mailbox-return result.
+  const setRoute = (next: ShellRoute) => {
+    setMailboxReturn(null);
+    setRouteState({ slug: activeSlug, route: next });
+    // A new entry only when the address actually changes (section changes inside a Zone, not record opens).
+    if (history && history.read() !== routeToPath(next)) history.push(routeToPath(next));
+  };
   const open = (next: ShellRoute) => setRoute(next);
 
   const params = new URLSearchParams(location?.search ?? '');
@@ -112,6 +136,22 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   useEffect(() => {
     if (location?.pathname === '/invite' && replaceLocation) replaceLocation('/invite');
   }, [location?.pathname, replaceLocation]);
+
+  // The mailbox connection page sends the browser back to `/?mailbox=<code>`. The code is read once, removed from the
+  // address bar and only ever mapped to fixed wording; it opens the Communications Zone when this person can use it.
+  const [mailboxReturn, setMailboxReturn] = useState<string | null>(() => params.get('mailbox'));
+  useEffect(() => {
+    if (mailboxReturn && replaceLocation) replaceLocation('/');
+  }, [mailboxReturn, replaceLocation]);
+  // Back and forward: the address is read again and goes through the same permission check as any route.
+  useEffect(() => {
+    if (!history) return;
+    return history.subscribe(() => {
+      setMailboxReturn(null);
+      setRouteState({ slug: null, route: pathToRoute(history.read()), fromUrl: true });
+    });
+  }, [history]);
+  const returnReady = mailboxReturn !== null && phase.kind === 'ready' && phase.context.membership.permissions.includes('communications:read');
 
   const user = 'user' in phase ? phase.user : null;
 
@@ -227,7 +267,9 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const navigation = resolveNavigation(phase.kind === 'switching' ? { state: 'loading' } : { state: 'ready', permissions });
   // A route is only ever honoured for a Zone the server's permissions open, and only in the business
   // it was chosen in: a switch, or a role change on refresh, lands on Home.
-  const current = route.slug === phase.context.business.slug && canOpen(route.route, navigation) ? route.route : HOME;
+  // Coming back from the provider shows Communications until the person navigates (which clears `mailboxReturn`).
+  const shown = returnReady ? { slug: phase.context.business.slug, route: { zone: 'communications' } as ShellRoute } : route;
+  const current = (shown.slug === phase.context.business.slug || ('fromUrl' in shown && shown.fromUrl)) && canOpen(shown.route, navigation) ? shown.route : HOME;
   const canReadProjects = navigation.available.some((z) => z.id === 'projects');
   const canReadCustomers = navigation.available.some((z) => z.id === 'customers');
   const canReadSales = navigation.available.some((z) => z.id === 'sales');
@@ -275,6 +317,16 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
+  } else if (active && current.zone === 'communications') {
+    screen = (
+      <CommunicationsZone
+        key={slug}
+        client={communications} customers={customers} context={active} userLabel={userLabel} returnResult={mailboxReturn ?? undefined}
+        // On the desktop the provider consent opens in the system browser, where the sign-in to Pixa OS must also exist.
+        openConsent={platform === 'desktop' ? (url) => { window.open(url, '_blank', 'noopener,noreferrer'); } : undefined}
+        onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
+      />
+    );
   } else if (active && current.zone === 'finance') {
     screen = (
       <FinanceZone
@@ -302,9 +354,9 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
     screen = (
       <SettingsZone
         key={slug}
-        client={settings} user={phase.user} context={active} scope={current.child} page={target}
+        client={settings} account={account} user={phase.user} context={active} scope={current.child} page={target}
         // Moving between scopes and pages keeps the Zone mounted; the shell route follows.
-        onNavigate={open} onContextChanged={workspace.refresh}
+        onNavigate={open} onContextChanged={workspace.refresh} onLeft={() => { setRoute(HOME); workspace.retry(); }}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
@@ -346,9 +398,21 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
       } : undefined}
       onSignOut={signOut}
     >
+      {history && phase.kind === 'ready' ? <UrlSync history={history} path={routeToPath(current)} /> : null}
       {screen}
     </AppShell>
   );
+}
+
+/**
+ * Keeps the address equal to the screen. A request the shell refused (unknown path, a Zone this person's
+ * role does not open, another business's permissions) is replaced by Home's address rather than left in the bar.
+ */
+function UrlSync({ history, path }: { history: ShellHistory; path: string }) {
+  useEffect(() => {
+    if (history.read() !== path) history.replace(path);
+  }); // every render: a refused back/forward leaves `path` unchanged but the address different
+  return null;
 }
 
 /**

@@ -5,3 +5,5 @@ export {
   authorize, can, canAssignRole, canAttestBusinessMailbox, canManageMember, permissionsFor,
 } from './server/permissions';
 export type { Permission, Principal, ResourceScope, Role, Zone } from './server/permissions';
+// A2-C: read-only description of the fixed roles for the Settings "Roles & access" page.
+export { describeAccessModel } from './server/catalog';

@@ -4,7 +4,7 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { betterAuth, type BetterAuthOptions } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
-import { getAuthPrisma } from '@/core/db/auth-client';
+import { getAuthPrisma, type AuthTx } from '@/core/db/auth-client';
 import { getEnv } from '@/core/config/env';
 import { sendEmail } from '@/core/email';
 import { admissionHooks } from './admission';
@@ -87,4 +87,21 @@ let instance: ReturnType<typeof createAuth> | undefined;
 export function getAuth() {
   instance ??= createAuth();
   return instance;
+}
+
+/** A unit of work on the identity tables as bos_auth (data-model §5.1). */
+export type { AuthTx };
+
+/**
+ * Runs `work` in one bos_auth transaction (account management, settings-a3 §15.3–15.4): the change, the
+ * revocation of other sessions and the audit row commit or roll back together. Only the identity module's
+ * account services call this; it is not part of the module's public API.
+ */
+export function withAuthTransaction<T>(work: (tx: AuthTx) => Promise<T>): Promise<T> {
+  return getAuthPrisma().$transaction(work, { maxWait: 5_000, timeout: 10_000 });
+}
+
+/** One bos_auth statement outside any transaction (rate-limit counters and best-effort failure audit). */
+export function withAuthClient<T>(work: (db: AuthTx) => Promise<T>): Promise<T> {
+  return work(getAuthPrisma());
 }

@@ -437,3 +437,27 @@ apply) + `005_member_emails.sql`. F7-B (#69), #71, #66 and #74 added no Prisma m
 `_prisma_migrations` before the apply; re-stamp again if anything newer lands first. Production apply (needs Regan's
 approval): fresh Neon recovery branch → `prisma migrate deploy` → `pnpm db:privileged` (re-applies 001–005
 idempotently; 001 changes `accept_invitation`) → verify → then merge.
+
+## 14. A2-C as built (draft PR, 2026-11-18)
+
+Read-only roles and access description for the Settings "Roles & access" page. **No migration, no grant change, no
+custom roles** (D-A2-1; editable or custom roles need their own architecture decision). No UI in this stage: the
+Settings page list (`packages/app/src/zones/settings/pages.ts`) has no placeholder for it, so the page is A2-D work.
+
+- **Route:** `GET /api/v1/b/{slug}/access/roles` (`listAccessRoles`), a normal `tenantRoute` with `business:read`, so
+  authentication, admission, CSRF/CORS, slug-to-membership resolution (404 for non-members, unknown slugs and
+  suspended members) and `Cache-Control: private, no-store` are the same as every tenant route. GET and OPTIONS only.
+- **Contract:** `packages/contracts/src/access.ts` (`AccessRolesResponse`), additive. `model: { customRoles: false,
+  editable: false }` are literals, so a client cannot be served a different model without a contract change.
+- **Content:** the four roles (highest first) with their keys, `canInvite`, `canAssign` and `canManage`; every Zone
+  and key with a label and description; and the role-only rules (transfer ownership, step down and consumer-mailbox
+  attestation are OWNER only; every role may leave, except the last active owner). It is the same for every
+  business and caller and holds no tenant data.
+- **Single source:** `modules/access/server/catalog.ts` computes grants and the invite/assign/manage lists from
+  `ROLE_PERMISSIONS`, `canAssignRole` and `canManageMember`, so the description cannot drift from enforcement. Its
+  text tables are typed by `Permission`, `Zone` and `Role`, so a new key without a description fails typecheck. The
+  transfer and step-down rules are enforced in `modules/tenancy/server/members.ts` and stated here as data.
+- **Tests:** `tests/unit/access-roles.test.ts` pins the full role → key matrix of §5 (any grant change fails) and checks
+  the description against the contract and the rank rules. `tests/integration/access-roles.test.ts` runs the real
+  route: all four roles get the identical body; 401 without a session; 404 for a stranger, an unknown slug and a
+  member who was just suspended; GET/OPTIONS only; no CORS grant for a foreign origin.

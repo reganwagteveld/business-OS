@@ -27,7 +27,15 @@ const FAILURES: Record<CallbackFailure, [number, string]> = {
   mailbox_access_denied: [403, 'The account you signed in with cannot open this mailbox. Nothing was connected.'],
   domain_mismatch: [409, 'The account you signed in with does not belong to the organisation that owns this domain. Nothing was connected.'],
 };
-const failed = (reason: CallbackFailure) => ({ status: FAILURES[reason][0], title: 'Mailbox not connected', message: `${FAILURES[reason][1]} (${reason})` });
+// The return link carries one fixed word, never the reason text, a token or an id (docs/communications-c2-ui.md D-UI-10).
+const RETURN_CODES: Partial<Record<CallbackFailure, 'declined' | 'invalid_state' | 'insufficient_scope' | 'account_mismatch' | 'already_connected' | 'not_allowed'>> = {
+  declined: 'declined', invalid_state: 'invalid_state', insufficient_scope: 'insufficient_scope', account_mismatch: 'account_mismatch', already_connected: 'already_connected', not_allowed: 'not_allowed',
+};
+const failed = (reason: CallbackFailure) => ({
+  status: FAILURES[reason][0], title: 'Mailbox not connected', message: `${FAILURES[reason][1]} (${reason})`,
+  // No link for an ended session: the person must sign in first.
+  ...(reason === 'unauthenticated' ? {} : { returnCode: RETURN_CODES[reason] ?? ('error' as const) }),
+});
 
 /**
  * The provider redirects the browser here after consent (docs/communications-c2.md §7.1). The
@@ -95,6 +103,7 @@ export const GET = browserRoute(async ({ request, user, memberships }) => {
       status: 200,
       title: result.outcome === 'connected' ? 'Mailbox connected' : 'Mailbox reconnected',
       message: 'You can close this window and return to Business OS. No mail has been read yet.',
+      returnCode: result.outcome === 'connected' ? ('connected' as const) : ('reconnected' as const),
     };
   } catch (error) {
     const reason: CallbackFailure | null = error instanceof AuthorizationFailure ? error.reason

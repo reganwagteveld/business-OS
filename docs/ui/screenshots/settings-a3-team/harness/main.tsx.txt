@@ -1,0 +1,46 @@
+import './buffer-shim';
+import { App, createSettingsClient, memoryStorage, type AuthClient, type BusinessContext, type TenancyClient } from '@business-os/app';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { createFakeSettings, member } from '../../../packages/app/tests/support/fake-settings';
+import './index.css';
+
+const BASE = 'https://api.test';
+const q = new URLSearchParams(window.location.search).get('role');
+const role = q === 'member' ? 'MANAGER' : q === 'admin' ? 'ADMIN' : 'OWNER';
+const ME = crypto.randomUUID();
+const at = (d: string) => `2026-${d}T08:00:00.000Z`;
+const fake = createFakeSettings(['harbour-studio'], { 'harbour-studio': [
+  member({ id: ME, name: 'Morgan Lee', email: 'morgan@harbour.example', role, createdAt: at('06-02') }),
+  member({ id: crypto.randomUUID(), name: 'Priya Nair', email: 'priya@harbour.example', role: role === 'OWNER' ? 'ADMIN' : 'OWNER', createdAt: at('06-02') }),
+  member({ id: crypto.randomUUID(), name: 'Tom Walker', email: 'tom@harbour.example', role: 'MANAGER', createdAt: at('07-14') }),
+  member({ id: crypto.randomUUID(), name: 'Ines Costa', email: 'ines@harbour.example', role: 'MEMBER', createdAt: at('08-21') }),
+  member({ id: crypto.randomUUID(), name: 'Sam Okafor', email: 'sam@harbour.example', role: 'MEMBER', status: 'SUSPENDED', createdAt: at('09-03') }),
+] });
+fake.setMe(ME);
+fake.invitations['harbour-studio']!.push(
+  { id: crypto.randomUUID(), email: 'lena@harbour.example', role: 'MEMBER', expiresAt: '2099-01-01T00:00:00.000Z', createdAt: at('11-15') },
+  { id: crypto.randomUUID(), email: 'old.contact@harbour.example', role: 'MANAGER', expiresAt: '2026-10-01T00:00:00.000Z', createdAt: at('09-24') },
+);
+fake.profiles['harbour-studio'] = {
+  ...fake.profiles['harbour-studio']!, name: 'Harbour Design Studio', legalName: 'Harbour Design Studio Pty Ltd', tradingName: 'Harbour Studio', contactEmail: 'hello@harbour.example', contactPhone: '08 9430 1122',
+  website: 'https://harbour.example', address: { line1: '12 Mouat Street', line2: null, city: 'Fremantle', region: 'WA', postalCode: '6160', countryCode: 'AU' },
+};
+const PERMS = role === 'OWNER' ? ['business:read', 'business:manage', 'members:read', 'members:invite', 'members:manage', 'audit:read'] : role === 'ADMIN' ? ['business:read', 'members:read', 'members:invite', 'members:manage'] : ['business:read', 'members:read'];
+const USER = { id: crypto.randomUUID(), email: 'morgan@harbour.example', name: 'Morgan Lee', emailVerified: true };
+const context = (): BusinessContext => ({
+  business: { slug: 'harbour-studio', name: fake.profiles['harbour-studio']!.name, countryCode: 'AU', timeZone: 'Australia/Perth', locale: 'en-AU', currency: 'AUD' },
+  membership: { id: ME, role, permissions: PERMS },
+});
+const auth = { session: async () => ({ kind: 'signed-in', user: USER }), signOut: async () => undefined } as unknown as AuthClient;
+const tenancy: TenancyClient = {
+  listBusinesses: async () => ({ kind: 'ok', data: [{ slug: 'harbour-studio', name: fake.profiles['harbour-studio']!.name, role }] }),
+  businessContext: async () => ({ kind: 'ok', data: context() }),
+  createBusiness: async () => ({ kind: 'failed', status: 500 }),
+  platformAccess: async () => ({ kind: 'ok', data: { canCreateBusiness: false } }),
+};
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App platform="web" apiBaseUrl={BASE} auth={auth} tenancy={tenancy} storage={memoryStorage({ slug: 'harbour-studio' })} settings={createSettingsClient(BASE, { kind: 'cookie' }, fake.fetch)} />
+  </StrictMode>,
+);

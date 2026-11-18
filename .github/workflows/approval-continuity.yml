@@ -1,0 +1,137 @@
+# CIQ-A6A-2: approval continuity verifier, SHADOW MODE ONLY
+# (docs/ciq-a6-autonomous-merge-governance.md §4, §8, §14.3, §15).
+#
+# What it does: after each CI run of a pull request (and on manual dispatch), it re-evaluates whether
+# the PR's newest valid connector merge verdict would still cover the PR's current head under the
+# continuity rule, and records the result as a job summary and an artifact. That is all.
+#
+# What it never does: it has no write permission of any kind. It does not comment, label, mark
+# ready, push, merge, post a check or a status, or change how any PR is approved or merged. It is
+# not a required check. The current rule (exact head, or the same patch-id after a conflict-free
+# sync, otherwise a fresh verdict) keeps governing every merge until Regan approves D-A6-1.
+#
+# Trust: workflow_run and workflow_dispatch both run this file from the default branch, so the
+# verifier code and .github/merge-governance/policy.json come from main, never from a PR. The job
+# refuses any other ref. PR content is only fetched as git objects and read; nothing from a PR is
+# checked out or executed. Inputs are passed through the environment and validated by the script.
+name: Approval continuity (shadow)
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "evaluate (one PR or all open PRs) or report (aggregate earlier shadow artifacts)"
+        type: choice
+        options: [evaluate, report]
+        default: evaluate
+      pr:
+        description: "PR number (blank: every open PR into main with a connector verdict)"
+        required: false
+        default: ""
+      candidate_sha:
+        description: "Candidate SHA (blank: the PR's current head)"
+        required: false
+        default: ""
+      verdict_comment_id:
+        description: "Verdict comment id (blank: the newest valid connector verdict)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  actions: read
+
+concurrency:
+  group: approval-continuity-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  shadow:
+    name: Continuity shadow
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out main (trusted verifier and policy)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse anything but main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [ "$REF" = refs/heads/main ] || { echo "approval continuity runs only from main (got $REF)"; exit 1; }
+          git --version
+
+      - name: Evaluate (read-only)
+        if: github.event_name == 'workflow_run' || inputs.mode == 'evaluate'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          IN_PR: ${{ inputs.pr }}
+          IN_CANDIDATE: ${{ inputs.candidate_sha }}
+          IN_COMMENT: ${{ inputs.verdict_comment_id }}
+        run: |
+          set -euo pipefail
+          args=(shadow --out-dir "$RUNNER_TEMP/continuity" --event-name "$EVENT_NAME" --event-file "$GITHUB_EVENT_PATH")
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            [ -z "$IN_PR" ] || args+=(--pr "$IN_PR")
+            [ -z "$IN_CANDIDATE" ] || args+=(--candidate "$IN_CANDIDATE")
+            [ -z "$IN_COMMENT" ] || args+=(--verdict-comment "$IN_COMMENT")
+          fi
+          python3 -I scripts/merge-governance/continuity/verify.py "${args[@]}"
+          cat "$RUNNER_TEMP/continuity/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload shadow decisions
+        if: github.event_name == 'workflow_run' || inputs.mode == 'evaluate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: continuity-shadow-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/continuity/
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Aggregate the shadow report (read-only)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'report'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/shadow-artifacts"; mkdir -p "$dir"
+          gh api --paginate "repos/$REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | select(.name | startswith("continuity-shadow-")) | .id' > "$RUNNER_TEMP/ids"
+          while read -r id; do
+            [[ "$id" =~ ^[0-9]+$ ]] || continue
+            gh api "repos/$REPO/actions/artifacts/$id/zip" > "$RUNNER_TEMP/a.zip"
+            mkdir -p "$dir/$id" && unzip -q -o "$RUNNER_TEMP/a.zip" -d "$dir/$id"
+          done < "$RUNNER_TEMP/ids"
+          python3 -I scripts/merge-governance/continuity/verify.py report --dir "$dir" > "$RUNNER_TEMP/report.json"
+          {
+            echo "## Approval continuity shadow report"
+            echo
+            echo "Shadow mode has no effect on merges. Audit comparisons (annotations) are added offline; see scripts/merge-governance/continuity/README.md."
+            echo
+            echo '```json'
+            jq '{decisions_total, decisions_counted, window_decisions, window_days, category_counts, criteria_checked_here, criteria_not_checked_here, all_checked_criteria_met}' "$RUNNER_TEMP/report.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the shadow report
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'report'
+        uses: actions/upload-artifact@v4
+        with:
+          name: continuity-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/report.json
+          retention-days: 90

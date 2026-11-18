@@ -1,0 +1,178 @@
+# Output of docs/evidence/wf2/lifecycle-probe.test.ts.txt on main 2a96f44, local PostgreSQL 16, 2026-11-18. Random test UUIDs replaced with <uuid>.
+ ✓ tests/integration/zz-wf2-lifecycle-probe.test.ts (14 tests) 2492ms
+      Tests  14 passed (14)
+WF2-EVIDENCE {
+ "L2.opportunityKeys": [
+  "amount",
+  "archivedAt",
+  "closedAt",
+  "contactId",
+  "createdAt",
+  "createdById",
+  "currencyCode",
+  "customerId",
+  "description",
+  "expectedCloseDate",
+  "id",
+  "lossReason",
+  "ownerUserId",
+  "pipelineId",
+  "probability",
+  "stageId",
+  "status",
+  "title",
+  "updatedAt",
+  "updatedById",
+  "version"
+ ],
+ "L3.quoteLinesFromOpportunityAmount": "300.00",
+ "L3.opportunityHasQuoteField": false,
+ "L4.opportunityStatusAfterQuoteAccepted": "OPEN",
+ "L5.workflowsRoutesExist": false,
+ "L5.workflowsModuleExists": false,
+ "L5.createWithSourceOpportunityId": {
+  "status": 400
+ },
+ "L5.projectSourceFields": {
+  "sourceOpportunityId": null,
+  "sourceQuoteId": null
+ },
+ "L5.patchSourceOpportunityId": {
+  "status": 400
+ },
+ "L5.listBySourceOpportunity": {
+  "status": 400
+ },
+ "L6.patchIssuedQuoteProject": {
+  "status": 409
+ },
+ "L7.convertedInvoiceProjectId": null,
+ "L7.linkDraftInvoiceToProject": {
+  "status": 200,
+  "projectId": "<uuid>"
+ },
+ "L8.otherCustomersProject": {
+  "status": 400
+ },
+ "L9.settlement": {
+  "invoiceId": "<uuid>",
+  "number": "INV-0001",
+  "status": "ISSUED",
+  "customerId": "<uuid>",
+  "currencyCode": "AUD",
+  "total": "300.00",
+  "allocatedTotal": "300.00",
+  "creditAppliedTotal": "0.00",
+  "outstanding": "0.00",
+  "settlementState": "PAID",
+  "dueDate": "2026-12-31",
+  "overdue": false,
+  "asOf": "2026-11-18",
+  "allocations": [
+   {
+    "id": "<uuid>",
+    "paymentId": "<uuid>",
+    "invoiceId": "<uuid>",
+    "invoiceNumber": "INV-0001",
+    "currencyCode": "AUD",
+    "amount": "300.00",
+    "createdAt": "<time>",
+    "createdById": "<uuid>",
+    "reversedAt": null,
+    "reversedById": null
+   }
+  ],
+  "creditApplications": []
+ },
+ "L9.managerRecordsPayment": 403,
+ "L10.summaryOwner": {
+  "projectId": "<uuid>",
+  "currencies": [
+   {
+    "currencyCode": "AUD",
+    "currencyScale": 2,
+    "quotedNet": "0.00",
+    "acceptedNet": "0.00",
+    "invoicedNet": "300.00",
+    "invoicedGross": "300.00",
+    "creditedNet": "0.00",
+    "creditedGross": "0.00",
+    "billedNet": "300.00",
+    "paymentsAllocated": "300.00",
+    "creditApplied": "0.00",
+    "outstanding": "0.00",
+    "unappliedCredit": "0.00",
+    "expensesNet": "0.00"
+   }
+  ],
+  "counts": {
+   "quotes": {
+    "DRAFT": 0,
+    "ISSUED": 0,
+    "ACCEPTED": 0,
+    "DECLINED": 0,
+    "EXPIRED": 0,
+    "VOID": 0
+   },
+   "invoices": {
+    "DRAFT": 1,
+    "ISSUED": 1,
+    "ACCEPTED": 0,
+    "DECLINED": 0,
+    "EXPIRED": 0,
+    "VOID": 0
+   },
+   "creditNotes": {
+    "DRAFT": 0,
+    "ISSUED": 0,
+    "ACCEPTED": 0,
+    "DECLINED": 0,
+    "EXPIRED": 0,
+    "VOID": 0
+   }
+  }
+ },
+ "L10.summaryStatusByRole": {
+  "OWNER": 200,
+  "ADMIN": 200,
+  "MANAGER": 200,
+  "MEMBER": 403
+ },
+ "L10.crossTenantSummary": 404,
+ "L11.memberProjectKeys": [
+  "archivedAt",
+  "completedAt",
+  "createdAt",
+  "createdById",
+  "customer",
+  "customerId",
+  "description",
+  "dueDate",
+  "id",
+  "name",
+  "ownerUserId",
+  "priority",
+  "sourceOpportunity",
+  "sourceOpportunityId",
+  "startDate",
+  "status",
+  "taskCounts",
+  "updatedAt",
+  "updatedById",
+  "version"
+ ],
+ "L11.memberSeesOpportunityAmount": "5000.00",
+ "L12.changeLinkedProjectCustomer": {
+  "status": 409
+ },
+ "L13.reportingProjectFilter": {
+  "status": 400
+ },
+ "L13.reportingProjectGroupBy": {
+  "status": 400
+ },
+ "L14.timelineTypes": [
+  "contact.created",
+  "customer.created"
+ ]
+}

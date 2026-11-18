@@ -11,7 +11,7 @@ export type RawFileResult =
 
 export interface Requester {
   /** `headers` adds request headers such as Idempotency-Key; it cannot replace the credential or content headers. */
-  request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>): Promise<RawResult>;
+  request(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>): Promise<RawResult>;
   /** GET a binary file (a PDF or an image) with the same credentials. `accept` names the expected type. */
   requestFile(path: string, accept: string, signal?: AbortSignal): Promise<RawFileResult>;
 }

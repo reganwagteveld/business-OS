@@ -11,8 +11,9 @@ import type { IconName } from './icons';
  * because its entry exists, and the API still checks every request.
  */
 
-export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'scheduling' | 'people' | 'operations' | 'reporting' | 'settings';
+export type ZoneId = 'customers' | 'sales' | 'projects' | 'finance' | 'scheduling' | 'people' | 'operations' | 'reporting' | 'communications' | 'settings';
 
+/** `route` values are the shell's real addresses (shell/url-routes.ts). */
 export interface ZoneChild {
   /** Stable within its Zone. */
   id: string;
@@ -21,7 +22,7 @@ export interface ZoneChild {
 }
 
 export interface ZoneDefinition {
-  /** Stable identifier: used for state, tests and future URLs. Never shown. */
+  /** Stable identifier: used for state and tests. Never shown. */
   id: ZoneId;
   name: string;
   description: string;
@@ -88,6 +89,12 @@ export const ZONES: readonly ZoneDefinition[] = [
       { id: 'explore', label: 'Explore', route: '/reporting/explore' },
       { id: 'saved', label: 'Saved reports', route: '/reporting/saved' },
     ],
+  },
+  // Communications C2-UI-C (docs/communications-c2-ui.md, D-UI-1): mailbox management only. There is no Inbox child
+  // until provider mail is stored and readable (C2-B3): nothing here pretends otherwise.
+  {
+    id: 'communications', name: 'Communications', description: 'Connected mailboxes and their settings', icon: 'mail', route: '/communications', order: 75, requires: ['communications:read'], availability: 'built',
+    children: [{ id: 'mailboxes', label: 'Mailboxes', route: '/communications' }],
   },
   // A3 / A2-D stage 1: two scopes (the signed-in person, the active business). Pages inside a scope come from
   // zones/settings/pages.ts and are only listed when the backend behind them exists. Every member holds business:read.

@@ -231,6 +231,17 @@ describe('source rules (scripts/check-boundaries.mjs)', () => {
     expect(server([['app/api/v1/health/route.ts', 'export function GET() {}\n']])).toEqual([]);
   });
 
+  it('wraps every account route except GET /me in publicRoute, and keeps tenant authority out of them (A3-A)', () => {
+    expect(server([['app/api/v1/me/route.ts', 'export async function GET() {}\n']])).toEqual([]);
+    expect(server([['app/api/v1/me/route.ts', 'export async function PATCH() {}\n']])).toEqual(['account-route-wrapper']);
+    expect(server([['app/api/v1/me/route.ts', 'export const PATCH = publicRoute({}, h);\n']])).toEqual([]);
+    expect(server([['app/api/v1/me/password/route.ts', 'export async function POST() {}\n']])).toEqual(['tenant-route-wrapper']);
+    expect(server([['app/api/v1/me/sessions/route.ts', 'export const GET = publicRoute({}, h);\n']])).toEqual([]);
+    for (const spec of ['@/modules/tenancy', '@/modules/access', '@/core/db']) {
+      expect(server([['app/api/v1/me/sessions/route.ts', `import { x } from '${spec}';\nexport const GET = publicRoute({}, h);\n`]])).toEqual(['account-routes-no-tenant']);
+    }
+  });
+
   it('forbids hard-coded region names in the API and the clients', () => {
     expect(server([['core/config/env.ts', "const r = 'us-east-1';\n"]])).toEqual(['no-region-literals']);
     expect(server([['core/config/regions.ts', "const r = 'us-east-1';\n"]])).toEqual([]);

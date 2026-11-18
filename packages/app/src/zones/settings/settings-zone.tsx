@@ -1,15 +1,25 @@
 import type { CurrentUser } from '@business-os/contracts';
 import { cn } from '@business-os/ui';
 import { useEffect, useMemo, useRef } from 'react';
+import type { AccountClient } from '../../api/account';
 import type { SettingsClient } from '../../api/settings';
 import type { BusinessContext } from '../../api/tenancy';
 import type { ShellRoute } from '../../shell/registry';
 import { useDraftGuard } from '../drafts';
 import { ZoneFrame } from '../zone-frame';
+import { AccountDevicesPage } from './account-devices';
+import type { AccountPageEnv } from './account-env';
+import { AccountPasswordPage } from './account-password';
 import { AccountPreferences } from './account-preferences';
+import { AccountProfilePage } from './account-profile';
 import { BusinessProfilePage, type SettingsPageEnv } from './business-profile';
 import { isScope, pagesFor, resolvePage, type SettingsScope } from './pages';
+import { InvitationsPage } from './invitations';
+import { MembersPage } from './members';
+import { OwnershipPage } from './ownership';
+import { ZoneConfigurationPage } from './zones';
 import { RegionalSettingsPage } from './regional-settings';
+import { RolesAccessPage } from './roles-access';
 
 const focusRing = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
 
@@ -21,8 +31,10 @@ const focusRing = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-
  * discards every bit of state. Unsaved edits are protected on every way of leaving (pages, scopes,
  * Zones, business switcher, sign out, closing the window).
  */
-export function SettingsZone({ client, user, context, scope: scopeId, page: pageId, onNavigate, onContextChanged, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function SettingsZone({ client, account, user, context, scope: scopeId, page: pageId, onNavigate, onContextChanged, onLeft, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: SettingsClient;
+  /** Account management (A3-A): the signed-in person's own name, password and sessions. */
+  account: AccountClient;
   user: CurrentUser;
   context: BusinessContext;
   /** The shell route's child: `account` or `business`. Anything else opens the Business scope. */
@@ -32,6 +44,8 @@ export function SettingsZone({ client, user, context, scope: scopeId, page: page
   onNavigate: (route: ShellRoute) => void;
   /** Re-reads the business context (name, formats) after a save, so the shell never shows stale values. */
   onContextChanged: () => void;
+  /** The person left this business: the app re-reads their memberships and moves on. */
+  onLeft: () => void;
   onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
 }) {
   const { slug, name } = context.business;
@@ -53,12 +67,26 @@ export function SettingsZone({ client, user, context, scope: scopeId, page: page
     }
   }, [pageKey]);
 
-  const env: SettingsPageEnv = useMemo(() => ({ client, slug, canManage, markDraft, onSessionEnded, onSaved: onContextChanged }), [client, slug, canManage, markDraft, onSessionEnded, onContextChanged]);
+  const role = context.membership.role;
+  const membershipId = context.membership.id;
+  const { locale, timeZone } = context.business;
+  const go = (id: string) => leave(() => onNavigate({ zone: 'settings', child: 'business', target: id }));
+  const env: SettingsPageEnv = useMemo(
+    () => ({ client, slug, canManage, markDraft, onSessionEnded, onSaved: onContextChanged, me: { membershipId, role, permissions }, businessName: name, locale, timeZone, onLeft, go }),
+    // `go` and the callbacks change identity every render; the page reads them when it acts, never to decide what to show.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [client, slug, canManage, markDraft, onSessionEnded, membershipId, role, permissions, name, locale, timeZone, onContextChanged, onLeft],
+  );
+
+  const accountEnv: AccountPageEnv = useMemo(
+    () => ({ client: account, user, markDraft, onSessionEnded, onUserChanged: onContextChanged, locale, timeZone }),
+    [account, user, markDraft, onSessionEnded, onContextChanged, locale, timeZone],
+  );
 
   return (
     <ZoneFrame zone="Settings" business={name} user={user.name || user.email} leave={guard.leave} onHome={onHome} onSwitch={onSwitch} onSignOut={onSignOut}>
-      <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
-        <nav aria-label={scope === 'account' ? 'Account settings' : 'Business settings'} className="lg:w-56 lg:shrink-0">
+      <div className="flex min-w-0 flex-col gap-6 lg:flex-row lg:gap-10">
+        <nav aria-label={scope === 'account' ? 'Account settings' : 'Business settings'} className="min-w-0 lg:w-56 lg:shrink-0">
           <p className="mb-2 hidden truncate text-small font-semibold lg:block">{scope === 'account' ? 'Account' : name}</p>
           <ul className="flex gap-1 overflow-x-auto border-b border-line lg:flex-col lg:overflow-visible lg:border-b-0">
             {pages.map((p) => {
@@ -75,10 +103,18 @@ export function SettingsZone({ client, user, context, scope: scopeId, page: page
             })}
           </ul>
         </nav>
-        <div ref={content} className="min-w-0 max-w-3xl flex-1">
+        <div ref={content} className="min-w-0 max-w-5xl flex-1">
+          {page?.id === 'account-profile' ? <AccountProfilePage key={pageKey} env={accountEnv} /> : null}
+          {page?.id === 'password' ? <AccountPasswordPage key={pageKey} env={accountEnv} /> : null}
+          {page?.id === 'devices' ? <AccountDevicesPage key={pageKey} env={accountEnv} /> : null}
           {page?.id === 'preferences' ? <AccountPreferences key={pageKey} user={user} /> : null}
           {page?.id === 'profile' ? <BusinessProfilePage key={`${pageKey}|${slug}`} env={env} /> : null}
           {page?.id === 'regional' ? <RegionalSettingsPage key={`${pageKey}|${slug}`} env={env} /> : null}
+          {page?.id === 'members' ? <MembersPage key={`${pageKey}|${slug}`} env={env} /> : null}
+          {page?.id === 'invitations' ? <InvitationsPage key={`${pageKey}|${slug}`} env={env} /> : null}
+          {page?.id === 'access' ? <RolesAccessPage key={`${pageKey}|${slug}`} env={env} /> : null}
+          {page?.id === 'zones' ? <ZoneConfigurationPage key={`${pageKey}|${slug}`} env={{ ...env, open: (route) => leave(() => onNavigate(route)) }} /> : null}
+          {page?.id === 'ownership' ? <OwnershipPage key={`${pageKey}|${slug}`} env={env} /> : null}
         </div>
       </div>
       {guard.dialog}
