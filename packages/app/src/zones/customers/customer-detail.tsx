@@ -18,6 +18,8 @@ import { NoteComposer } from '../activity/note-composer';
 import { CustomerProjects } from '../projects/customer-projects';
 import { CustomerFinance } from '../finance/customer-finance';
 import type { FinanceClient } from '../../api/finance';
+import type { SalesClient } from '../../api/sales';
+import { CustomerOpportunities } from '../sales/customer-opportunities';
 
 function Panel({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -45,7 +47,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  * One customer's workspace. Everything shown is a real record from the API; contacts and activity
  * are managed through the existing tenant-scoped API. Archive asks first and restore is one click.
  */
-export function CustomerDetail({ client, slug, id, contact, locale, timeZone, canWrite, canLogActivity, canReadMessages = false, projects, finance, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
+export function CustomerDetail({ client, slug, id, contact, locale, timeZone, canWrite, canLogActivity, canReadMessages = false, projects, finance, sales, userId, onBack, onEdit, onDraftChange, confirmDiscard, onSessionEnded }: {
   client: CustomersClient; slug: string; id: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean;
   /** A contact to mark in the contacts panel (the page was opened from a `contact:<id>` target). */
   contact?: ContactFocus;
@@ -55,6 +57,10 @@ export function CustomerDetail({ client, slug, id, contact, locale, timeZone, ca
   projects?: ProjectsLink;
   /** The customer's finance, shown only to people who may read finance (the server checks again). */
   finance?: FinanceLink;
+  /** The customer's sales opportunities, shown only to people who may read sales (the server checks again). */
+  sales?: SalesLink;
+  /** The signed-in user, so they can edit or remove their own timeline entries. */
+  userId?: string;
   onBack: () => void; onEdit: (c: Customer) => void;
   /** Open contact or activity drafts report here, so the Zone asks before anything would discard them. */
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
@@ -83,7 +89,7 @@ export function CustomerDetail({ client, slug, id, contact, locale, timeZone, ca
         <Loaded
           key={shown.id}
           customer={shown} contact={contact} client={client} slug={slug} locale={locale} timeZone={timeZone} canWrite={canWrite} canLogActivity={canLogActivity} canReadMessages={canReadMessages}
-          names={names} projects={projects} finance={finance} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
+          names={names} projects={projects} finance={finance} sales={sales} userId={userId} onEdit={onEdit} onChanged={customer.reload} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded}
         />
       ) : null}
     </div>
@@ -91,12 +97,14 @@ export function CustomerDetail({ client, slug, id, contact, locale, timeZone, ca
 }
 
 export interface ProjectsLink { client: ProjectsClient; onOpen: (projectId: string) => void }
+/** The customer's opportunities panel, passed only to people who hold sales:read. */
+export interface SalesLink { client: SalesClient; onOpen: (opportunityId: string) => void; onViewAll?: () => void }
 /** The customer's finance panel, passed only to people who hold finance:read. `onOpen` takes `invoice:<id>`, `quote:<id>` or `payment:<id>`. */
 export interface FinanceLink { client: FinanceClient; onOpen: (target: string) => void }
 
-function Loaded({ customer, contact, client, slug, locale, timeZone, canWrite, canLogActivity, canReadMessages, names, projects, finance, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
+function Loaded({ customer, contact, client, slug, locale, timeZone, canWrite, canLogActivity, canReadMessages, names, projects, finance, sales, userId, onEdit, onChanged, onDraftChange, confirmDiscard, onSessionEnded }: {
   customer: Customer; contact?: ContactFocus; client: CustomersClient; slug: string; locale?: string; timeZone: string; canWrite: boolean; canLogActivity: boolean; canReadMessages: boolean;
-  names: Map<string, string> | null; projects?: ProjectsLink; finance?: FinanceLink; onEdit: (c: Customer) => void; onChanged: () => void;
+  names: Map<string, string> | null; projects?: ProjectsLink; finance?: FinanceLink; sales?: SalesLink; userId?: string; onEdit: (c: Customer) => void; onChanged: () => void;
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const archived = customer.archivedAt !== null;
@@ -187,7 +195,7 @@ function Loaded({ customer, contact, client, slug, locale, timeZone, canWrite, c
           </Panel>
         </div>
         <div className="lg:col-span-2 lg:row-start-3">
-          <ActivityPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} canWrite={canLogActivity && !archived} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
+          <ActivityPanel customerId={customer.id} userId={userId} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} canWrite={canLogActivity && !archived} onDraftChange={onDraftChange} confirmDiscard={confirmDiscard} onSessionEnded={onSessionEnded} />
           {canReadMessages ? (
             <div className="mt-5">
               <ConversationsPanel customerId={customer.id} client={client} slug={slug} locale={locale} timeZone={timeZone} names={names} onSessionEnded={onSessionEnded} />
@@ -195,6 +203,9 @@ function Loaded({ customer, contact, client, slug, locale, timeZone, canWrite, c
           ) : null}
         </div>
         <div className="space-y-5 self-start lg:col-start-3 lg:row-start-3">
+          {sales ? (
+            <CustomerOpportunities client={sales.client} slug={slug} customerId={customer.id} locale={locale} onOpen={(oid) => confirmDiscard(() => sales.onOpen(oid))} onViewAll={sales.onViewAll ? () => confirmDiscard(() => sales.onViewAll!()) : undefined} onSessionEnded={onSessionEnded} />
+          ) : null}
           {projects ? (
             <CustomerProjects client={projects.client} slug={slug} customerId={customer.id} onOpen={(id) => confirmDiscard(() => projects.onOpen(id))} onSessionEnded={onSessionEnded} />
           ) : null}
@@ -208,8 +219,8 @@ function Loaded({ customer, contact, client, slug, locale, timeZone, canWrite, c
   );
 }
 
-function ActivityPanel({ customerId, client, slug, locale, timeZone, names, canWrite, onDraftChange, confirmDiscard, onSessionEnded }: {
-  customerId: string; client: CustomersClient; slug: string; locale?: string; timeZone: string; names: Map<string, string> | null; canWrite: boolean;
+function ActivityPanel({ customerId, userId, client, slug, locale, timeZone, names, canWrite, onDraftChange, confirmDiscard, onSessionEnded }: {
+  customerId: string; userId?: string; client: CustomersClient; slug: string; locale?: string; timeZone: string; names: Map<string, string> | null; canWrite: boolean;
   onDraftChange: (key: string, dirty: boolean) => void; confirmDiscard: (action: () => void) => void; onSessionEnded: () => void;
 }) {
   const [refresh, setRefresh] = useState(0);
@@ -224,6 +235,7 @@ function ActivityPanel({ customerId, client, slug, locale, timeZone, names, canW
       ) : null}
       <ActivityTimeline load={(cursor, types, signal) => client.activities(slug, customerId, cursor, signal, types)} loadKey={`${slug}|${customerId}`} refreshKey={refresh}
         names={names} locale={locale} timeZone={timeZone} onSessionEnded={onSessionEnded}
+        manage={userId && canWrite ? { userId, client, slug, onChanged: saved, onDraftChange, confirmDiscard, onSessionEnded } : undefined}
         emptyHint="Notes, logged calls, meetings and emails, recorded messages and changes to this customer appear here." />
     </Panel>
   );
