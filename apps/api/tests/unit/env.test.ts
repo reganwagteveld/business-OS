@@ -32,6 +32,24 @@ describe('authentication configuration', () => {
     expect(() => parseEnv({ ...valid, EMAIL_TRANSPORT: 'resend' })).toThrow('RESEND_API_KEY'));
 });
 
+describe('production never trusts Vercel preview origins (INFRA-VC-1 R1)', () => {
+  const prod = { ...valid, VERCEL_ENV: 'production', EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: 're_test', EMAIL_FROM: 'Pixa <no-reply@example.test>' };
+  it('accepts the desktop origins in production', () =>
+    expect(parseEnv({ ...prod, CORS_ALLOWED_ORIGINS: 'tauri://localhost,http://tauri.localhost' }).CORS_ALLOWED_ORIGINS).toEqual(['tauri://localhost', 'http://tauri.localhost']));
+  it.each([
+    'https://business-os-web-git-feature-pixakova.vercel.app',
+    'https://business-os-web-eight.vercel.app',
+    'https://business-os-ashy-nine.vercel.app',
+    'https://vercel.app',
+    'http://preview.vercel.app:8080',
+  ])('rejects %s in production', (origin) =>
+    expect(() => parseEnv({ ...prod, CORS_ALLOWED_ORIGINS: `tauri://localhost,${origin}` })).toThrow('vercel.app origin'));
+  it('does not treat look-alike hosts as Vercel', () =>
+    expect(parseEnv({ ...prod, CORS_ALLOWED_ORIGINS: 'https://vercel.app.example.com,https://notvercel.app' }).CORS_ALLOWED_ORIGINS).toHaveLength(2));
+  it('leaves non-production environments unchanged', () =>
+    expect(parseEnv({ ...valid, VERCEL_ENV: 'preview', CORS_ALLOWED_ORIGINS: 'https://x-pixakova.vercel.app' }).CORS_ALLOWED_ORIGINS).toHaveLength(1));
+});
+
 describe('runtime region colocation', () => {
   const prod = { ...valid, REGION: 'us-east-1', DATABASE_REGION: 'us-east-1' };
   it('accepts functions running in the configured region', () =>
