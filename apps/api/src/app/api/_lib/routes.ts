@@ -61,6 +61,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   CM011: [409, 'erased'], CM012: [409, 'legal_hold_rule'], CM013: [409, 'immutable'],
   // WF-1B-1 (migration 20261207000000_workflow_links, docs/cross-zone-workflows-wf1.md §5.4): projects_guard_links.
   WF001: [409, 'project_has_quote'], WF002: [409, 'quote_not_accepted'], WF003: [409, 'quote_has_project'], WF004: [409, 'opportunity_mismatch'],
+  // Sales S-CFG-1A (migration 20261210000000_sales_configuration, docs/sales-pipeline-configuration-scfg.md §6.4).
+  SA001: [409, 'archived_reference'], SA002: [409, 'has_open_opportunities'], SA003: [409, 'last_stage'], SA004: [409, 'immutable'],
 };
 
 /**
@@ -87,6 +89,8 @@ const FINANCE_CONSTRAINTS: [RegExp, string][] = [
   [/people_leave_types_active_name_key|people_leave_policies_active_name_key/, 'duplicate_name'],
   [/people_leave_policy_assignments_open_key/, 'stale'],
   [/people_department_assignments_open_key|people_manager_assignments_open_key|people_employee_personal_details_pkey/, 'stale'],
+  // Sales S-CFG-1A (§4.3): active stage and pipeline names, behind the service checks.
+  [/sales_stages_active_name_key|sales_pipelines_active_name_key/, 'name_taken'],
 ];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

@@ -34,6 +34,9 @@ jobs:
       desktop: ${{ steps.classify.outputs.desktop }}
       tier: ${{ steps.classify.outputs.tier }}
       desktop_reason: ${{ steps.classify.outputs.desktop_reason }}
+      # CIQ-A4: 'false' (pull requests only) leaves macOS out of the desktop matrix; anything else keeps it.
+      macos: ${{ steps.classify.outputs.macos }}
+      macos_reason: ${{ steps.classify.outputs.macos_reason }}
       # CIQ-A1: which gated jobs run (docs, client or full). Separate from the CI-2A desktop decision.
       gate_tier: ${{ steps.gate-tier.outputs.gate_tier }}
       gate_reason: ${{ steps.gate-tier.outputs.gate_reason }}
@@ -49,6 +52,7 @@ jobs:
           .github/scripts/classify-gate-tier.test.sh
           .github/scripts/scan-doc-credentials.test.sh
           .github/scripts/doc-credential-gate.test.sh
+          .github/scripts/runner-retry-decide.test.sh
           .github/scripts/ci-gate.test.sh
           .github/scripts/db-shard-completeness.test.sh
           .github/scripts/changed-files.test.sh
@@ -79,6 +83,8 @@ jobs:
             echo "desktop=true"
             echo "tier=full"
             echo "desktop_reason=$1"
+            echo "macos=true"
+            echo "macos_reason=$1"
           }
           {
             if [ "$EVENT_NAME" != pull_request ] && [ "$EVENT_NAME" != push ]; then
@@ -398,7 +404,9 @@ jobs:
 
   # Native desktop build on all three platforms. Runs on every push to main or release branches,
   # tags, manual and scheduled runs, and on pull requests that touch desktop-affecting paths
-  # (.github/scripts/classify-changes.sh).
+  # (.github/scripts/classify-changes.sh). CIQ-A4: on a pull request that changes nothing the macOS
+  # build depends on, the classifier says macos=false and the matrix runs Linux and Windows only.
+  # Only the literal 'false' removes macOS; a missing or unexpected value keeps all three (fail closed).
   desktop:
     name: Desktop shell (${{ matrix.name }})
     needs: changes
@@ -408,10 +416,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { name: Linux (compile check), os: ubuntu-24.04, bundle: '--no-bundle' }
-          - { name: macOS, os: macos-latest, bundle: '--bundles app' }
-          - { name: Windows, os: windows-latest, bundle: '--bundles nsis' }
+        include: ${{ fromJSON(needs.changes.outputs.macos == 'false' && '[{"name":"Linux (compile check)","os":"ubuntu-24.04","bundle":"--no-bundle"},{"name":"Windows","os":"windows-latest","bundle":"--bundles nsis"}]' || '[{"name":"Linux (compile check)","os":"ubuntu-24.04","bundle":"--no-bundle"},{"name":"macOS","os":"macos-latest","bundle":"--bundles app"},{"name":"Windows","os":"windows-latest","bundle":"--bundles nsis"}]') }}
     env:
       # No API is deployed yet, so the shell reports "Not reachable"; the CSP allows only this origin.
       VITE_API_BASE_URL: https://api.business-os.invalid
@@ -470,6 +475,9 @@ jobs:
       DESKTOP_REASON: ${{ needs.changes.outputs.desktop_reason }}
       GATE_TIER: ${{ needs.changes.outputs.gate_tier }}
       GATE_REASON: ${{ needs.changes.outputs.gate_reason }}
+      MACOS_REQUIRED: ${{ needs.changes.outputs.macos }}
+      MACOS_REASON: ${{ needs.changes.outputs.macos_reason }}
+      EVENT_NAME: ${{ github.event_name }}
     steps:
       - name: Summary
         continue-on-error: true
@@ -503,6 +511,8 @@ jobs:
             echo "Gate tier: **${GATE_TIER:-unknown}** ($GATE_REASON)"
             echo
             echo "Desktop tier: **${DESKTOP_TIER:-unknown}**. Desktop matrix required: **${DESKTOP_REQUIRED:-unknown}** ($DESKTOP_REASON)"
+            echo
+            echo "macOS leg: **$([ "$MACOS_REQUIRED" = false ] && echo 'left out' || echo 'included when the matrix runs')** (${MACOS_REASON:-})"
             started="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT" --jq .run_started_at 2>/dev/null || true)"
             if [ -n "$started" ]; then
               total=$(( $(date +%s) - $(date -d "$started" +%s) ))

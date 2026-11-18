@@ -177,8 +177,8 @@ All entries are written in the same unit of work as the change (a rollback remov
 | PR | Scope |
 |---|---|
 | 16 | Opportunity interface: list, detail, create/edit forms in the Sales Zone (web and desktop) |
-| 17 | Kanban pipeline: drag between stages, using the existing PATCH stage move; stage reorder endpoint (`sales:manage`) using spaced positions |
-| 18 | Pipeline configuration: rename, archive pipelines and stages, make default; stage add/rename/archive with "move open opportunities first" rules |
+| 17 | Kanban pipeline: drag between stages, using the existing PATCH stage move; stage reorder endpoint (`sales:manage`) using spaced positions. **Stage reorder API built in S-CFG-1A** (`PUT …/sales/pipelines/:id/stages/order`, `docs/sales-pipeline-configuration-scfg.md` §6.1) |
+| 18 | Pipeline configuration: rename, archive pipelines and stages, make default; stage add/rename/archive with "move open opportunities first" rules. **Superseded by S-CFG** (`docs/sales-pipeline-configuration-scfg.md`): S-CFG-1A builds the stage and pipeline-rename API with database guards; the UI is S-CFG-1B, multiple pipelines S-CFG-2 |
 | 19 | Sales dashboard: per-currency totals, win rate, forecast (probability × amount) from real records only |
 | 20 | Activity integration: opportunity events on the customer timeline (an `opportunity_id` link on activities, per data-model §4.7 option A); customer lifecycle status (DM2) if still wanted |
 
