@@ -1,4 +1,4 @@
-import { App, applyStoredTheme, parseClientConfig } from '@business-os/app';
+import { App, applyStoredTheme, createPathHistory, parseClientConfig } from '@business-os/app';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
@@ -19,6 +19,7 @@ createRoot(document.getElementById('root')!).render(
       location={{ pathname: window.location.pathname, search: window.location.search }}
       navigate={(url) => window.location.assign(url)}
       replaceLocation={(path) => window.history.replaceState(null, '', path)}
+      history={createPathHistory()}
     />
   </StrictMode>,
 );
