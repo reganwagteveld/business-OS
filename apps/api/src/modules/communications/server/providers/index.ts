@@ -10,6 +10,8 @@ export const MAIL_PROVIDERS: readonly MailProvider[] = ['GOOGLE', 'MICROSOFT'];
 
 export function providerAdapter(provider: MailProvider): MailProviderAdapter | undefined {
   const env = getEnv();
+  // Dormant release gate: no provider is usable until the owner switches the connect flow on.
+  if (env.COMMUNICATIONS_CONNECT_ENABLED !== 'true') return undefined;
   if (provider === 'GOOGLE' && env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET) {
     return googleAdapter({ clientId: env.GOOGLE_OAUTH_CLIENT_ID, clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET });
   }
