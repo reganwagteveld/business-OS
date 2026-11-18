@@ -16,4 +16,5 @@ export { createFinanceClient, type FinanceClient } from './api/finance';
 export { createReportingClient, type ReportingClient } from './api/reporting';
 export { createSchedulingClient, type SchedulingClient } from './api/scheduling';
 export { createDashboardClient, type DashboardClient } from './api/dashboard';
+export { createSettingsClient, type SettingsClient } from './api/settings';
 export { createSearchClient, type SearchClient, type SearchRow } from './api/search';

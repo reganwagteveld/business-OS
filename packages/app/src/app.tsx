@@ -9,6 +9,7 @@ import { createFinanceClient, type FinanceClient } from './api/finance';
 import { createReportingClient, type ReportingClient } from './api/reporting';
 import { createSchedulingClient, type SchedulingClient } from './api/scheduling';
 import { createSalesClient, type SalesClient } from './api/sales';
+import { createSettingsClient, type SettingsClient } from './api/settings';
 import { createTenancyClient, type TenancyClient } from './api/tenancy';
 import { AcceptInvitation, AuthScreens, DesktopSignIn, type AuthView } from './auth/auth-screens';
 import type { ClientPlatform } from './config';
@@ -31,6 +32,7 @@ import { FinanceZone } from './zones/finance/finance-zone';
 import { ReportingZone } from './zones/reporting/reporting-zone';
 import { SchedulingZone } from './zones/scheduling/scheduling-zone';
 import { SalesZone } from './zones/sales/sales-zone';
+import { SettingsZone } from './zones/settings/settings-zone';
 import { browserStorage, type WorkspaceStorage } from './workspace/storage';
 import { useWorkspace } from './workspace/use-workspace';
 
@@ -54,6 +56,7 @@ export interface AppProps {
   people?: PeopleClient;
   finance?: FinanceClient;
   reporting?: ReportingClient;
+  settings?: SettingsClient;
   scheduling?: SchedulingClient;
   /** The operational dashboard's own reads (pipeline summary, business activity, upcoming events). */
   dashboard?: DashboardClient;
@@ -72,7 +75,7 @@ type Mode = 'default' | 'choose' | 'new';
  * open the right one. Offline, server errors and an ended session each get their own screen, and
  * the active business is only ever one the server lists for you.
  */
-export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, scheduling: schedulingOverride, dashboard: dashboardOverride, storage: storageOverride }: AppProps) {
+export function App({ platform, apiBaseUrl, transport, location, navigate, replaceLocation, auth: authOverride, tenancy: tenancyOverride, customers: customersOverride, sales: salesOverride, projects: projectsOverride, people: peopleOverride, finance: financeOverride, reporting: reportingOverride, scheduling: schedulingOverride, settings: settingsOverride, dashboard: dashboardOverride, storage: storageOverride }: AppProps) {
   const resolvedTransport = useMemo<AuthTransport>(() => transport ?? { kind: 'cookie' }, [transport]);
   const auth = useMemo(() => authOverride ?? createAuthClient(apiBaseUrl, resolvedTransport), [authOverride, apiBaseUrl, resolvedTransport]);
   const tenancy = useMemo(() => tenancyOverride ?? createTenancyClient(apiBaseUrl, resolvedTransport), [tenancyOverride, apiBaseUrl, resolvedTransport]);
@@ -82,6 +85,7 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
   const projects = useMemo(() => projectsOverride ?? createProjectsClient(apiBaseUrl, resolvedTransport), [projectsOverride, apiBaseUrl, resolvedTransport]);
   const finance = useMemo(() => financeOverride ?? createFinanceClient(apiBaseUrl, resolvedTransport), [financeOverride, apiBaseUrl, resolvedTransport]);
   const reporting = useMemo(() => reportingOverride ?? createReportingClient(apiBaseUrl, resolvedTransport), [reportingOverride, apiBaseUrl, resolvedTransport]);
+  const settings = useMemo(() => settingsOverride ?? createSettingsClient(apiBaseUrl, resolvedTransport), [settingsOverride, apiBaseUrl, resolvedTransport]);
   const scheduling = useMemo(() => schedulingOverride ?? createSchedulingClient(apiBaseUrl, resolvedTransport), [schedulingOverride, apiBaseUrl, resolvedTransport]);
   const dashboard = useMemo(() => dashboardOverride ?? createDashboardClient(apiBaseUrl, resolvedTransport), [dashboardOverride, apiBaseUrl, resolvedTransport]);
   const searchClient = useMemo(() => createSearchClient(apiBaseUrl, resolvedTransport), [apiBaseUrl, resolvedTransport]);
@@ -291,6 +295,16 @@ export function App({ platform, apiBaseUrl, transport, location, navigate, repla
         client={reporting} context={active} userLabel={userLabel}
         // Moving between Dashboard, Explore and Saved reports keeps the Zone mounted, so its settings survive.
         section={current.child} onSection={(child) => setRoute({ ...current, child })}
+        onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
+      />
+    );
+  } else if (active && current.zone === 'settings') {
+    screen = (
+      <SettingsZone
+        key={slug}
+        client={settings} user={phase.user} context={active} scope={current.child} page={target}
+        // Moving between scopes and pages keeps the Zone mounted; the shell route follows.
+        onNavigate={open} onContextChanged={workspace.refresh}
         onHome={() => open(HOME)} onSwitch={leaveToChooser} onSignOut={signOut} onSessionEnded={workspace.retry}
       />
     );
