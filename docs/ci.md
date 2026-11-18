@@ -6,19 +6,43 @@ One workflow, `.github/workflows/ci.yml` (plus the separate, non-gating visual-r
 
 | Job | Runs | What it checks |
 |---|---|---|
-| Detect changes | always | Self-tests the change classifier and the gate verdict, then decides whether the desktop matrix is needed |
-| Static checks | always | Contract snapshot, typecheck, lint, boundaries (dependency-cruiser + source rules) |
-| Unit, contract and architecture tests | always | `pnpm test` (every package plus `tests/architecture`) |
-| Database tests | always | PostgreSQL roles, `prisma migrate deploy` as the owner role, privileged SQL, integration tests (API, RBAC, tenancy), RLS spike and isolation tests behind PgBouncer, the finance integrity and payments suites again with `bos_app` behind PgBouncer (F2), migrations match schema |
-| Build verification | always | `pnpm build` (API, web, desktop frontend), API boots without owner credentials, client bundles contain no server configuration |
+| Detect changes | always | Self-tests the classifiers, the credential scan and the gate verdict; checks migration order; decides the gate tier and whether the desktop matrix is needed; scans added documentation lines for credentials |
+| Static checks | unless gate tier `docs` | Contract snapshot, typecheck, lint, boundaries (dependency-cruiser + source rules) |
+| Unit, contract and architecture tests | unless gate tier `docs` | `pnpm test` (every package plus `tests/architecture`) |
+| Database tests (integration shard 1/3, 2/3, 3/3) | gate tier `full` only | Each shard has its own PostgreSQL service: roles, `prisma migrate deploy` as the owner role, privileged SQL, then one third of the integration test files (API, RBAC, tenancy) via `vitest --shard`, with a JSON report uploaded even on failure |
+| Database tests (RLS isolation and pooler suites) | gate tier `full` only | Own PostgreSQL and PgBouncer: RLS spike and isolation tests behind PgBouncer, the finance, people, leave, billing, reminders, scheduling-resources and membership suites again with `bos_app` behind PgBouncer, migrations match schema |
+| Database tests (shard completeness) | gate tier `full` only, even when a shard failed | `db-shard-completeness.sh`: every file from `git ls-files apps/api/tests/integration/*.test.ts` ran in exactly one shard, every shard report is present and readable, every file passed with at least one test, nothing failed, was skipped or is todo, and no unlisted file ran |
+| Build verification | unless gate tier `docs` | `pnpm build` (API, web, desktop frontend), API boots without owner credentials, client bundles contain no server configuration |
 | Desktop shell (Linux, macOS, Windows) | see below | Unsigned Tauri build (Linux compile only, macOS `.app`, Windows NSIS) and the Rust unit tests |
 | CI gate | always, even after failures or cancellation | Passes only if every applicable job succeeded |
 
-Static, unit, database and build jobs never depend on which files changed. Only the desktop matrix is conditional.
+Two independent decisions, both fail closed, select the conditional jobs: the **gate tier** (CIQ-A1, below) for static, unit, database and build, and the **desktop tier** (CI-2A) for the native matrix.
+
+## Gate tiers (CIQ-A1)
+
+Design: `docs/ciq-1-merge-queue-throughput.md` §4.A.1 and §4.A.2 (owner decisions D-CI-2 and D-CIQ-1). `.github/scripts/classify-gate-tier.sh` reads the same changed-file list as the desktop classifier and prints `gate_tier`:
+
+| Gate tier | Paths (every changed path must match) | Static | Unit | Build | Database |
+|---|---|---|---|---|---|
+| `docs` | ordinary documentation: `docs/**` `.md`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`, **excluding** governance documents (below) | skipped | skipped | skipped | skipped (all three database jobs) |
+| `client` | at least one client source file, i.e. `.ts`, `.tsx` or `.css` under `packages/app/src/`, `packages/app/tests/`, `packages/ui/src/`, `packages/ui/tests/` or `apps/web/src/`, plus optionally ordinary documentation; **excluding** the HTTP transport (`packages/app/src/api/http.ts`, `client.ts`), `packages/app/src/config.ts`, `packages/app/src/auth/**`, test `setup` files, hidden files, `*.config.*`, `tsconfig*`, manifests and lockfiles, and any path containing `auth`, `session`, `admission`, `permission`, `tenant`, `tenanc`, `rbac`, `role`, `csrf`, `token`, `secret` or `credential` (case-insensitive) | runs | runs | runs | skipped |
+| `full` | anything else | runs | runs | runs | runs |
+
+**Governance documents are never `docs` tier** (case-insensitive): `CLAUDE.md`, `AGENTS.md` and `SECURITY.md` anywhere, every root `*.md` (including `README.md`), and under `docs/`: `agent-*`, `agents/`, `merge-queue*`, `active-workstreams*`, `ci*`, `*-ci-*`, `*release*`, `*migration*`, `deployment*`, `vercel*`, `*neon*`, `operations/`, `ops/`, `private-beta*`, `*security*`, `*lockdown*`, `*admission*`, `adr/`. They run the full suite and keep their own governance review (Regan's own approval where they change the approval model).
+
+**Why `client` may skip the Database job:** clients reach data only through `/api/v1`. `pnpm boundaries` and `tests/architecture` forbid database or server imports in client packages, no API or database test imports a client package, and both checks still run in the `client` tier.
+
+**Events:** only `pull_request` and a `push` to `refs/heads/main` may use `docs` or `client`. Release branches, tags, manual runs, the weekly schedule and `workflow_call` (nightly, release validation) are always `full`.
+
+**Fail closed:** an empty list, a diff that cannot be established, an unsafe path name (`..`, `.` segments, `//`, a leading `/`, control characters, backslashes), any path not on an allow-list, a mix with a `full` path and a classifier error all select `full`. Jobs run unless the classifier explicitly said `docs` (or `client` for Database), so a missing output runs them.
+
+**Credential scan (every tier):** `scan-doc-credentials.sh` fails Detect changes when a line *added* to `docs/**`, `*.md`, `*.mdx` or `*.txt` matches a provider credential pattern (AWS, GitHub, private keys, Slack, Stripe live, npm, Resend, Neon URL with a password). The match is never printed. The range is never a single commit and the scan is never skipped (`doc-credential-gate.sh`): a pull request is scanned over GitHub's merge commit against the base tip, so every commit in the PR counts and a credential added then removed inside the PR does not; the merge commit's second parent must be the PR head. A push to `main` is scanned over its single step from the previous tip. Any other case (no merge commit, PR head mismatch, multi-commit or force push, new branch, schedule, manual run) scans every documentation file at `HEAD`, and the gate tier is `full`. `doc-credential-gate.test.sh` covers these with throwaway repositories, including a multi-commit PR whose credential is in an earlier commit.
+
+Change the rules only together with `classify-gate-tier.test.sh` and `ci-gate.test.sh`. A tier only decides which jobs `CI gate` requires: it never grants merge permission, which still comes only from a verified verdict (`docs/agent-task-protocol.md`).
 
 ## When the desktop matrix runs
 
-The native desktop matrix (Linux compile check, macOS, Windows) is the only conditional job. Static checks, unit tests, database tests and build verification run on every run, including documentation-only ones. `.github/scripts/changed-files.sh` lists the changed paths and `.github/scripts/classify-changes.sh` classifies them (CI-2A, design in [ci-2-runner-efficiency.md](ci-2-runner-efficiency.md)). The result is a **tier**:
+The native desktop matrix (Linux compile check, macOS, Windows) runs according to the desktop tier, which is independent of the gate tier. `.github/scripts/changed-files.sh` lists the changed paths and `.github/scripts/classify-changes.sh` classifies them (CI-2A, design in [ci-2-runner-efficiency.md](ci-2-runner-efficiency.md)). The result is a **tier**:
 
 | Tier | Paths (every changed path must match) | Matrix |
 |---|---|---|
@@ -29,6 +53,40 @@ The native desktop matrix (Linux compile check, macOS, Windows) is the only cond
 Always `full`: pushes to `release/**`, `v*` tags, manual runs and the weekly schedule. Fail-closed rules: an empty list, a diff that cannot be established (checkout is not a merge commit, a push that is not a single step from the previous tip, missing or zero `before`), a path with `..`, `//` or a leading `/`, and a classifier error all select `full`. Renames and copies are listed as a deletion plus an addition, so moving code into `docs/` still lists the code path. A mixed change is `full` as soon as one path is not on the allow-list.
 
 Change the rules only together with `classify-changes.test.sh` (and `changed-files.test.sh` for diff handling). The self-tests run in "Detect changes" before the classifier is used.
+
+### macOS leg on pull requests (CIQ-A4)
+
+GitHub's hosted macOS (arm64) runners are often unavailable: of 175 macOS jobs from 16 to 17 November 2026, 18 were never given a runner and GitHub cancelled them after 15 minutes ("The job was not acquired by Runner", with a capacity notice), even when no other macOS job of ours was running. When a runner is found, the macOS job queues for a median of 0.1 min and runs in 2.7 min. Two changes, approved by Regan on 2026-11-17 with the safeguards below:
+
+**1. macOS only where it can matter.** When the desktop matrix runs on a **pull request**, `classify-changes.sh` also prints `macos=false` if every changed path is on a second allow-list of paths that cannot change what the macOS leg builds. In that case the matrix runs Linux (compile check) and Windows only.
+
+The allow-list covers:
+- documentation (`docs/**`, `*.md` outside `apps/desktop/`) and `ops/**` data;
+- `apps/api/**` and `apps/web/**`;
+- `scripts/vercel/**`, `scripts/merge-queue/**` and root `tests/**/*.ts`;
+- `.ts`, `.tsx`, `.css`, `.json`, `.html`, `.svg`, `.png`, `.woff2` and `.txt` files in `packages/{app,ui,contracts}/**`. The shared frontend is bundled identically on every OS and is still built by the Linux and Windows legs and by Build verification.
+
+macOS stays in the matrix (fail closed) for:
+- anything in `apps/desktop/**`, Rust, `Cargo.*` and `rust-toolchain*`;
+- every `package.json`, lockfile, `pnpm-workspace.yaml`, `*.config.*`, `tsconfig*` and hidden file;
+- `.github/**` (CI and release tooling), any other path and any unknown extension;
+- an empty or unsafe path list.
+
+Pushes to `main`, release branches, tags, nightly, manual and release runs always include macOS. Only the literal value `false` removes macOS from the matrix; anything else keeps all three platforms. The gate fails if macOS was left out on anything other than a pull request with a successful classifier. Replaying 48 recent PRs: 26 ran the matrix, and 18 of those would leave macOS out.
+
+**2. One automatic retry of a runner that was never allocated** (`.github/workflows/ci-runner-retry.yml`, decision in `runner-retry-decide.sh`, self-tested by `runner-retry-decide.test.sh`). When a CI run on a pull request or push fails, the workflow re-runs its failed jobs once, but only if every failed job other than `CI gate` is a confirmed allocation failure. A confirmed allocation failure means all of these hold:
+- the job finished as `cancelled`;
+- no runner was assigned and no step ran;
+- GitHub's failure annotation says "not acquired by Runner".
+
+Safeguards:
+- A test failure, timeout, start-up failure or ordinary cancellation is never retried.
+- Only attempt 1 is retried. The attempt is re-read just before the request, and a concurrency group per run prevents duplicate requests.
+- If attempt 2 fails the same way, the workflow reports an **infrastructure failure** and does nothing else, so `CI gate` stays red.
+- The retry never marks anything successful: the re-run repeats the failed jobs and `CI gate`, which still requires every applicable job to succeed.
+- The workflow runs from the default branch and never checks out pull request code.
+
+Paid larger macOS runners and self-hosted runners are not used (owner decision 2026-11-17: measure these two changes first).
 
 ## Nightly validation (CI-2B)
 
@@ -67,7 +125,11 @@ Nothing publishes. Any future publish workflow must be a separate PR with a GitH
 
 ## The gate
 
-`.github/scripts/ci-gate.sh` (self-tested by `ci-gate.test.sh`) fails when any of these is not `success`: Detect changes, Static checks, Unit tests, Database tests, Build verification. The desktop matrix must also be `success` unless the classifier job succeeded and explicitly reported `desktop=false` with tier `docs` or `server`; a skip with any other tier, a missing tier or a failed classifier fails the gate. The gate uses `if: always()`, so it reports a failure (not a skip) when jobs before it fail or are cancelled. A run that never completes leaves `CI gate` pending, which blocks merge.
+`.github/scripts/ci-gate.sh` (self-tested by `ci-gate.test.sh`) fails when Detect changes is not `success`, and when Static checks, Unit tests, Database tests or Build verification is not `success`, except that a job may be `skipped` when Detect changes succeeded and the gate tier permits that skip (`docs`: static, unit, build and the three database jobs; `client`: the three database jobs only). The three database jobs (shards, RLS/pooler, completeness) are each required separately; the matrix result of the shards is `failure` if any shard failed.
+
+### Database shards (CIQ-A2)
+
+Why sharding is safe: shards never share a database. Each shard and the pooler job start their own `postgres:16.10` service container, so tests in different jobs cannot see or corrupt each other's rows, sequences, advisory locks or rate-limit buckets. Within a job, files still run one at a time (`fileParallelism: false`), exactly as before. Role separation is identical in every job (roles from `docker/init/01-roles.sql`, migrations as `bos_owner`, privileged SQL as the admin role, tests as `bos_app`). Coverage is proven, not assumed: `database-complete` compares the executed files with `git ls-files` (not vitest's own list, so a narrowed `include` is caught). To add a pooler suite, add a step to the `database-pooler` job. To change the shard count, change the matrix and the count passed to the completeness script together. A permitted job that ran anyway must succeed; a missing result, an unknown or empty tier, or a failed classifier requires success. The desktop matrix must also be `success` unless the classifier job succeeded and explicitly reported `desktop=false` with tier `docs` or `server`; a skip with any other tier, a missing tier or a failed classifier fails the gate. The gate uses `if: always()`, so it reports a failure (not a skip) when jobs before it fail or are cancelled. A run that never completes leaves `CI gate` pending, which blocks merge.
 
 Do not mark individual jobs as required: GitHub treats a skipped required job as passing.
 
