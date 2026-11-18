@@ -343,16 +343,6 @@
       "restoreDrill": {
         "status": "not-run"
       }
-    },
-    {
-      "branchId": "br-lingering-salad-bbaxtnck",
-      "name": "rehearsal-sales-configuration-20261118b",
-      "kind": "testing",
-      "prs": [
-        135
-      ],
-      "createdAt": "2026-11-17T16:50:39Z",
-      "note": "Temporary S-CFG-1A rehearsal branch. Reset to production with Neon's native reset at 17:07:59 UTC (authorised by Regan 17:07) and migrated at head 8a64b13 for the final rehearsal. Kept for review; deleting it needs Regan's approval."
     }
   ],
   "deleted": [
@@ -614,6 +604,24 @@
         "approval": "Regan in the Pixa OS project thread, 2026-11-17 16:49:58 UTC: \"Create a fresh rehearsal branch rehearsal-sales-configuration-20261118b from production, re-run the persistent-connection timing probe at the current PR #135 head, then delete rehearsal-sales-configuration-20261118.\"",
         "reason": "temporary S-CFG-1A rehearsal branch (PR #135); superseded by rehearsal-sales-configuration-20261118b for the re-measure. It had been reset to production at 16:49:24 UTC on Regan's 16:49:07 instruction and was not used again",
         "verification": "Read-only Neon API before delete: exact id/name/created_at (16:33:20Z), not default, not protected, ready, no child branches, no running operations; its read_write compute was still awake from the post-reset read-only check (no session in use). Its first-run evidence is on PR #135 issuecomment-6954353326. After delete: 15 branches, production and the new 20261118b present."
+      }
+    },
+    {
+      "branchId": "br-lingering-salad-bbaxtnck",
+      "name": "rehearsal-sales-configuration-20261118b",
+      "kind": "testing",
+      "prs": [
+        135
+      ],
+      "createdAt": "2026-11-17T16:50:39Z",
+      "note": "Temporary S-CFG-1A rehearsal branch. Reset to production with Neon's native reset at 17:07:59 UTC (authorised by Regan 17:07) and migrated at head 8a64b13 for the final rehearsal. Kept for review; deleting it needs Regan's approval.",
+      "deletion": {
+        "at": "2026-11-18T01:49:51Z",
+        "outcome": "deleted",
+        "approval": "Regan in the Pixa OS project thread, 2026-11-18 01:48:41 UTC: the existing verdict permits deletion of rehearsal-sales-configuration-20261118b after fresh identity, dependency and recovery checks, preserving the production recovery branch; \"No reason for another approval loop\"",
+        "reason": "temporary S-CFG-1A rehearsal branch (PR #135); migration applied and verified in production, evidence preserved, rollback point is pre-sales-configuration-migration",
+        "verification": "Read-only Neon API: exact id/name/created_at (16:50:39Z), not default, not protected, parent production, ready, no child branches, compute idle (last active 17:22 UTC), no running operations; host not in local env files. 20261210000000_sales_configuration finished, not rolled back, in live production _prisma_migrations (read-only). Evidence on PR #135 (6954353326, 6954805407, 6955233536) present. pre-sales-configuration-migration ready and untouched. After delete: 15 branches, production and the recovery branch present, health 200.",
+        "recoveryRef": "pre-sales-configuration-migration"
       }
     }
   ],
