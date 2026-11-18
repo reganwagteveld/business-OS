@@ -19,6 +19,7 @@ type Overlay = { kind: 'none' } | { kind: 'detail'; id: string } | { kind: 'new'
 /** S2: the calendar views (S1), the resource schedule, and the resource directory. */
 type Section = 'calendar' | 'timeline' | 'resources';
 const SECTIONS: { id: Section; label: string }[] = [{ id: 'calendar', label: 'Calendar' }, { id: 'timeline', label: 'Resource schedule' }, { id: 'resources', label: 'Resources' }];
+const asSection = (value: string | undefined): Section => SECTIONS.find((s) => s.id === value)?.id ?? 'calendar';
 const VIEWS: { id: ViewKind; label: string }[] = [{ id: 'day', label: 'Day' }, { id: 'week', label: 'Week' }, { id: 'month', label: 'Month' }];
 
 /**
@@ -28,10 +29,14 @@ const VIEWS: { id: ViewKind; label: string }[] = [{ id: 'day', label: 'Day' }, {
  * the business's locale. Write controls follow the server's permission keys for presentation only; the API
  * enforces every rule again.
  */
-export function SchedulingZone({ client, context, userLabel, now, onHome, onSwitch, onSignOut, onSessionEnded }: {
+export function SchedulingZone({ client, context, userLabel, now, section, onSection, onOpenCustomer, onHome, onSwitch, onSignOut, onSessionEnded }: {
   client: SchedulingClient; context: BusinessContext; userLabel: string;
   /** Injected in tests; the current time otherwise. */
   now?: number;
+  /** The shell's secondary-navigation child (calendar, timeline, resources). Without `onSection` the Zone keeps the section itself and shows its own tabs. */
+  section?: string; onSection?: (section: Section) => void;
+  /** Present only when the viewer may read Customers. */
+  onOpenCustomer?: (customerId: string) => void;
   onHome: () => void; onSwitch: () => void; onSignOut: () => void; onSessionEnded: () => void;
 }) {
   const { slug, name, locale, timeZone: businessZone } = context.business;
@@ -56,14 +61,14 @@ export function SchedulingZone({ client, context, userLabel, now, onHome, onSwit
 
   const content = useRef<HTMLDivElement>(null);
   return (
-    <ZoneFrame zone="Schedule" business={name} user={userLabel} onHome={onHome} onSwitch={onSwitch} onSignOut={onSignOut}>
+    <ZoneFrame zone="Scheduling" business={name} user={userLabel} onHome={onHome} onSwitch={onSwitch} onSignOut={onSignOut}>
       <div ref={content}>
         {cals.state.status === 'loading' ? (
-          <ZonePage title="Schedule" state={{ kind: 'loading', label: 'Loading calendars…' }} />
+          <ZonePage title="Scheduling" state={{ kind: 'loading', label: 'Loading calendars…' }} />
         ) : cals.state.outcome.kind !== 'ok' ? (
-          <ZonePage title="Schedule"><Problem outcome={cals.state.outcome} what="Calendars" onRetry={cals.reload} onSessionEnded={onSessionEnded} /></ZonePage>
+          <ZonePage title="Scheduling"><Problem outcome={cals.state.outcome} what="Calendars" onRetry={cals.reload} onSessionEnded={onSessionEnded} /></ZonePage>
         ) : calendars!.length === 0 ? (
-          <ZonePage title="Schedule" state={initFailed || !canCreate
+          <ZonePage title="Scheduling" state={initFailed || !canCreate
             ? { kind: 'empty', title: 'No calendars yet', description: canCreate ? 'The calendar could not be set up. Try again in a moment.' : 'Ask a manager to set up a calendar for this business.' }
             : { kind: 'loading', label: 'Setting up your calendar…' }} />
         ) : (
@@ -71,6 +76,7 @@ export function SchedulingZone({ client, context, userLabel, now, onHome, onSwit
             client={client} slug={slug} locale={locale} businessZone={businessZone} calendars={calendars!} now={now}
             canCreate={canCreate} canUpdate={can('scheduling:update')} canCancel={can('scheduling:cancel')} canManage={can('scheduling:manage_calendars')}
             canManageResources={can('scheduling:manage_resources')}
+            section={section} onSection={onSection} onOpenCustomer={onOpenCustomer}
             onCalendarsChanged={() => setGeneration((g) => g + 1)} onSessionEnded={onSessionEnded}
           />
         )}
@@ -79,11 +85,14 @@ export function SchedulingZone({ client, context, userLabel, now, onHome, onSwit
   );
 }
 
-function Schedule({ client, slug, locale, businessZone, calendars, now, canCreate, canUpdate, canCancel, canManage, canManageResources, onCalendarsChanged, onSessionEnded }: {
+function Schedule({ client, slug, locale, businessZone, calendars, now, canCreate, canUpdate, canCancel, canManage, canManageResources, section: controlled, onSection, onOpenCustomer, onCalendarsChanged, onSessionEnded }: {
   client: SchedulingClient; slug: string; locale: string; businessZone: string; calendars: SchedulingCalendar[]; now?: number;
-  canCreate: boolean; canUpdate: boolean; canCancel: boolean; canManage: boolean; canManageResources: boolean; onCalendarsChanged: () => void; onSessionEnded: () => void;
+  canCreate: boolean; canUpdate: boolean; canCancel: boolean; canManage: boolean; canManageResources: boolean;
+  section?: string; onSection?: (section: Section) => void; onOpenCustomer?: (customerId: string) => void; onCalendarsChanged: () => void; onSessionEnded: () => void;
 }) {
-  const [section, setSection] = useState<Section>('calendar');
+  const [localSection, setLocalSection] = useState<Section>('calendar');
+  const section = onSection ? asSection(controlled) : localSection;
+  const setSection = (next: Section) => (onSection ? onSection(next) : setLocalSection(next));
   const [calendarId, setCalendarId] = useState(() => (calendars.find((c) => c.isDefault) ?? calendars[0]!).id);
   const calendar = calendars.find((c) => c.id === calendarId) ?? calendars.find((c) => c.isDefault) ?? calendars[0]!;
   const zone = calendar.timeZone;
@@ -114,20 +123,20 @@ function Schedule({ client, slug, locale, businessZone, calendars, now, canCreat
 
   return (
     <ZonePage
-      title="Schedule"
+      title="Scheduling"
       description={`${calendar.name} · times in ${zone}${zone !== businessZone ? ` (the business uses ${businessZone})` : ''}`}
       primaryActions={canCreate && !calendar.archivedAt ? <Button onClick={() => setOverlay({ kind: 'new', draft: newDraft() })}>New event</Button> : undefined}
       secondaryActions={canManage ? <Button variant="outline" onClick={() => setOverlay({ kind: 'calendar' })}>Add calendar</Button> : undefined}
     >
       <div className="space-y-4">
-        <div role="tablist" aria-label="Schedule sections" className="inline-flex rounded-lg border p-0.5">
+        {onSection ? null : <div role="tablist" aria-label="Scheduling sections" className="inline-flex rounded-lg border p-0.5">
           {SECTIONS.map((s) => (
             <button key={s.id} type="button" role="tab" aria-selected={section === s.id} onClick={() => setSection(s.id)}
               className={`min-h-9 rounded-md px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring ${section === s.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
               {s.label}
             </button>
           ))}
-        </div>
+        </div>}
         {notice ? <Alert tone="success" role="status"><AlertDescription>{notice}</AlertDescription></Alert> : null}
         {section === 'resources' ? (
           <ResourceDirectory client={client} slug={slug} locale={locale} timeZone={zone} canManage={canManageResources} onSessionEnded={onSessionEnded} />
@@ -179,7 +188,7 @@ function Schedule({ client, slug, locale, businessZone, calendars, now, canCreat
         </>)}
       </div>
       {overlay.kind === 'detail' ? (
-        <EventDetail client={client} slug={slug} id={overlay.id} calendars={calendars} locale={locale} canUpdate={canUpdate} canCancel={canCancel}
+        <EventDetail client={client} slug={slug} id={overlay.id} calendars={calendars} locale={locale} canUpdate={canUpdate} canCancel={canCancel} onOpenCustomer={onOpenCustomer}
           onEdit={(event) => setOverlay({ kind: 'edit', id: event.id })} onChanged={refresh} onClose={() => setOverlay({ kind: 'none' })} onSessionEnded={onSessionEnded} />
       ) : null}
       {overlay.kind === 'new' ? (

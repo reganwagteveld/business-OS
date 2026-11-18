@@ -10,6 +10,7 @@ import { ForbiddenError, authorize, permissionsFor, type Permission } from '@/mo
 import { classifyAuthRequest, getCurrentUser, getSessionToken, type CurrentUser } from '@/modules/identity';
 import { NotFoundError, type Actor } from '@/modules/tenancy';
 import { betaSessionAdmitted, myMemberships, TenantScopeError, TransactionStartTimeoutError, TrustedPathError, withTenant, type AppTenantDb, type MembershipRow } from '@/core/db';
+import { getEnv } from '@/core/config/env';
 import { apiHeaders } from '@/core/http';
 import {
   isUniqueViolation, RateLimitedError, RecordNotFoundError, RuleViolationError, SearchBusyError, SearchTimeoutError, ServiceFailureError, sqlState, StateConflictError,
@@ -61,6 +62,8 @@ const FINANCE_SQLSTATES: Record<string, [number, string]> = {
   CM011: [409, 'erased'], CM012: [409, 'legal_hold_rule'], CM013: [409, 'immutable'],
   // WF-1B-1 (migration 20261207000000_workflow_links, docs/cross-zone-workflows-wf1.md §5.4): projects_guard_links.
   WF001: [409, 'project_has_quote'], WF002: [409, 'quote_not_accepted'], WF003: [409, 'quote_has_project'], WF004: [409, 'opportunity_mismatch'],
+  // Sales S-CFG-1A (migration 20261210000000_sales_configuration, docs/sales-pipeline-configuration-scfg.md §6.4).
+  SA001: [409, 'archived_reference'], SA002: [409, 'has_open_opportunities'], SA003: [409, 'last_stage'], SA004: [409, 'immutable'],
 };
 
 /**
@@ -87,6 +90,8 @@ const FINANCE_CONSTRAINTS: [RegExp, string][] = [
   [/people_leave_types_active_name_key|people_leave_policies_active_name_key/, 'duplicate_name'],
   [/people_leave_policy_assignments_open_key/, 'stale'],
   [/people_department_assignments_open_key|people_manager_assignments_open_key|people_employee_personal_details_pkey/, 'stale'],
+  // Sales S-CFG-1A (§4.3): active stage and pipeline names, behind the service checks.
+  [/sales_stages_active_name_key|sales_pipelines_active_name_key/, 'name_taken'],
 ];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -407,11 +412,17 @@ export function tenantFileRoute(
  * static text chosen by the handler: no input is ever echoed, nothing is cached, nothing can be
  * framed and no script runs.
  */
+/**
+ * `returnCode` is a fixed word chosen by the handler (never user input): the page then offers a link back to the
+ * application at `${APP_BASE_URL}/?mailbox=<code>`, which shows fixed wording for that code. No token, id or provider text.
+ */
+export interface BrowserPage { status: number; title: string; message: string; returnCode?: 'connected' | 'reconnected' | 'declined' | 'invalid_state' | 'insufficient_scope' | 'account_mismatch' | 'already_connected' | 'not_allowed' | 'error' }
+
 export function browserRoute(
-  handler: (args: { request: Request; user: CurrentUser | null; sessionToken: string | null; memberships: (slug: string) => Promise<MembershipRow | undefined> }) => Promise<{ status: number; title: string; message: string }>,
+  handler: (args: { request: Request; user: CurrentUser | null; sessionToken: string | null; memberships: (slug: string) => Promise<MembershipRow | undefined> }) => Promise<BrowserPage>,
 ) {
   return async (request: Request): Promise<Response> => {
-    let page: { status: number; title: string; message: string };
+    let page: BrowserPage;
     try {
       const auth = await authenticate(request);
       const signedIn = auth instanceof Response ? null : auth;
@@ -426,10 +437,13 @@ export function browserRoute(
       page = { status: 500, title: 'Something went wrong', message: 'Nothing was connected. Please try again from Business OS.' };
     }
     const escape = (v: string) => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    const back = page.returnCode
+      ? `<p><a href="${escape(new URL(`/?mailbox=${page.returnCode}`, getEnv().APP_BASE_URL).toString())}" rel="noreferrer">Return to Pixa OS</a></p>`
+      : '';
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`
       + `<meta name="referrer" content="no-referrer"><title>${escape(page.title)}</title></head>`
       + `<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;line-height:1.5">`
-      + `<h1 style="font-size:1.25rem">${escape(page.title)}</h1><p>${escape(page.message)}</p></body></html>`;
+      + `<h1 style="font-size:1.25rem">${escape(page.title)}</h1><p>${escape(page.message)}</p>${back}</body></html>`;
     return new Response(html, {
       status: page.status,
       headers: {

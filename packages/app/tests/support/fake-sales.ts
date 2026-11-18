@@ -5,7 +5,7 @@
  * append-only outcome history. The app's real Sales client and contracts sit in front of it.
  */
 import {
-  CreateOpportunityRequest, LoseOpportunityRequest, ReopenOpportunityRequest, UpdateOpportunityRequest,
+  CreateOpportunityRequest, ListOpportunitiesQuery, LoseOpportunityRequest, ReopenOpportunityRequest, UpdateOpportunityRequest,
   type Opportunity, type OpportunityOutcome, type Pipeline, type Stage,
 } from '@business-os/contracts';
 import { randomUUID } from 'node:crypto';
@@ -62,7 +62,7 @@ export function pipelineWithStages(name = 'Sales pipeline', isDefault = true): {
   const stages = [['New', 10], ['Qualified', 25], ['Proposal', 50], ['Negotiation', 75]].map(([n, p], i) => ({
     id: randomUUID(), pipelineId: id, name: n as string, position: (i + 1) * 1000, defaultProbability: p as number, archivedAt: null,
   }));
-  return { pipeline: { id, name, isDefault, position: 0, createdAt: NOW, updatedAt: NOW, archivedAt: null }, stages };
+  return { pipeline: { id, name, isDefault, position: 0, createdAt: NOW, updatedAt: NOW, archivedAt: null, configVersion: 1 }, stages };
 }
 
 export function opportunity(entry: { pipeline: Pipeline; stages: Stage[] }, over: Partial<Opportunity> = {}): Opportunity {
@@ -113,6 +113,8 @@ export function withSales(api: ReturnType<typeof createFakeApi>, sales: Record<s
     // opportunities
     if (!id && method === 'GET') {
       const q = url.searchParams;
+      // Validate the query with the server's own contract, so a request the real API rejects fails here too.
+      if (!ListOpportunitiesQuery.safeParse(Object.fromEntries(q)).success) return json(400, { error: 'invalid_input' });
       const term = q.get('q')?.toLowerCase();
       const rows = s.opportunities
         .filter((o) => (q.get('status') ?? 'all') === 'all' || o.status === q.get('status')!.toUpperCase())

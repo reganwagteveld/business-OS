@@ -90,6 +90,10 @@ export const envSchema = z
     // Communications E1 (docs/communications-e1.md §11): the retention and erasure worker refuses to run unless
     // this is exactly "true", even with CRON_SECRET set. Off by default; turning it on is an owner decision.
     COMMUNICATIONS_RETENTION_JOBS_ENABLED: z.enum(['true', 'false']).default('false'),
+    // Communications C2-UI-C (docs/communications-c2-ui.md): the provider connect flow (consent start and callback) refuses
+    // every provider as "not configured" unless this is exactly "true", even when OAuth clients are set. Off by default;
+    // turning it on is an owner decision, taken only with approved test accounts and verified provider setup (Gate C).
+    COMMUNICATIONS_CONNECT_ENABLED: z.enum(['true', 'false']).default('false'),
   })
   .superRefine((value, ctx) => {
     if (value.REGION !== value.DATABASE_REGION) {

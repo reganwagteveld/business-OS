@@ -1,5 +1,10 @@
 // Public API of the sales module (docs/sales-data-model.md). Routes import only from here.
 export { createPipeline, initialiseDefaultPipeline, listPipelines, listStages } from './server/pipelines';
+// S-CFG-1A (docs/sales-pipeline-configuration-scfg.md §6.1): pipeline and stage configuration.
+export {
+  archiveStage, CONFIG_ROUTE_TIMEOUT_MS, createStage, getPipelineConfig, reorderStages, restoreStage, setConfigTestHooks, updatePipeline, updateStage,
+} from './server/configuration';
+export type { ConfigTestHooks } from './server/configuration';
 export {
   archiveOpportunity, createOpportunity, getOpportunity, listOpportunities, listOutcomes, loseOpportunity, reopenOpportunity, restoreOpportunity,
   updateOpportunity, winOpportunity,
