@@ -33,7 +33,10 @@ function useResolvedRef(value: LinkRef | null, kind: 'opportunity' | 'project', 
   useEffect(() => {
     if (!done || !id) return;
     if (done.kind === 'ok') onResolved({ id, label: done.data.label, customerId: done.data.customerId });
-    else if (done.kind !== 'unreachable') onResolved({ id, label: `This ${kind} (not available to you)`, customerId: value?.customerId ?? null });
+    // Offline or a server failure: say so instead of "Loading…" (or "not available") for ever. The customer stays unknown, so the
+    // link is kept and the server checks it on save.
+    else if (done.kind === 'unreachable' || done.kind === 'failed') onResolved({ id, label: `This ${kind} (could not be loaded)`, customerId: value?.customerId });
+    else onResolved({ id, label: `This ${kind} (not available to you)`, customerId: value?.customerId ?? null });
     // Applied once per answer: the answer is the dependency, the callback is fresh on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done, id]);
@@ -53,10 +56,17 @@ export function OpportunityField({ sales, slug, customerId, value, onChange, onR
       selected={value ? { id: value.id, label: value.label } : null} searchKey={`opp|${slug}|${customerId}`}
       disabledReason={customerId ? undefined : 'Choose the customer first.'}
       search={async (q, signal) => {
-        const out = await sales.list(slug, { q, status: 'all', archived: 'active', customerId, limit: 25 }, signal);
-        if (out.kind !== 'ok') return out;
-        const options: LinkOption[] = out.data.opportunities.filter((o) => o.status !== 'LOST').slice(0, SHOWN)
-          .map((o) => ({ id: o.id, label: o.title, detail: STATUS_LABEL[o.status], customerId: o.customerId }));
+        // Open first, then won: asked of the server by status, so a customer with many lost deals still sees every
+        // linkable one (filtering a mixed page here could leave open and won deals off the list).
+        const open = await sales.list(slug, { q, status: 'open', archived: 'active', customerId, limit: SHOWN }, signal);
+        if (open.kind !== 'ok') return open;
+        let found = open.data.opportunities;
+        if (found.length < SHOWN) {
+          const won = await sales.list(slug, { q, status: 'won', archived: 'active', customerId, limit: SHOWN - found.length }, signal);
+          if (won.kind !== 'ok') return won;
+          found = [...found, ...won.data.opportunities];
+        }
+        const options: LinkOption[] = found.map((o) => ({ id: o.id, label: o.title, detail: STATUS_LABEL[o.status], customerId: o.customerId }));
         return { kind: 'ok', data: options };
       }}
       onPick={(o) => onChange(o ? { id: o.id, label: o.label, customerId: o.customerId ?? null } : null)} onSessionEnded={onSessionEnded} error={error}

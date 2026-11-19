@@ -95,6 +95,18 @@ describe('quote and invoice forms: pickers and links (AC-2.2)', () => {
     expect(post(fin, '/finance/invoices').body).toMatchObject({ customerId: acme.id, projectId: acmeProject.id, opportunityId: fitout.id });
   });
 
+  it('offers every open and won opportunity even when the customer has many lost ones (bug scan 2026-11-19)', async () => {
+    const lost = Array.from({ length: 30 }, (_, i) => opportunity(pipeline, { title: `Acme old deal ${i}`, customerId: acme.id, status: 'LOST' }));
+    const { other, user } = setup({ section: 'invoices', intent: 'new', opportunities: [...lost, fitout, wonOpp] });
+    await heading('New invoice');
+    await pickCustomer(user, 'Acme Pty Ltd');
+    const opps = await screen.findByRole('list', { name: 'Matching opportunities' });
+    expect(within(opps).getAllByRole('button').map((b) => b.textContent)).toEqual(['Acme fit-outOpen', 'Acme service planWon']);
+    // Asked of the server by status (open first, then won), never a mixed page filtered here.
+    const statuses = other.calls.filter((c) => c.method === 'GET' && c.path.endsWith('/sales/opportunities')).map((c) => (c.query as Record<string, string>).status);
+    expect(statuses).not.toContain('all');
+  });
+
   it('a different customer clears a project and opportunity of the first one before saving, and says so', async () => {
     const { fin, user } = setup({ section: 'quotes', intent: 'new' });
     await heading('New quote');
