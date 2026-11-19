@@ -10,6 +10,13 @@ import { SearchRequest, SearchResolveRequest, SearchResult, SearchType } from '@
 import { decodeSearchCursor, encodeSearchCursor, normalizeQuery, SEARCH_API_ENABLED, SEARCH_INDEXES, SEARCH_PROVIDERS, searchApiEnabled, toTsquery } from '@/modules/search';
 
 process.env.AUTH_SECRET ??= 'unit-test-only-auth-secret-0123456789abcdef';
+// The cursor HMAC reads AUTH_SECRET through getEnv(), which validates the whole server environment. CI sets the
+// rest; these test-only values let `pnpm test` pass on a fresh checkout too (never a real database: nothing connects).
+process.env.DATABASE_URL ??= 'postgresql://unit:test@localhost:5432/unit_test_only';
+process.env.AUTH_DATABASE_URL ??= 'postgresql://unit:test@localhost:5432/unit_test_only';
+process.env.APP_BASE_URL ??= 'http://localhost:3000';
+process.env.REGION ??= 'unit-test';
+process.env.DATABASE_REGION ??= process.env.REGION;
 
 const SRC = resolve(__dirname, '../../src');
 const MIGRATIONS = resolve(__dirname, '../../prisma/migrations');
