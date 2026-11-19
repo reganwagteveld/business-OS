@@ -252,10 +252,10 @@ const nonZero = (v: string) => !/^0(\.0+)?$/.test(v);
  */
 export async function statementPdf(db: AppTenantDb, actorUserId: string, q: { customerId: string; currencyCode: string; from: string; to: string }) {
   const statement = await getStatement(db, q);
-  const [business, branding, seller, billTo] = await Promise.all([
-    db.business.findFirstOrThrow({ select: { locale: true } }), loadBranding(db), sellerSnapshot(db) as Promise<Seller>,
-    billToSnapshot(db, q.customerId, null) as Promise<BillTo>,
-  ]);
+  const business = await db.business.findFirstOrThrow({ select: { locale: true } });
+  const branding = await loadBranding(db);
+  const seller = (await sellerSnapshot(db)) as Seller;
+  const billTo = (await billToSnapshot(db, q.customerId, null)) as BillTo;
   const asset = branding.logoAssetId ? await loadLogoAsset(db, branding.logoAssetId) : null;
   const logo = asset ? await logoBytes(db, asset.id) : null;
   const p = statement.position;

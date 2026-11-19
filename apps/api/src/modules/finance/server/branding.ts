@@ -214,7 +214,8 @@ export async function uploadLogo(db: AppTenantDb, actorUserId: string, input: { 
 export async function currentLogo(db: AppTenantDb): Promise<{ bytes: Buffer; contentType: string; sha256: string }> {
   const branding = await loadBranding(db);
   if (!branding.logoAssetId) throw new RecordNotFoundError();
-  const [asset, bytes] = await Promise.all([loadLogoAsset(db, branding.logoAssetId), logoBytes(db, branding.logoAssetId)]);
+  const asset = await loadLogoAsset(db, branding.logoAssetId);
+  const bytes = await logoBytes(db, branding.logoAssetId);
   if (!asset || !bytes) throw new RecordNotFoundError();
   return { bytes, contentType: asset.contentType, sha256: asset.sha256 };
 }

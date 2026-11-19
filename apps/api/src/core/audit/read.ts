@@ -85,10 +85,8 @@ export async function listAuditEvents(db: AppTenantDb, query: ListAuditEventsQue
   // a former member: no id, no name.
   const actorIds = [...new Set(items.flatMap((row) => (row.actor_user_id ? [row.actor_user_id] : [])))];
   const memberTargetIds = [...new Set(items.flatMap((row) => (row.target_type === 'membership' && row.target_id && resolveRule(row.action).target === 'show' ? [row.target_id] : [])))];
-  const [actors, targets] = await Promise.all([
-    actorIds.length > 0 ? db.membership.findMany({ where: { userId: { in: actorIds } }, select: { userId: true, user: { select: { name: true } } } }) : [],
-    memberTargetIds.length > 0 ? db.membership.findMany({ where: { id: { in: memberTargetIds } }, select: { id: true, user: { select: { name: true } } } }) : [],
-  ]);
+  const actors = actorIds.length > 0 ? await db.membership.findMany({ where: { userId: { in: actorIds } }, select: { userId: true, user: { select: { name: true } } } }) : [];
+  const targets = memberTargetIds.length > 0 ? await db.membership.findMany({ where: { id: { in: memberTargetIds } }, select: { id: true, user: { select: { name: true } } } }) : [];
   const actorNames = new Map(actors.map((m) => [m.userId as string, (m.user as { name: string }).name]));
   const targetNames = new Map(targets.map((m) => [m.id as string, (m.user as { name: string }).name]));
 
