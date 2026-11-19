@@ -116,11 +116,9 @@ async function checkCustomer(db: AppTenantDb, viewer: Viewer, customerId: string
 async function checkCustomerUnlocked(db: AppTenantDb, project: Row) {
   if (project.sourceQuoteId !== null) throw new StateConflictError('project_customer_locked');
   if (project.customerId === null) return; // only customerless expenses can link a customerless project
-  const [document, expense, template] = await Promise.all([
-    db.financeDocument.findFirst({ where: { projectId: project.id }, select: { id: true } }),
-    db.financeExpense.findFirst({ where: { projectId: project.id, customerId: { not: null } }, select: { id: true } }),
-    db.financeRecurringTemplate.findFirst({ where: { projectId: project.id }, select: { id: true } }),
-  ]);
+  const document = await db.financeDocument.findFirst({ where: { projectId: project.id }, select: { id: true } });
+  const expense = await db.financeExpense.findFirst({ where: { projectId: project.id, customerId: { not: null } }, select: { id: true } });
+  const template = await db.financeRecurringTemplate.findFirst({ where: { projectId: project.id }, select: { id: true } });
   if (document || expense || template) throw new StateConflictError('project_customer_locked');
 }
 

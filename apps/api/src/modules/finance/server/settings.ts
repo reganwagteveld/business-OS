@@ -43,16 +43,20 @@ export async function loadSettings(db: AppTenantDb): Promise<SettingsRow> {
  * finance tables are the reported blocker. Retention expiry never authorises deletion.
  */
 export async function hasRetainedRecords(db: AppTenantDb): Promise<boolean> {
-  const [documents, payments, expenses, series, rates, categories, settings] = await Promise.all([
-    db.financeDocument.count({ take: 1 }), db.financePayment.count({ take: 1 }), db.financeExpense.count({ take: 1 }),
-    db.financeNumberSeries.count({ take: 1 }), db.financeTaxRate.count({ take: 1 }), db.financeExpenseCategory.count({ take: 1 }),
-    db.financeSettings.count({ take: 1 }),
-  ]);
-  return documents + payments + expenses + series + rates + categories + settings > 0;
+  // One query at a time (the unit of work has one connection), stopping at the first table with a row.
+  const checks = [
+    () => db.financeDocument.count({ take: 1 }), () => db.financePayment.count({ take: 1 }), () => db.financeExpense.count({ take: 1 }),
+    () => db.financeNumberSeries.count({ take: 1 }), () => db.financeTaxRate.count({ take: 1 }), () => db.financeExpenseCategory.count({ take: 1 }),
+    () => db.financeSettings.count({ take: 1 }),
+  ];
+  for (const check of checks) if (await check() > 0) return true;
+  return false;
 }
 
 async function settingsDto(db: AppTenantDb) {
-  const [row, business, retained] = await Promise.all([loadSettings(db), businessProfile(db), hasRetainedRecords(db)]);
+  const row = await loadSettings(db);
+  const business = await businessProfile(db);
+  const retained = await hasRetainedRecords(db);
   return {
     sellerLegalName: row.sellerLegalName, sellerAddress: row.sellerAddress, sellerEmail: row.sellerEmail, sellerPhone: row.sellerPhone,
     sellerIdentifiers: identifiersOf(row.sellerIdentifiers), paymentInstructions: row.paymentInstructions,
@@ -242,7 +246,8 @@ export async function updateTaxRate(db: AppTenantDb, actorUserId: string, id: st
  * (FD-L6 is open), and nothing here makes a document compliant with any invoicing regime.
  */
 export async function sellerSnapshot(db: AppTenantDb) {
-  const [s, business] = await Promise.all([loadSettings(db), businessProfile(db)]);
+  const s = await loadSettings(db);
+  const business = await businessProfile(db);
   return {
     legalName: s.sellerLegalName ?? business.legalName ?? business.name,
     address: s.sellerAddress, email: s.sellerEmail, phone: s.sellerPhone, countryCode: business.countryCode,

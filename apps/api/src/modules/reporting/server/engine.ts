@@ -202,10 +202,9 @@ async function runOne(db: AppTenantDb, actor: Principal, ref: MetricRef, q: Pars
   const source = PERIOD_SOURCES[def.source!]!;
   const unit = q.granularity === 'none' ? 'month' : q.granularity;
   const byCustomer = q.groupBy === 'customer';
-  const [current, previous] = await Promise.all([
-    source(db, { range: ctx.range, unit, byCustomer, filters: q.filters, timeZone: ctx.timeZone }),
-    ctx.comparisonRange ? source(db, { range: ctx.comparisonRange, unit, byCustomer, filters: q.filters, timeZone: ctx.timeZone }) : Promise.resolve([]),
-  ]);
+  // One query at a time: every query here shares the unit of work's single connection.
+  const current = await source(db, { range: ctx.range, unit, byCustomer, filters: q.filters, timeZone: ctx.timeZone });
+  const previous = ctx.comparisonRange ? await source(db, { range: ctx.comparisonRange, unit, byCustomer, filters: q.filters, timeZone: ctx.timeZone }) : [];
   const ids = byCustomer ? [...current, ...previous].map((r) => r.customerId).filter((id): id is string => id !== null) : [];
   const labels = ids.length ? await customerLabels(db, ids) : new Map<string, string>();
   const shaped = shapeSeries(def, { groupBy: q.groupBy, granularity: q.granularity, range: ctx.range, comparisonRange: ctx.comparisonRange, current, previous, labels });

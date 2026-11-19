@@ -70,9 +70,9 @@ export const billToParty = (b: BillTo, locale: string): SnapshotParty => ({
  * current seller settings and customer, exactly what issuing it now would seal.
  */
 async function buildSnapshot(db: AppTenantDb, kind: PdfKind, row: Row, renderedAt: Date): Promise<{ snapshot: DocumentSnapshot; logo: Buffer | null }> {
-  const [business, lines, branding] = await Promise.all([
-    db.business.findFirstOrThrow({ select: { locale: true } }), linesOf(db, row.id), loadBranding(db),
-  ]);
+  const business = await db.business.findFirstOrThrow({ select: { locale: true } });
+  const lines = await linesOf(db, row.id);
+  const branding = await loadBranding(db);
   const scale = row.currencyScale;
   let breakdown;
   try {

@@ -172,20 +172,19 @@ export async function changeManager(
 /** Everything that happened, oldest first. Reasons only with people:read_sensitive. */
 export async function employeeHistory(db: AppTenantDb, viewer: Viewer, id: string) {
   await loadEmployee(db, id);
-  const [status, departments, managers] = await Promise.all([
-    db.peopleEmploymentStatusHistory.findMany({
-      where: { employeeId: id }, orderBy: [{ recordedAt: 'asc' }, { id: 'asc' }],
-      select: { id: true, fromStatus: true, toStatus: true, effectiveDate: true, reason: true, recordedById: true, recordedAt: true },
-    }),
-    db.peopleDepartmentAssignment.findMany({
-      where: { employeeId: id }, orderBy: [{ startsOn: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-      select: { id: true, startsOn: true, endsOn: true, createdById: true, endedById: true, department: { select: { id: true, name: true, archivedAt: true } } },
-    } as never) as unknown as Promise<{ id: string; startsOn: Date; endsOn: Date | null; createdById: string | null; endedById: string | null; department: { id: string; name: string; archivedAt: Date | null } }[]>,
-    db.peopleManagerAssignment.findMany({
-      where: { employeeId: id }, orderBy: [{ startsOn: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-      select: { id: true, startsOn: true, endsOn: true, createdById: true, endedById: true, manager: { select: namedSelect } },
-    } as never) as unknown as Promise<{ id: string; startsOn: Date; endsOn: Date | null; createdById: string | null; endedById: string | null; manager: Parameters<typeof managerRef>[0] }[]>,
-  ]);
+  // One query at a time: the unit of work has a single connection.
+  const status = await db.peopleEmploymentStatusHistory.findMany({
+    where: { employeeId: id }, orderBy: [{ recordedAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, fromStatus: true, toStatus: true, effectiveDate: true, reason: true, recordedById: true, recordedAt: true },
+  });
+  const departments = await (db.peopleDepartmentAssignment.findMany({
+    where: { employeeId: id }, orderBy: [{ startsOn: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, startsOn: true, endsOn: true, createdById: true, endedById: true, department: { select: { id: true, name: true, archivedAt: true } } },
+  } as never) as unknown as Promise<{ id: string; startsOn: Date; endsOn: Date | null; createdById: string | null; endedById: string | null; department: { id: string; name: string; archivedAt: Date | null } }[]>);
+  const managers = await (db.peopleManagerAssignment.findMany({
+    where: { employeeId: id }, orderBy: [{ startsOn: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, startsOn: true, endsOn: true, createdById: true, endedById: true, manager: { select: namedSelect } },
+  } as never) as unknown as Promise<{ id: string; startsOn: Date; endsOn: Date | null; createdById: string | null; endedById: string | null; manager: Parameters<typeof managerRef>[0] }[]>);
   return {
     status: status.map((s) => ({
       id: s.id, fromStatus: s.fromStatus, toStatus: s.toStatus, effectiveDate: dayOf(s.effectiveDate)!,

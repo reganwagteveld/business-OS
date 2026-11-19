@@ -209,6 +209,12 @@ describe('source rules (scripts/check-boundaries.mjs)', () => {
     expect(server([['core/tenant/index.ts', 'export const f = (ctx) => ctx.businessId;\n']])).toEqual([]);
   });
 
+  it('forbids parallel promises in services and core, which share one transaction connection', () => {
+    expect(server([['modules/finance/server/x.ts', 'const [a, b] = await Promise.all([f(db), g(db)]);\n']])).toEqual(['sequential-queries']);
+    expect(server([['core/audit/read.ts', 'await Promise.allSettled([f(db)]);\n']])).toEqual(['sequential-queries']);
+    expect(server([['modules/finance/server/x.ts', 'const a = await f(db);\nconst b = await g(db);\n']])).toEqual([]);
+  });
+
   it('forbids runtime code reading migration-owner credentials', () => {
     expect(server([['core/config/schema.ts', 'const u = process.env.MIGRATION_DATABASE_URL;\n']])).toEqual(['runtime-owner-credentials']);
     expect(server([['core/db/index.ts', "z.object({ SHADOW_DATABASE_URL: z.string() })\n"]])).toEqual(['runtime-owner-credentials']);

@@ -36,13 +36,11 @@ export async function projectFinanceSummary(db: AppTenantDb, projectId: string):
   // One query with OR returns each row once, so a quote that is both is counted once.
   const quoteMatch: Record<string, unknown>[] = [{ projectId }];
   if (project.sourceQuoteId) quoteMatch.push({ id: project.sourceQuoteId });
-  const [quotes, invoices, expenses] = await Promise.all([
-    db.financeDocument.findMany({ where: { kind: 'QUOTE', OR: quoteMatch }, select: docSelect }) as Promise<Doc[]>,
-    // I(P): invoices with project_id = P (after D-WF1-10 this includes drafts converted from the source quote).
-    db.financeDocument.findMany({ where: { kind: 'INVOICE', projectId }, select: docSelect }) as Promise<Doc[]>,
-    // E(P): expenses with project_id = P.
-    db.financeExpense.findMany({ where: { projectId }, select: { status: true, currencyCode: true, subtotal: true } }),
-  ]);
+  const quotes = (await db.financeDocument.findMany({ where: { kind: 'QUOTE', OR: quoteMatch }, select: docSelect })) as Doc[];
+  // I(P): invoices with project_id = P (after D-WF1-10 this includes drafts converted from the source quote).
+  const invoices = (await db.financeDocument.findMany({ where: { kind: 'INVOICE', projectId }, select: docSelect })) as Doc[];
+  // E(P): expenses with project_id = P.
+  const expenses = await db.financeExpense.findMany({ where: { projectId }, select: { status: true, currencyCode: true, subtotal: true } });
   // C(P): credit notes whose credited invoice is in I(P). Membership follows the credited invoice, not the
   // credit note's own copied project_id, so it cannot drift.
   const creditNotes = invoices.length === 0 ? [] : ((await db.financeDocument.findMany({

@@ -67,6 +67,12 @@ export function serverViolations(files) {
       errors.push(`tenant-id-outside-core: ${name} reads businessId from a tenant context; only core/tenant and core/db may`);
     }
 
+    // A unit of work runs on ONE pooled connection, so its queries must run one at a time: concurrent queries on one
+    // pg client are deprecated and become an error in pg 9. Services and core code await each query in turn.
+    if (/^(modules|core)\//.test(name) && /\bPromise\.(all|allSettled|any|race)\s*\(/.test(content)) {
+      errors.push(`sequential-queries: ${name} runs promises in parallel; queries share one transaction connection, so await them one at a time`);
+    }
+
     if (name !== 'core/config/migration.ts' && OWNER_CREDENTIALS.test(content)) {
       errors.push(`runtime-owner-credentials: ${name} reads migration-owner credentials; only core/config/migration.ts (migration tooling) may`);
     }
