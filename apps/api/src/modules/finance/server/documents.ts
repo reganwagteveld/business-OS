@@ -591,7 +591,8 @@ export async function issueDocument(db: AppTenantDb, actorUserId: string, kind: 
   if (lines.length === 0) throw new RuleViolationError('no_lines', 'Add at least one line before issuing.');
   const totals = documentTotals(lines.map((l) => lineAmounts(l.quantity, l.unitPrice, l.discountAmount, l.taxRatePercent, before.currencyScale)));
 
-  const [business, settings] = await Promise.all([businessProfile(db), loadSettings(db)]);
+  const business = await businessProfile(db);
+  const settings = await loadSettings(db);
   const issueDate = input.issueDate ?? todayIn(business.timeZone);
   let dueDate: string | null = null;
   let validUntil: string | null = null;
@@ -618,7 +619,8 @@ export async function issueDocument(db: AppTenantDb, actorUserId: string, kind: 
     if (credited.add(totals.total).gt(invoice.total)) throw new StateConflictError('credit_exceeds_invoice');
   }
 
-  const [seller, billTo] = await Promise.all([sellerSnapshot(db), billToSnapshot(db, before.customerId, before.contactId)]);
+  const seller = await sellerSnapshot(db);
+  const billTo = await billToSnapshot(db, before.customerId, before.contactId);
   const result = await db.financeDocument.updateMany({
     where: { id, kind, status: 'DRAFT', version: input.version },
     data: {

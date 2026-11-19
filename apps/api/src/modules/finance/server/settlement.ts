@@ -131,7 +131,8 @@ export async function getInvoiceSettlement(db: AppTenantDb, invoiceId: string): 
   const state = settlementStateOf(inv);
   const outstanding = inv.status === 'ISSUED' ? inv.total.sub(inv.allocatedTotal).sub(inv.creditAppliedTotal) : new Decimal(0);
   const due = dayOf(inv.dueDate);
-  const [allocations, applications] = await Promise.all([allocationsOf(db, { invoiceId }), applicationsOf(db, { invoiceId })]);
+  const allocations = await allocationsOf(db, { invoiceId });
+  const applications = await applicationsOf(db, { invoiceId });
   return {
     invoiceId, number: inv.number, status: inv.status, customerId: inv.customerId, currencyCode: inv.currencyCode, total: formatAmount(inv.total, s),
     allocatedTotal: formatAmount(inv.allocatedTotal, s), creditAppliedTotal: formatAmount(inv.creditAppliedTotal, s), outstanding: formatAmount(outstanding, s),

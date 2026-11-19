@@ -5,7 +5,7 @@
  * Source rules: scripts/check-boundaries.mjs on in-memory files.
  */
 import { createRequire } from 'node:module';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { cruise, type ICruiseResult, type IConfiguration } from 'dependency-cruiser';
@@ -207,6 +207,30 @@ describe('source rules (scripts/check-boundaries.mjs)', () => {
     expect(server([['modules/customers/server/service.ts', 'export const f = (ctx) => ctx.businessId;\n']])).toEqual(['tenant-id-outside-core']);
     expect(server([['app/api/v1/x/route.ts', 'const { businessId } = tenant;\n']])).toEqual(['tenant-id-outside-core']);
     expect(server([['core/tenant/index.ts', 'export const f = (ctx) => ctx.businessId;\n']])).toEqual([]);
+  });
+
+  it('forbids parallel promises in services and core, which share one transaction connection', () => {
+    expect(server([['modules/finance/server/x.ts', 'const [a, b] = await Promise.all([f(db), g(db)]);\n']])).toEqual(['sequential-queries']);
+    expect(server([['core/audit/read.ts', 'await Promise.allSettled([f(db)]);\n']])).toEqual(['sequential-queries']);
+    expect(server([['modules/finance/server/x.ts', 'const a = await f(db);\nconst b = await g(db);\n']])).toEqual([]);
+    // Outside modules and core (route wrappers, tests) the rule does not apply.
+    expect(server([['app/api/_lib/x.ts', 'await Promise.all([a(), b()]);\n']])).toEqual([]);
+  });
+
+  it('allows parallel non-database work only with a reviewed parallel-ok reason', () => {
+    expect(server([['core/x.ts', '// parallel-ok: hashes two buffers, no database client\nawait Promise.all([hash(a), hash(b)]);\n']])).toEqual([]);
+    expect(server([['core/x.ts', 'await Promise.all([hash(a), hash(b)]); // parallel-ok: CPU only\n']])).toEqual([]);
+    // An empty reason, or a marker two lines away, is not an exception.
+    expect(server([['core/x.ts', '// parallel-ok:\nawait Promise.all([f(db)]);\n']])).toEqual(['sequential-queries']);
+    expect(server([['core/x.ts', '// parallel-ok: reason\n\nawait Promise.all([f(db)]);\n']])).toEqual(['sequential-queries']);
+  });
+
+  it('keeps pg below 9 until Prisma stops issuing parallel queries in a transaction (upgrade gate)', () => {
+    // Prisma 7's query interpreter still runs some relation reads in parallel on one transaction connection
+    // (pg DeprecationWarning, PR 172). pg 9 turns that into an error, so lifting this bound needs a Prisma release
+    // that serialises them and an integration run with no such warning (NODE_OPTIONS=--trace-deprecation).
+    const api = JSON.parse(readFileSync(resolve(__dirname, '../../apps/api/package.json'), 'utf8')) as { dependencies: Record<string, string> };
+    expect(api.dependencies.pg).toMatch(/<\s*9(\.0\.0)?$/);
   });
 
   it('forbids runtime code reading migration-owner credentials', () => {

@@ -67,6 +67,21 @@ export function serverViolations(files) {
       errors.push(`tenant-id-outside-core: ${name} reads businessId from a tenant context; only core/tenant and core/db may`);
     }
 
+    // A unit of work runs on ONE pooled connection, so its queries must run one at a time: concurrent queries on one
+    // pg client are deprecated and become an error in pg 9 (docs/architecture.md §7.3 layer 3). Parallel promises in
+    // modules and core almost always mean parallel queries on the tenant client, so they are refused by default. Work
+    // that never touches a database client (CPU work, an outbound call outside any unit of work) may run in parallel
+    // with a reviewed exception: `// parallel-ok: <reason>` on the same line or the line above.
+    if (/^(modules|core)\//.test(name)) {
+      const lines = content.split('\n');
+      lines.forEach((line, i) => {
+        if (!/\bPromise\.(all|allSettled|any|race)\s*\(/.test(line)) return;
+        const exception = /\/\/\s*parallel-ok:\s*\S/;
+        if (exception.test(line) || exception.test(lines[i - 1] ?? '')) return;
+        errors.push(`sequential-queries: ${name}:${i + 1} runs promises in parallel; queries in a unit of work share one connection, so await them one at a time (or mark non-database work with "// parallel-ok: <reason>")`);
+      });
+    }
+
     if (name !== 'core/config/migration.ts' && OWNER_CREDENTIALS.test(content)) {
       errors.push(`runtime-owner-credentials: ${name} reads migration-owner credentials; only core/config/migration.ts (migration tooling) may`);
     }

@@ -214,7 +214,8 @@ async function today(db: AppTenantDb) {
 }
 
 async function dto(db: AppTenantDb, row: ExpenseRow): Promise<ExpenseDto> {
-  const [allocations, day] = await Promise.all([expenseAllocationsOf(db, { expenseId: row.id }), today(db)]);
+  const allocations = await expenseAllocationsOf(db, { expenseId: row.id });
+  const day = await today(db);
   return { ...headerDto(row, day), allocations: allocations.map(expenseAllocationDto) };
 }
 
