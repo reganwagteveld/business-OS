@@ -6,11 +6,21 @@ import { publicRoute } from '../../_lib/routes';
 
 export const dynamic = 'force-dynamic';
 
-/** The signed-in user (contract: endpoints.me). Browser: session cookie. Desktop: bearer token. */
+/**
+ * The signed-in user (contract: endpoints.me). Browser: session cookie. Desktop: bearer token.
+ * Deliberately not a publicRoute: it answers before admission and email verification, so the clients can tell
+ * those states apart. A failure (database or auth library unavailable) still answers like every other route:
+ * JSON 500 with the no-store and CORS headers, never a bare error the clients would read as "offline".
+ */
 export async function GET(request: Request) {
-  const user = await getCurrentUser(request);
-  if (!user) return NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: apiHeaders(request) });
-  return NextResponse.json(MeResponse.parse({ user }), { headers: apiHeaders(request) });
+  try {
+    const user = await getCurrentUser(request);
+    if (!user) return NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: apiHeaders(request) });
+    return NextResponse.json(MeResponse.parse({ user }), { headers: apiHeaders(request) });
+  } catch (error) {
+    console.error('[api] unexpected error', error instanceof Error ? error.name : typeof error);
+    return NextResponse.json({ error: 'internal_error' }, { status: 500, headers: apiHeaders(request) });
+  }
 }
 
 /**
